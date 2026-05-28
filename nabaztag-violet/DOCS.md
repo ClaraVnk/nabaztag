@@ -24,11 +24,31 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 3. Install **Nabaztag Violet Server**, set `server_address` to **your HAOS host
    IP** (the address the rabbit must reach), then **Start**.
 
-## Point the rabbit at it
+## Point the rabbit at it — two methods (your choice)
 
-Hold the rabbit's head while powering it (LEDs go blue), join its `NabaztagXX`
-Wi-Fi, open `192.168.0.1`, set the **Violet Platform** field to
-`http://<HAOS_IP>/vl`, then *update and start*. Watch the add-on log: you should
+First, make sure the rabbit's VLAN can reach the HAOS host on TCP **80** and
+**5222** (inter-VLAN firewall rule) — this is needed for **both** methods.
+
+**Method A — DNS redirect** *(recommended: nothing to type on the rabbit, and it
+survives a factory reset).* In UniFi, add a DNS host record for the rabbit's
+VLAN:
+
+```
+r.nabaztag.com  →  <HAOS_IP>
+```
+
+That is the host the v2 rabbit contacts at boot (`Host: r.nabaztag.com` on its
+`/vl/bc.jsp` + `/vl/locate.jsp` requests). Because our `locate.jsp` hands back
+`<HAOS_IP>` for ping/broad/xmpp, this single record is enough. The rabbit must
+use the UniFi/DHCP-provided DNS. *(Optional belt-and-suspenders: also redirect
+`xmpp.nabaztag.com`, `broad.violet.net`, `tagtag.nabaztag.objects.violet.net`.)*
+
+**Method B — configure the rabbit directly** *(no DNS change).* Hold the rabbit's
+head while powering it (LEDs go blue), join its `NabaztagXX` Wi-Fi, open
+`192.168.0.1`, set the **Violet Platform** field to `http://<HAOS_IP>/vl`, then
+*update and start*.
+
+With either method, power-cycle the rabbit and watch the add-on log: you should
 see `serving bootcode`, then the XMPP `stream → success → bind → session` and
 finally `bound and idle — ready for commands`.
 

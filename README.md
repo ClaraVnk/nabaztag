@@ -81,12 +81,22 @@ proxy — one clean process.
    add `https://github.com/ClaraVnk/nabaztag`.
 2. Install **Nabaztag Violet Server**, open its **Configuration** tab and set
    `server_address` to your **HAOS host IP**, then **Start** it.
-3. Allow the rabbit's VLAN to reach the host on TCP **80** and **5222**.
-4. Put the rabbit in config mode (hold head + power → LEDs blue), join its
-   `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform** to
-   `http://<haos-ip>/vl`, and *update and start*.
-5. Watch the add-on log for `bound and idle — ready for commands`. Optionally
-   drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
+3. Allow the rabbit's VLAN to reach the host on TCP **80** and **5222**
+   (inter-VLAN firewall rule — required for **both** methods below).
+4. **Point the rabbit at the server — pick the method you prefer:**
+
+   - **Method A · DNS redirect** *(recommended — nothing to type on the rabbit,
+     survives a factory reset):* in UniFi, add a DNS host record
+     `r.nabaztag.com → <haos-ip>` scoped to the rabbit's VLAN, and leave the
+     rabbit on its factory server. The rabbit must use the UniFi/DHCP DNS.
+   - **Method B · configure the rabbit directly** *(no DNS change):* hold its head
+     while powering it (LEDs go blue), join its `NabaztagXX` Wi-Fi, open
+     `192.168.0.1`, set **Violet Platform** to `http://<haos-ip>/vl`, then
+     *update and start*.
+
+5. Power-cycle the rabbit and watch the add-on log for
+   `bound and idle — ready for commands`. Optionally drop
+   `home-assistant/nabaztag.yaml` into `/config/packages/`.
 
 Full guide (API, pairing, troubleshooting) is in
 **[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
