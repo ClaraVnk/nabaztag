@@ -38,8 +38,14 @@ LOG_LEVEL = (os.environ.get("LOG_LEVEL") or _OPTS.get("log_level") or "Info").up
 HTTP_PORT = int(os.environ.get("HTTP_PORT", _OPTS.get("http_port", 80)))
 XMPP_PORT = int(os.environ.get("XMPP_PORT", _OPTS.get("xmpp_port", 5222)))
 API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
+# Which bytecode to serve at /vl/bc.jsp. The bytecode and the locate format are
+# a matched pair: 'ojn' (OpenJabNab) expects the locate WITH the xmpp port (what
+# we now send); 'violet' is the original; 'pub' is the live community server's
+# (newest) build, fetched at build for comparison/RE.
+BOOTCODE_CHOICE = (os.environ.get("BOOTCODE") or _OPTS.get("bootcode") or "ojn").lower()
 BOOTCODE_FILE = os.environ.get(
-    "BOOTCODE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootcode.violet")
+    "BOOTCODE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), f"bootcode.{BOOTCODE_CHOICE}"),
 )
 
 logging.basicConfig(

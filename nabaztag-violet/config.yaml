@@ -1,5 +1,5 @@
 name: "Nabaztag Violet Server"
-version: "0.1.3"
+version: "0.1.4"
 slug: "nabaztag_violet"
 description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, logs everything, exposes a control API for Home Assistant. Dependency-free Python."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
@@ -23,6 +23,8 @@ ports_description:
 options:
   server_address: "192.0.2.10"
   log_level: "Info"
+  bootcode: "ojn"
 schema:
   server_address: "str"
   log_level: "list(Debug|Info|Warning|Error)"
+  bootcode: "list(violet|ojn|pub)"
