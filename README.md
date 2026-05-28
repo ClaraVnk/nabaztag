@@ -10,65 +10,67 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?logo=home-assistant&logoColor=white" alt="Home Assistant add-on">
   <img src="https://img.shields.io/badge/arch-amd64-lightgrey" alt="amd64">
-  <img src="https://img.shields.io/badge/server-OpenJabNab-orange" alt="OpenJabNab">
+  <img src="https://img.shields.io/badge/protocol-Violet-orange" alt="Violet protocol">
+  <img src="https://img.shields.io/badge/python-stdlib-3776AB?logo=python&logoColor=white" alt="Python stdlib">
   <img src="https://img.shields.io/badge/100%25-local-success" alt="100% local, no cloud">
-  <img src="https://img.shields.io/badge/status-experimental-yellow" alt="experimental">
+  <img src="https://img.shields.io/badge/status-Phase%201-yellow" alt="Phase 1">
 </p>
 
 Bring an **original Nabaztag** (the 2005–2006 Wi-Fi rabbit by Violet/Mindscape)
 back to life and drive it from **Home Assistant**, fully locally — no cloud.
 
-This repository is a **Home Assistant OS add-on repository**. The add-on runs an
-[OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) server that the rabbit
-phones home to (its original servers died around 2011), and exposes an HTTP API
-that Home Assistant uses to wiggle the ears, set LED colors, play sounds, and
-speak.
+This repository is a **Home Assistant OS add-on repository**. Its primary add-on
+is a small, **dependency-free server that speaks the original Violet protocol**
+directly: the rabbit phones home to it (the real Violet servers died around
+2011), and Home Assistant drives the rabbit — ears, LEDs, sounds — through a
+simple control API.
 
-> ⚠️ **Uncertain-outcome project.** A stock rabbit is a "dumb" Wi-Fi client with
-> a hard-coded server. Reviving it depends on redirecting that traffic and on the
-> rabbit's aging firmware/Wi-Fi cooperating. The protocol is plain HTTP (no TLS
-> pinning), so the odds are good — but if the wall proves too high, the fallback
-> is the hardware route (a **tagtagtag/pynab** card inside the rabbit), which is
-> out of scope for this add-on.
+> ⚠️ **Uncertain-outcome project.** A stock rabbit is a "dumb" Wi-Fi client that
+> downloads its bytecode from the server on every boot (nothing is flashed) and
+> talks plain HTTP + XMPP (no TLS pinning). Booting it against our own server and
+> getting it to connect is **Phase 1 (done)**. Capturing its **microphone** for
+> voice is **Phase 2** and genuinely harder (see Roadmap). If a wall proves too
+> high, the hardware fallback is a **tagtagtag/pynab** card — out of scope here.
 
 ## How it works
 
 ```
-Nabaztag (<rabbit-ip>)  ──HTTP /vl/* :80──▶  ┌───────────────────────────┐
-       ▲                ◀──XMPP push :5222─  │  Add-on @ <haos-ip>        │
-       │                                      │  Apache :80 ─▶ OpenJabNab  │
-Home Assistant  ──HTTP /ojn_api/* :80──▶      │            127.0.0.1:8080  │
-                                              └───────────────────────────┘
+Nabaztag (<rabbit-ip>)  ──HTTP /vl/bc.jsp,/vl/locate.jsp :80──▶  ┌──────────────────────────┐
+       ▲                                                          │  Add-on @ <haos-ip>       │
+       │                ◀──── XMPP push (commands) :5222 ───────  │  nabaztag-violet (Python) │
+       │                ───── XMPP events (button/RFID) ───────▶  │   HTTP boot + XMPP + API  │
+Home Assistant  ──── HTTP control API :8099 (/api/...) ─────────▶ └──────────────────────────┘
 ```
 
-On boot the rabbit downloads its bootcode and a "locate" file, then opens an
-XMPP connection and waits for **pushed** commands. OpenJabNab's HTTP listener
-binds localhost only, so **Apache** serves port **80** and reverse-proxies the
-`/vl/*` rabbit protocol and the `/ojn_api/*` control API to OpenJabNab; XMPP
-(`:5222`) is served by OpenJabNab directly.
+On boot the rabbit fetches its **bytecode** (`/vl/bc.jsp`) and a **locate** file
+(`/vl/locate.jsp`) that points it at our server, then opens an **XMPP** stream.
+Our server completes the handshake using the documented **SASL success-bypass**
+(no Violet password needed), keeps the rabbit idle, pushes `violet:packet`
+commands, and **logs everything** the rabbit sends. No OpenJabNab, no reverse
+proxy — one clean process.
 
 ## What you can do from Home Assistant
 
-- 🐰 Wiggle the **ears** to preset positions / choreographies
-- 🌈 Set the **LED** color (e.g. flash on the Farfisa intercom)
-- 🔊 Play a **sound / MP3** (incl. local HA-generated speech)
-- 🗣️ **Speak** (see the TTS note — local HA TTS recommended)
-- 📟 (v2) React to **button** presses and **RFID** tags *(read-back support is
-  WIP — see the add-on docs)*
+- 🐰 Move the **ears** &nbsp; 🌈 set **LED** colors &nbsp; 🔊 play a **sound / MP3**
+- 🗣️ **Speak** via HA's local TTS → MP3 (see TTS note)
+- 📟 (v2) react to **button** presses and **RFID** tags *(surfaced in the logs)*
+- 🎤 talk to it via the **microphone** → *Phase 2, see Roadmap*
 
 ## Repository layout
 
 ```
 .
-├── repository.yaml            # declares this as an HA add-on repository
-├── nabaztag-server/           # the add-on
-│   ├── config.yaml            # options, ports, arch
-│   ├── build.yaml             # builds on the prebuilt OpenJabNab image (amd64)
-│   ├── Dockerfile
-│   ├── run.sh                 # renders persistent config, starts OpenJabNab
-│   └── DOCS.md                # full install / pairing / networking / testing guide
+├── repository.yaml          # declares this as an HA add-on repository
+├── nabaztag-violet/         # ⭐ primary add-on — our own Violet-protocol server
+│   ├── server.py            #    dependency-free Python (HTTP boot + XMPP + control API)
+│   ├── config.yaml          #    options (server_address, log_level), ports, arch
+│   ├── Dockerfile           #    installs python3, fetches the bytecode at build
+│   ├── build.yaml
+│   └── DOCS.md              #    install / pairing / API / status
+├── nabaztag-server/         # OpenJabNab add-on (superseded — kept for reference)
+│   └── …                    #    its HTTP listener is non-functional in the upstream image
 ├── home-assistant/
-│   └── nabaztag.yaml          # ready-to-paste HA package (rest_commands + automations)
+│   └── nabaztag.yaml        # ready-to-paste HA package (rest_commands + automations)
 ├── README.md
 └── LICENSE
 ```
@@ -77,36 +79,51 @@ binds localhost only, so **Apache** serves port **80** and reverse-proxies the
 
 1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**,
    add `https://github.com/ClaraVnk/nabaztag`.
-2. Install **Nabaztag Server (OpenJabNab)**, set `server_address` to your HAOS
-   host IP, and start it.
-3. Allow the rabbit's VLAN to reach the host, point the rabbit at the server,
-   and pair it.
-4. Drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
+2. Install **Nabaztag Violet Server**, open its **Configuration** tab and set
+   `server_address` to your **HAOS host IP**, then **Start** it.
+3. Allow the rabbit's VLAN to reach the host on TCP **80** and **5222**.
+4. Put the rabbit in config mode (hold head + power → LEDs blue), join its
+   `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform** to
+   `http://<haos-ip>/vl`, and *update and start*.
+5. Watch the add-on log for `bound and idle — ready for commands`. Optionally
+   drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
 
-Full step-by-step (cross-VLAN firewall, Wi-Fi settings, traffic capture, staged
-testing, troubleshooting) is in **[`nabaztag-server/DOCS.md`](nabaztag-server/DOCS.md)**.
+Full guide (API, pairing, troubleshooting) is in
+**[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
+
+## Roadmap
+
+- **Phase 1 — done:** our own server; the rabbit boots our bytecode and connects;
+  HA control API; full traffic logging. Command payloads (LED/ears/sound) are
+  best-effort (framing correct) and get refined against the real rabbit.
+- **Phase 2 — microphone & firmware:** the v2 mic needs firmware that streams it.
+  The whole toolchain is open (RedoXyde's `mtl_linux` Metal compiler + simulator,
+  the RE'd original firmware `nominal.mtl`, the `nabAsm`/`nabDasm` tools and
+  `nabgcc`), so we can build/modify the bytecode and add a clean mic stream to our
+  server — then wire it to a local STT (Whisper) and an LLM conversation agent.
 
 ## Hardware
 
 - Works with the **Nabaztag** (v1, 2005) and **Nabaztag:tag** (v2, 2006 — mic +
-  RFID). This project targets the **stock** rabbit; it does **not** use pynab.
+  RFID). Targets the **stock** rabbit; no hardware mod, nothing flashed.
 - Host architecture: **amd64**.
 
 ## TTS note
 
-OpenJabNab's built-in TTS relied on Acapela's now-dead web service. For reliable,
+The rabbit's original TTS relied on Acapela's now-dead web service. For reliable,
 fully-local speech, generate audio with Home Assistant's local TTS (e.g. Piper)
-and play the resulting MP3 on the rabbit via the `playurl` API. See the docs.
+and play the resulting MP3 on the rabbit.
 
 ## Credits
 
-- [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) — the PHP/C++ Violet
-  protocol reimplementation this add-on runs.
-- [antoine-aumjaud/docker-openjabnab](https://github.com/antoine-aumjaud/docker-openjabnab)
-  and [fbricon/openjabnab-docker](https://github.com/fbricon/openjabnab-docker) —
-  the prebuilt Docker image this add-on layers on.
-- The Nabaztag community boot-process write-ups (wizz.cc) that documented the
-  `/vl/bc.jsp` → `/vl/locate.jsp` → ping/broad/XMPP sequence.
+- The Violet documentation at [nabaztag.com/doc](https://nabaztag.com/doc) —
+  official API, the **Metal** language grammar, and the Télécom SudParis report
+  that reverse-engineered the v2 boot + XMPP protocol (the SASL success-bypass).
+- [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) — reference PHP/C++ Violet
+  reimplementation (and the bundled `bootcode.violet`).
+- [RedoXyde](https://github.com/RedoXyde) (`mtl_linux`, `nabgcc`) and
+  [Pixel166](https://github.com/Pixel166) (`nabAsm`/`nabDasm`) — the open Metal
+  firmware toolchain that makes Phase 2 possible.
 
 Images: Home Assistant logo © the Home Assistant project. Nabaztag photo by
 docraven (Flickr), via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Nabaztag.jpg),
