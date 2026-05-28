@@ -1,2 +1,6 @@
 .DS_Store
 .claude/
+# Violet's proprietary bytecode — fetched at add-on build time, not committed
+nabaztag-violet/bootcode.violet
+__pycache__/
+*.pyc

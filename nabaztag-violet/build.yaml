@@ -1,0 +1,5 @@
+build_from:
+  amd64: "python:3.12-alpine"
+labels:
+  org.opencontainers.image.title: "Nabaztag Violet Server"
+  org.opencontainers.image.source: "https://github.com/ClaraVnk/nabaztag"
