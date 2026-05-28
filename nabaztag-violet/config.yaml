@@ -1,5 +1,5 @@
 name: "Nabaztag Violet Server"
-version: "0.1.0"
+version: "0.1.1"
 slug: "nabaztag_violet"
 description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, logs everything, exposes a control API for Home Assistant. Dependency-free Python."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
@@ -15,11 +15,11 @@ host_network: false
 ports:
   "80/tcp": 80
   "5222/tcp": 5222
-  "8080/tcp": 8080
+  "8080/tcp": 8099
 ports_description:
   "80/tcp": "Boot: /vl/bc.jsp serves the bytecode, /vl/locate.jsp points the rabbit at us."
   "5222/tcp": "XMPP: the rabbit connects here; the server pushes violet:packet commands."
-  "8080/tcp": "Control API for Home Assistant (/api/status, /api/led, /api/ears, /api/raw, ...)."
+  "8080/tcp": "Control API for Home Assistant — reached on host port 8099 (8080 is taken by signal-cli)."
 options:
   server_address: "192.0.2.10"
   log_level: "Info"
