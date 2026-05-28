@@ -1,5 +1,5 @@
 name: "Nabaztag Server (OpenJabNab)"
-version: "0.1.0"
+version: "0.1.1"
 slug: "nabaztag_server"
 description: "Revive an original Nabaztag/tag (v1/v2). Runs an OpenJabNab server the rabbit phones home to, driven from Home Assistant."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-server"
