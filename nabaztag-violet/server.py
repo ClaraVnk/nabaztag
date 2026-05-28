@@ -69,20 +69,59 @@ def frame_packet(ptype: int, payload: bytes) -> bytes:
     return bytes([0x7F, ptype & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF]) + payload + bytes([0xFF])
 
 
-# Message type codes — framing is solid; payload semantics are best-effort and
-# MUST be validated/refined against the real rabbit (use /api/raw to experiment
-# and watch the logs). Documented helpers below build plausible payloads.
-PKT_PING = 0x01
-PKT_MESSAGE = 0x0A          # "MessagePacket" (TTS / sound), obfuscated upstream
-PKT_AMBIENT = 0x09          # ambient/choreography-ish
-PKT_REBOOT = 0x05
+# Packet type codes (OpenJabNab packet.h, verified): Ambient=0x04, Message=0x0A,
+# Sleep=0x0B.
+PKT_AMBIENT = 0x04
+PKT_MESSAGE = 0x0A
+PKT_SLEEP = 0x0B
 
-def build_choreography(chor: str) -> bytes:
-    """Encode an API-v2 style choreography string (tempo,led/motor,...).
-    NOTE: over XMPP the rabbit expects a *binary* sequence; the exact opcode
-    layout still needs live confirmation. We send the ASCII choreography as the
-    payload for now so it shows up clearly in captures for refinement."""
-    return frame_packet(PKT_AMBIENT, chor.encode("latin-1", "replace"))
+# AmbientPacket services (ambientpacket.h). This drives the belly icons (weather,
+# stock, mail, air quality), the ear positions and the nose blink.
+SVC_DISABLE = 0x00
+SVC_WEATHER = 0x01      # 0 Sun,1 Cloudy,2 Smog,3 Rain,4 Snow,5 Storm
+SVC_STOCK = 0x02
+SVC_PERIPH = 0x03
+SVC_EAR_LEFT = 0x04    # value = ear position
+SVC_EAR_RIGHT = 0x05   # value = ear position
+SVC_EMAIL = 0x06
+SVC_AIRQUALITY = 0x07
+SVC_NOSE = 0x08        # 0 None,1 Blink,2 DoubleBlink
+SVC_BOTTOMLED = 0x09
+SVC_TAICHI = 0x0E
+WEATHER = {"sun": 0, "cloudy": 1, "smog": 2, "rain": 3, "snow": 4, "storm": 5}
+
+
+def ambient_internal(services: dict) -> bytes:
+    """AmbientPacket internal data (ambientpacket.cpp): 0x7FFFFFFE header, then
+    (service, value) byte pairs sorted by service id (Qt QMap order)."""
+    out = bytes([0x7F, 0xFF, 0xFF, 0xFE])
+    for k in sorted(services):
+        out += bytes([k & 0xFF, services[k] & 0xFF])
+    return out
+
+
+def ambient_packet(services: dict) -> bytes:
+    return frame_packet(PKT_AMBIENT, ambient_internal(services))
+
+
+def pack_list(packets) -> bytes:
+    """Concatenate packets like OpenJabNab Packet::GetData(list): a single leading
+    0x7F, then {type, len(3), data} per packet, and one trailing 0xFF."""
+    out = bytes([0x7F])
+    for ptype, data in packets:
+        n = len(data)
+        out += bytes([ptype & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF]) + data
+    out += bytes([0xFF])
+    return out
+
+
+# The packet the rabbit needs as the answer to its violet:iq:sources query to
+# finish booting (OpenJabNab Bunny::GetInitPacket): AmbientPacket (nose off, ears
+# at 0) + SleepPacket(Wake_Up = 0).
+INIT_PACKET = pack_list([
+    (PKT_AMBIENT, ambient_internal({SVC_NOSE: 0, SVC_EAR_LEFT: 0, SVC_EAR_RIGHT: 0})),
+    (PKT_SLEEP, bytes([0])),
+])
 
 
 # --------------------------------------------------------------------------- #
@@ -127,8 +166,8 @@ class XmppSession(threading.Thread):
         self.msg_nb += 1
         b64 = base64.b64encode(raw).decode("ascii")
         stanza = (
-            f"<message from='net.nabaztag.platform@{self.domain}/services' "
-            f"to='{self.jid}' id='ojn-{self.msg_nb}'>"
+            f"<message from='net.openjabnab.platform@{self.domain}/services' "
+            f"to='{self.mac}@{self.domain}/{self.resource}' id='ojn-{self.msg_nb}'>"
             f"<packet xmlns='violet:packet' format='1.0' ttl='604800'>{b64}</packet>"
             f"</message>"
         )
@@ -213,6 +252,31 @@ class XmppSession(threading.Thread):
             self.bound = True
             self.send(f"<iq type='result' id='{iq_id}'/>")
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
+            return
+
+        if "violet:iq:sources" in f and "<iq" in f:
+            # The rabbit asks for its config; answering with the init packet lets
+            # it finish booting (otherwise it stays stuck in the boot resource).
+            iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
+            iq_id = iq_id.group(1) if iq_id else "1"
+            frm = re.search(r"from='([^']*)'", f) or re.search(r'from="([^"]*)"', f)
+            to = re.search(r"to='([^']*)'", f) or re.search(r'to="([^"]*)"', f)
+            frm = frm.group(1) if frm else self.jid
+            to = to.group(1) if to else f"net.violet.platform@{self.domain}/sources"
+            b64 = base64.b64encode(INIT_PACKET).decode("ascii")
+            self.send(
+                f"<iq from='{to}' to='{frm}' type='result' id='{iq_id}'>"
+                f"<query xmlns='violet:iq:sources'><packet xmlns='violet:packet' format='1.0' ttl='604800'>{b64}</packet></query></iq>"
+            )
+            log.info("rabbit %s: answered violet:iq:sources (init packet) — boot should complete", self.addr[0])
+            return
+
+        if "<unbind" in f and "<iq" in f:
+            iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
+            iq_id = iq_id.group(1) if iq_id else "1"
+            self.send(f"<iq type='result' id='{iq_id}'/>")
+            self.bound = True
+            log.info("rabbit %s: boot unbind done — now operational, ready for commands", self.addr[0])
             return
 
         if f.startswith("<iq") and "ping" in f:
@@ -417,23 +481,27 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/raw":
-                raw = base64.b64decode(q.get("b64", [""])[0])
-                b.send_violet_packet(raw)
-            elif path == "/api/ping":
-                b.send_violet_packet(frame_packet(PKT_PING, b"ping"))
-            elif path == "/api/reboot":
-                b.send_violet_packet(frame_packet(PKT_REBOOT, b""))
-            elif path == "/api/chor":
-                b.send_violet_packet(build_choreography(q.get("chor", [""])[0]))
-            elif path == "/api/led":
-                # led id 0-4, r,g,b 0-255 -> API-v2 choreography
-                led = int(q.get("id", ["2"])[0]); r = int(q.get("r", ["0"])[0])
-                g = int(q.get("g", ["0"])[0]); bl = int(q.get("b", ["0"])[0])
-                b.send_violet_packet(build_choreography(f"10,0,led,{led},{r},{g},{bl}"))
+                b.send_violet_packet(base64.b64decode(q.get("b64", [""])[0]))
             elif path == "/api/ears":
-                ear = int(q.get("ear", ["1"])[0]); ang = int(q.get("angle", ["0"])[0])
-                d = int(q.get("dir", ["0"])[0])
-                b.send_violet_packet(build_choreography(f"10,0,motor,{ear},{ang},0,{d}"))
+                # ?left=&right= (or ?angle= for both). Position value (0..16-ish).
+                both = q.get("angle", ["0"])[0]
+                left = int(q.get("left", [both])[0]); right = int(q.get("right", [both])[0])
+                b.send_violet_packet(ambient_packet({SVC_EAR_LEFT: left, SVC_EAR_RIGHT: right}))
+            elif path == "/api/weather":
+                # ?v=sun|cloudy|smog|rain|snow|storm (the belly icons)
+                v = q.get("v", ["sun"])[0].lower()
+                wv = WEATHER.get(v, int(v) if v.isdigit() else 0)
+                b.send_violet_packet(ambient_packet({SVC_WEATHER: wv}))
+            elif path == "/api/nose":
+                # ?v=0 none / 1 blink / 2 double-blink
+                b.send_violet_packet(ambient_packet({SVC_NOSE: int(q.get("v", ["1"])[0])}))
+            elif path == "/api/ambient":
+                # generic AmbientPacket: ?svc=<id>&val=<v> (repeatable)
+                svcs = {int(s): int(v) for s, v in zip(q.get("svc", []), q.get("val", []))}
+                b.send_violet_packet(ambient_packet(svcs or {SVC_NOSE: 1}))
+            elif path == "/api/sleep":
+                on = 1 if q.get("on", ["1"])[0] in ("1", "true", "yes") else 0
+                b.send_violet_packet(frame_packet(PKT_SLEEP, bytes([on])))
             else:
                 return self._json(404, {"error": "unknown endpoint"})
         except Exception as exc:  # noqa
