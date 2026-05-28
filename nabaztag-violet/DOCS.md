@@ -21,55 +21,53 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
    Store → ⋮ → Repositories) if not already.
 2. **Stop the "Nabaztag Server (OpenJabNab)" add-on** — it uses the same
    `:80`/`:5222` ports.
-3. Install **Nabaztag Violet Server**, set `server_address` to **your HAOS host
-   IP** (the address the rabbit must reach), then **Start**.
+3. Install **Nabaztag Violet Server**. Set `server_address` to a **hostname**
+   (e.g. `nabaztag.lan`) — **not a raw IP**: the bytecode resolves the XMPP server
+   by DNS, so it must be a resolvable name. (`bootcode` option: `ojn` is the
+   default and works.) Then **Start**.
 
-## Point the rabbit at it — two methods (your choice)
+## Point the rabbit at the server
 
-**Method A — DNS redirect** *(recommended: nothing to type on the rabbit, and it
-survives a factory reset).* In your DNS (UniFi, AdGuard, Pi-hole…), add a host
-record:
+1. **DNS record** so the rabbit resolves the `server_address` hostname to this
+   host (the bytecode resolves the XMPP server by DNS — an IP literal fails):
+   ```
+   nabaztag.lan  →  <HAOS_IP>
+   ```
+   Add it where the rabbit's DNS lives (UniFi "Local DNS Records", AdGuard/Pi-hole
+   rewrite…). Verify from any device: `nslookup nabaztag.lan` → `<HAOS_IP>`.
+2. **Rabbit config** — hold its head while powering it (LEDs go blue), join its
+   `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform** to
+   `http://<HAOS_IP>/vl` (the IP is fine here — boot/locate don't use DNS), then
+   *update and start*.
+3. Power-cycle and watch the log: `serving bootcode → … → answered
+   violet:iq:sources → bound and idle`. The rabbit then **breathes** = operational.
 
-```
-r.nabaztag.com  →  <HAOS_IP>
-```
+> **Rabbit on its own VLAN/subnet?** Allow it through the firewall to this host on
+> TCP **80** and **5222**, and give it a **DHCP reservation** — a changed IP
+> silently breaks the (IP-scoped) firewall rule (this cost us hours). On a flat
+> home network there's nothing to do.
 
-That is the host the v2 rabbit contacts at boot (`Host: r.nabaztag.com` on its
-`/vl/bc.jsp` + `/vl/locate.jsp` requests). Because our `locate.jsp` hands back
-`<HAOS_IP>` for ping/broad/xmpp, this single record is enough. The rabbit must
-use that DNS (the one handed out by DHCP). *(Optional belt-and-suspenders: also
-redirect `xmpp.nabaztag.com`, `broad.violet.net`, `tagtag.nabaztag.objects.violet.net`.)*
+## Control API (Home Assistant)
 
-**Method B — configure the rabbit directly** *(no DNS change).* Hold the rabbit's
-head while powering it (LEDs go blue), join its `NabaztagXX` Wi-Fi, open
-`192.168.0.1`, set the **Violet Platform** field to `http://<HAOS_IP>/vl`, then
-*update and start*.
-
-With either method, power-cycle the rabbit and watch the add-on log: you should
-see `serving bootcode`, then the XMPP `stream → success → bind → session` and
-finally `bound and idle — ready for commands`.
-
-> **Rabbit on its own VLAN/subnet?** Only then do you need a firewall rule letting
-> it reach the HAOS host on TCP **80** and **5222** (and **8123** if you serve TTS
-> audio from HA). On a flat home network there's nothing to do.
-
-## Control API
+Reached on host port **8099** (container `:8080`). If a single rabbit is connected
+`mac` is optional; otherwise pass `?mac=<lowercase-no-colons>`.
 
 - `GET /api/status` — connected rabbits.
-- `GET /api/led?id=2&r=0&g=238&b=0` — set an LED (ids 0=bottom,1=left,2=middle,3=right,4=nose).
-- `GET /api/ears?ear=1&angle=20&dir=0` — move an ear.
-- `GET /api/ping` / `GET /api/reboot`.
-- `GET /api/raw?b64=<base64>` — inject a raw violet packet (for RE/experiments).
+- `GET /api/ears?left=0&right=14` — ear positions (0 ≈ horizontal … ~16).
+- `GET /api/weather?v=storm` — belly icon (`sun|cloudy|smog|rain|snow|storm`).
+- `GET /api/nose?v=1` — nose (0 none / 1 blink / 2 double-blink).
+- `GET /api/sleep?on=0` — wake (`0`) or sleep (`1`).
+- `GET /api/ambient?svc=8&val=1` — generic AmbientPacket (repeatable `svc`/`val`).
+- `GET /api/raw?b64=<base64>` — inject a raw violet packet.
 
-If only one rabbit is connected, `mac` is optional; otherwise pass `?mac=...`.
+## Status
 
-## Status / honesty
-
-- **Boot + XMPP connect are implemented and tested** (against a simulated rabbit).
-  The big milestone — the rabbit booting our bytecode and connecting to our own
-  server — should work on first try.
-- **The binary command payloads (LED/ears/sound) are best-effort.** The packet
-  *framing* is correct (`0x7F type len(3) payload 0xFF`, base64 in
-  `<packet xmlns='violet:packet'>`), but the exact opcode layout still needs
-  validation on the real rabbit — use `/api/raw` + the logs to refine. This is
-  Phase 1; the mic and richer commands come next.
+- **Connection + full boot verified on the real rabbit:** it boots our bytecode,
+  does the XMPP handshake, we answer its `violet:iq:sources` query with the init
+  packet, it rebinds as `idle` and **breathes** — operational.
+- **Commands** are real binary `AmbientPacket`s (verified format): ears, belly
+  weather/stock/mail/air-quality icons, nose, plus sleep/wake — sent from
+  `net.openjabnab.platform@<domain>/services` to the rabbit's current resource.
+- **Visible confirmation pending an awake rabbit:** a sleeping Nabaztag parks
+  display *and* motor commands; revalidate ears/belly/nose when it's awake.
+- **Not yet (Phase 2):** sound/TTS (MessagePacket) and the microphone → Claude.

@@ -22,8 +22,8 @@ back to life and drive it from **Home Assistant**, fully locally — no cloud.
 This repository is a **Home Assistant OS add-on repository**. Its primary add-on
 is a small, **dependency-free server that speaks the original Violet protocol**
 directly: the rabbit phones home to it (the real Violet servers died around
-2011), and Home Assistant drives the rabbit — ears, LEDs, sounds — through a
-simple control API.
+2011), and Home Assistant drives the rabbit — ears, belly weather icons, nose —
+through a simple control API.
 
 > ⚠️ **Uncertain-outcome project.** A stock rabbit is a "dumb" Wi-Fi client that
 > downloads its bytecode from the server on every boot (nothing is flashed) and
@@ -51,10 +51,15 @@ proxy — one clean process.
 
 ## What you can do from Home Assistant
 
-- 🐰 Move the **ears** &nbsp; 🌈 set **LED** colors &nbsp; 🔊 play a **sound / MP3**
-- 🗣️ **Speak** via HA's local TTS → MP3 (see TTS note)
+Commands are sent as binary `violet:packet` `AmbientPacket`s (format verified
+against the real rabbit):
+
+- 👂 move the **ears** to a position (independent left / right)
+- 🌦️ show **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
+  air quality
+- 👃 **nose** blink &nbsp; 💤 **sleep / wake**
 - 📟 (v2) react to **button** presses and **RFID** tags *(surfaced in the logs)*
-- 🎤 talk to it via the **microphone** → *Phase 2, see Roadmap*
+- 🔊 **sound / TTS** (MessagePacket) and 🎤 **microphone → Claude** → *Phase 2*
 
 ## Repository layout
 
@@ -79,35 +84,38 @@ proxy — one clean process.
 
 1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**,
    add `https://github.com/ClaraVnk/nabaztag`.
-2. Install **Nabaztag Violet Server**, open its **Configuration** tab and set
-   `server_address` to your **HAOS host IP**, then **Start** it.
-3. **Point the rabbit at the server — pick the method you prefer:**
+2. Install **Nabaztag Violet Server**. In **Configuration**, set `server_address`
+   to a **hostname** such as `nabaztag.lan` — **not a raw IP**: the bytecode
+   resolves the XMPP server by **DNS**, so an IP literal fails. (`bootcode` option:
+   `ojn` is the default and works.) **Start** the add-on.
+3. **Add a DNS record** so the rabbit resolves that hostname to the HAOS host:
+   `nabaztag.lan → <haos-ip>` (UniFi "Local DNS Records", AdGuard/Pi-hole rewrite…).
+   Verify from any device: `nslookup nabaztag.lan` → `<haos-ip>`.
+4. **Point the rabbit at the server:** hold its head while powering it (LEDs go
+   blue), join its `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform**
+   to `http://<haos-ip>/vl` (the IP is fine here — boot/locate don't need DNS),
+   then *update and start*.
+5. Watch the add-on log: `serving bootcode → … → bound and idle — ready for
+   commands`. Optionally drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
 
-   - **Method A · DNS redirect** *(recommended — nothing to type on the rabbit,
-     survives a factory reset):* in your DNS (UniFi, AdGuard, Pi-hole…), add a
-     host record `r.nabaztag.com → <haos-ip>` and leave the rabbit on its factory
-     server. The rabbit must use that DNS (the one handed out by DHCP).
-   - **Method B · configure the rabbit directly** *(no DNS change):* hold its head
-     while powering it (LEDs go blue), join its `NabaztagXX` Wi-Fi, open
-     `192.168.0.1`, set **Violet Platform** to `http://<haos-ip>/vl`, then
-     *update and start*.
-
-4. Power-cycle the rabbit and watch the add-on log for
-   `bound and idle — ready for commands`. Optionally drop
-   `home-assistant/nabaztag.yaml` into `/config/packages/`.
-
-> **Rabbit on its own VLAN/subnet?** Only then do you need a firewall rule
-> allowing it to reach the HAOS host on TCP **80** and **5222** (and **8123** if
-> you serve TTS audio from HA). On a flat home network there's nothing to do.
+> **Rabbit on its own VLAN/subnet?** Allow it through the firewall to the HAOS
+> host on TCP **80** and **5222**, and give it a **DHCP reservation** (so its IP —
+> and the firewall rule — stay valid; a changed IP silently breaks everything). On
+> a flat home network there's nothing to do.
 
 Full guide (API, pairing, troubleshooting) is in
 **[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
 
 ## Roadmap
 
-- **Phase 1 — done:** our own server; the rabbit boots our bytecode and connects;
-  HA control API; full traffic logging. Command payloads (LED/ears/sound) are
-  best-effort (framing correct) and get refined against the real rabbit.
+- **Phase 1 — working (verified live):** the rabbit boots our bytecode, completes
+  the full XMPP handshake (incl. answering its `violet:iq:sources` query with an
+  init packet), becomes operational (`idle`) and **breathes**. It receives binary
+  **AmbientPacket** commands (ears, belly weather/stock/mail/air-quality icons,
+  nose) and sleep/wake. Connection + command pipeline confirmed on the real device.
+- **Phase 1.5 — in progress:** confirm each command visually on an **awake** rabbit
+  (a sleeping Nabaztag parks display/motor commands); proper wake/sleep-schedule
+  control; sound/TTS via MessagePacket; a richer HA package.
 - **Phase 2 — microphone & firmware:** the v2 mic needs firmware that streams it.
   The whole toolchain is open (RedoXyde's `mtl_linux` Metal compiler + simulator,
   the RE'd original firmware `nominal.mtl`, the `nabAsm`/`nabDasm` tools and
