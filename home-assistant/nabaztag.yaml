@@ -7,58 +7,97 @@
 #     packages: !include_dir_named packages
 #
 # Add to secrets.yaml:
-#   nab_host: "<HAOS_IP>"           # HAOS host running the Nabaztag add-on (e.g. 192.0.2.10)
-#   nab_mac:  "<rabbit-mac>"        # rabbit MAC, lowercase, no colons (e.g. 0123456789ab)
+#   nab_api: "<HAOS_IP>:8099"   # the nabaztag-violet add-on control API (host port 8099)
+#   nab_mac: "<rabbit-mac>"     # rabbit MAC, lowercase, no colons (e.g. 0123456789ab)
 #
-# The rest_commands hit the OpenJabNab API on the add-on. With auth_bypass=true
-# (add-on default) no token is needed on a trusted LAN.
+# These hit the add-on's control API on a trusted LAN (no token).
 # ---------------------------------------------------------------------------
 
 rest_command:
-  nabaztag_tts:
-    # NOTE: OpenJabNab's Acapela TTS is likely dead — prefer nabaztag_play with
-    # an HA-generated MP3 (see automations below). Kept for completeness.
-    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/tts/say?text={{ text | urlencode }}"
-    method: GET
-    timeout: 10
-
-  nabaztag_ears:
-    # id = preset ear position/choreography index (discover via the admin UI)
-    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/ears/setFriend?id={{ pos }}"
-    method: GET
-    timeout: 10
-
-  nabaztag_color:
-    # name = a color from colorbreathing/getColorList (red, green, blue, ...)
-    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/colorbreathing/setColor?name={{ color }}"
-    method: GET
-    timeout: 10
-
+  # Stream + play any audio the rabbit can reach over HTTP (MP3/WAV). Use this
+  # for TTS: render with HA's local TTS (Piper) to a file under /config/www and
+  # pass its /local URL, or point it at a pre-rendered clip (see scripts below).
   nabaztag_play:
-    # media = URL to an MP3 the rabbit can reach (e.g. an HA-served file)
-    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/webradio/playurl?url={{ media | urlencode }}"
+    url: "http://{{ api }}/api/play?mac={{ mac }}&url={{ media | urlencode }}"
+    method: GET
+    timeout: 15
+
+  # Move the ears to positions (~0..16), independent left / right.
+  nabaztag_ears:
+    url: "http://{{ api }}/api/ears?mac={{ mac }}&left={{ left }}&right={{ right }}"
     method: GET
     timeout: 10
 
-# --- Reusable script: speak via local HA TTS, played on the rabbit ----------
-# 100%-local TTS path that sidesteps the dead Acapela engine: HA's TTS writes an
-# MP3 under /config/www (served at /local/...), then the rabbit plays that URL.
+  # Full RGB on one LED: led = bottom|left|middle|right|top.
+  nabaztag_led:
+    url: "http://{{ api }}/api/led?mac={{ mac }}&led={{ led }}&r={{ r }}&g={{ g }}&b={{ b }}"
+    method: GET
+    timeout: 10
+
+  # Belly weather icon: v = sun|cloudy|smog|rain|snow|storm.
+  nabaztag_weather_icon:
+    url: "http://{{ api }}/api/weather?mac={{ mac }}&v={{ v }}"
+    method: GET
+    timeout: 10
+
+  # Nose: v = 0 none / 1 blink / 2 double-blink.
+  nabaztag_nose:
+    url: "http://{{ api }}/api/nose?mac={{ mac }}&v={{ v }}"
+    method: GET
+    timeout: 10
+
+  # Wake (on=0) / sleep (on=1).
+  nabaztag_sleep:
+    url: "http://{{ api }}/api/sleep?mac={{ mac }}&on={{ on }}"
+    method: GET
+    timeout: 10
+
+  # Raw program (advanced): text uses '|' as the newline between KEY value lines.
+  nabaztag_program:
+    url: "http://{{ api }}/api/program?mac={{ mac }}&text={{ text | urlencode }}"
+    method: GET
+    timeout: 10
+
+# --- Local-TTS / iconic-clips note ------------------------------------------
+# The Violet rabbit's charm is its TERSE, theatrical delivery — "Aujourd'hui…
+# pluie !" — not a verbose sensor dump. That maps perfectly to a handful of
+# pre-rendered clips. Render them once with HA's Piper (or any TTS) into
+# /config/www/nabaztag/ so they're served at http://<HAOS_IP>:8123/local/nabaztag/<name>.mp3
+# Suggested set (French): bonjour.mp3, soleil.mp3, pluie.mp3, nuages.mp3,
+# neige.mp3, orage.mp3, brume.mp3, shiva.mp3, soir.mp3.
+# For fully dynamic speech, render on the fly and pass the resulting media URL
+# to rest_command.nabaztag_play.
+
 script:
-  nabaztag_speak:
-    alias: "Nabaztag - speak (local TTS -> MP3 -> rabbit)"
-    fields:
-      message: { description: "Text to speak", example: "Bonjour Loutre" }
+  # Speak the weather "à la Violet": belly icon + a one-word clip, with the
+  # dramatic "Aujourd'hui…" pause baked into the clip itself.
+  nabaztag_weather_announce:
+    alias: "Nabaztag - weather (Aujourd'hui… ✕ !)"
+    variables:
+      cond: "{{ states('weather.home') }}"
+      # weather.home state -> (belly icon, clip name)
+      map: >-
+        {{ {
+          'sunny':        ['sun','soleil'],
+          'clear-night':  ['sun','soleil'],
+          'partlycloudy': ['cloudy','nuages'],
+          'cloudy':       ['cloudy','nuages'],
+          'fog':          ['smog','brume'],
+          'rainy':        ['rain','pluie'],
+          'pouring':      ['rain','pluie'],
+          'snowy':        ['snow','neige'],
+          'snowy-rainy':  ['snow','neige'],
+          'lightning':    ['storm','orage'],
+          'lightning-rainy':['storm','orage'],
+        }.get(cond, ['cloudy','nuages']) }}
     sequence:
-      # Adjust the tts engine to your install (e.g. tts.piper).
-      - service: tts.speak
-        target:
-          entity_id: tts.piper
+      - service: rest_command.nabaztag_weather_icon
+        data: { api: !secret nab_api, mac: !secret nab_mac, v: "{{ map[0] }}" }
+      - service: rest_command.nabaztag_play
         data:
-          media_player_entity_id: media_player.dummy_for_tts  # or use cache+file approach
-          message: "{{ message }}"
-      # See DOCS.md "TTS note" — if you serve the MP3 from /config/www, call:
-      # - service: rest_command.nabaztag_play
-      #   data: { host: !secret nab_host, mac: !secret nab_mac, media: "http://<HAOS_IP>:8123/local/nabaztag_tts.mp3" }
+          api: !secret nab_api
+          mac: !secret nab_mac
+          media: "http://<HAOS_IP>:8123/local/nabaztag/{{ map[1] }}.mp3"
 
 # --- Example automations ----------------------------------------------------
 automation:
@@ -68,10 +107,16 @@ automation:
         entity_id: person.kevin
         to: "home"
     action:
+      # ears perk up + a warm green + a hello
       - service: rest_command.nabaztag_ears
-        data: { host: !secret nab_host, mac: !secret nab_mac, pos: 1 }
-      - service: rest_command.nabaztag_color
-        data: { host: !secret nab_host, mac: !secret nab_mac, color: "green" }
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 3, right: 3 }
+      - service: rest_command.nabaztag_led
+        data: { api: !secret nab_api, mac: !secret nab_mac, led: "bottom", r: 0, g: 200, b: 60 }
+      - service: rest_command.nabaztag_play
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          media: "http://<HAOS_IP>:8123/local/nabaztag/bonjour.mp3"
 
   - alias: "Nabaztag - intercom (Farfisa) flash"
     trigger:
@@ -80,33 +125,32 @@ automation:
         to: "on"
     action:
       - repeat:
-          count: 3
+          count: 4
           sequence:
-            - service: rest_command.nabaztag_color
-              data: { host: !secret nab_host, mac: !secret nab_mac, color: "magenta" }
-            - delay: "00:00:01"
-            - service: rest_command.nabaztag_color
-              data: { host: !secret nab_host, mac: !secret nab_mac, color: "black" }
-            - delay: "00:00:01"
+            - service: rest_command.nabaztag_led
+              data: { api: !secret nab_api, mac: !secret nab_mac, led: "middle", r: 255, g: 0, b: 0 }
+            - delay: "00:00:00.5"
+            - service: rest_command.nabaztag_led
+              data: { api: !secret nab_api, mac: !secret nab_mac, led: "middle", r: 0, g: 0, b: 0 }
+            - delay: "00:00:00.5"
 
   - alias: "Nabaztag - morning weather"
     trigger:
       - platform: time
         at: "07:30:00"
     action:
-      - service: script.nabaztag_speak
-        data:
-          message: >-
-            Bonjour. Aujourd'hui, {{ states('weather.home') }}, il fait
-            {{ state_attr('weather.home','temperature') }} degrés.
+      - service: script.nabaztag_weather_announce
 
   - alias: "Nabaztag - evening brief"
     trigger:
       - platform: time
         at: "21:00:00"
     action:
-      - service: script.nabaztag_speak
-        data: { message: "Brief du soir : tout est calme à la maison." }
+      - service: rest_command.nabaztag_play
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          media: "http://<HAOS_IP>:8123/local/nabaztag/soir.mp3"
 
   - alias: "Nabaztag - Shiva walk reminder"
     trigger:
@@ -114,6 +158,9 @@ automation:
         at: "18:30:00"
     action:
       - service: rest_command.nabaztag_ears
-        data: { host: !secret nab_host, mac: !secret nab_mac, pos: 3 }
-      - service: script.nabaztag_speak
-        data: { message: "C'est l'heure de sortir Shiva." }
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 10, right: 10 }
+      - service: rest_command.nabaztag_play
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          media: "http://<HAOS_IP>:8123/local/nabaztag/shiva.mp3"

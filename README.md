@@ -51,15 +51,19 @@ proxy — one clean process.
 
 ## What you can do from Home Assistant
 
-Commands are sent as binary `violet:packet` `AmbientPacket`s (format verified
-against the real rabbit):
+Commands use the two `violet:packet` channels reverse-engineered from the
+bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
+(`AmbientPacket`) for the at-a-glance indicators:
 
-- 👂 move the **ears** to a position (independent left / right)
-- 🌦️ show **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
-  air quality
-- 👃 **nose** blink &nbsp; 💤 **sleep / wake**
+- 🔊 **play audio** — stream any MP3/WAV (e.g. a Home-Assistant/Piper **TTS**
+  media URL); the rabbit fetches it over HTTP from the add-on
+- 👂 **move the ears** to precise positions (independent left / right) via a
+  choreography
+- 💡 **RGB light shows** on the 5 LEDs (bottom / left / middle / right / top)
+- 🌦️ **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
+  air quality &nbsp; 👃 **nose** blink &nbsp; 💤 **sleep / wake**
 - 📟 (v2) react to **button** presses and **RFID** tags *(surfaced in the logs)*
-- 🔊 **sound / TTS** (MessagePacket) and 🎤 **microphone → Claude** → *Phase 2*
+- 🎤 **microphone → Claude** → *Phase 2*
 
 ## Repository layout
 
@@ -113,9 +117,12 @@ Full guide (API, pairing, troubleshooting) is in
   init packet), becomes operational (`idle`) and **breathes**. It receives binary
   **AmbientPacket** commands (ears, belly weather/stock/mail/air-quality icons,
   nose) and sleep/wake. Connection + command pipeline confirmed on the real device.
-- **Phase 1.5 — in progress:** confirm each command visually on an **awake** rabbit
-  (a sleeping Nabaztag parks display/motor commands); proper wake/sleep-schedule
-  control; sound/TTS via MessagePacket; a richer HA package.
+- **Phase 1.5 — in progress:** the rich command channel is reverse-engineered and
+  implemented — **audio playback** (stream an MP3/WAV URL), **ear positioning**
+  and **RGB light shows** (the `MessagePacket` program + choreography formats,
+  both verified against the bytecode's own decoder). Remaining: confirm each one
+  visually on an **awake** rabbit (*asleep = LEDs off + ears down*, *breathing =
+  awake*) and flesh out the HA package.
 - **Phase 2 — microphone & firmware:** the v2 mic needs firmware that streams it.
   The whole toolchain is open (RedoXyde's `mtl_linux` Metal compiler + simulator,
   the RE'd original firmware `nominal.mtl`, the `nabAsm`/`nabDasm` tools and
@@ -132,7 +139,8 @@ Full guide (API, pairing, troubleshooting) is in
 
 The rabbit's original TTS relied on Acapela's now-dead web service. For reliable,
 fully-local speech, generate audio with Home Assistant's local TTS (e.g. Piper)
-and play the resulting MP3 on the rabbit.
+and hand the resulting media URL to `GET /api/play?url=…` — the rabbit streams and
+plays it. (You can also `POST` the audio bytes directly; the add-on serves them.)
 
 ## Credits
 

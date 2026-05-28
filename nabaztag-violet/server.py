@@ -125,6 +125,129 @@ INIT_PACKET = pack_list([
 
 
 # --------------------------------------------------------------------------- #
+# MessagePacket (type 0x0A) — "programs": the rich command channel.
+# --------------------------------------------------------------------------- #
+# A program is plain text, one "KEY value" command per line (LF-separated; the
+# bytecode strips \r and splits on the first space — main.mtl filterconfig). The
+# payload is obfuscated with the rolling cipher from OpenJabNab messagepacket.cpp
+# (verified against the bytecode's matching de-obfuscation in main.mtl/info.mtl).
+# Commands the bytecode executes (main.mtl runEvalOneCommand):
+#   ST <url>  live-stream + play audio from a URL (the local-TTS / sound path)
+#   MU <url>  play a short downloaded sound resource (blocking, <=300 KB)
+#   MW        wait for the current sound to finish
+#   CH <url>  download + play a choreography resource (ears + the 5 RGB LEDs)
+#   WT <ms>   wait, staying interactive
+# Audio (ST/MU) and choreography (CH) resources are fetched by the rabbit over
+# HTTP from THIS server (see the /res/ route on the boot server).
+_INVERSION_TABLE = bytes([
+    1, 171, 205, 183, 57, 163, 197, 239, 241, 27, 61, 167, 41, 19, 53, 223,
+    225, 139, 173, 151, 25, 131, 165, 207, 209, 251, 29, 135, 9, 243, 21, 191,
+    193, 107, 141, 119, 249, 99, 133, 175, 177, 219, 253, 103, 233, 211, 245, 159,
+    161, 75, 109, 87, 217, 67, 101, 143, 145, 187, 221, 71, 201, 179, 213, 127,
+    129, 43, 77, 55, 185, 35, 69, 111, 113, 155, 189, 39, 169, 147, 181, 95,
+    97, 11, 45, 23, 153, 3, 37, 79, 81, 123, 157, 7, 137, 115, 149, 63,
+    65, 235, 13, 247, 121, 227, 5, 47, 49, 91, 125, 231, 105, 83, 117, 31,
+    33, 203, 237, 215, 89, 195, 229, 15, 17, 59, 93, 199, 73, 51, 85, 255,
+])
+
+
+def message_internal(text: bytes) -> bytes:
+    """Obfuscated MessagePacket payload (OpenJabNab messagepacket.cpp
+    GetInternalData): leading 0x00, then each byte rolled through the inversion
+    table keyed on the previous *plaintext* byte (seed 35)."""
+    out = bytearray([0x00])
+    prev = 35
+    for c in text:
+        out.append((_INVERSION_TABLE[prev % 128] * c + 47) & 0xFF)
+        prev = c
+    return bytes(out)
+
+
+def message_packet(program: str) -> bytes:
+    """Frame a program (newline-separated 'KEY value' lines) as a type-0x0A
+    violet packet."""
+    if not program.endswith("\n"):
+        program += "\n"
+    return frame_packet(PKT_MESSAGE, message_internal(program.encode("latin-1", "replace")))
+
+
+# --------------------------------------------------------------------------- #
+# Choreography binary (OpenJabNab choregraphy.cpp) — ears + the 5 RGB LEDs.
+# --------------------------------------------------------------------------- #
+# Layout: len(4, big-endian, of the body) | body | 4-byte zero trailer, where
+#   body = 0x00 0x01 <tempo/10>  then per action  <deltaTicks(1)> <action bytes>
+#   motor action: 0x08 <ear 0=L/1=R> <angle/18> <dir 0=fwd/1=back>
+#   led   action: 0x07 <led 0=bottom,1=left,2=middle,3=right,4=top> <r> <g> <b> 0x00 0x00
+LED_NAMES = {"bottom": 0, "left": 1, "middle": 2, "right": 3, "top": 4}
+EAR_NAMES = {"left": 0, "right": 1}
+
+
+def build_choreography(tempo_ms: int, actions: list) -> bytes:
+    """actions: list of (time_ticks, "motor"|"led", params). motor params =
+    (ear, angle_deg, dir); led params = (led, r, g, b)."""
+    if tempo_ms > 2550:
+        t = 0xFF
+    elif tempo_ms < 10:
+        t = 0x01
+    else:
+        t = tempo_ms // 10
+    body = bytearray([0x00, 0x01, t & 0xFF])
+    last = 0
+    for time, kind, params in sorted(actions, key=lambda a: a[0]):
+        delta = min(max(time - last, 0), 255)
+        body.append(delta & 0xFF)
+        if kind == "motor":
+            ear, angle, d = params
+            body += bytes([0x08, ear & 0xFF, (angle // 18) & 0xFF, d & 0xFF])
+        else:  # led
+            led, r, g, b = params
+            body += bytes([0x07, led & 0xFF, r & 0xFF, g & 0xFF, b & 0xFF, 0x00, 0x00])
+        last = time
+    n = len(body)
+    return bytes([(n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF]) + bytes(body) + bytes(4)
+
+
+def parse_choreography_spec(spec: str):
+    """Parse the comma form 'tempo,time,order,p3,p4,p5,p6,...' (OpenJabNab
+    Choregraphy::Parse): order=motor → p3=ear,p4=angle,p6=dir; order=led →
+    p3=led,p4=r,p5=g,p6=b. Returns (tempo_ms, actions)."""
+    parts = [s.strip() for s in spec.split(",")]
+    tempo = int(parts[0])
+    actions = []
+    i = 1
+    while i + 5 < len(parts) + 1 and i + 5 <= len(parts):
+        time = int(parts[i]); order = parts[i + 1].lower()
+        p3 = int(parts[i + 2]); p4 = int(parts[i + 3]); p5 = int(parts[i + 4]); p6 = int(parts[i + 5])
+        if order == "motor":
+            actions.append((time, "motor", (p3, p4, p6)))
+        elif order == "led":
+            actions.append((time, "led", (p3, p4, p5, p6)))
+        else:
+            raise ValueError(f"bad choreography order {order!r}")
+        i += 6
+    return tempo, actions
+
+
+# --------------------------------------------------------------------------- #
+# Resource store — the rabbit downloads audio / choreography resources over HTTP
+# from this server (referenced by full URL in ST/MU/CH program commands).
+# --------------------------------------------------------------------------- #
+RESOURCES: dict[str, tuple[str, bytes]] = {}
+RES_LOCK = threading.Lock()
+
+
+def store_resource(content: bytes, content_type: str = "application/octet-stream") -> str:
+    token = os.urandom(8).hex()
+    with RES_LOCK:
+        RESOURCES[token] = (content_type, content)
+    return token
+
+
+def resource_url(token: str) -> str:
+    return f"http://{SERVER_ADDRESS}/res/{token}"
+
+
+# --------------------------------------------------------------------------- #
 # XMPP server (one thread per rabbit)
 # --------------------------------------------------------------------------- #
 class XmppSession(threading.Thread):
@@ -172,6 +295,20 @@ class XmppSession(threading.Thread):
             f"</message>"
         )
         self.send(stanza)
+
+    def send_program(self, program: str):
+        """Push a code-0x0A program (newline-separated 'KEY value' commands)."""
+        self.send_violet_packet(message_packet(program))
+
+    def send_audio(self, url: str):
+        """Stream + play audio from a URL (ST). The rabbit fetches it over HTTP,
+        so it can be a /res/ URL on this server (HA-generated TTS, a sound…)."""
+        self.send_program(f"ST {url}")
+
+    def send_choreography(self, tempo_ms: int, actions: list):
+        """Store a choreography resource and tell the rabbit to play it (CH)."""
+        token = store_resource(build_choreography(tempo_ms, actions))
+        self.send_program(f"CH {resource_url(token)}")
 
     # -- handshake --------------------------------------------------------- #
     def _stream_header(self, features: str):
@@ -406,6 +543,21 @@ class BootHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if path.startswith("/res/"):
+            token = path[len("/res/"):]
+            with RES_LOCK:
+                entry = RESOURCES.get(token)
+            if entry is None:
+                self.send_error(404, "no such resource")
+                return
+            ctype, data = entry
+            log.info("serving resource %s (%d bytes, %s) to %s", token, len(data), ctype, self.address_string())
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path.endswith("/locate.jsp"):
             # Exact format expected by the bytecode (from OpenJabNab's locate
             # plugin): LF line endings, and xmpp_domain MUST include the port —
@@ -472,35 +624,85 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if path in ("", "/api", "/api/status"):
             with BUNNIES_LOCK:
-                conn = {m: {"addr": s.addr[0], "bound": s.bound} for m, s in BUNNIES.items()}
+                conn = {m: {"addr": s.addr[0], "bound": s.bound, "resource": s.resource}
+                        for m, s in BUNNIES.items()}
             return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn})
+
+        body = b""
+        if self.command == "POST":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length:
+                body = self.rfile.read(length)
 
         b = self._bunny(q)
         if b is None:
             return self._json(404, {"error": "no connected bunny (give ?mac=)"})
 
+        def _one(name, default=None):
+            return q.get(name, [default])[0]
+
         try:
             if path == "/api/raw":
-                b.send_violet_packet(base64.b64decode(q.get("b64", [""])[0]))
+                b.send_violet_packet(base64.b64decode(_one("b64", "")))
+            elif path == "/api/program":
+                # ?text=ST%20http://... — newline OR '|' separated commands.
+                b.send_program(_one("text", "").replace("|", "\n"))
+            elif path == "/api/play":
+                # Audio: ?url=<mp3/wav> streamed via ST, OR POST the audio body
+                # (stored + served from /res/ and streamed). ?wait=1 blocks (MW).
+                url = _one("url")
+                if not url and body:
+                    ctype = self.headers.get("Content-Type", "audio/mpeg")
+                    url = resource_url(store_resource(body, ctype))
+                if not url:
+                    return self._json(400, {"error": "give ?url= or POST audio body"})
+                prog = f"ST {url}"
+                if _one("wait") in ("1", "true", "yes"):
+                    prog += "\nMW"
+                b.send_program(prog)
             elif path == "/api/ears":
-                # ?left=&right= (or ?angle= for both). Position value (0..16-ish).
-                both = q.get("angle", ["0"])[0]
-                left = int(q.get("left", [both])[0]); right = int(q.get("right", [both])[0])
-                b.send_violet_packet(ambient_packet({SVC_EAR_LEFT: left, SVC_EAR_RIGHT: right}))
+                # Real ear positioning via a choreography motor action.
+                # ?left=&right= positions (~0..16); ?dir=0|1 rotation direction.
+                both = _one("angle", "0")
+                left = int(_one("left", both)); right = int(_one("right", both))
+                d = int(_one("dir", "0"))
+                b.send_choreography(200, [
+                    (0, "motor", (EAR_NAMES["left"], left * 18, d)),
+                    (0, "motor", (EAR_NAMES["right"], right * 18, d)),
+                ])
+            elif path == "/api/earwiggle":
+                # The AmbientPacket "ears" effect: a wiggle back to home + a beep
+                # (the original "your friend moved their ears" feature).
+                b.send_violet_packet(ambient_packet({SVC_EAR_LEFT: int(_one("left", "1")),
+                                                      SVC_EAR_RIGHT: int(_one("right", "1"))}))
+            elif path == "/api/led":
+                # Full RGB on one of the 5 LEDs via a choreography.
+                # ?led=bottom|left|middle|right|top &r=&g=&b=
+                led = _one("led", "bottom").lower()
+                lid = LED_NAMES.get(led, int(led) if led.isdigit() else 0)
+                r = int(_one("r", "0")); g = int(_one("g", "0")); bl = int(_one("b", "0"))
+                b.send_choreography(200, [(0, "led", (lid, r, g, bl))])
+            elif path == "/api/choreography":
+                # ?spec=tempo,time,order,p3,p4,p5,p6,... (OpenJabNab comma form).
+                tempo, actions = parse_choreography_spec(_one("spec", ""))
+                b.send_choreography(tempo, actions)
             elif path == "/api/weather":
                 # ?v=sun|cloudy|smog|rain|snow|storm (the belly icons)
-                v = q.get("v", ["sun"])[0].lower()
+                v = _one("v", "sun").lower()
                 wv = WEATHER.get(v, int(v) if v.isdigit() else 0)
                 b.send_violet_packet(ambient_packet({SVC_WEATHER: wv}))
             elif path == "/api/nose":
                 # ?v=0 none / 1 blink / 2 double-blink
-                b.send_violet_packet(ambient_packet({SVC_NOSE: int(q.get("v", ["1"])[0])}))
+                b.send_violet_packet(ambient_packet({SVC_NOSE: int(_one("v", "1"))}))
+            elif path == "/api/bottomled":
+                # Bottom belly LED via AmbientPacket (palette index, no fetch).
+                b.send_violet_packet(ambient_packet({SVC_BOTTOMLED: int(_one("v", "0"))}))
             elif path == "/api/ambient":
                 # generic AmbientPacket: ?svc=<id>&val=<v> (repeatable)
                 svcs = {int(s): int(v) for s, v in zip(q.get("svc", []), q.get("val", []))}
                 b.send_violet_packet(ambient_packet(svcs or {SVC_NOSE: 1}))
             elif path == "/api/sleep":
-                on = 1 if q.get("on", ["1"])[0] in ("1", "true", "yes") else 0
+                on = 1 if _one("on", "1") in ("1", "true", "yes") else 0
                 b.send_violet_packet(frame_packet(PKT_SLEEP, bytes([on])))
             else:
                 return self._json(404, {"error": "unknown endpoint"})

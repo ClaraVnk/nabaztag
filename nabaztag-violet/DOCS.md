@@ -52,10 +52,33 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 Reached on host port **8099** (container `:8080`). If a single rabbit is connected
 `mac` is optional; otherwise pass `?mac=<lowercase-no-colons>`.
 
-- `GET /api/status` — connected rabbits.
-- `GET /api/ears?left=0&right=14` — ear positions (0 ≈ horizontal … ~16).
+The rabbit has **two command channels** (reverse-engineered from the bytecode):
+
+- **Programs** (`MessagePacket`, type `0x0A`) — the rich channel: play audio,
+  move ears to precise angles, run RGB light shows. Resources (audio, light
+  shows) are fetched by the rabbit over HTTP **from this add-on** (`/res/…`).
+- **Ambient** (`AmbientPacket`, type `0x04`) — belly icons, the bottom LED, the
+  nose, sleep/wake. *Ambient "ears" only wiggle the ears back home + beep* (the
+  original "a friend moved their ears" effect) — it does **not** set an angle;
+  use `/api/ears` (a program) for real positioning.
+
+Endpoints:
+
+- `GET /api/status` — connected rabbits (and their XMPP resource).
+- `GET /api/play?url=<mp3/wav>` — **stream + play audio** from a URL (e.g. a
+  Home-Assistant/Piper TTS media URL). `&wait=1` blocks until it finishes.
+  Also accepts **`POST`** with the audio bytes as the body (served from `/res/`).
+- `GET /api/ears?left=8&right=2` — **move the ears** to positions (~0..16) via a
+  choreography; `&dir=0|1` sets rotation direction.
+- `GET /api/led?led=top&r=0&g=238&b=0` — **full RGB** on one LED
+  (`bottom|left|middle|right|top`) via a choreography.
+- `GET /api/choreography?spec=100,0,motor,0,180,0,0,5,led,4,0,238,0` — raw light
+  show: `tempo,(time,order,p3,p4,p5,p6)…` (`motor`→ear,angle,_,dir / `led`→led,r,g,b).
+- `GET /api/program?text=ST%20http://…|MW` — raw program (`|` = newline).
 - `GET /api/weather?v=storm` — belly icon (`sun|cloudy|smog|rain|snow|storm`).
 - `GET /api/nose?v=1` — nose (0 none / 1 blink / 2 double-blink).
+- `GET /api/bottomled?v=3` — bottom belly LED (palette index, no fetch).
+- `GET /api/earwiggle?left=1&right=1` — the ambient "ears wiggle home" effect.
 - `GET /api/sleep?on=0` — wake (`0`) or sleep (`1`).
 - `GET /api/ambient?svc=8&val=1` — generic AmbientPacket (repeatable `svc`/`val`).
 - `GET /api/raw?b64=<base64>` — inject a raw violet packet.
@@ -65,9 +88,12 @@ Reached on host port **8099** (container `:8080`). If a single rabbit is connect
 - **Connection + full boot verified on the real rabbit:** it boots our bytecode,
   does the XMPP handshake, we answer its `violet:iq:sources` query with the init
   packet, it rebinds as `idle` and **breathes** — operational.
-- **Commands** are real binary `AmbientPacket`s (verified format): ears, belly
-  weather/stock/mail/air-quality icons, nose, plus sleep/wake — sent from
-  `net.openjabnab.platform@<domain>/services` to the rabbit's current resource.
-- **Visible confirmation pending an awake rabbit:** a sleeping Nabaztag parks
-  display *and* motor commands; revalidate ears/belly/nose when it's awake.
-- **Not yet (Phase 2):** sound/TTS (MessagePacket) and the microphone → Claude.
+- **Command formats reverse-engineered & verified against the bytecode:** the
+  `AmbientPacket`, the `SleepPacket` (`on=0` wakes, `on=1` sleeps), the
+  `MessagePacket` program obfuscation (round-trips against the bytecode's
+  de-obfuscation), and the choreography binary (ear angles + 5 RGB LEDs).
+- **Visible confirmation pending an awake rabbit:** the program/choreography and
+  audio endpoints are implemented but want a daytime check on the device. Note
+  *asleep = LEDs off + ears down*; *breathing = awake/idle* — so commands should
+  be sent while it's breathing (or send `/api/sleep?on=0` first).
+- **Next (Phase 2):** the microphone → local STT → Claude → speech back out.
