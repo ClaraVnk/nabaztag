@@ -1,0 +1,9 @@
+# The add-on is layered on top of the prebuilt OpenJabNab image so we never have
+# to recompile Qt4/PHP5 on EOL debian:jessie. Host arch is amd64.
+# After the first successful pull, pin a digest here for reproducibility:
+#   amd64: "antoineaumjaud/docker-openjabnab@sha256:<digest>"
+build_from:
+  amd64: "antoineaumjaud/docker-openjabnab:latest"
+labels:
+  org.opencontainers.image.title: "Nabaztag Server (OpenJabNab)"
+  org.opencontainers.image.source: "https://github.com/ClaraVnk/nabaztag"

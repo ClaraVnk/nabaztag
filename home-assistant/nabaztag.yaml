@@ -1,0 +1,119 @@
+# Nabaztag — Home Assistant package
+# ---------------------------------------------------------------------------
+# Drop this file in /config/packages/nabaztag.yaml and enable packages once in
+# configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Add to secrets.yaml:
+#   nab_host: "<HAOS_IP>"           # HAOS host running the Nabaztag add-on (e.g. 192.0.2.10)
+#   nab_mac:  "<rabbit-mac>"        # rabbit MAC, lowercase, no colons (e.g. 0123456789ab)
+#
+# The rest_commands hit the OpenJabNab API on the add-on. With auth_bypass=true
+# (add-on default) no token is needed on a trusted LAN.
+# ---------------------------------------------------------------------------
+
+rest_command:
+  nabaztag_tts:
+    # NOTE: OpenJabNab's Acapela TTS is likely dead — prefer nabaztag_play with
+    # an HA-generated MP3 (see automations below). Kept for completeness.
+    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/tts/say?text={{ text | urlencode }}"
+    method: GET
+    timeout: 10
+
+  nabaztag_ears:
+    # id = preset ear position/choreography index (discover via the admin UI)
+    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/ears/setFriend?id={{ pos }}"
+    method: GET
+    timeout: 10
+
+  nabaztag_color:
+    # name = a color from colorbreathing/getColorList (red, green, blue, ...)
+    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/colorbreathing/setColor?name={{ color }}"
+    method: GET
+    timeout: 10
+
+  nabaztag_play:
+    # media = URL to an MP3 the rabbit can reach (e.g. an HA-served file)
+    url: "http://{{ host }}/ojn_api/bunny/{{ mac }}/webradio/playurl?url={{ media | urlencode }}"
+    method: GET
+    timeout: 10
+
+# --- Reusable script: speak via local HA TTS, played on the rabbit ----------
+# 100%-local TTS path that sidesteps the dead Acapela engine: HA's TTS writes an
+# MP3 under /config/www (served at /local/...), then the rabbit plays that URL.
+script:
+  nabaztag_speak:
+    alias: "Nabaztag - speak (local TTS -> MP3 -> rabbit)"
+    fields:
+      message: { description: "Text to speak", example: "Bonjour Loutre" }
+    sequence:
+      # Adjust the tts engine to your install (e.g. tts.piper).
+      - service: tts.speak
+        target:
+          entity_id: tts.piper
+        data:
+          media_player_entity_id: media_player.dummy_for_tts  # or use cache+file approach
+          message: "{{ message }}"
+      # See DOCS.md "TTS note" — if you serve the MP3 from /config/www, call:
+      # - service: rest_command.nabaztag_play
+      #   data: { host: !secret nab_host, mac: !secret nab_mac, media: "http://<HAOS_IP>:8123/local/nabaztag_tts.mp3" }
+
+# --- Example automations ----------------------------------------------------
+automation:
+  - alias: "Nabaztag - welcome on arrival"
+    trigger:
+      - platform: state
+        entity_id: person.kevin
+        to: "home"
+    action:
+      - service: rest_command.nabaztag_ears
+        data: { host: !secret nab_host, mac: !secret nab_mac, pos: 1 }
+      - service: rest_command.nabaztag_color
+        data: { host: !secret nab_host, mac: !secret nab_mac, color: "green" }
+
+  - alias: "Nabaztag - intercom (Farfisa) flash"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.farfisa_intercom
+        to: "on"
+    action:
+      - repeat:
+          count: 3
+          sequence:
+            - service: rest_command.nabaztag_color
+              data: { host: !secret nab_host, mac: !secret nab_mac, color: "magenta" }
+            - delay: "00:00:01"
+            - service: rest_command.nabaztag_color
+              data: { host: !secret nab_host, mac: !secret nab_mac, color: "black" }
+            - delay: "00:00:01"
+
+  - alias: "Nabaztag - morning weather"
+    trigger:
+      - platform: time
+        at: "07:30:00"
+    action:
+      - service: script.nabaztag_speak
+        data:
+          message: >-
+            Bonjour. Aujourd'hui, {{ states('weather.home') }}, il fait
+            {{ state_attr('weather.home','temperature') }} degrés.
+
+  - alias: "Nabaztag - evening brief"
+    trigger:
+      - platform: time
+        at: "21:00:00"
+    action:
+      - service: script.nabaztag_speak
+        data: { message: "Brief du soir : tout est calme à la maison." }
+
+  - alias: "Nabaztag - Shiva walk reminder"
+    trigger:
+      - platform: time
+        at: "18:30:00"
+    action:
+      - service: rest_command.nabaztag_ears
+        data: { host: !secret nab_host, mac: !secret nab_mac, pos: 3 }
+      - service: script.nabaztag_speak
+        data: { message: "C'est l'heure de sortir Shiva." }

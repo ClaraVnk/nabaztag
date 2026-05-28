@@ -1,0 +1,29 @@
+name: "Nabaztag Server (OpenJabNab)"
+version: "0.1.0"
+slug: "nabaztag_server"
+description: "Revive an original Nabaztag/tag (v1/v2). Runs an OpenJabNab server the rabbit phones home to, driven from Home Assistant."
+url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-server"
+arch:
+  - amd64
+init: false
+startup: services
+boot: auto
+host_network: false
+# Container ports are fixed; the rabbit and HA reach them on the host's IP.
+# IMPORTANT: keep host ports == container ports. OpenJabNab tells the rabbit to
+# reach `server_address` on the standard ports, so remapping the host side would
+# break it. If host :80 is already taken, see DOCS.md.
+ports:
+  "80/tcp": 80
+  "5222/tcp": 5222
+ports_description:
+  "80/tcp": "Apache reverse proxy: rabbit protocol (/vl/*), control API (/ojn_api/*) and admin UI (/ojn_admin/). Reached by the rabbit and by Home Assistant."
+  "5222/tcp": "XMPP — OpenJabNab pushes commands to the rabbit over this connection."
+options:
+  server_address: "192.0.2.10"
+  log_level: "Info"
+  auth_bypass: true
+schema:
+  server_address: "str"
+  log_level: "list(Debug|Info|Warning|Error)"
+  auth_bypass: "bool"
