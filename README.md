@@ -138,8 +138,8 @@ and play the resulting MP3 on the rabbit.
   firmware toolchain that makes Phase 2 possible.
 
 Images: Home Assistant logo © the Home Assistant project. Nabaztag photo by
-docraven (Flickr), via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Nabaztag.jpg),
-licensed [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0).
+Catalarem, via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Nabaztag1.jpg),
+licensed [CC BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5).
 
 ## License
 

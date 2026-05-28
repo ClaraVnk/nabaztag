@@ -337,9 +337,12 @@ class BootHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         if path.endswith("/locate.jsp"):
-            body = (f"ping {SERVER_ADDRESS}\r\n"
-                    f"broad {SERVER_ADDRESS}\r\n"
-                    f"xmpp_domain {SERVER_ADDRESS}\r\n").encode()
+            # Exact format expected by the bytecode (from OpenJabNab's locate
+            # plugin): LF line endings, and xmpp_domain MUST include the port —
+            # without ":<port>" the rabbit can't open the XMPP session.
+            body = (f"ping {SERVER_ADDRESS}\n"
+                    f"broad {SERVER_ADDRESS}\n"
+                    f"xmpp_domain {SERVER_ADDRESS}:{XMPP_PORT}\n").encode()
             log.info("locate -> %s for %s [%s]", SERVER_ADDRESS, self.address_string(), p.query)
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
