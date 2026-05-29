@@ -1,5 +1,5 @@
 name: "Nabaztag Violet Server"
-version: "0.13.2"
+version: "0.13.3"
 slug: "nabaztag_violet"
 description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, drives ears/LEDs/sound/TTS, and (Phase 2) does button push-to-talk → bundled STT → conversation agent → speech. For Home Assistant."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
@@ -51,4 +51,3 @@ schema:
   connect_jingle: "list(none|acquired|ack|abort|ministop|ears|rfid_ok|start_record|end_record|start_interactive|end_interactive|previous|next)"
   wake_chime: "list(none|acquired|ack|abort|ministop|ears|rfid_ok|start_record|end_record|start_interactive|end_interactive|previous|next)"
   personality: "list(off|discret|normal|vif)"
-  voice_prompt: "str?"

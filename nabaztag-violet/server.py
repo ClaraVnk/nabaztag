@@ -1078,12 +1078,18 @@ class XmppSession(threading.Thread):
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
                 threading.Timer(2.5, self.send_state_query).start()
-                if VOLUME["hw"] is not None:
-                    threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
-                if CONNECT_JINGLE:
-                    threading.Timer(3.5, self._play_connect_jingle).start()
-                if AUTO_LISTEN:
-                    threading.Timer(4.0, self._start_listen).start()
+                # The rabbit toggles between resources ('idle' / 'streaming') on
+                # the same XMPP stream, so this branch fires every ~10s. Gate the
+                # one-shot greet/init on a per-session flag — a real reboot opens
+                # a fresh TCP (new instance) and re-arms it.
+                if not getattr(self, "_session_inited", False):
+                    self._session_inited = True
+                    if VOLUME["hw"] is not None:
+                        threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
+                    if CONNECT_JINGLE:
+                        threading.Timer(3.5, self._play_connect_jingle).start()
+                    if AUTO_LISTEN:
+                        threading.Timer(4.0, self._start_listen).start()
             return
 
         if "violet:iq:sources" in f and "<iq" in f:
