@@ -1,0 +1,57 @@
+// ---------------------------------------------------------------------------
+// micstream.mtl — server-controllable continuous microphone streaming.
+//
+// Added to the stock Violet bytecode to enable the "hey Nabi" wake word (Phase 3):
+// the stock firmware only records the mic on a physical button press, so this
+// adds a server-triggered continuous capture that streams 8 kHz audio to the
+// server as "snd"-prefixed UDP datagrams (same wire shape as openab's recorder).
+//
+// Triggered by two program commands (added to runEvalOneCommand in main.mtl):
+//   RS <ip> [port]   start streaming to <ip>:<port> (port defaults to 4000)
+//   RT               stop streaming
+//
+// Cross-subnet works because arpreq() resolves the gateway MAC for non-local
+// IPs (arp.mtl: `if subnet ip then ip else netgateway`). We resolve it once at
+// start and reuse it for every chunk (no ARP per datagram).
+// ---------------------------------------------------------------------------
+
+var g_stream_on = 0;;
+var g_stream_ip;;
+var g_stream_port = 4000;;
+var g_stream_mac;;
+
+// Send one recorded buffer, split into <=512-byte "snd" datagrams.
+fun _streamsend data =
+	if g_stream_mac == nil then 0
+	else let strlen data -> n in
+	if n > 512 then (
+		udpsend netip 4000 g_stream_ip g_stream_port (strcatlist ("snd"::(strsub data 0 512)::nil)) g_stream_mac;
+		_streamsend (strsub data 512 nil)
+	) else
+		udpsend netip 4000 g_stream_ip g_stream_port (strcatlist ("snd"::data::nil)) g_stream_mac;;
+
+// recStart callback: stream each chunk while enabled.
+fun cbrecstream s =
+	if g_stream_on then _streamsend s;
+	0;;
+
+// arpreq callback: cache the (gateway) MAC, then begin recording.
+fun _cbstreammac mac =
+	set g_stream_mac = mac;
+	recStop;
+	recStart 8000 0 #cbrecstream;
+	0;;
+
+// ip = 4-byte address, port = int.
+fun startmicstream ip port =
+	set g_stream_ip = ip;
+	set g_stream_port = port;
+	set g_stream_on = 1;
+	set g_stream_mac = nil;
+	arpreq g_stream_ip #_cbstreammac;
+	0;;
+
+fun stopmicstream =
+	set g_stream_on = 0;
+	recStop;
+	0;;

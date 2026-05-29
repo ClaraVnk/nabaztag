@@ -1,0 +1,3 @@
+# Built bytecode is derived from reverse-engineered proprietary firmware —
+# build/serve it locally, do not commit it (like the stock bootcodes).
+*.bin
