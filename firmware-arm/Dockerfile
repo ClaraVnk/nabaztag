@@ -38,6 +38,7 @@ COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 
 # Apply our source modifications (idempotent, prints what landed).
 COPY apply-mods.py /build/apply-mods.py
+COPY pages/ /build/pages/
 # Quick sanity probe before the real patch run — confirms apply-mods.py is
 # the version we just shipped and the stdlib anchors are still present in
 # upstream. (Helps diagnose cache hits that mask stale patch logic.)
