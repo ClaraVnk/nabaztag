@@ -450,7 +450,10 @@ def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -
             check=True, capture_output=True, timeout=25,
         )
         with open(path, "rb") as fh:
-            return fh.read()
+            data = fh.read()
+        # Downsample to 8 kHz: espeak's 22 kHz WAV gets large and the rabbit
+        # truncates big WAVs; ~3 s @ 8 kHz ≈ 47 KB fits its playback buffer.
+        return _resample_wav(data, 8000)
     finally:
         try:
             os.unlink(path)
@@ -458,9 +461,8 @@ def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -
             pass
 
 
-def _resample_wav_16k(wav_bytes: bytes) -> bytes:
-    """Return a 16 kHz mono 16-bit PCM WAV (what whisper.cpp expects). The rabbit
-    records at 8 kHz, so we upsample."""
+def _resample_wav(wav_bytes: bytes, target_rate: int) -> bytes:
+    """Return a mono 16-bit PCM WAV at target_rate."""
     import wave, audioop, io
     try:
         w = wave.open(io.BytesIO(wav_bytes))
@@ -471,16 +473,21 @@ def _resample_wav_16k(wav_bytes: bytes) -> bytes:
             frames = audioop.lin2lin(frames, sw, 2)
         if ch != 1:
             frames = audioop.tomono(frames, 2, 0.5, 0.5)
-        if rate != 16000:
-            frames, _ = audioop.ratecv(frames, 2, 1, rate, 16000, None)
+        if rate != target_rate:
+            frames, _ = audioop.ratecv(frames, 2, 1, rate, target_rate, None)
         out = io.BytesIO()
         ww = wave.open(out, "wb")
-        ww.setnchannels(1); ww.setsampwidth(2); ww.setframerate(16000)
+        ww.setnchannels(1); ww.setsampwidth(2); ww.setframerate(target_rate)
         ww.writeframes(frames)
         ww.close()
         return out.getvalue()
     except Exception:
         return wav_bytes
+
+
+def _resample_wav_16k(wav_bytes: bytes) -> bytes:
+    """16 kHz mono PCM WAV (what whisper.cpp expects; the rabbit records at 8 kHz)."""
+    return _resample_wav(wav_bytes, 16000)
 
 
 def stt_transcribe(pcm_wav: bytes) -> str:
@@ -1306,6 +1313,17 @@ def wake_loop():
         log.info("wake: heard %r", text)
         if not (WAKE_WORD in text or "nab" in text or "navi" in text):
             continue
+        # Wake heard — capture ~2.5 s more so a command spanning the window isn't
+        # clipped, then transcribe the whole utterance.
+        time.sleep(2.5)
+        with MIC_LOCK:
+            tail = bytes(MIC_STREAM["adpcm"])
+            MIC_STREAM["adpcm"] = bytearray()
+        if tail:
+            try:
+                text = stt_transcribe(adpcm_stream_to_pcm_wav(chunk + tail)).lower() or text
+            except Exception:  # noqa
+                pass
         cmd = _strip_wake(text)
         log.info("wake: TRIGGERED — command %r", cmd)
         if b is None:
