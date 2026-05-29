@@ -124,6 +124,9 @@ if VOICE_PROMPT is None:
 # Assistant Piper add-on, fetched through the Supervisor proxy).
 TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak").lower()
 TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.piper"
+# Pitch-shift the TTS up by this many percent (ffmpeg, tempo preserved) for a
+# younger/cuter, more playful timbre. 0 = off; ~10-18 ≈ "mignonne"; >30 = chipmunk.
+VOICE_PITCH = int(os.environ.get("VOICE_PITCH") or _OPTS.get("voice_pitch") or 0)
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-small.bin")
 
@@ -501,15 +504,51 @@ def synth_via_ha(text: str) -> bytes:
         return b""
 
 
+def _pitch(data: bytes) -> bytes:
+    """Pitch-shift up by VOICE_PITCH percent (tempo preserved, ffmpeg) for a
+    cuter/younger timbre. Returns the input unchanged when off or on failure."""
+    if not VOICE_PITCH or not data:
+        return data
+    import tempfile, subprocess, os
+    k = 1.0 + max(0, min(VOICE_PITCH, 40)) / 100.0
+    ext = "wav" if data[:4] == b"RIFF" else "mp3"
+    src = dst = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix="." + ext, delete=False) as f:
+            f.write(data); src = f.name
+        sr = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+             "stream=sample_rate", "-of", "csv=p=0", src],
+            capture_output=True, text=True, timeout=10).stdout.strip()
+        sr = int(sr) if sr.isdigit() else 22050
+        dst = src + ".p." + ext
+        af = f"asetrate={int(sr * k)},aresample={sr},atempo={1.0 / k:.4f}"
+        subprocess.run(["ffmpeg", "-y", "-i", src, "-af", af, "-b:a", "96k", dst],
+                       check=True, capture_output=True, timeout=20)
+        with open(dst, "rb") as fh:
+            return fh.read()
+    except Exception as exc:  # noqa
+        log.warning("pitch failed: %s", exc)
+        return data
+    finally:
+        for p in (src, dst):
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+
 def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
     """Make speech audio for the rabbit. Uses the Home Assistant Piper add-on when
     tts_engine=piper (nicer voice), otherwise the bundled espeak-ng (always works,
-    fully local). Returns MP3 (Piper) or WAV (espeak); the rabbit decodes both."""
+    fully local). Returns MP3 (Piper) or WAV (espeak); the rabbit decodes both.
+    A VOICE_PITCH > 0 shifts it up for a cuter timbre."""
     text = _clean_for_tts(text)
     if TTS_ENGINE == "piper":
         audio = synth_via_ha(text)
         if audio:
-            return audio
+            return _pitch(audio)
         log.warning("Piper TTS returned nothing — falling back to espeak")
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         path = tf.name
@@ -522,7 +561,7 @@ def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -
             data = fh.read()
         # Downsample to 8 kHz: espeak's 22 kHz WAV gets large and the rabbit
         # truncates big WAVs; ~3 s @ 8 kHz ≈ 47 KB fits its playback buffer.
-        return _resample_wav(data, 8000)
+        return _pitch(_resample_wav(data, 8000))
     finally:
         try:
             os.unlink(path)

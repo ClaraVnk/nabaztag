@@ -134,7 +134,12 @@ Enable it in the add-on **Configuration**:
 - `stt_language`: `fr`
 - `tts_engine`: `espeak` (bundled, robotic) or `piper` (nicer — needs the HA
   **Piper** add-on; the add-on fetches its audio through the Supervisor proxy)
-- `tts_entity`: the Piper TTS entity, e.g. `tts.piper`
+- `tts_entity`: the Piper TTS entity, e.g. `tts.piper`. For a softer French voice
+  use **`fr_FR-siwis-medium`** in the Piper add-on (the clearest French female).
+- `voice_pitch`: shift the voice **up** by this many percent for a cuter / younger,
+  more playful timbre (`0` = off; ~`12`–`18` is a nice "mignonne" range; `>30` =
+  chipmunk). Stock Piper voices are neutral, so this is how you make Nabi sound
+  more espiègle without a custom voice. Needs ffmpeg (bundled).
 - `voice_prompt`: the instruction prepended for the agent (it explains the action
   tags and asks for short replies)
 
