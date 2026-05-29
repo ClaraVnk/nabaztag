@@ -51,6 +51,9 @@ API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
 # The .bin is built locally and dropped in the add-on's persistent /data.
 BOOTCODE_CHOICE = "hybrid"
 BOOTCODE_FILE = os.environ.get("BOOTCODE_FILE", "/data/bootcode.hybrid")
+# Where /api/ota stages signed .sim files. The rabbit fetches them at the
+# matching /ota/<basename> URL when the server sends a FW program command.
+OTA_DIR = os.environ.get("OTA_DIR", "/data/ota")
 # Where Nabi should stream its mic (the hybrid bytecode's RS command). The rabbit
 # routes UDP to this host:4000; we resolve the advertised server address to an IP.
 MIC_UDP_PORT = int(os.environ.get("MIC_UDP_PORT", _OPTS.get("mic_udp_port", 4000)))
@@ -1301,6 +1304,25 @@ class BootHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if path.startswith("/ota/"):
+            # Signed .sim staged by /api/ota; the rabbit fetches it when it
+            # receives the `FW <url>` program command. Plain path traversal
+            # is blocked by basename() — we only serve files directly under
+            # /data/ota/.
+            name = os.path.basename(path[len("/ota/"):])
+            full = os.path.join(OTA_DIR, name)
+            if not name or not os.path.isfile(full):
+                self.send_error(404, "no such firmware")
+                return
+            with open(full, "rb") as fh:
+                data = fh.read()
+            log.info("OTA: serving %s (%d bytes) to %s", name, len(data), self.address_string())
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path.endswith("/locate.jsp"):
             # Exact format expected by the bytecode (from OpenJabNab's locate
             # plugin): LF line endings, and xmpp_domain MUST include the port —
@@ -1535,6 +1557,65 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if _one("wait") in ("1", "true", "yes"):
                     prog += "\nMW"
                 b.send_program(prog)
+            elif path == "/api/ota":
+                # Stage a SIGNED .sim and (optionally) tell the rabbit to fetch
+                # + flash it.
+                #
+                # Two input modes:
+                #   - multipart upload (Content-Type: multipart/form-data; the
+                #     field name is "sim")
+                #   - ?path=/server-side/path/to.signed.sim (uses the file
+                #     already on the HAOS host)
+                #
+                # Query: ?name=basename.sim chooses the staged filename
+                #        (default "firmware.signed.sim"). ?trigger=1 then
+                #        pushes a FW <url> program command to the connected
+                #        rabbit so it auto-flashes. The rabbit verifies the
+                #        Ed25519 signature with the embedded pubkey before
+                #        flashing — so an unsigned/tampered .sim is rejected.
+                ctype = self.headers.get("Content-Type", "")
+                blob = b""
+                if "multipart/form-data" in ctype and body:
+                    # Crude multipart parser — we only support a single field.
+                    boundary = ctype.split("boundary=", 1)[1].split(";", 1)[0].strip()
+                    sep = ("--" + boundary).encode()
+                    parts = body.split(sep)
+                    for part in parts:
+                        if b'name="sim"' not in part:
+                            continue
+                        h_end = part.find(b"\r\n\r\n")
+                        if h_end < 0:
+                            continue
+                        blob = part[h_end + 4 :].rstrip(b"\r\n-")
+                        break
+                else:
+                    p_in = _one("path")
+                    if p_in and os.path.isfile(p_in):
+                        with open(p_in, "rb") as fh:
+                            blob = fh.read()
+                if not blob:
+                    return self._json(400, {"error": "no .sim payload (use multipart 'sim' field or ?path=)"})
+                if b"-violet-" not in blob or b"-sig-" not in blob:
+                    return self._json(400, {"error": "not a signed .sim (missing -violet- / -sig- markers)"})
+                name = os.path.basename(_one("name", "firmware.signed.sim"))
+                os.makedirs(OTA_DIR, exist_ok=True)
+                target = os.path.join(OTA_DIR, name)
+                with open(target, "wb") as fh:
+                    fh.write(blob)
+                staged_url = f"http://{SERVER_ADDRESS}/ota/{name}"
+                log.info("OTA: staged %s (%d bytes) → %s", name, len(blob), staged_url)
+                triggered = False
+                if _one("trigger") in ("1", "true", "yes"):
+                    b.send_program(f"FW {staged_url}")
+                    triggered = True
+                    log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
+                return self._json(200, {
+                    "ok": True,
+                    "staged": target,
+                    "url": staged_url,
+                    "bytes": len(blob),
+                    "triggered": triggered,
+                })
             elif path == "/api/volume":
                 # ?level=0..100 (100 = loudest). Mapped to the VS1003 inverted
                 # attenuation (0 = loud .. higher = quiet) and sent as the bytecode

@@ -1,0 +1,77 @@
+// fwota.mtl — Over-the-air firmware flash.
+//
+// Adds a `FW <url>` program command: the rabbit downloads a signed .sim
+// from the server, verifies its Ed25519 signature with the embedded public
+// key (verifySig opcode, added in our custom firmware), then calls
+// flashFirmware. The bootloader still runs its own httpflash sig check on
+// the next chin-button upload too — this OTA path is just a third way in.
+//
+// Requires:
+//   - verifySig opcode (custom firmware ≥ this fork)
+//   - flashFirmware opcode (always present)
+//   - HTTP_NORMAL httprequest (defined in http.mtl, included by main.mtl)
+//
+// Format expected (produced by firmware-arm/signing/sign_sim.py):
+//   "-violet-" SIZE_HEX(8) PAYLOAD_HEX "-violet-" "-sig-" SIG_HEX(128) "-sig-"
+
+
+// Recursive hex→bin transcribe at offset `off`, writing `len` bytes into
+// `bin`. Distinct names from the bootloader's helpers so this module is
+// safe to include alongside any other Metal file.
+fun getbinary_fw bin src i off len=
+	if i<len then
+	(
+		strset bin i (htoi strsub src off 2);
+		getbinary_fw bin src i+1 off+2 len
+	);;
+
+
+// Decode the firmware payload from a .sim text body. Returns the raw
+// (un-obfuscated) Nab.bin bytes, or nil if the body is malformed.
+fun parsefirm_fw req=
+	let strstr req "-violet-" 0 -> i0 in
+	if i0!=nil then let i0+8->i0 in
+	let htoi strsub req i0 8 -> len in
+	let i0+8->i0 in
+	let strsub req i0+len 8 -> end in
+	if !strcmp end "-violet-" then
+	let strnew len>>1 -> bin in
+	(
+		getbinary_fw bin req 0 i0 len>>1;
+		uncrypt bin 0 nil 0x47 47;
+		bin
+	);;
+
+
+// Decode the 64-byte Ed25519 signature from a "-sig-<128 hex>-sig-"
+// trailer. Returns the sig bytes, or nil if the trailer is missing or
+// malformed.
+fun parsesig_fw req=
+	let strstr req "-sig-" 0 -> i0 in
+	if i0!=nil then let i0+5->i1 in
+	let strstr req "-sig-" i1 -> i2 in
+	if i2!=nil then
+	if i2-i1==128 then
+	let strnew 64 -> sig in
+	(
+		getbinary_fw sig req 0 i1 64;
+		sig
+	);;
+
+
+// HTTP_NORMAL callback: invoked with `[httpreq full_body]`. We verify the
+// signature and (if valid) call flashFirmware. flashFirmware never
+// returns — the rabbit reboots into the new image.
+fun ota_cb httpreq body=
+	let parsefirm_fw body -> firm in
+	let parsesig_fw body -> sig in
+	if firm!=nil then
+	if sig!=nil then
+	if (verifySig firm sig)!=0 then
+	flashFirmware firm 0x13fb6754 0x0407FE58;;
+
+
+// Public entry: kick off the OTA download. Async — returns immediately;
+// the callback handles verify + flash when the body arrives.
+fun flashFromUrl url=
+	httprequest "GET" url nil #ota_cb HTTP_NORMAL;;

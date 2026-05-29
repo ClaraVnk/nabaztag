@@ -33,5 +33,16 @@ if '!strcmp key "SV"' not in s:
         raise SystemExit("ERROR: RT command not found (apply the RS/RT patch first)")
     s = s.replace(rt, rt + '\n\t\telse if !strcmp key "SV" then (sndVol (atoi val);0)', 1)
 
+# OTA: FW <url> -> downloads a signed .sim, verifies the Ed25519 sig with
+# the embedded pubkey, then calls flashFirmware. Requires the verifySig
+# opcode added in our custom firmware (firmware-arm fork).
+if "#include fwota.mtl" not in s:
+    s = s.replace(inc, inc + "\n#include fwota.mtl", 1)
+if '!strcmp key "FW"' not in s:
+    sv = 'else if !strcmp key "SV" then (sndVol (atoi val);0)'
+    if sv not in s:
+        raise SystemExit("ERROR: SV command not found (apply SV patch first)")
+    s = s.replace(sv, sv + '\n\t\telse if !strcmp key "FW" then (flashFromUrl val;0)', 1)
+
 open(path, "w", encoding="latin-1").write(s)
 print("patched OK")
