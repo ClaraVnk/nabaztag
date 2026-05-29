@@ -166,16 +166,18 @@ Full guide (API, pairing, troubleshooting) is in
   rabbits re-download their bytecode every boot, pushing new bytecode updates the
   whole fleet). Needs multi-tenant per-rabbit state and hardening of the plain
   Violet protocol.
-- **Phase 7 — Metal → Python transpiler:** the bytecode language ("Metal", or
-  *MTL*) is the 2006 in-house DSL used to write the bootcode. It's compiled by
-  `mtl_compiler` to a custom bytecode the rabbit executes. Today, anyone who
-  wants to change rabbit behavior has to learn an obscure dead language and
-  babysit an old C++ compiler. A faithful **MTL → Python transpiler** (and the
-  reverse, for an exit ramp) would let the community read, fork and ship
-  bytecode in a mainstream language — opening the doors to real maintenance
-  and contributions. The grammar is small (see `DT_metal_03_01_13_grammaire.pdf`),
-  and most builtins are already documented; this is mechanical work, not
-  research.
+- **Phase 7 — modernize the Metal toolchain in Python (two steps):**
+    1. **Phase 7a — Python MTL compiler:** rewrite the existing C++ `mtl_compiler`
+       in Python. Same input (`.mtl` source), same output (the rabbit's
+       bytecode), zero behavioral change for the device. Win: no more aging
+       C++ toolchain (g++-multilib, build dance), one fewer barrier for
+       contributors, easier to add new opcodes / sanity checks / linting.
+       Grammar is small (see `DT_metal_03_01_13_grammaire.pdf`).
+    2. **Phase 7b — "view as Python" layer:** on top of 7a, add a bidirectional
+       MTL ↔ Python source mapper so people can read, write and review bytecode
+       logic in familiar Python syntax. The rabbit still executes MTL bytecode;
+       the Python is purely a contributor-facing surface. Doable mechanically,
+       not research.
 - **Phase 8 — shrink the firmware by moving Metal logic to C:** the rabbit's
   bootloader is ~3000 lines of Metal bytecode (`mtl/boot/boot.0.0.0.13.mtl`)
   running on top of a tiny stack VM. Native ARM is roughly 3× denser than
