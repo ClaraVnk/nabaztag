@@ -1,7 +1,7 @@
 name: "Nabaztag Violet Server"
-version: "0.2.1"
+version: "0.3.0"
 slug: "nabaztag_violet"
-description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, logs everything, exposes a control API for Home Assistant. Dependency-free Python."
+description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, drives ears/LEDs/sound/TTS, and (Phase 2) does button push-to-talk → bundled STT → conversation agent → speech. For Home Assistant."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
 arch:
   - amd64
@@ -9,6 +9,9 @@ init: false
 startup: services
 boot: auto
 host_network: false
+# Lets the add-on call Home Assistant services (e.g. the conversation agent) via
+# the Supervisor proxy, for the voice pipeline.
+homeassistant_api: true
 # Keep host ports == container ports: the rabbit reaches the server on the
 # standard ports advertised by /vl/locate.jsp. Set server_address to the HAOS
 # host IP. (Stop the OpenJabNab add-on first — it also uses :80/:5222.)
@@ -24,7 +27,13 @@ options:
   server_address: "192.0.2.10"
   log_level: "Info"
   bootcode: "ojn"
+  voice_pipeline: false
+  conversation_agent: ""
+  stt_language: "fr"
 schema:
   server_address: "str"
   log_level: "list(Debug|Info|Warning|Error)"
   bootcode: "list(violet|ojn)"
+  voice_pipeline: "bool"
+  conversation_agent: "str?"
+  stt_language: "str"

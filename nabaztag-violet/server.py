@@ -50,6 +50,14 @@ BOOTCODE_FILE = os.environ.get(
     "BOOTCODE_FILE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), f"bootcode.{BOOTCODE_CHOICE}"),
 )
+# Phase-2 voice pipeline: button push-to-talk → STT (bundled whisper.cpp) →
+# optional conversation agent (Home Assistant, e.g. Claude) → TTS, all triggered
+# by the rabbit's button. When voice_pipeline is off the recording is just stored.
+VOICE_PIPELINE = str(os.environ.get("VOICE_PIPELINE") or _OPTS.get("voice_pipeline") or "").lower() in ("1", "true", "yes", "on")
+CONVERSATION_AGENT = os.environ.get("CONVERSATION_AGENT") or _OPTS.get("conversation_agent") or ""
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE") or _OPTS.get("stt_language") or "fr"
+WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-base.bin")
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -340,6 +348,104 @@ def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -
             os.unlink(path)
         except OSError:
             pass
+
+
+def _resample_wav_16k(wav_bytes: bytes) -> bytes:
+    """Return a 16 kHz mono 16-bit PCM WAV (what whisper.cpp expects). The rabbit
+    records at 8 kHz, so we upsample."""
+    import wave, audioop, io
+    try:
+        w = wave.open(io.BytesIO(wav_bytes))
+        ch, sw, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        frames = w.readframes(n)
+        w.close()
+        if sw != 2:
+            frames = audioop.lin2lin(frames, sw, 2)
+        if ch != 1:
+            frames = audioop.tomono(frames, 2, 0.5, 0.5)
+        if rate != 16000:
+            frames, _ = audioop.ratecv(frames, 2, 1, rate, 16000, None)
+        out = io.BytesIO()
+        ww = wave.open(out, "wb")
+        ww.setnchannels(1); ww.setsampwidth(2); ww.setframerate(16000)
+        ww.writeframes(frames)
+        ww.close()
+        return out.getvalue()
+    except Exception:
+        return wav_bytes
+
+
+def stt_transcribe(pcm_wav: bytes) -> str:
+    """Transcribe a PCM WAV with the bundled whisper.cpp (resampled to 16 kHz).
+    Returns "" if the binary/model is missing or nothing is recognised."""
+    if not (os.path.exists(WHISPER_BIN) and os.path.exists(WHISPER_MODEL)):
+        log.warning("STT unavailable (whisper missing: %s / %s)", WHISPER_BIN, WHISPER_MODEL)
+        return ""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        tf.write(_resample_wav_16k(pcm_wav))
+        path = tf.name
+    try:
+        subprocess.run(
+            [WHISPER_BIN, "-m", WHISPER_MODEL, "-f", path, "-l", STT_LANGUAGE,
+             "-nt", "-otxt", "-of", path],
+            check=True, capture_output=True, timeout=120,
+        )
+        with open(path + ".txt", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except Exception as exc:  # noqa
+        log.warning("STT failed: %s", exc)
+        return ""
+    finally:
+        for ext in ("", ".txt"):
+            try:
+                os.unlink(path + ext)
+            except OSError:
+                pass
+
+
+def conversation_ask(text: str) -> str:
+    """Send text to a Home Assistant conversation agent (e.g. the Anthropic/Claude
+    integration) via the Supervisor proxy; return the agent's reply text."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not (token and CONVERSATION_AGENT):
+        return ""
+    import urllib.request
+    body = json.dumps({"agent_id": CONVERSATION_AGENT, "text": text}).encode()
+    req = urllib.request.Request(
+        "http://supervisor/core/api/services/conversation/process?return_response",
+        data=body, method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            j = json.loads(resp.read().decode("utf-8", "replace"))
+        sr = j.get("service_response") or j
+        return (((sr.get("response") or {}).get("speech") or {}).get("plain") or {}).get("speech", "").strip()
+    except Exception as exc:  # noqa
+        log.warning("conversation agent call failed: %s", exc)
+        return ""
+
+
+def handle_voice(pcm_wav: bytes):
+    """Full voice loop for a button recording: STT → optional conversation agent
+    → speak the reply on the rabbit. Runs off the request thread."""
+    with BUNNIES_LOCK:
+        bunny = next(iter(BUNNIES.values()), None)
+    if bunny is None:
+        return
+    text = stt_transcribe(pcm_wav)
+    log.info("voice: heard %r", text)
+    if not text:
+        return
+    reply = conversation_ask(text) if CONVERSATION_AGENT else text
+    if not reply:
+        reply = text  # fall back to echoing what was heard
+    log.info("voice: replying %r", reply)
+    try:
+        wav = synth_tts(reply)
+        bunny.send_program(f"ST {resource_url(store_resource(wav, 'audio/wav'))}")
+    except Exception as exc:  # noqa
+        log.warning("voice: reply playback failed: %s", exc)
 
 
 # --------------------------------------------------------------------------- #
@@ -723,6 +829,10 @@ class BootHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            # Run the voice loop off the request thread so the rabbit's POST
+            # returns immediately (STT + the agent can take a few seconds).
+            if VOICE_PIPELINE:
+                threading.Thread(target=handle_voice, args=(pcm,), daemon=True).start()
             return
         log.info("unhandled boot POST %s from %s", self.path, self.address_string())
         self.send_response(200)
