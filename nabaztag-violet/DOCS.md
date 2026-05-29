@@ -119,6 +119,16 @@ Enable it in the add-on **Configuration**:
 Keep replies short — the charm is brevity. The bundled STT model is `base`
 (decent French on an 8 kHz mic); swap to a bigger whisper model for more accuracy.
 
+## Home Assistant entities (MQTT)
+
+The add-on can publish Nabi's controls as **native HA entities** via MQTT
+discovery — a **Nabaztag (Nabi)** device with a belly RGB **light**, **ear left**
+/ **ear right** sliders, a **nose** select, a **sleep** switch, and a **Say** text
+field. Point it at your MQTT broker (the same one your HA MQTT integration uses)
+with the options `mqtt_host` / `mqtt_port` / `mqtt_user` / `mqtt_password`. If you
+run the **Mosquitto** add-on it's detected automatically (leave `mqtt_host` empty).
+No broker → this is simply skipped and the rest of the add-on works as usual.
+
 ## Status
 
 - **Phase 1 — working, verified live:** the rabbit boots our server, **breathes**,
