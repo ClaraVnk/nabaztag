@@ -663,6 +663,7 @@ class XmppSession(threading.Thread):
     def _start_listen(self):
         """Begin streaming the mic for the wake word (auto_listen)."""
         WAKE["on"] = True
+        WAKE["streaming"] = True
         WAKE["cooldown"] = 0.0
         log.info("auto-listen: starting mic stream on %s", self.mac)
         self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
@@ -1170,10 +1171,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                         MIC_STREAM["adpcm"] = bytearray()
                         MIC_STREAM["packets"] = 0
                     WAKE["on"] = True
+                    WAKE["streaming"] = True
                     WAKE["cooldown"] = 0.0
                     b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
                 else:
                     WAKE["on"] = False
+                    WAKE["streaming"] = False
                     b.send_program("RT")
             else:
                 return self._json(404, {"error": "unknown endpoint"})
@@ -1236,7 +1239,7 @@ def udp_mic_server():
 # Phase 3B — wake word on the mic stream: transcribe rolling windows; when the
 # wake word ("nabi") is heard, send the rest to the conversation agent.
 # --------------------------------------------------------------------------- #
-WAKE = {"on": False, "cooldown": 0.0}
+WAKE = {"on": False, "cooldown": 0.0, "streaming": False}
 
 
 def adpcm_stream_to_pcm_wav(raw: bytes) -> bytes:
@@ -1261,12 +1264,23 @@ def _strip_wake(text: str) -> str:
 
 
 def wake_loop():
-    """Consume mic-stream windows; on the wake word, send the rest to the agent."""
+    """Consume mic-stream windows; on the wake word, send the rest to the agent.
+    The rabbit is half-duplex (it can't record and play at once), so before
+    speaking a reply we stop the mic (RT), then re-arm it (RS) after a cooldown."""
     while True:
         time.sleep(WAKE_WINDOW_S)
-        if not WAKE["on"] or time.time() < WAKE["cooldown"]:
+        now = time.time()
+        b = _bunny_any()
+        # Re-arm the mic once the reply cooldown has elapsed.
+        if WAKE["on"] and not WAKE["streaming"] and now >= WAKE["cooldown"] and b is not None:
             with MIC_LOCK:
-                MIC_STREAM["adpcm"] = bytearray()  # drop audio while idle/cooling down
+                MIC_STREAM["adpcm"] = bytearray()
+            b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+            WAKE["streaming"] = True
+            log.info("wake: mic re-armed")
+        if not WAKE["on"] or not WAKE["streaming"] or now < WAKE["cooldown"]:
+            with MIC_LOCK:
+                MIC_STREAM["adpcm"] = bytearray()
             continue
         with MIC_LOCK:
             chunk = bytes(MIC_STREAM["adpcm"])
@@ -1285,19 +1299,23 @@ def wake_loop():
             continue
         cmd = _strip_wake(text)
         log.info("wake: TRIGGERED — command %r", cmd)
-        WAKE["cooldown"] = time.time() + 10  # don't react to our own reply
-        b = _bunny_any()
         if b is None:
             continue
+        # Half-duplex: stop the mic so the speaker is free; Claude's latency is the
+        # natural gap before playback. Mic re-arms after the cooldown.
+        b.send_program("RT")
+        WAKE["streaming"] = False
+        WAKE["cooldown"] = now + 15
         reply = conversation_ask((VOICE_PROMPT or "") + cmd) if (CONVERSATION_AGENT and cmd) else (cmd or "Oui ?")
         reply = run_action_tags(b, reply or "Oui ?")
+        log.info("wake: speaking %r", reply)
         if reply.strip():
             try:
                 wav = synth_tts(reply)
                 b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
             except Exception as exc:  # noqa
                 log.warning("wake: reply failed %s", exc)
-        WAKE["cooldown"] = time.time() + 10
+        WAKE["cooldown"] = time.time() + 12  # ~reply length + margin, then re-arm
 
 
 # --------------------------------------------------------------------------- #
