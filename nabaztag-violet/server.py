@@ -75,6 +75,12 @@ TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak
 TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.piper"
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-small.bin")
+# MQTT broker for exposing Nabi's controls as HA entities. If mqtt_host is set we
+# use it; otherwise we try the Supervisor MQTT service (the Mosquitto add-on).
+MQTT_HOST = os.environ.get("MQTT_HOST") or _OPTS.get("mqtt_host") or ""
+MQTT_PORT = int(os.environ.get("MQTT_PORT") or _OPTS.get("mqtt_port") or 1883)
+MQTT_USER = os.environ.get("MQTT_USER") or _OPTS.get("mqtt_user") or ""
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or _OPTS.get("mqtt_password") or ""
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -1186,8 +1192,13 @@ def _mqtt_handle(topic: str, payload: str):
 
 
 def start_mqtt():
-    cfg = _mqtt_service_config()
+    if MQTT_HOST:
+        cfg = {"host": MQTT_HOST, "port": MQTT_PORT,
+               "username": MQTT_USER or None, "password": MQTT_PASSWORD or None}
+    else:
+        cfg = _mqtt_service_config()
     if not cfg:
+        log.info("MQTT: no broker (set the mqtt_host option, or install the Mosquitto add-on) — no HA entity discovery")
         return
     try:
         import paho.mqtt.client as mqtt
