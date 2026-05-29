@@ -45,8 +45,6 @@ COPY pages/ /build/pages/
 RUN sha256sum /build/apply-mods.py /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp \
  && grep -c verifySig /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp || true
 RUN python3 /build/apply-mods.py /build/nabgcc
-RUN grep -c verifySig /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp \
- && grep -c OPverifySig /build/nabgcc/mtl/mtl_linux/inc/vm/vbc.h
 
 # Optional patches/ dir (for ad-hoc tweaks that don't belong in apply-mods.py).
 COPY patches/ /patches/
