@@ -66,6 +66,15 @@ rest_command:
     method: GET
     timeout: 10
 
+  # Play an original Nabaztag jingle (extracted from the firmware). name =
+  # acquired | ack | abort | ministop | ears | rfid_ok | start_record |
+  # end_record | start_interactive | end_interactive | previous | next.
+  # (GET http://<api>/api/jingle lists them.)
+  nabaztag_jingle:
+    url: "http://{{ api }}/api/jingle?mac={{ mac }}&name={{ name }}"
+    method: GET
+    timeout: 15
+
 script:
   # --- Talk to Claude through the rabbit -----------------------------------
   # Pipes a prompt to the Home Assistant Anthropic (Claude) conversation agent
@@ -130,6 +139,8 @@ automation:
         entity_id: person.kevin
         to: "home"
     action:
+      - service: rest_command.nabaztag_jingle
+        data: { api: !secret nab_api, mac: !secret nab_mac, name: acquired }
       - service: rest_command.nabaztag_ears
         data: { api: !secret nab_api, mac: !secret nab_mac, left: 3, right: 3 }
       - service: rest_command.nabaztag_led

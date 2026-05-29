@@ -40,5 +40,8 @@ COPY --from=whisper /out/models /app/models
 
 # Dependency-free server (Python stdlib only); reads /data/options.json at runtime.
 COPY server.py /app/
+# Original Nabaztag jingles (Standard MIDI, extracted from the firmware) — the
+# server renders them to audio on the fly via a tiny built-in synth.
+COPY sounds /app/sounds
 
 CMD [ "python3", "/app/server.py" ]

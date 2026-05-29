@@ -79,6 +79,11 @@ Endpoints:
   Home-Assistant/Piper TTS media URL). `&wait=1` blocks until it finishes.
   Also accepts **`POST`** with the audio bytes as the body (served from `/res/`).
   The rabbit decodes **MP3 and WAV (PCM, 22 kHz/16-bit mono)** — both verified live.
+- `GET /api/jingle?name=acquired` — play an **original Nabaztag jingle** (extracted
+  from the firmware, rendered on the fly by a tiny built-in MIDI synth). `GET
+  /api/jingle` (no name) lists them: `acquired, ack, abort, ministop, ears,
+  rfid_ok, start_record, end_record, start_interactive, end_interactive, previous,
+  next`. `&wait=1` blocks.
 - `GET /api/ears?left=8&right=2` — **move the ears** to positions (~0..16) via a
   choreography; `&dir=0|1` sets rotation direction.
 - `GET /api/led?led=top&r=0&g=238&b=0` — **full RGB** on one LED

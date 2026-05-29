@@ -59,6 +59,8 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
   no cloud, nothing to install)
 - 🔊 **play audio** — stream any MP3 or WAV (e.g. a Piper TTS media URL); the
   rabbit fetches it over HTTP from the add-on
+- 🎵 **original Nabaztag jingles** — the iconic Violet sounds (extracted from the
+  firmware as MIDI, synthesized on the fly): `acquired`, `ack`, `rfid_ok`, …
 - 👂 **move the ears** to precise positions (independent left / right) via a
   choreography
 - 💡 **RGB light shows** on the 5 LEDs (bottom / left / middle / right / top)
