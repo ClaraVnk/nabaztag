@@ -153,6 +153,12 @@ Full guide (API, pairing, troubleshooting) is in
   firmware (it speaks plain HTTP, no TLS) and add improvements.
 - **Phase 5 — setup UX:** a much nicer captive/config page when you join the
   rabbit's Wi-Fi to pair it.
+- **Phase 6 — a public server for every rabbit:** the server is dependency-free
+  standalone Python, so it can run on a dedicated public host (not just as a
+  local add-on) — letting any Nabaztag in the world connect and get updates (since
+  rabbits re-download their bytecode every boot, pushing new bytecode updates the
+  whole fleet). Needs multi-tenant per-rabbit state and hardening of the plain
+  Violet protocol.
 
 ## Hardware
 
