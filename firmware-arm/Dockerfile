@@ -39,12 +39,22 @@ COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 # Apply our source modifications (idempotent, prints what landed).
 COPY apply-mods.py /build/apply-mods.py
 COPY pages/ /build/pages/
+
+# MODE controls which mods land:
+#   full    = everything (default; verify-enforced + modernized UI)
+#   minimal = opcode + crypto only — bootloader HTML and httpflash stay
+#             byte-identical to vanilla wpa2. This is the rescue/parachute
+#             build: closest possible to what's already known to flash
+#             cleanly on Kevin's rabbit, but still ships verifySig so
+#             future OTAs can verify .sim signatures.
+ARG MODE=full
+ENV NAB_MODE=$MODE
 # Quick sanity probe before the real patch run — confirms apply-mods.py is
 # the version we just shipped and the stdlib anchors are still present in
 # upstream. (Helps diagnose cache hits that mask stale patch logic.)
 RUN sha256sum /build/apply-mods.py /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp \
  && grep -c verifySig /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp || true
-RUN python3 /build/apply-mods.py /build/nabgcc
+RUN python3 /build/apply-mods.py --mode "$NAB_MODE" /build/nabgcc
 
 # Optional patches/ dir (for ad-hoc tweaks that don't belong in apply-mods.py).
 COPY patches/ /patches/

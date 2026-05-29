@@ -41,7 +41,10 @@ footer a{color:var(--mut)}
 <div class=x><input id=n name=n type=password value="<KEY>">
 <button type=button onclick="var e=document.getElementById('n');e.type=e.type=='text'?'password':'text'">show</button></div></label>
 </fieldset>
-<details><summary>Advanced — proxy, static IP, WEP auth</summary>
+<details><summary>Advanced — server, proxy, static IP, WEP auth</summary>
+<fieldset><legend>Server</legend>
+<label><small>Boot URL host (leave the path)</small><input name=a type=text value="<SERVER>"></label>
+</fieldset>
 <fieldset><legend>Network</legend>
 <label><small>WEP auth</small><select name=l><AUTH></select></label>
 <label><small>DHCP</small><select name=f><DHCP></select></label>
