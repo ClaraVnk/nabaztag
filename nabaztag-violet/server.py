@@ -72,6 +72,9 @@ AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "
 # Optional: play this jingle once the rabbit comes online (a little "hello").
 # Empty = none. Set to a jingle name (see /api/jingle) to enable.
 CONNECT_JINGLE = (os.environ.get("CONNECT_JINGLE") or _OPTS.get("connect_jingle") or "").strip()
+# Optional short "got it" chime played after the wake word (once the mic has
+# stopped), filling the gap while the agent composes its reply. "" = off.
+WAKE_CHIME = (os.environ.get("WAKE_CHIME") or _OPTS.get("wake_chime") or "").strip()
 # Optional shared secret for the control API. Empty = open (default; fine on a
 # trusted LAN behind Home Assistant). If set, every /api/ request must present it
 # as the X-API-Token header or a ?token= query param — the minimal guard to have
@@ -1568,6 +1571,14 @@ def wake_loop():
         b.send_program("RT")
         WAKE["streaming"] = False
         WAKE["cooldown"] = now + 15
+        # "Got it" chime in the now-silent gap before the reply (mic already off).
+        if WAKE_CHIME:
+            try:
+                cw = render_jingle(WAKE_CHIME)
+                if cw:
+                    b.send_program(f"ST {resource_url(store_resource(cw, _audio_ctype(cw)))}")
+            except Exception as exc:  # noqa
+                log.warning("wake: chime failed %s", exc)
         reply = conversation_ask((VOICE_PROMPT or "") + cmd) if (CONVERSATION_AGENT and cmd) else (cmd or "Oui ?")
         reply = run_action_tags(b, reply or "Oui ?")
         log.info("wake: speaking %r", reply)
