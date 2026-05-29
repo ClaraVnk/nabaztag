@@ -1,5 +1,5 @@
 name: "Nabaztag Violet Server"
-version: "0.11.2"
+version: "0.12.0"
 slug: "nabaztag_violet"
 description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, drives ears/LEDs/sound/TTS, and (Phase 2) does button push-to-talk → bundled STT → conversation agent → speech. For Home Assistant."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
@@ -35,6 +35,7 @@ options:
   stt_language: "fr"
   tts_engine: "espeak"
   tts_entity: "tts.piper"
+  voice_pitch: 0
   wake_word: "nabi"
   auto_listen: false
   connect_jingle: ""
@@ -51,6 +52,7 @@ schema:
   stt_language: "str"
   tts_engine: "list(espeak|piper)"
   tts_entity: "str?"
+  voice_pitch: "int?"
   wake_word: "str?"
   auto_listen: "bool"
   connect_jingle: "str?"
