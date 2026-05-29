@@ -1,79 +1,49 @@
 configuration:
   server_address:
-    name: Adresse du serveur (nom d'hôte)
-    description: >-
-      Le nom d'hôte que le lapin résout pour joindre ce serveur (ex. nabaztag.lan).
-      Doit être un nom DNS, pas une IP — le bytecode résout le serveur XMPP par DNS.
+    name: "Adresse du serveur (nom d'hôte)"
+    description: "Le nom d'hôte que le lapin résout pour joindre ce serveur (ex. nabaztag.lan). Doit être un nom DNS, pas une IP — le bytecode résout le serveur XMPP par DNS."
   log_level:
-    name: Niveau de log
-    description: Niveau de détail écrit dans le journal de l'add-on.
+    name: "Niveau de log"
+    description: "Niveau de détail écrit dans le journal de l'add-on."
   api_token:
-    name: Jeton d'API (optionnel)
-    description: >-
-      Si renseigné, l'API de contrôle exige ce jeton (en-tête X-API-Token ou
-      ?token=). À laisser vide sur un LAN de confiance derrière Home Assistant.
+    name: "Jeton d'API (optionnel)"
+    description: "Si renseigné, l'API de contrôle exige ce jeton (en-tête X-API-Token ou paramètre token). À laisser vide sur un LAN de confiance derrière Home Assistant."
   bootcode:
-    name: Bytecode servi au démarrage
-    description: >-
-      Quel bytecode firmware servir : ojn/violet (d'origine) ou hybrid. L'hybride
-      ajoute le flux micro + le contrôle du volume, et est nécessaire pour le mot
-      d'éveil mains-libres et /api/volume.
+    name: "Bytecode servi au démarrage"
+    description: "Quel bytecode firmware servir — ojn/violet (d'origine) ou hybrid. L'hybride ajoute le flux micro et le contrôle du volume, et est requis pour le mot d'éveil mains-libres et l'API volume."
   voice_pipeline:
-    name: Pipeline vocal
-    description: >-
-      Maintiens la tête et parle → transcription (whisper.cpp) → agent
-      conversationnel → réponse parlée.
+    name: "Pipeline vocal"
+    description: "Maintiens la tête et parle, puis transcription (whisper.cpp), agent conversationnel, puis réponse parlée."
   conversation_agent:
-    name: Agent conversationnel
-    description: >-
-      L'entité conversation de Home Assistant qui répond (ex.
-      conversation.claude_conversation pour Claude, ou conversation.home_assistant
-      pour l'Assist local). Vide = répète juste la transcription.
+    name: "Agent conversationnel"
+    description: "L'entité conversation de Home Assistant qui répond (ex. conversation.claude_conversation pour Claude, ou conversation.home_assistant pour l'Assist local). Vide répète juste la transcription."
   stt_language:
-    name: Langue de reconnaissance vocale
-    description: Code langue pour la transcription (ex. fr, en).
+    name: "Langue de reconnaissance vocale"
+    description: "Code langue pour la transcription (ex. fr, en)."
   tts_engine:
-    name: Moteur de synthèse vocale
-    description: >-
-      espeak (embarqué, robotique, 100% local) ou piper (bien plus joli — nécessite
-      l'add-on Piper de Home Assistant).
+    name: "Moteur de synthèse vocale"
+    description: "espeak (embarqué, robotique, 100% local) ou piper (bien plus joli — nécessite l'add-on Piper de Home Assistant)."
   tts_entity:
-    name: Entité voix Piper
-    description: >-
-      L'entité TTS utilisée quand le moteur est piper (ex. tts.piper). Pour une
-      voix française plus douce, utilise fr_FR-siwis-medium dans l'add-on Piper.
+    name: "Entité voix Piper"
+    description: "L'entité TTS utilisée quand le moteur est piper (ex. tts.piper). Pour une voix française plus douce, utilise fr_FR-siwis-medium dans l'add-on Piper."
   voice_pitch:
-    name: Aigu de la voix (%)
-    description: >-
-      Monte la voix pour un timbre plus mignon / jeune et espiègle. 0 = off ;
-      environ 12–18 donne un joli côté « mignonne » ; au-delà de 30 ça fait chipmunk.
+    name: "Aigu de la voix (pourcentage)"
+    description: "Monte la voix pour un timbre plus mignon, jeune et espiègle. 0 = off ; environ 12 à 18 donne un joli côté « mignonne » ; au-delà de 30 ça fait chipmunk."
   wake_word:
-    name: Mot d'éveil
-    description: Le mot déclencheur de l'écoute mains-libres (par défaut : nabi).
+    name: "Mot d'éveil"
+    description: "Le mot déclencheur de l'écoute mains-libres (par défaut nabi)."
   auto_listen:
-    name: Écoute passive (vie privée)
-    description: >-
-      DÉSACTIVÉE par défaut. Activée, Nabi écoute en continu le mot d'éveil et son
-      micro diffuse. Désactivée, le micro ne diffuse jamais — le push-to-talk
-      (bouton) fonctionne quand même.
+    name: "Écoute passive (vie privée)"
+    description: "DÉSACTIVÉE par défaut. Activée, Nabi écoute en continu le mot d'éveil et son micro diffuse. Désactivée, le micro ne diffuse jamais — le push-to-talk (bouton) fonctionne quand même."
   connect_jingle:
-    name: Jingle de connexion
-    description: >-
-      Joue ce jingle quand Nabi se connecte (ex. acquired). Vide = aucun. Liste
-      des jingles sur /api/jingle.
+    name: "Jingle de connexion"
+    description: "Joue ce jingle quand Nabi se connecte (ex. acquired). Vide = aucun. Liste des jingles via l'API jingle."
   wake_chime:
-    name: Bip d'éveil
-    description: >-
-      Un court bip joué juste après le mot d'éveil, pendant que l'agent prépare sa
-      réponse (ex. start_record). Vide = aucun.
+    name: "Bip d'éveil"
+    description: "Un court bip joué juste après le mot d'éveil, pendant que l'agent prépare sa réponse (ex. start_record). Vide = aucun."
   personality:
-    name: Personnalité
-    description: >-
-      Laisse Nabi vivre seul — petits gestes aléatoires (oreilles/LED/nez), en
-      journée. off = aucun (tu le pilotes depuis HA) ; subtle / auto / lively = la
-      fréquence.
+    name: "Personnalité"
+    description: "Laisse Nabi vivre seul — petits gestes aléatoires (oreilles/LED/nez), en journée. off = aucun (tu le pilotes depuis Home Assistant) ; subtle / auto / lively = la fréquence."
   voice_prompt:
-    name: Prompt de personnalité (voix)
-    description: >-
-      L'instruction ajoutée devant ce que l'agent entend — définit le caractère de
-      Nabi et les balises [ears]/[led]/[nose]. Garde des réponses courtes.
+    name: "Prompt de personnalité (voix)"
+    description: "L'instruction ajoutée devant ce que l'agent entend — définit le caractère de Nabi et les balises d'action. Garde des réponses courtes."

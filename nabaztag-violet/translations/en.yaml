@@ -1,78 +1,49 @@
 configuration:
   server_address:
-    name: Server address (hostname)
-    description: >-
-      The hostname the rabbit resolves to reach this server (e.g. nabaztag.lan).
-      Must be a DNS name, not an IP — the bytecode resolves the XMPP server by DNS.
+    name: "Server address (hostname)"
+    description: "The hostname the rabbit resolves to reach this server (e.g. nabaztag.lan). Must be a DNS name, not an IP — the bytecode resolves the XMPP server by DNS."
   log_level:
-    name: Log level
-    description: How much detail to write to the add-on log.
+    name: "Log level"
+    description: "How much detail to write to the add-on log."
   api_token:
-    name: API token (optional)
-    description: >-
-      If set, the control API requires this token (X-API-Token header or
-      ?token=). Leave empty on a trusted LAN behind Home Assistant.
+    name: "API token (optional)"
+    description: "If set, the control API requires this token (X-API-Token header or token query param). Leave empty on a trusted LAN behind Home Assistant."
   bootcode:
-    name: Bytecode served at boot
-    description: >-
-      Which firmware bytecode to serve: ojn/violet (stock) or hybrid. The hybrid
-      adds the microphone stream + volume control, and is required for the
-      hands-free wake word and /api/volume.
+    name: "Bytecode served at boot"
+    description: "Which firmware bytecode to serve — ojn/violet (stock) or hybrid. The hybrid adds the microphone stream and volume control, and is required for the hands-free wake word and the volume API."
   voice_pipeline:
-    name: Voice pipeline
-    description: >-
-      Hold the head button and speak → transcribe (whisper.cpp) → ask the
-      conversation agent → speak the reply.
+    name: "Voice pipeline"
+    description: "Hold the head button and speak, then transcribe (whisper.cpp), ask the conversation agent, and speak the reply."
   conversation_agent:
-    name: Conversation agent
-    description: >-
-      The Home Assistant conversation entity that answers (e.g.
-      conversation.claude_conversation for Claude, or conversation.home_assistant
-      for local Assist). Empty = just echo the transcription.
+    name: "Conversation agent"
+    description: "The Home Assistant conversation entity that answers (e.g. conversation.claude_conversation for Claude, or conversation.home_assistant for local Assist). Empty just echoes the transcription."
   stt_language:
-    name: Speech-to-text language
-    description: Language code used for transcription (e.g. fr, en).
+    name: "Speech-to-text language"
+    description: "Language code used for transcription (e.g. fr, en)."
   tts_engine:
-    name: Text-to-speech engine
-    description: >-
-      espeak (bundled, robotic, fully local) or piper (much nicer — needs the
-      Home Assistant Piper add-on).
+    name: "Text-to-speech engine"
+    description: "espeak (bundled, robotic, fully local) or piper (much nicer — needs the Home Assistant Piper add-on)."
   tts_entity:
-    name: Piper voice entity
-    description: >-
-      The TTS entity used when the engine is piper (e.g. tts.piper). For a softer
-      French voice, use fr_FR-siwis-medium in the Piper add-on.
+    name: "Piper voice entity"
+    description: "The TTS entity used when the engine is piper (e.g. tts.piper). For a softer French voice, use fr_FR-siwis-medium in the Piper add-on."
   voice_pitch:
-    name: Voice pitch-up (%)
-    description: >-
-      Shift the voice up for a cuter / younger, more playful timbre. 0 = off;
-      about 12–18 is a nice "mignonne" range; above 30 sounds chipmunk-y.
+    name: "Voice pitch-up (percent)"
+    description: "Shift the voice up for a cuter, younger, more playful timbre. 0 = off; around 12 to 18 is a nice 'mignonne' range; above 30 sounds chipmunk-y."
   wake_word:
-    name: Wake word
-    description: The trigger word for hands-free listening (default: nabi).
+    name: "Wake word"
+    description: "The trigger word for hands-free listening (default nabi)."
   auto_listen:
-    name: Passive listening (privacy)
-    description: >-
-      OFF by default. When on, Nabi listens continuously for the wake word and
-      its microphone streams. When off the mic never streams — push-to-talk
-      still works.
+    name: "Passive listening (privacy)"
+    description: "OFF by default. When on, Nabi listens continuously for the wake word and its microphone streams. When off the mic never streams — push-to-talk still works."
   connect_jingle:
-    name: Connect jingle
-    description: >-
-      Play this jingle once Nabi comes online (e.g. acquired). Empty = none. See
-      the jingle list at /api/jingle.
+    name: "Connect jingle"
+    description: "Play this jingle once Nabi comes online (e.g. acquired). Empty = none. See the jingle list at the jingle API."
   wake_chime:
-    name: Wake chime
-    description: >-
-      A short chime played right after the wake word, while the agent composes
-      its reply (e.g. start_record). Empty = none.
+    name: "Wake chime"
+    description: "A short chime played right after the wake word, while the agent composes its reply (e.g. start_record). Empty = none."
   personality:
-    name: Personality
-    description: >-
-      Let Nabi act on its own — random gentle ear/LED/nose moves, daytime only.
-      off = none (drive it yourself from HA); subtle / auto / lively = how often.
+    name: "Personality"
+    description: "Let Nabi act on its own — random gentle ear/LED/nose moves, daytime only. off = none (drive it yourself from Home Assistant); subtle / auto / lively = how often."
   voice_prompt:
-    name: Voice persona prompt
-    description: >-
-      The instruction prepended to what the agent hears — defines Nabi's
-      character and the [ears]/[led]/[nose] action tags. Keep replies short.
+    name: "Voice persona prompt"
+    description: "The instruction prepended to what the agent hears — defines Nabi's character and the action tags. Keep replies short."
