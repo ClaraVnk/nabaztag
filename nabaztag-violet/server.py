@@ -378,8 +378,9 @@ class XmppSession(threading.Thread):
             self.send("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
             return
 
-        if "urn:ietf:params:xml:ns:xmpp-bind" in f and "<iq" in f:
-            # resource bind
+        if "urn:ietf:params:xml:ns:xmpp-bind" in f and "<iq" in f and "<unbind" not in f:
+            # resource bind (note: <unbind> shares this namespace — exclude it so
+            # it falls through to the unbind handler and doesn't reset the resource)
             iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
             iq_id = iq_id.group(1) if iq_id else "1"
             res = re.search(r"<resource>\s*([^<]*?)\s*</resource>", f)
