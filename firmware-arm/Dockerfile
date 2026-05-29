@@ -10,6 +10,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       build-essential \
       g++-multilib \
       php-cli \
+      python3 \
       git \
       ca-certificates \
       make \
@@ -25,8 +26,28 @@ RUN git clone https://github.com/RedoXyde/nabgcc.git \
  && git clone https://github.com/RedoXyde/mtl_linux.git mtl/mtl_linux \
  && cd mtl/mtl_linux && git checkout "$MTL_LINUX_COMMIT"
 
-# Apply our custom patches (mounted at /patches at build time). The patches/
-# layout is read-only here; build.sh COPYs patches/ in.
+# Drop our crypto module + vendored TweetNaCl + the embedded public key.
+# .c files go under src/crypto/ (compiled in via the existing src/**/*.c
+# glob). Headers go under inc/ so the existing -Iinc/ resolves them from
+# any source file (vinterp.c lives in src/vm/ and needs to #include them).
+COPY upstream/tweetnacl/tweetnacl.c /build/nabgcc/src/crypto/tweetnacl.c
+COPY crypto/nab_sig.c               /build/nabgcc/src/crypto/nab_sig.c
+COPY upstream/tweetnacl/tweetnacl.h /build/nabgcc/inc/tweetnacl.h
+COPY crypto/nab_sig.h               /build/nabgcc/inc/nab_sig.h
+COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
+
+# Apply our source modifications (idempotent, prints what landed).
+COPY apply-mods.py /build/apply-mods.py
+# Quick sanity probe before the real patch run — confirms apply-mods.py is
+# the version we just shipped and the stdlib anchors are still present in
+# upstream. (Helps diagnose cache hits that mask stale patch logic.)
+RUN sha256sum /build/apply-mods.py /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp \
+ && grep -c verifySig /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp || true
+RUN python3 /build/apply-mods.py /build/nabgcc
+RUN grep -c verifySig /build/nabgcc/mtl/mtl_linux/src/vcomp/stdlib_core.cpp \
+ && grep -c OPverifySig /build/nabgcc/mtl/mtl_linux/inc/vm/vbc.h
+
+# Optional patches/ dir (for ad-hoc tweaks that don't belong in apply-mods.py).
 COPY patches/ /patches/
 RUN cd /build/nabgcc && \
     set -e; \
@@ -37,7 +58,7 @@ RUN cd /build/nabgcc && \
         git apply "$p"; \
       done; \
     else \
-      echo "no patches to apply"; \
+      echo "no .patch files to apply"; \
     fi
 
 # Build: bytecode bootloader → ELF → bin → .sim
@@ -45,6 +66,7 @@ RUN cd /build/nabgcc \
  && make mtl_boot \
  && make -j"$(nproc)" \
  && php utils/mkfirmware.php bin/Nab.bin bin/firmware0.0.0.13.sim \
+ && arm-none-eabi-size bin/Nab.elf \
  && ls -la bin/Nab.bin bin/firmware0.0.0.13.sim
 
 # Outputs the artifacts to a tar on stdout when run with no command.
