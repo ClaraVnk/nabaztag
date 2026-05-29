@@ -1131,6 +1131,118 @@ def api_server():
 
 
 # --------------------------------------------------------------------------- #
+# MQTT discovery — expose Nabi's controls as native Home Assistant entities.
+# --------------------------------------------------------------------------- #
+DISCOVERY_PREFIX = "homeassistant"
+MQTT_BASE = "nabaztag"
+_DEVICE = {"identifiers": ["nabaztag_nabi"], "name": "Nabaztag (Nabi)",
+           "manufacturer": "Violet", "model": "Nabaztag/tag"}
+
+
+def _mqtt_service_config():
+    """Broker connection info from the Supervisor (add-on declares `mqtt:need`)."""
+    token = _supervisor_token()
+    if not token:
+        return None
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://supervisor/services/mqtt",
+                                     headers={"Authorization": f"Bearer {token}"})
+        data = (json.loads(urllib.request.urlopen(req, timeout=10).read()).get("data") or {})
+        return data if data.get("host") else None
+    except Exception as exc:  # noqa
+        log.info("MQTT service not available (%s) — skipping HA entity discovery", exc)
+        return None
+
+
+def _bunny_any():
+    with BUNNIES_LOCK:
+        return next(iter(BUNNIES.values()), None)
+
+
+def _mqtt_handle(topic: str, payload: str):
+    b = _bunny_any()
+    if b is None:
+        return
+    t = topic[len(MQTT_BASE) + 1:]
+    if t == "light/belly/set":
+        d = json.loads(payload)
+        if d.get("state") == "OFF":
+            b.send_choreography(200, [(0, "led", (2, 0, 0, 0))])
+        else:
+            c = d.get("color") or {}
+            b.send_choreography(200, [(0, "led", (2, int(c.get("r", 255)),
+                                                  int(c.get("g", 255)), int(c.get("b", 255))))])
+    elif t.startswith("ear/"):
+        ear = 0 if t.split("/")[1] == "left" else 1
+        b.send_choreography(200, [(0, "motor", (ear, int(payload) * 18, 0))])
+    elif t == "nose/set":
+        b.send_violet_packet(ambient_packet({SVC_NOSE: {"off": 0, "blink": 1, "double": 2}.get(payload, 0)}))
+    elif t == "sleep/set":
+        b.send_violet_packet(frame_packet(PKT_SLEEP, bytes([1 if payload == "ON" else 0])))
+    elif t == "say/set" and payload.strip():
+        wav = synth_tts(payload)
+        b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+
+
+def start_mqtt():
+    cfg = _mqtt_service_config()
+    if not cfg:
+        return
+    try:
+        import paho.mqtt.client as mqtt
+    except Exception:  # noqa
+        log.warning("MQTT: paho-mqtt not installed — no HA entity discovery")
+        return
+    try:
+        cli = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="nabaztag-addon")
+    except Exception:  # noqa (paho 1.x)
+        cli = mqtt.Client(client_id="nabaztag-addon")
+    if cfg.get("username"):
+        cli.username_pw_set(cfg.get("username"), cfg.get("password"))
+    avail_topic = f"{MQTT_BASE}/availability"
+    cli.will_set(avail_topic, "offline", retain=True)
+
+    def discover():
+        avail = {"availability_topic": avail_topic}
+        def pub(typ, oid, conf):
+            cli.publish(f"{DISCOVERY_PREFIX}/{typ}/nabaztag/{oid}/config",
+                        json.dumps({**conf, "device": _DEVICE, **avail}), retain=True)
+        pub("light", "belly", {"name": "Belly", "unique_id": "nabi_belly", "schema": "json",
+            "color_mode": True, "supported_color_modes": ["rgb"],
+            "command_topic": f"{MQTT_BASE}/light/belly/set"})
+        for side in ("left", "right"):
+            pub("number", f"ear_{side}", {"name": f"Ear {side}", "unique_id": f"nabi_ear_{side}",
+                "min": 0, "max": 16, "step": 1, "icon": "mdi:rabbit",
+                "command_topic": f"{MQTT_BASE}/ear/{side}/set"})
+        pub("select", "nose", {"name": "Nose", "unique_id": "nabi_nose",
+            "options": ["off", "blink", "double"], "command_topic": f"{MQTT_BASE}/nose/set"})
+        pub("switch", "sleep", {"name": "Sleep", "unique_id": "nabi_sleep", "icon": "mdi:sleep",
+            "payload_on": "ON", "payload_off": "OFF", "command_topic": f"{MQTT_BASE}/sleep/set"})
+        pub("text", "say", {"name": "Say", "unique_id": "nabi_say", "icon": "mdi:bullhorn",
+            "command_topic": f"{MQTT_BASE}/say/set"})
+        cli.publish(avail_topic, "online", retain=True)
+
+    def on_connect(client, userdata, flags, reason_code, properties=None):
+        log.info("MQTT connected (%s) — publishing Nabi entity discovery", reason_code)
+        for sub in ("light/belly", "ear/left", "ear/right", "nose", "sleep", "say"):
+            client.subscribe(f"{MQTT_BASE}/{sub}/set")
+        discover()
+
+    def on_message(client, userdata, msg):
+        try:
+            _mqtt_handle(msg.topic, msg.payload.decode("utf-8", "replace"))
+        except Exception as exc:  # noqa
+            log.warning("MQTT command error on %s: %s", msg.topic, exc)
+
+    cli.on_connect = on_connect
+    cli.on_message = on_message
+    log.info("MQTT: connecting to %s:%s for HA entity discovery", cfg["host"], cfg.get("port", 1883))
+    cli.connect_async(cfg["host"], int(cfg.get("port", 1883)), 60)
+    cli.loop_forever(retry_first_connection=True)
+
+
+# --------------------------------------------------------------------------- #
 def main():
     log.info("nabaztag-violet starting | server_address=%s http=%d xmpp=%d api=%d",
              SERVER_ADDRESS, HTTP_PORT, XMPP_PORT, API_PORT)
@@ -1138,6 +1250,7 @@ def main():
         log.warning("bootcode file not found at %s — /vl/bc.jsp will 500", BOOTCODE_FILE)
     threading.Thread(target=xmpp_server, daemon=True).start()
     threading.Thread(target=api_server, daemon=True).start()
+    threading.Thread(target=start_mqtt, daemon=True).start()
     http_boot_server()  # blocks
 
 
