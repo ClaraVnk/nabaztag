@@ -3,3 +3,8 @@ bin/
 *.elf
 *.bin
 *.map
+__pycache__/
+# Private signing key never leaves the dev machine. Only the public header
+# (keys/signing_pubkey.h) is committed.
+signing/*.key
+signing/*_priv*
