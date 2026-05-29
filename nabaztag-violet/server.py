@@ -382,6 +382,21 @@ def _audio_ctype(data: bytes) -> str:
     return "audio/wav"
 
 
+def _audio_duration_s(data: bytes) -> float:
+    """Best-effort playback length in seconds, to time the mic re-arm so it
+    doesn't cut a reply short."""
+    try:
+        if data[:4] == b"RIFF":
+            import io, wave
+            w = wave.open(io.BytesIO(data))
+            d = w.getnframes() / float(w.getframerate() or 22050)
+            w.close()
+            return d
+    except Exception:  # noqa
+        pass
+    return max(2.0, len(data) / 8000.0)  # rough estimate for MP3
+
+
 def _supervisor_token() -> str:
     """The Supervisor API token. Under s6-overlay our service doesn't inherit it
     in the env, so fall back to the file s6 stores the container env in."""
@@ -412,12 +427,12 @@ def synth_via_ha(text: str) -> bytes:
         req = urllib.request.Request(
             "http://supervisor/core/api/tts_get_url", data=body, method="POST",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-        path = json.loads(urllib.request.urlopen(req, timeout=30).read()).get("path")
+        path = json.loads(urllib.request.urlopen(req, timeout=10).read()).get("path")
         if not path:
             return b""
         areq = urllib.request.Request("http://supervisor/core" + path,
                                       headers={"Authorization": f"Bearer {token}"})
-        return urllib.request.urlopen(areq, timeout=30).read()
+        return urllib.request.urlopen(areq, timeout=10).read()
     except Exception as exc:  # noqa
         log.warning("Piper/HA TTS failed: %s", exc)
         return b""
@@ -1309,13 +1324,17 @@ def wake_loop():
         reply = conversation_ask((VOICE_PROMPT or "") + cmd) if (CONVERSATION_AGENT and cmd) else (cmd or "Oui ?")
         reply = run_action_tags(b, reply or "Oui ?")
         log.info("wake: speaking %r", reply)
+        dur = 4.0
         if reply.strip():
             try:
                 wav = synth_tts(reply)
+                dur = _audio_duration_s(wav)
                 b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
             except Exception as exc:  # noqa
                 log.warning("wake: reply failed %s", exc)
-        WAKE["cooldown"] = time.time() + 12  # ~reply length + margin, then re-arm
+        # Re-arm only after the reply has surely finished (it plays AFTER the
+        # rabbit fetches it + does the streaming-resource dance — add margin).
+        WAKE["cooldown"] = time.time() + dur + 6
 
 
 # --------------------------------------------------------------------------- #
