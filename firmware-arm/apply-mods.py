@@ -311,28 +311,45 @@ def modernize_pages(root: Path) -> None:
 
 
 def patch_makefile(root: Path) -> None:
-    """Add -ffunction-sections -fdata-sections + -Wl,--gc-sections so the linker
-    strips the TweetNaCl functions we don't use (only crypto_sign_open + its
-    deps are kept)."""
+    """Two-pronged size optimization in the Makefile:
+
+    1. --gc-sections + -ffunction-sections + -fdata-sections so the linker
+       can prune unused symbols (most of TweetNaCl, dead newlib helpers).
+    2. Strip the upstream DEBUG_VM / DEBUG_AUDIO / DEBUG_MAIN defines.
+       These wire DBG_VM(...) macros to sprintf+UART, which drags in
+       _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
+       glue. Production firmware doesn't need them; the serial console is
+       not wired up on Kevin's rabbit anyway.
+    """
     p = root / "Makefile"
     s = p.read_text()
-    if "gc-sections" in s:
+    if "gc-sections" not in s:
+        s = s.replace(
+            "CFLAGS += --specs=nosys.specs\n",
+            "CFLAGS += --specs=nosys.specs\nCFLAGS += -ffunction-sections -fdata-sections\n",
+            1,
+        )
+        s = s.replace(
+            "LDFLAGS += -Wl,-Map",
+            "LDFLAGS += -Wl,--gc-sections\nLDFLAGS += -Wl,-Map",
+            1,
+        )
+        print(f"[ok]   {p}: added -ffunction-sections / -fdata-sections / --gc-sections")
+    else:
         print(f"[skip] {p}: gc-sections already present")
-        return
-    new = s.replace(
-        "CFLAGS += --specs=nosys.specs\n",
-        "CFLAGS += --specs=nosys.specs\nCFLAGS += -ffunction-sections -fdata-sections\n",
-        1,
-    )
-    new = new.replace(
-        "LDFLAGS += -Wl,-Map",
-        "LDFLAGS += -Wl,--gc-sections\nLDFLAGS += -Wl,-Map",
-        1,
-    )
-    if new == s:
-        sys.exit(f"FAIL {p}: could not splice gc-sections flags")
-    p.write_text(new)
-    print(f"[ok]   {p}: added -ffunction-sections / -fdata-sections / --gc-sections")
+
+    # Comment out the DEBUG defines (idempotent — leaves a `# disabled by
+    # apply-mods` marker so re-runs are no-ops).
+    disabled = False
+    for flag in ("-DDEBUG_VM", "-DDEBUG_AUDIO", "-DDEBUG_MAIN"):
+        live = f"OPTIONS += {flag}\n"
+        dead = f"#OPTIONS += {flag}  # disabled by apply-mods\n"
+        if live in s:
+            s = s.replace(live, dead, 1)
+            disabled = True
+    if disabled:
+        print(f"[ok]   {p}: disabled DEBUG_VM/AUDIO/MAIN (drops the printf family)")
+    p.write_text(s)
 
 
 def patch_bootloader(root: Path) -> None:
