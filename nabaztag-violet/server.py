@@ -69,6 +69,10 @@ _DEFAULT_VOICE_PROMPT = (
 VOICE_PROMPT = os.environ.get("VOICE_PROMPT")
 if VOICE_PROMPT is None:
     VOICE_PROMPT = _OPTS.get("voice_prompt", _DEFAULT_VOICE_PROMPT)
+# TTS engine: "espeak" (bundled, robotic) or "piper" (nicer; via the Home
+# Assistant Piper add-on, fetched through the Supervisor proxy).
+TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak").lower()
+TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.piper"
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-base.bin")
 
@@ -352,10 +356,45 @@ def _clean_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _audio_ctype(data: bytes) -> str:
+    if data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
+        return "audio/mpeg"
+    return "audio/wav"
+
+
+def synth_via_ha(text: str) -> bytes:
+    """Synthesize via a Home Assistant TTS engine (e.g. the Piper add-on) using
+    the Supervisor proxy; returns the audio bytes (MP3). "" on failure."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return b""
+    import urllib.request
+    try:
+        body = json.dumps({"engine_id": TTS_ENTITY, "message": text}).encode()
+        req = urllib.request.Request(
+            "http://supervisor/core/api/tts_get_url", data=body, method="POST",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        path = json.loads(urllib.request.urlopen(req, timeout=30).read()).get("path")
+        if not path:
+            return b""
+        areq = urllib.request.Request("http://supervisor/core" + path,
+                                      headers={"Authorization": f"Bearer {token}"})
+        return urllib.request.urlopen(areq, timeout=30).read()
+    except Exception as exc:  # noqa
+        log.warning("Piper/HA TTS failed: %s", exc)
+        return b""
+
+
 def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
-    """Local, self-contained TTS via espeak-ng → 22 kHz/16-bit mono WAV (the
-    format the rabbit's audio path accepts). No cloud, no external service."""
+    """Make speech audio for the rabbit. Uses the Home Assistant Piper add-on when
+    tts_engine=piper (nicer voice), otherwise the bundled espeak-ng (always works,
+    fully local). Returns MP3 (Piper) or WAV (espeak); the rabbit decodes both."""
     text = _clean_for_tts(text)
+    if TTS_ENGINE == "piper":
+        audio = synth_via_ha(text)
+        if audio:
+            return audio
+        log.warning("Piper TTS returned nothing — falling back to espeak")
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         path = tf.name
     try:
@@ -503,7 +542,7 @@ def handle_voice(pcm_wav: bytes):
     try:
         if reply.strip():
             wav = synth_tts(reply)
-            bunny.send_program(f"ST {resource_url(store_resource(wav, 'audio/wav'))}")
+            bunny.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
     except Exception as exc:  # noqa
         log.warning("voice: reply playback failed: %s", exc)
 
@@ -995,7 +1034,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "give ?text="})
                 wav = synth_tts(text, _one("voice", "fr"),
                                 int(_one("speed", "160")), int(_one("pitch", "50")))
-                url = resource_url(store_resource(wav, "audio/wav"))
+                url = resource_url(store_resource(wav, _audio_ctype(wav)))
                 prog = f"ST {url}"
                 if _one("wait") in ("1", "true", "yes"):
                     prog += "\nMW"
