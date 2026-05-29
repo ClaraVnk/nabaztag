@@ -362,10 +362,28 @@ def _audio_ctype(data: bytes) -> str:
     return "audio/wav"
 
 
+def _supervisor_token() -> str:
+    """The Supervisor API token. Under s6-overlay our service doesn't inherit it
+    in the env, so fall back to the file s6 stores the container env in."""
+    tok = os.environ.get("SUPERVISOR_TOKEN")
+    if tok:
+        return tok
+    for p in ("/run/s6/container_environment/SUPERVISOR_TOKEN",
+              "/var/run/s6/container_environment/SUPERVISOR_TOKEN"):
+        try:
+            with open(p) as fh:
+                tok = fh.read().strip()
+                if tok:
+                    return tok
+        except OSError:
+            pass
+    return ""
+
+
 def synth_via_ha(text: str) -> bytes:
     """Synthesize via a Home Assistant TTS engine (e.g. the Piper add-on) using
     the Supervisor proxy; returns the audio bytes (MP3). "" on failure."""
-    token = os.environ.get("SUPERVISOR_TOKEN")
+    token = _supervisor_token()
     if not token:
         return b""
     import urllib.request
@@ -467,7 +485,7 @@ def stt_transcribe(pcm_wav: bytes) -> str:
 def conversation_ask(text: str) -> str:
     """Send text to a Home Assistant conversation agent (e.g. the Anthropic/Claude
     integration) via the Supervisor proxy; return the agent's reply text."""
-    token = os.environ.get("SUPERVISOR_TOKEN")
+    token = _supervisor_token()
     if not (token and CONVERSATION_AGENT):
         return ""
     import urllib.request
