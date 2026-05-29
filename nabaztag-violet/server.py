@@ -1501,6 +1501,76 @@ class ApiHandler(BaseHTTPRequestHandler):
             if length:
                 body = self.rfile.read(length)
 
+        if path == "/api/ota":
+            # Stage a SIGNED .sim and (optionally) tell the rabbit to fetch
+            # + flash it. Bunny is only required when ?trigger=1.
+            #
+            # Input:
+            #   - multipart upload (Content-Type: multipart/form-data; the
+            #     field name is "sim"), OR
+            #   - ?path=/server-side/path/to.signed.sim (file already on host).
+            #
+            # Query:
+            #   ?name=basename.sim   override staged filename
+            #   ?trigger=1           push 'FW <url>' to the rabbit (requires
+            #                        a connected bunny + custom firmware that
+            #                        understands the FW command).
+            ctype = self.headers.get("Content-Type", "")
+
+            def _one(name, default=None):
+                return q.get(name, [default])[0]
+
+            blob = b""
+            if "multipart/form-data" in ctype and body:
+                # Crude multipart parser — we only support a single field.
+                try:
+                    boundary = ctype.split("boundary=", 1)[1].split(";", 1)[0].strip()
+                    sep = ("--" + boundary).encode()
+                    for part in body.split(sep):
+                        if b'name="sim"' not in part:
+                            continue
+                        h_end = part.find(b"\r\n\r\n")
+                        if h_end < 0:
+                            continue
+                        blob = part[h_end + 4 :].rstrip(b"\r\n-")
+                        break
+                except (IndexError, ValueError):
+                    blob = b""
+            else:
+                p_in = _one("path")
+                if p_in and os.path.isfile(p_in):
+                    with open(p_in, "rb") as fh:
+                        blob = fh.read()
+            if not blob:
+                return self._json(400, {"error": "no .sim payload (use multipart 'sim' field or ?path=)"})
+            if b"-violet-" not in blob or b"-sig-" not in blob:
+                return self._json(400, {"error": "not a signed .sim (missing -violet- / -sig- markers)"})
+            name = os.path.basename(_one("name", "firmware.signed.sim"))
+            os.makedirs(OTA_DIR, exist_ok=True)
+            target = os.path.join(OTA_DIR, name)
+            with open(target, "wb") as fh:
+                fh.write(blob)
+            staged_url = f"http://{SERVER_ADDRESS}/ota/{name}"
+            log.info("OTA: staged %s (%d bytes) → %s", name, len(blob), staged_url)
+            triggered = False
+            warn = None
+            if _one("trigger") in ("1", "true", "yes"):
+                b = self._bunny(q)
+                if b is None:
+                    warn = "trigger requested but no connected bunny — staged only"
+                else:
+                    b.send_program(f"FW {staged_url}")
+                    triggered = True
+                    log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
+            return self._json(200, {
+                "ok": True,
+                "staged": target,
+                "url": staged_url,
+                "bytes": len(blob),
+                "triggered": triggered,
+                **({"warn": warn} if warn else {}),
+            })
+
         b = self._bunny(q)
         if b is None:
             return self._json(404, {"error": "no connected bunny (give ?mac=)"})
@@ -1557,65 +1627,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if _one("wait") in ("1", "true", "yes"):
                     prog += "\nMW"
                 b.send_program(prog)
-            elif path == "/api/ota":
-                # Stage a SIGNED .sim and (optionally) tell the rabbit to fetch
-                # + flash it.
-                #
-                # Two input modes:
-                #   - multipart upload (Content-Type: multipart/form-data; the
-                #     field name is "sim")
-                #   - ?path=/server-side/path/to.signed.sim (uses the file
-                #     already on the HAOS host)
-                #
-                # Query: ?name=basename.sim chooses the staged filename
-                #        (default "firmware.signed.sim"). ?trigger=1 then
-                #        pushes a FW <url> program command to the connected
-                #        rabbit so it auto-flashes. The rabbit verifies the
-                #        Ed25519 signature with the embedded pubkey before
-                #        flashing — so an unsigned/tampered .sim is rejected.
-                ctype = self.headers.get("Content-Type", "")
-                blob = b""
-                if "multipart/form-data" in ctype and body:
-                    # Crude multipart parser — we only support a single field.
-                    boundary = ctype.split("boundary=", 1)[1].split(";", 1)[0].strip()
-                    sep = ("--" + boundary).encode()
-                    parts = body.split(sep)
-                    for part in parts:
-                        if b'name="sim"' not in part:
-                            continue
-                        h_end = part.find(b"\r\n\r\n")
-                        if h_end < 0:
-                            continue
-                        blob = part[h_end + 4 :].rstrip(b"\r\n-")
-                        break
-                else:
-                    p_in = _one("path")
-                    if p_in and os.path.isfile(p_in):
-                        with open(p_in, "rb") as fh:
-                            blob = fh.read()
-                if not blob:
-                    return self._json(400, {"error": "no .sim payload (use multipart 'sim' field or ?path=)"})
-                if b"-violet-" not in blob or b"-sig-" not in blob:
-                    return self._json(400, {"error": "not a signed .sim (missing -violet- / -sig- markers)"})
-                name = os.path.basename(_one("name", "firmware.signed.sim"))
-                os.makedirs(OTA_DIR, exist_ok=True)
-                target = os.path.join(OTA_DIR, name)
-                with open(target, "wb") as fh:
-                    fh.write(blob)
-                staged_url = f"http://{SERVER_ADDRESS}/ota/{name}"
-                log.info("OTA: staged %s (%d bytes) → %s", name, len(blob), staged_url)
-                triggered = False
-                if _one("trigger") in ("1", "true", "yes"):
-                    b.send_program(f"FW {staged_url}")
-                    triggered = True
-                    log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
-                return self._json(200, {
-                    "ok": True,
-                    "staged": target,
-                    "url": staged_url,
-                    "bytes": len(blob),
-                    "triggered": triggered,
-                })
             elif path == "/api/volume":
                 # ?level=0..100 (100 = loudest). Mapped to the VS1003 inverted
                 # attenuation (0 = loud .. higher = quiet) and sent as the bytecode
