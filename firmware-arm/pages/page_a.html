@@ -1,0 +1,61 @@
+<!doctype html><html lang=en><head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Nabaztag setup</title>
+<style>
+:root{color-scheme:dark;--bg:#0e0e12;--fg:#eaeaef;--mut:#85858f;--acc:#b86bff;--card:#181820;--brd:#2a2a35;--in:#08080b}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;max-width:560px;margin-inline:auto}
+h1{font-size:22px;margin:0 0 2px;font-weight:600;letter-spacing:.4px}
+h1+p{margin:0 0 20px;color:var(--mut);font-size:13px}
+fieldset{border:1px solid var(--brd);border-radius:8px;padding:14px 14px 4px;margin:0 0 10px;background:var(--card)}
+legend{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;padding:0 6px}
+label{display:block;margin:0 0 10px}
+label small{display:block;color:var(--mut);font-size:11px;margin:0 0 3px}
+input,select{width:100%;padding:7px 9px;background:var(--in);border:1px solid var(--brd);border-radius:5px;color:var(--fg);font:13px/1.4 ui-monospace,SFMono-Regular,monospace}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+.r{display:flex;gap:14px;flex-wrap:wrap}
+.r label{display:flex;align-items:center;gap:5px;margin:0;font-size:13px}
+.r input{width:auto;margin:0}
+.x{display:flex;gap:6px}
+.x button{flex:0 0 auto;background:transparent;border:1px solid var(--brd);color:var(--mut);padding:7px 10px;border-radius:5px;cursor:pointer;font-size:12px}
+.cta{width:100%;padding:11px;background:var(--acc);color:#fff;border:0;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin:6px 0 0}
+details{margin:14px 0}
+summary{cursor:pointer;color:var(--mut);font-size:13px;padding:6px 0}
+footer{text-align:center;margin-top:24px;color:var(--mut);font-size:12px}
+footer a{color:var(--mut)}
+</style></head><body>
+<h1>Nabaztag</h1><p>Setup mode — pair the rabbit with your network.</p>
+<form method=GET action=b.htm>
+<fieldset><legend>Wi-Fi</legend>
+<label><small>From scan</small><select name=w><option value='-'>— pick a network —</option><SCAN></select></label>
+<label><small>or type the SSID</small><input name=k type=text value="<SSID>"></label>
+<label><small>Encryption</small>
+<div class=r>
+<label><input type=radio name=m <ENC-NONE> value="<ENC-VNONE>">None</label>
+<label><input type=radio name=m <ENC-WEP> value="<ENC-VWEP>">WEP</label>
+<label><input type=radio name=m <ENC-WPA> value="<ENC-VWPA>">WPA</label>
+<label><input type=radio name=m <ENC-WPA2> value="<ENC-VWPA2>">WPA2</label>
+</div></label>
+<label><small>Password</small>
+<div class=x><input id=n name=n type=password value="<KEY>">
+<button type=button onclick="var e=document.getElementById('n');e.type=e.type=='text'?'password':'text'">show</button></div></label>
+</fieldset>
+<details><summary>Advanced — proxy, static IP, WEP auth</summary>
+<fieldset><legend>Network</legend>
+<label><small>WEP auth</small><select name=l><AUTH></select></label>
+<label><small>DHCP</small><select name=f><DHCP></select></label>
+<label><small>IP</small><input name=g type=text value="<NETIP>"></label>
+<label><small>Mask</small><input name=h type=text value="<NETMSK>"></label>
+<label><small>Gateway</small><input name=i type=text value="<NETGW>"></label>
+<label><small>DNS</small><input name=j type=text value="<NETDNS>"></label>
+</fieldset>
+<fieldset><legend>Proxy</legend>
+<label><small>HTTP proxy</small><select name=c><PROXY></select></label>
+<label><small>Address</small><input name=d type=text value="<PROXYIP>"></label>
+<label><small>Port</small><input name=e type=text value="<PROXYPORT>"></label>
+</fieldset></details>
+<button type=submit name=z value=1 class=cta>Connect rabbit</button>
+</form>
+<footer>firmware <FIRMWARE> · <a href=u.htm>upgrade</a> · by <a href="https://cyberloutre.fr">Loutre</a></footer>
+</body></html>

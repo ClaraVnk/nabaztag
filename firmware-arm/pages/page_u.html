@@ -1,0 +1,30 @@
+<!doctype html><html lang=en><head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Nabaztag firmware upgrade</title>
+<style>
+:root{color-scheme:dark;--bg:#0e0e12;--fg:#eaeaef;--mut:#85858f;--acc:#b86bff;--card:#181820;--brd:#2a2a35;--in:#08080b}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:520px;margin-inline:auto}
+h1{font-size:22px;margin:0 0 2px;font-weight:600}
+h1+p{margin:0 0 20px;color:var(--mut);font-size:13px}
+fieldset{border:1px solid var(--brd);border-radius:8px;padding:16px;margin:0;background:var(--card)}
+legend{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;padding:0 6px}
+input[type=file]{width:100%;padding:10px;background:var(--in);border:1px solid var(--brd);border-radius:5px;color:var(--fg);font-size:13px;margin:8px 0 14px}
+input[type=file]::file-selector-button{background:var(--brd);color:var(--fg);border:0;padding:6px 12px;border-radius:4px;margin-right:10px;cursor:pointer}
+.cta{width:100%;padding:11px;background:var(--acc);color:#fff;border:0;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+.warn{background:#3a2300;border:1px solid #6b4400;color:#ffc466;border-radius:6px;padding:10px 12px;font-size:12px;margin:0 0 14px;line-height:1.5}
+footer{text-align:center;margin-top:20px;color:var(--mut);font-size:12px}
+footer a{color:var(--mut)}
+</style></head><body>
+<h1>Firmware upgrade</h1>
+<p>Upload a signed .sim file. Unsigned or tampered images will be rejected.</p>
+<form method=POST action=c enctype=multipart/form-data>
+<fieldset><legend>Image</legend>
+<div class=warn>Do not power off the rabbit during the upload. The flash takes ~30 s once accepted.</div>
+<input type=file name=mtenFWUpload>
+<button type=submit name=Upgrade value=1 class=cta>Upload and flash</button>
+</fieldset>
+</form>
+<footer><a href=a.htm>back to setup</a> · by <a href="https://cyberloutre.fr">Loutre</a></footer>
+</body></html>
