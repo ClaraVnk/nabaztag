@@ -772,27 +772,35 @@ def run_action_tags(bunny, text: str) -> str:
 
 def _speak(b, text: str) -> float:
     """Speak text on the rabbit, turning [pause] / [pause N] markers into REAL
-    silences (N ms, default 600) for theatrical delivery — each segment is
-    synthesized and played with MW (wait-for-sound) then WT (wait) between them.
-    Returns the estimated total duration so callers can size the wake cooldown."""
+    silences (N ms, default 600) for theatrical delivery. A single program with
+    several `ST` doesn't work (the first audio's resource-switch drops the rest),
+    so we orchestrate from the server: pre-synthesize every segment, then play
+    each `ST` on its own and sleep its duration (+ the pauses) between them.
+    Blocks for the whole utterance; callers run it in their own thread. Returns
+    the total duration (for the wake cooldown)."""
+    import time as _t
     pieces = re.split(r"\[pause(?:\s+(\d+))?\]", text)
-    program = []
-    total = 0.0
+    steps = []  # ("say", wav, dur) | ("pause", seconds)
     for idx, piece in enumerate(pieces):
-        if idx % 2 == 0:                       # a speech segment
+        if idx % 2 == 0:
             seg = (piece or "").strip()
             if seg:
                 wav = synth_tts(seg)
                 if wav:
-                    program.append(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
-                    program.append("MW")       # wait for it to finish before the pause
-                    total += _audio_duration_s(wav)
-        else:                                   # a [pause] marker
-            ms = max(100, min(int(piece) if piece else 600, 5000))
-            program.append(f"WT {ms}")
-            total += ms / 1000.0
-    if program:
-        b.send_program("\n".join(program))
+                    steps.append(("say", wav, _audio_duration_s(wav)))
+        else:
+            steps.append(("pause", max(100, min(int(piece) if piece else 600, 5000)) / 1000.0))
+    total = 0.0
+    for i, st in enumerate(steps):
+        if st[0] == "say":
+            b.send_program(f"ST {resource_url(store_resource(st[1], _audio_ctype(st[1])))}")
+            # don't wait after the very last segment (caller's cooldown covers it)
+            if i < len(steps) - 1:
+                _t.sleep(st[2] + 0.3)
+            total += st[2] + 0.3
+        else:
+            _t.sleep(st[1])
+            total += st[1]
     return total
 
 
@@ -1411,8 +1419,9 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if not text:
                     return self._json(400, {"error": "give ?text="})
                 if "[pause" in text:
-                    # honor [pause]/[pause N] markers as real silences
-                    _speak(b, text)
+                    # honor [pause]/[pause N] markers as real silences (threaded:
+                    # _speak blocks for the whole phrase)
+                    threading.Thread(target=_speak, args=(b, text), daemon=True).start()
                 else:
                     wav = synth_tts(text, _one("voice", "fr"),
                                     int(_one("speed", "160")), int(_one("pitch", "50")))
