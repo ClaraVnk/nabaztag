@@ -88,8 +88,14 @@ WAKE_CHIME = (os.environ.get("WAKE_CHIME") or _OPTS.get("wake_chime") or "").str
 # breathes and you wire your own behaviours in Home Assistant (custom). The two
 # are mutually exclusive — pick one so they don't both move the ears.
 PERSONALITY = (os.environ.get("PERSONALITY") or _OPTS.get("personality") or "off").strip().lower()
-PERSONALITY_MIN_S = int(os.environ.get("PERSONALITY_MIN_S") or _OPTS.get("personality_min_s") or 360)
-PERSONALITY_MAX_S = int(os.environ.get("PERSONALITY_MAX_S") or _OPTS.get("personality_max_s") or 1500)
+# Intensity → how often Nabi acts on its own (random seconds in range). off =
+# none (you drive it from HA). subtle ≈ a few times/hour, auto ≈ hourly-ish,
+# lively ≈ every few minutes.
+_PLEVELS = {"subtle": (900, 2400), "auto": (360, 1500), "lively": (180, 600)}
+PERSONALITY_ACTIVE = PERSONALITY in _PLEVELS
+_pmin, _pmax = _PLEVELS.get(PERSONALITY, (360, 1500))
+PERSONALITY_MIN_S = int(os.environ.get("PERSONALITY_MIN_S") or _OPTS.get("personality_min_s") or _pmin)
+PERSONALITY_MAX_S = int(os.environ.get("PERSONALITY_MAX_S") or _OPTS.get("personality_max_s") or _pmax)
 # Optional shared secret for the control API. Empty = open (default; fine on a
 # trusted LAN behind Home Assistant). If set, every /api/ request must present it
 # as the X-API-Token header or a ?token= query param — the minimal guard to have
@@ -1670,12 +1676,17 @@ def _personality_action(b):
     try:
         pick = random.random()
         if pick < 0.45:
-            l = random.randint(3, 13); r = random.randint(3, 13); d = random.randint(0, 1)
-            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], l * 18, d)),
-                                      (0, "motor", (EAR_NAMES["right"], r * 18, d ^ 1))])
-            _t.sleep(1.2)
-            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], 8 * 18, d ^ 1)),
-                                      (0, "motor", (EAR_NAMES["right"], 8 * 18, d))])
+            # An AMPLE, clearly visible wiggle: opposite extremes, swap, then
+            # settle to neutral (8). Small random moves were invisible.
+            p, q = random.choice([(2, 14), (14, 2), (1, 12), (15, 4), (4, 15)])
+            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], p * 18, 0)),
+                                      (0, "motor", (EAR_NAMES["right"], q * 18, 1))])
+            _t.sleep(0.9)
+            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], q * 18, 1)),
+                                      (0, "motor", (EAR_NAMES["right"], p * 18, 0))])
+            _t.sleep(0.9)
+            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], 8 * 18, 0)),
+                                      (0, "motor", (EAR_NAMES["right"], 8 * 18, 1))])
         elif pick < 0.80:
             rgb = random.choice([(255, 120, 0), (0, 160, 255), (0, 200, 90),
                                  (220, 0, 150), (255, 210, 0), (150, 0, 255)])
@@ -1718,7 +1729,7 @@ def main():
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=udp_mic_server, daemon=True).start()
     threading.Thread(target=wake_loop, daemon=True).start()
-    if PERSONALITY == "auto":
+    if PERSONALITY_ACTIVE:
         threading.Thread(target=personality_loop, daemon=True).start()
     http_boot_server()  # blocks
 
