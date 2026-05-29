@@ -83,8 +83,8 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 ├── nabaztag-server/         # OpenJabNab add-on (superseded — kept for reference)
 │   └── …                    #    its HTTP listener is non-functional in the upstream image
 ├── home-assistant/
-│   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + automations)
-│   └── ambient-mqtt.yaml    # ambient automations via the native MQTT entities (v0.5.1+)
+│   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
+│   └── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
 ├── README.md
 └── LICENSE
 ```

@@ -1,0 +1,133 @@
+# Nabaztag (Nabi) — ambient automations (REST)
+# ---------------------------------------------------------------------------
+# Drives the rabbit purely through the add-on's HTTP control API via the
+# rest_commands defined in home-assistant/nabaztag.yaml (no MQTT broker).
+# Install both files in /config/packages/ and enable packages once in
+# configuration.yaml:
+#     homeassistant:
+#       packages: !include_dir_named packages
+# then Developer Tools → YAML → "Reload all YAML".
+#
+# secrets.yaml needs:
+#   nab_api: "<HAOS_IP>:8099"
+#   nab_mac: "<rabbit-mac>"     # lowercase, no colons
+#
+# Replace the example home-state entities below (look for the  # <-- your ...).
+# ---------------------------------------------------------------------------
+
+script:
+  # Belly = colour of the day. Example: France RTE Tempo (blue/white/red day).
+  nabaztag_belly_tempo:
+    alias: "Nabaztag - belly = colour of the day"
+    variables:
+      rgb: >-
+        {{ {'Bleu': [0, 90, 255], 'Blanc': [255, 255, 255], 'Rouge': [255, 0, 0]}.get(states('sensor.rte_tempo_couleur_actuelle'), [60, 60, 60]) }}
+    sequence:
+      - service: rest_command.nabaztag_led
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          led: middle
+          r: "{{ rgb[0] }}"
+          g: "{{ rgb[1] }}"
+          b: "{{ rgb[2] }}"
+
+  # Quick two-step ear wiggle, returns to a neutral resting position (8).
+  nabaztag_ears_wiggle:
+    alias: "Nabaztag - ear wiggle"
+    sequence:
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 2, right: 13}
+      - delay: {milliseconds: 700}
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 13, right: 2}
+      - delay: {milliseconds: 700}
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
+
+automation:
+  # Belly follows the colour of the day.
+  - id: nabi_belly_tempo
+    alias: "Nabaztag - belly follows the colour of the day"
+    trigger:
+      - platform: state
+        entity_id: sensor.rte_tempo_couleur_actuelle   # <-- your colour source
+      - platform: homeassistant
+        event: start
+    action:
+      - service: script.nabaztag_belly_tempo
+    mode: single
+
+  # Night: doze off, belly dark.
+  - id: nabi_sleep_night
+    alias: "Nabaztag - sleep at night (23:00)"
+    trigger:
+      - platform: time
+        at: "23:00:00"
+    action:
+      - service: rest_command.nabaztag_sleep
+        data: {api: !secret nab_api, mac: !secret nab_mac, on: 1}
+      - service: rest_command.nabaztag_led
+        data: {api: !secret nab_api, mac: !secret nab_mac, led: middle, r: 0, g: 0, b: 0}
+    mode: single
+
+  # Morning: wake, belly back on, hello wiggle.
+  - id: nabi_wake_morning
+    alias: "Nabaztag - wake (07:00)"
+    trigger:
+      - platform: time
+        at: "07:00:00"
+    action:
+      - service: rest_command.nabaztag_sleep
+        data: {api: !secret nab_api, mac: !secret nab_mac, on: 0}
+      - delay: {seconds: 2}
+      - service: script.nabaztag_belly_tempo
+      - service: script.nabaztag_ears_wiggle
+    mode: single
+
+  # Ears perk up when someone gets home.
+  - id: nabi_arrival
+    alias: "Nabaztag - ears on arrival"
+    trigger:
+      - platform: state
+        entity_id: [person.member_one, person.member_two]   # <-- your people
+        from: not_home
+        to: home
+    action:
+      - service: script.nabaztag_ears_wiggle
+    mode: single
+
+  # Ears wiggle when an appliance finishes (guard against cloud-sensor bounce).
+  - id: nabi_appliance_done
+    alias: "Nabaztag - ears when an appliance finishes"
+    trigger:
+      - platform: state
+        entity_id:
+          - sensor.dishwasher_current_status     # <-- your appliances
+          - sensor.washer_current_status
+        to: end
+    condition:
+      - condition: template
+        value_template: "{{ trigger.from_state.state not in ['unavailable', 'unknown', ''] }}"
+    action:
+      - service: script.nabaztag_ears_wiggle
+    mode: single
+
+  # Nose double-blinks + ears up when the intercom / doorbell rings.
+  - id: nabi_intercom
+    alias: "Nabaztag - nose blinks at the intercom"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.intercom    # <-- your doorbell / intercom
+        to: "on"
+    action:
+      - service: rest_command.nabaztag_nose
+        data: {api: !secret nab_api, mac: !secret nab_mac, v: 2}
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 2, right: 2}
+      - delay: {seconds: 5}
+      - service: rest_command.nabaztag_nose
+        data: {api: !secret nab_api, mac: !secret nab_mac, v: 0}
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
+    mode: single
