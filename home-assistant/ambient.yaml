@@ -45,6 +45,16 @@ script:
       - service: rest_command.nabaztag_ears
         data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
 
+  # A tiny, gentle idle twitch (smaller than the wiggle) — a "sign of life".
+  nabaztag_idle_twitch:
+    alias: "Nabaztag - subtle idle ear twitch"
+    sequence:
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 6, right: 10}
+      - delay: {milliseconds: 500}
+      - service: rest_command.nabaztag_ears
+        data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
+
 automation:
   # Belly follows the colour of the day.
   - id: nabi_belly_tempo
@@ -130,4 +140,22 @@ automation:
         data: {api: !secret nab_api, mac: !secret nab_mac, v: 0}
       - service: rest_command.nabaztag_ears
         data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
+    mode: single
+
+  # Signs of life: a subtle ear twitch now and then during the day, so Nabi
+  # feels alive even when nothing's happening. Randomised (~1 in 3 every 20 min,
+  # i.e. roughly once an hour) so it's not clockwork; daytime only.
+  - id: nabi_idle_life
+    alias: "Nabaztag - signs of life (idle twitch)"
+    trigger:
+      - platform: time_pattern
+        minutes: "/20"
+    condition:
+      - condition: time
+        after: "07:30:00"
+        before: "22:30:00"
+      - condition: template
+        value_template: "{{ range(3) | random == 0 }}"
+    action:
+      - service: script.nabaztag_idle_twitch
     mode: single
