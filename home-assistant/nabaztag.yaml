@@ -135,7 +135,7 @@ script:
         data:
           api: !secret nab_api
           mac: !secret nab_mac
-          text: "Aujourd'hui... {{ m[1] | replace('_',\"'\") }} !"
+          text: "Aujourd'hui [pause] {{ m[1] | replace('_',\"'\") }} !"
 
 # --- Example automations ----------------------------------------------------
 automation:
