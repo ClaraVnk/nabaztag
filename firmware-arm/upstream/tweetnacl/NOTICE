@@ -1,0 +1,13 @@
+TweetNaCl — a crypto library in 100 tweets
+https://tweetnacl.cr.yp.to/
+
+Vendored 2026-05-29 from https://tweetnacl.cr.yp.to/20140427/
+  tweetnacl.c  sha256: 02e65bc3013ff2168983365e55906bc783c4c7e0a60d8100f17bb303a17175c4
+  tweetnacl.h  sha256: 43f29ad721d9927b747b0100ab4160c119e7bb180c7c98a66e4bf79d31244287
+
+Public domain (released by the authors). Used here only for Ed25519
+verify (crypto_sign_open + crypto_hash); the rest of the library is
+included unchanged because TweetNaCl is one self-contained file, and
+relies on the linker's --gc-sections to strip unused symbols.
+
+Authors: Bernstein, Janssen, Lange, Schwabe.

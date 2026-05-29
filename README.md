@@ -176,6 +176,15 @@ Full guide (API, pairing, troubleshooting) is in
   and contributions. The grammar is small (see `DT_metal_03_01_13_grammaire.pdf`),
   and most builtins are already documented; this is mechanical work, not
   research.
+- **Phase 8 — shrink the firmware by moving Metal logic to C:** the rabbit's
+  bootloader is ~3000 lines of Metal bytecode (`mtl/boot/boot.0.0.0.13.mtl`)
+  running on top of a tiny stack VM. Native ARM is roughly 3× denser than
+  Metal bytecode, so rewriting hot paths (HTTP server, locate parsing, audio
+  bootstrap) in C — and stripping the corresponding VM opcodes — would free
+  10–20 KB of ROM and headroom for richer features. Trade-off: Metal is small,
+  readable, and changeable without rebuilding the whole firmware; C is denser
+  but every change requires a full reflash. Worth it for stable, well-understood
+  paths; not for fast-iterating UI bits.
 
 ## Hardware
 

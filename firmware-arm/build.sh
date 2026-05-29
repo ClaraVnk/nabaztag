@@ -2,6 +2,11 @@
 # Build the ARM firmware on the HAOS host (Docker is always available there)
 # and pull the produced .sim back to ./bin/ in this directory.
 #
+# SECURITY: this script ships ONLY the build context (Dockerfile + patches +
+# public key header) to HAOS. The Ed25519 *private* signing key NEVER leaves
+# the Mac: it lives at ~/.nabaztag/signing_key.bin and is used locally by
+# signing/sign_sim.py to wrap the unsigned .sim after build.
+#
 # Usage:
 #   ./build.sh                  # full build (vanilla nabgcc wpa2 HEAD + patches)
 #   ./build.sh --remote HOST    # override remote (default root@192.168.1.15)
