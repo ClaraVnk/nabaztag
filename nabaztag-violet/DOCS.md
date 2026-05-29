@@ -161,6 +161,44 @@ packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/m
 Set `nab_api` (`<HAOS_IP>:8099`) and `nab_mac` in `secrets.yaml`, drop the files
 in `/config/packages/`, and reload YAML.
 
+## Inputs → Home Assistant events (button / RFID / ears)
+
+Nabi is also an **input device**: it reports its head **button**, **RFID/Ztamp**
+tags, and **ear-by-hand** movements, and the add-on re-emits them as a Home
+Assistant event named **`nabaztag_event`** (fired via the Supervisor proxy — no
+config needed). Trigger automations on it:
+
+- **Button** — `type: button`, `clic` (1–4) and `action`:
+  `click` (single), `double_click`. *(Long / double-long presses drive
+  push-to-talk recording, so they are not reported as button events.)*
+- **RFID/Ztamp** — `type: rfid`, `tag` (the tag id) — tag an object to trigger a
+  scene. Reported over HTTP (`/vl/rfid.jsp`), works on the stock bytecode.
+- **Ears** — `type: ears`, `left` / `right` (~0..16) when you turn the ears by hand.
+
+```yaml
+automation:
+  - alias: "Nabi button → toggle a light"
+    trigger:
+      - platform: event
+        event_type: nabaztag_event
+        event_data: { type: button, action: click }
+    action:
+      - service: light.toggle
+        target: { entity_id: light.living_room }
+
+  - alias: "Nabi RFID → run a scene"
+    trigger:
+      - platform: event
+        event_type: nabaztag_event
+        event_data: { type: rfid }
+    action:
+      - service: rest_command.nabaztag_say
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          text: "Tiens, un objet magique… {{ trigger.event.data.tag }} !"
+```
+
 ## Status
 
 - **Phase 1 — working, verified live:** the rabbit boots our server, **breathes**,
