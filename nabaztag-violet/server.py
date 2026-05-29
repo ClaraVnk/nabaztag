@@ -69,6 +69,9 @@ WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S") or _OPTS.get("wake_window_
 # silence is well under this; speech is >1000. On decode error the gate is bypassed.
 WAKE_VAD_RMS = int(os.environ.get("WAKE_VAD_RMS") or _OPTS.get("wake_vad_rms") or 300)
 AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "").lower() in ("1", "true", "yes", "on")
+# Optional: play this jingle once the rabbit comes online (a little "hello").
+# Empty = none. Set to a jingle name (see /api/jingle) to enable.
+CONNECT_JINGLE = (os.environ.get("CONNECT_JINGLE") or _OPTS.get("connect_jingle") or "").strip()
 # Optional shared secret for the control API. Empty = open (default; fine on a
 # trusted LAN behind Home Assistant). If set, every /api/ request must present it
 # as the X-API-Token header or a ?token= query param — the minimal guard to have
@@ -821,6 +824,16 @@ class XmppSession(threading.Thread):
         token = store_resource(build_choreography(tempo_ms, actions))
         self.send_program(f"CH {resource_url(token)}")
 
+    def _play_connect_jingle(self):
+        """Play the configured greeting jingle once the rabbit is operational."""
+        try:
+            wav = render_jingle(CONNECT_JINGLE)
+            if wav:
+                self.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+                log.info("rabbit %s: played connect jingle %r", self.addr[0], CONNECT_JINGLE)
+        except Exception as exc:  # noqa
+            log.warning("connect jingle failed: %s", exc)
+
     def send_state_query(self):
         """Ask the rabbit to report its internal state via the bytecode's
         `getrunningstate` ad-hoc command. The reply (sState/gSleepState/run…)
@@ -923,6 +936,8 @@ class XmppSession(threading.Thread):
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
                 threading.Timer(2.5, self.send_state_query).start()
+                if CONNECT_JINGLE:
+                    threading.Timer(3.5, self._play_connect_jingle).start()
                 if AUTO_LISTEN:
                     threading.Timer(4.0, self._start_listen).start()
             return
