@@ -783,7 +783,7 @@ def _fade(data: bytes) -> bytes:
         dst = src + ".out." + ext
         subprocess.run(
             ["ffmpeg", "-y", "-i", src, "-af",
-             f"afade=t=in:d=0.04,afade=t=out:st={st:.2f}:d=0.09", dst],
+             f"afade=t=in:d=0.04,afade=t=out:st={st:.2f}:d=0.09", "-b:a", "96k", dst],
             check=True, capture_output=True, timeout=15)
         with open(dst, "rb") as fh:
             return fh.read()

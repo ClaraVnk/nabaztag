@@ -78,8 +78,9 @@ Endpoints:
   bundled, no cloud): the rabbit speaks the text. `&voice=fr&speed=160&pitch=50`,
   `&wait=1` to block. This is the simplest way to make the rabbit talk. A
   **`[pause]`** (or `[pause 800]` ms) marker in the text becomes a **real silence**
-  — for theatrical delivery, e.g. `Aujourd'hui… [pause] pluie !`. The voice agent
-  can use it too (it's in the `voice_prompt`).
+  — used mainly for the iconic weather cadence (`Aujourd'hui [pause] pluie !`).
+  Note: splitting around a pause means each part is synthesized separately, so the
+  prosody is a bit staccato — kept for the weather signature, not general replies.
 - `GET /api/play?url=<mp3/wav>` — **stream + play audio** from a URL (e.g. a
   Home-Assistant/Piper TTS media URL). `&wait=1` blocks until it finishes.
   Also accepts **`POST`** with the audio bytes as the body (served from `/res/`).
