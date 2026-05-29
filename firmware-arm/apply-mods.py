@@ -146,6 +146,67 @@ def patch_stdlib_core(root: Path) -> None:
     print(f"[ok]   {p}: registered verifySig in all 4 stdlib arrays")
 
 
+def strip_tweetnacl(root: Path) -> None:
+    """Remove the TweetNaCl entry points we don't use (everything that isn't
+    crypto_sign_open or its hash dependency). The orphaned static helpers
+    those used will be garbage-collected by the linker — between this and
+    --gc-sections we claw back ~3 KB of ROM.
+
+    KEEP:  crypto_sign_open, crypto_hash, crypto_hashblocks, crypto_verify_32
+    DROP:  crypto_box*, crypto_secretbox*, crypto_stream*, crypto_onetimeauth*,
+           crypto_scalarmult* (X25519), crypto_sign (sign-side), crypto_sign_keypair,
+           crypto_core_(h)salsa20, crypto_verify_16
+    """
+    p = root / "src/crypto/tweetnacl.c"
+    s = p.read_text()
+    if "/* tweetnacl-stripped */" in s:
+        print(f"[skip] {p}: already stripped")
+        return
+
+    unused = [
+        "crypto_core_salsa20", "crypto_core_hsalsa20",
+        "crypto_stream_salsa20_xor", "crypto_stream_salsa20",
+        "crypto_stream_xor", "crypto_stream",
+        "crypto_onetimeauth_verify", "crypto_onetimeauth",
+        "crypto_secretbox_open", "crypto_secretbox",
+        "crypto_scalarmult_base", "crypto_scalarmult",
+        "crypto_box_open_afternm", "crypto_box_afternm",
+        "crypto_box_open", "crypto_box_beforenm",
+        "crypto_box_keypair", "crypto_box",
+        "crypto_sign_keypair", "crypto_sign",
+        "crypto_verify_16",
+    ]
+    # Order longest-first so e.g. crypto_box matches AFTER crypto_box_keypair
+    # has had its turn (avoids prefix collisions even though our regex anchors
+    # on a literal `(` after the name).
+    unused.sort(key=len, reverse=True)
+    removed = 0
+    for name in unused:
+        pat = re.compile(
+            rf"^(int|void)\s+{re.escape(name)}\s*\([^)]*\)\s*\n\{{",
+            re.MULTILINE,
+        )
+        m = pat.search(s)
+        if not m:
+            continue
+        # Find the matching closing brace (account for nested braces).
+        i = m.end()
+        depth = 1
+        while i < len(s) and depth > 0:
+            c = s[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+            i += 1
+        if depth == 0:
+            s = s[:m.start()] + s[i:]
+            removed += 1
+    s = "/* tweetnacl-stripped */\n" + s
+    p.write_text(s)
+    print(f"[ok]   {p}: stripped {removed}/{len(unused)} unused TweetNaCl entry points")
+
+
 def patch_makefile(root: Path) -> None:
     """Add -ffunction-sections -fdata-sections + -Wl,--gc-sections so the linker
     strips the TweetNaCl functions we don't use (only crypto_sign_open + its
@@ -267,7 +328,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
-        "--steps", default="vbc,vinterp,stdlib,makefile,bootloader",
+        "--steps", default="vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader",
         help="Comma-separated steps to run. Useful for incremental debug.",
     )
     args = ap.parse_args()
@@ -280,6 +341,7 @@ def main() -> int:
         "vbc": patch_vbc_h,
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
+        "strip_tweetnacl": strip_tweetnacl,
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
     }
