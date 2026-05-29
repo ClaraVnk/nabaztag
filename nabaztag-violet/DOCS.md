@@ -103,8 +103,12 @@ by putting `[ears L R]`, `[led ZONE R G B]` or `[nose N]` tags in its reply.
 Enable it in the add-on **Configuration**:
 
 - `voice_pipeline`: `true`
-- `conversation_agent`: your agent entity, e.g. `conversation.claude_conversation`
-  (leave empty to just echo the transcription)
+- `conversation_agent`: which "brain" answers — **your choice of agent entity**:
+  - `conversation.claude_conversation` → **Claude** (chatty; can move the rabbit via
+    the action tags), or
+  - `conversation.home_assistant` → **Home Assistant's own Assist** (local intents —
+    controls your home, tells the time, etc.), or
+  - *empty* → just echo the transcription back.
 - `stt_language`: `fr`
 - `tts_engine`: `espeak` (bundled, robotic) or `piper` (nicer — needs the HA
   **Piper** add-on; the add-on fetches its audio through the Supervisor proxy)
