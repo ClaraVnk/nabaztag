@@ -331,9 +331,18 @@ def resource_url(token: str) -> str:
     return f"http://{SERVER_ADDRESS}/res/{token}"
 
 
+def _clean_for_tts(text: str) -> str:
+    """Strip markdown/emoji so the TTS doesn't read them aloud (conversation
+    agents like Claude often add *emphasis* and 🐰 emoji)."""
+    text = re.sub(r"[*_`#>~|]", " ", text)
+    text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿←-⇿⬀-⯿️]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
     """Local, self-contained TTS via espeak-ng → 22 kHz/16-bit mono WAV (the
     format the rabbit's audio path accepts). No cloud, no external service."""
+    text = _clean_for_tts(text)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         path = tf.name
     try:
