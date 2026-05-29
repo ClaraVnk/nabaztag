@@ -46,16 +46,11 @@ API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
 # a matched pair: 'ojn' (OpenJabNab) expects the locate WITH the xmpp port (what
 # we now send); 'violet' is the original; 'pub' is the live community server's
 # (newest) build, fetched at build for comparison/RE.
-BOOTCODE_CHOICE = (os.environ.get("BOOTCODE") or _OPTS.get("bootcode") or "ojn").lower()
-if BOOTCODE_CHOICE == "hybrid":
-    # The custom mic-streaming bytecode (Phase 3) is built locally and dropped in
-    # the add-on's persistent /data (it's RE-derived firmware, not shipped).
-    BOOTCODE_FILE = os.environ.get("BOOTCODE_FILE", "/data/bootcode.hybrid")
-else:
-    BOOTCODE_FILE = os.environ.get(
-        "BOOTCODE_FILE",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), f"bootcode.{BOOTCODE_CHOICE}"),
-    )
+# Bytecode = hybrid (Phase 3): adds the mic stream (wake word) + the volume
+# command. Hardcoded; the choice was removed from the UI to keep it lambda-clean.
+# The .bin is built locally and dropped in the add-on's persistent /data.
+BOOTCODE_CHOICE = "hybrid"
+BOOTCODE_FILE = os.environ.get("BOOTCODE_FILE", "/data/bootcode.hybrid")
 # Where Nabi should stream its mic (the hybrid bytecode's RS command). The rabbit
 # routes UDP to this host:4000; we resolve the advertised server address to an IP.
 MIC_UDP_PORT = int(os.environ.get("MIC_UDP_PORT", _OPTS.get("mic_udp_port", 4000)))
@@ -80,9 +75,13 @@ AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "
 # Optional: play this jingle once the rabbit comes online (a little "hello").
 # Empty = none. Set to a jingle name (see /api/jingle) to enable.
 CONNECT_JINGLE = (os.environ.get("CONNECT_JINGLE") or _OPTS.get("connect_jingle") or "").strip()
+if CONNECT_JINGLE == "none":
+    CONNECT_JINGLE = ""
 # Optional short "got it" chime played after the wake word (once the mic has
 # stopped), filling the gap while the agent composes its reply. "" = off.
 WAKE_CHIME = (os.environ.get("WAKE_CHIME") or _OPTS.get("wake_chime") or "").strip()
+if WAKE_CHIME == "none":
+    WAKE_CHIME = ""
 # Personality: "auto" = the add-on gives Nabi a life of its own (random gentle
 # ears / side-LED pulses / nose at random intervals, daytime). "off" = it just
 # breathes and you wire your own behaviours in Home Assistant (custom). The two
@@ -91,7 +90,7 @@ PERSONALITY = (os.environ.get("PERSONALITY") or _OPTS.get("personality") or "off
 # Intensity → how often Nabi acts on its own (random seconds in range). off =
 # none (you drive it from HA). subtle ≈ a few times/hour, auto ≈ hourly-ish,
 # lively ≈ every few minutes.
-_PLEVELS = {"subtle": (900, 2400), "auto": (360, 1500), "lively": (180, 600)}
+_PLEVELS = {"discret": (900, 2400), "normal": (360, 1500), "vif": (180, 600)}
 PERSONALITY_ACTIVE = PERSONALITY in _PLEVELS
 _pmin, _pmax = _PLEVELS.get(PERSONALITY, (360, 1500))
 PERSONALITY_MIN_S = int(os.environ.get("PERSONALITY_MIN_S") or _OPTS.get("personality_min_s") or _pmin)
@@ -106,20 +105,23 @@ API_TOKEN = (os.environ.get("API_TOKEN") or _OPTS.get("api_token") or "").strip(
 # by the rabbit's button. When voice_pipeline is off the recording is just stored.
 VOICE_PIPELINE = str(os.environ.get("VOICE_PIPELINE") or _OPTS.get("voice_pipeline") or "").lower() in ("1", "true", "yes", "on")
 CONVERSATION_AGENT = os.environ.get("CONVERSATION_AGENT") or _OPTS.get("conversation_agent") or ""
+if CONVERSATION_AGENT == "none":
+    CONVERSATION_AGENT = ""
 STT_LANGUAGE = os.environ.get("STT_LANGUAGE") or _OPTS.get("stt_language") or "fr"
 # Prepended to what we send the conversation agent, so it can drive the rabbit
 # by embedding action tags in its reply (executed + stripped before speaking).
-_DEFAULT_VOICE_PROMPT = (
-    "Tu es la voix d'un lapin Nabaztag espiègle. Réponds en français, en une ou "
-    "deux phrases courtes. Tu peux AGIR en insérant des balises dans ta réponse : "
-    "[ears G D] (oreilles, positions 0 à 16), "
+# Nabi's persona + action-tag instructions, prepended to what the agent hears.
+# Fixed in code (not a user option) — this IS the intended character.
+VOICE_PROMPT = os.environ.get("VOICE_PROMPT") or (
+    "Tu es Nabi, un lapin Nabaztag (le lapin culte de Violet) : tu t'appelles Nabi "
+    "et tu parles à la première personne. Théâtral, espiègle, ULTRA bref. Réponds en "
+    "français en UNE phrase courte (jamais de monologue). Soigne la mise en scène : "
+    "ménage des pauses dramatiques avec « … » (ex. la météo se dit « Aujourd'hui… "
+    "pluie ! »). Pas de markdown ni d'emoji. Tu peux AGIR en insérant des balises "
+    "(exécutées puis retirées de la parole) : [ears G D] (oreilles 0 à 16), "
     "[led ZONE R V B] (ZONE = bottom|left|middle|right|top, couleurs 0 à 255), "
-    "[nose N] (nez, N = 0,1,2). Les balises sont exécutées puis retirées de ce qui "
-    "est dit à voix haute. Voici ce qu'on te dit : "
+    "[nose N] (nez 0,1,2). Voici ce qu'on te dit : "
 )
-VOICE_PROMPT = os.environ.get("VOICE_PROMPT")
-if VOICE_PROMPT is None:
-    VOICE_PROMPT = _OPTS.get("voice_prompt", _DEFAULT_VOICE_PROMPT)
 # TTS engine: "espeak" (bundled, robotic) or "piper" (nicer; via the Home
 # Assistant Piper add-on, fetched through the Supervisor proxy).
 TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak").lower()
@@ -1535,6 +1537,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 lvl = max(0, min(100, int(_one("level", "80"))))
                 VOLUME["hw"] = round((100 - lvl) * 1.2)
                 b.send_program(f"SV {VOLUME['hw']}")
+                _save_state()
             elif path == "/api/ears":
                 # Real ear positioning via a choreography motor action.
                 # ?left=&right= positions (~0..16); ?dir=0|1 rotation direction.
@@ -1596,6 +1599,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     WAKE["on"] = False
                     WAKE["streaming"] = False
                     b.send_program("RT")
+                _save_state()
             elif path == "/api/personality":
                 # Trigger one personality action now (test / manual). Threaded so
                 # the call returns immediately.
@@ -1665,6 +1669,34 @@ WAKE = {"on": False, "cooldown": 0.0, "streaming": False}
 # Last volume (raw VS1003 attenuation, 0=loud..higher=quiet) — re-applied on
 # reconnect since the rabbit resets it on reboot. None = never set (leave default).
 VOLUME = {"hw": None}
+
+# Persist passive-listening + volume across add-on restarts (otherwise toggling
+# the listen switch / setting the volume is lost on every restart).
+_STATE_FILE = os.environ.get("STATE_FILE", "/data/state.json")
+
+
+def _save_state():
+    try:
+        with open(_STATE_FILE, "w") as fh:
+            json.dump({"listen": bool(WAKE["on"]), "volume_hw": VOLUME["hw"]}, fh)
+    except OSError as exc:
+        log.warning("state save failed: %s", exc)
+
+
+def _load_state():
+    try:
+        with open(_STATE_FILE) as fh:
+            s = json.load(fh)
+        if s.get("listen"):
+            WAKE["on"] = True
+        if isinstance(s.get("volume_hw"), int):
+            VOLUME["hw"] = s["volume_hw"]
+        log.info("state loaded: listen=%s volume_hw=%s", WAKE["on"], VOLUME["hw"])
+    except (OSError, ValueError):
+        pass
+
+
+_load_state()
 
 
 def adpcm_stream_to_pcm_wav(raw: bytes) -> bytes:
