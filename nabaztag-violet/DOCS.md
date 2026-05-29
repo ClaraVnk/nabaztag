@@ -126,6 +126,23 @@ Enable it in the add-on **Configuration**:
 Keep replies short — the charm is brevity. The bundled STT model is `base`
 (decent French on an 8 kHz mic); swap to a bigger whisper model for more accuracy.
 
+### Passive listening ("hey Nabi") & privacy
+
+A hands-free wake word is **opt-in and OFF by default** — a deliberate privacy
+choice (push-to-talk needs no always-on mic). When it is **off, the rabbit does
+not stream its microphone at all**; nothing is captured or sent. Controls:
+
+- `auto_listen`: `false` (default) → no passive listening. Set `true` to start it
+  automatically once the rabbit is idle.
+- `wake_word`: the trigger word (default `nabi`).
+- Toggle it **at runtime** with `GET /api/mic?on=1` / `?on=0`. Turning it **off
+  sends `RT`**, so the rabbit *stops capturing* — it is not a server-side mute.
+  The `home-assistant/` package exposes this as the `nabaztag_listen` rest_command
+  and (via `entities.yaml`) a **"Nabi passive listening" toggle** for a dashboard.
+
+Passive listening needs the **hybrid bytecode** (`bootcode: hybrid`); push-to-talk
+works on the stock bytecode and is always available regardless of this setting.
+
 ## Home Assistant integration (REST)
 
 The integration is **pure REST** — no MQTT broker. Home Assistant drives Nabi

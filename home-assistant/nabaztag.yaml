@@ -57,6 +57,15 @@ rest_command:
     method: GET
     timeout: 10
 
+  # Passive listening ("hey Nabi"): on=1 starts it, on=0 stops it. PRIVACY: this
+  # is opt-in and OFF by default. When off, the rabbit's mic does NOT stream at
+  # all — turning it off sends RT so the rabbit stops capturing (not a server-side
+  # mute). Push-to-talk (the head button) is independent and always available.
+  nabaztag_listen:
+    url: "http://{{ api }}/api/mic?mac={{ mac }}&on={{ on }}"
+    method: GET
+    timeout: 10
+
 script:
   # --- Talk to Claude through the rabbit -----------------------------------
   # Pipes a prompt to the Home Assistant Anthropic (Claude) conversation agent
