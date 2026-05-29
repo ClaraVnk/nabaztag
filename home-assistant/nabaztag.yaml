@@ -81,7 +81,40 @@ rest_command:
     method: GET
     timeout: 10
 
+input_select:
+  # Pick a jingle to preview on the rabbit (no add-on restart needed).
+  # The list mirrors the connect_jingle / wake_chime catalogue.
+  nabaztag_jingle_preview:
+    name: "Nabaztag – jingle à tester"
+    options:
+      - acquired
+      - ack
+      - abort
+      - ministop
+      - ears
+      - rfid_ok
+      - start_record
+      - end_record
+      - start_interactive
+      - end_interactive
+      - previous
+      - next
+    initial: ears
+    icon: mdi:music-note
+
 script:
+  # --- Preview the selected jingle on the rabbit ---------------------------
+  # Drop a button on the dashboard that runs this script + the input_select
+  # above to A/B every jingle without restarting the add-on.
+  nabaztag_preview_jingle:
+    alias: "Nabaztag - test the selected jingle"
+    sequence:
+      - service: rest_command.nabaztag_jingle
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          name: "{{ states('input_select.nabaztag_jingle_preview') }}"
+
   # --- Talk to Claude through the rabbit -----------------------------------
   # Pipes a prompt to the Home Assistant Anthropic (Claude) conversation agent
   # and speaks the reply on the rabbit. Mic input is Phase 2; this is the
