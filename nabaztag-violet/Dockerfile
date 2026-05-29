@@ -6,7 +6,7 @@ WORKDIR /app
 # Nabaztag bytecodes are Violet's proprietary firmware, not committed — fetched
 # at build from the OpenJabNab distribution (selectable via the `bootcode` option:
 # violet/ojn). python3 installed explicitly so the image works on any Alpine base.
-RUN apk add --no-cache python3 curl ca-certificates && \
+RUN apk add --no-cache python3 curl ca-certificates espeak-ng && \
     curl -fsSL -o /app/bootcode.violet \
       https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet && \
     curl -fsSL -o /app/bootcode.ojn \

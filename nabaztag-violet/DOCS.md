@@ -65,9 +65,13 @@ The rabbit has **two command channels** (reverse-engineered from the bytecode):
 Endpoints:
 
 - `GET /api/status` — connected rabbits (and their XMPP resource).
+- `GET /api/say?text=Aujourd'hui… pluie !` — **local TTS** (espeak-ng → WAV,
+  bundled, no cloud): the rabbit speaks the text. `&voice=fr&speed=160&pitch=50`,
+  `&wait=1` to block. This is the simplest way to make the rabbit talk.
 - `GET /api/play?url=<mp3/wav>` — **stream + play audio** from a URL (e.g. a
   Home-Assistant/Piper TTS media URL). `&wait=1` blocks until it finishes.
   Also accepts **`POST`** with the audio bytes as the body (served from `/res/`).
+  The rabbit decodes **MP3 and WAV (PCM, 22 kHz/16-bit mono)** — both verified live.
 - `GET /api/ears?left=8&right=2` — **move the ears** to positions (~0..16) via a
   choreography; `&dir=0|1` sets rotation direction.
 - `GET /api/led?led=top&r=0&g=238&b=0` — **full RGB** on one LED

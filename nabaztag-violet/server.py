@@ -18,6 +18,8 @@ import logging
 import os
 import re
 import socket
+import subprocess
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -245,6 +247,25 @@ def store_resource(content: bytes, content_type: str = "application/octet-stream
 
 def resource_url(token: str) -> str:
     return f"http://{SERVER_ADDRESS}/res/{token}"
+
+
+def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
+    """Local, self-contained TTS via espeak-ng → 22 kHz/16-bit mono WAV (the
+    format the rabbit's audio path accepts). No cloud, no external service."""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        path = tf.name
+    try:
+        subprocess.run(
+            ["espeak-ng", "-v", voice, "-s", str(speed), "-p", str(pitch), "-w", path, text],
+            check=True, capture_output=True, timeout=25,
+        )
+        with open(path, "rb") as fh:
+            return fh.read()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -672,6 +693,19 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/program":
                 # ?text=ST%20http://... — newline OR '|' separated commands.
                 b.send_program(_one("text", "").replace("|", "\n"))
+            elif path == "/api/say":
+                # Local TTS: ?text=... (&voice=fr&speed=160&pitch=50). Speaks on
+                # the rabbit via espeak-ng → WAV → stream. ?wait=1 blocks (MW).
+                text = _one("text", "")
+                if not text:
+                    return self._json(400, {"error": "give ?text="})
+                wav = synth_tts(text, _one("voice", "fr"),
+                                int(_one("speed", "160")), int(_one("pitch", "50")))
+                url = resource_url(store_resource(wav, "audio/wav"))
+                prog = f"ST {url}"
+                if _one("wait") in ("1", "true", "yes"):
+                    prog += "\nMW"
+                b.send_program(prog)
             elif path == "/api/play":
                 # Audio: ?url=<mp3/wav> streamed via ST, OR POST the audio body
                 # (stored + served from /res/ and streamed). ?wait=1 blocks (MW).
