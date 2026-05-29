@@ -25,7 +25,7 @@ configuration:
     description: "Monte la voix pour un timbre plus mignon, jeune et espiègle. 0 = off ; environ 12 à 18 donne un joli côté « mignonne » ; au-delà de 30 ça fait chipmunk."
   auto_listen:
     name: "Écoute passive (vie privée)"
-    description: "DÉSACTIVÉE par défaut. Activée, Nabi écoute en continu le mot d'éveil et son micro diffuse. Désactivée, le micro ne diffuse jamais — le push-to-talk (bouton) fonctionne quand même. (Le toggle runtime depuis le dashboard survit aussi aux redémarrages de l'add-on maintenant.)"
+    description: "DÉSACTIVÉE par défaut. Activée, Nabi écoute en continu le mot d'éveil et son micro diffuse. Désactivée, le micro ne diffuse jamais — le push-to-talk (bouton) fonctionne quand même."
   connect_jingle:
     name: "Jingle de connexion"
     description: "Joue ce jingle quand Nabi se connecte. « none » = aucun jingle."
