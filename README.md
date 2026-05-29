@@ -166,6 +166,16 @@ Full guide (API, pairing, troubleshooting) is in
   rabbits re-download their bytecode every boot, pushing new bytecode updates the
   whole fleet). Needs multi-tenant per-rabbit state and hardening of the plain
   Violet protocol.
+- **Phase 7 — Metal → Python transpiler:** the bytecode language ("Metal", or
+  *MTL*) is the 2006 in-house DSL used to write the bootcode. It's compiled by
+  `mtl_compiler` to a custom bytecode the rabbit executes. Today, anyone who
+  wants to change rabbit behavior has to learn an obscure dead language and
+  babysit an old C++ compiler. A faithful **MTL → Python transpiler** (and the
+  reverse, for an exit ramp) would let the community read, fork and ship
+  bytecode in a mainstream language — opening the doors to real maintenance
+  and contributions. The grammar is small (see `DT_metal_03_01_13_grammaire.pdf`),
+  and most builtins are already documented; this is mechanical work, not
+  research.
 
 ## Hardware
 

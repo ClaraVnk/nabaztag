@@ -1,0 +1,5 @@
+bin/
+*.sim
+*.elf
+*.bin
+*.map
