@@ -217,11 +217,13 @@ automation:
 Nabi can have **a life of its own** or be **entirely driven by you** — your choice
 via the `personality` option:
 
-- **`personality: auto`** — the add-on animates Nabi on its own: a gentle random
-  behaviour (an ear flick, a soft side-LED pulse, or a nose blink) every few
-  minutes, daytime only, and never on top of a voice reply. It deliberately
-  leaves the **belly LED** alone so it won't fight a colour-of-the-day. Tune the
-  cadence with `personality_min_s` / `personality_max_s`.
+- **`personality: subtle | auto | lively`** — the add-on animates Nabi on its
+  own: a gentle random behaviour (an ample ear wiggle, a soft side-LED pulse, or
+  a nose blink) at random intervals, **daytime only**, and never on top of a
+  voice reply. It deliberately leaves the **belly LED** alone so it won't fight a
+  colour-of-the-day. The level sets the cadence — `subtle` ≈ a few times/hour,
+  `auto` ≈ hourly-ish, `lively` ≈ every few minutes (override with
+  `personality_min_s` / `personality_max_s`).
 - **`personality: off`** (default) — Nabi just breathes, and **you** decide what
   it does, when, via Home Assistant automations (see the "signs of life" example
   in `ambient.yaml`).
