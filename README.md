@@ -139,6 +139,20 @@ Full guide (API, pairing, troubleshooting) is in
   `[ears …]` / `[led …]` / `[nose …]` tags in its reply. TTS is bundled **espeak-ng**
   or, for a much nicer voice, **Piper** via the HA Piper add-on. Enable it with the
   `voice_pipeline` / `conversation_agent` / `tts_engine` options.
+- **Phase 3 — wake word & custom firmware — in progress:** push-to-talk needs no
+  firmware change, but a hands-free wake word ("hey Nabi") does: reverse-engineering
+  the bytecode shows the **stock firmware only records the mic on a physical button
+  press** — the server can't start a recording. So passive listening requires
+  **custom mic-streaming firmware**. The open **Metal toolchain now stands up and
+  compiles bytecode end-to-end** (RedoXyde's `mtl_linux` compiler, built in a Linux
+  x86 container). The plan: a *hybrid* bytecode — the stock Violet firmware plus a
+  server-triggered **UDP microphone stream** (à la `openab`) — feeding an on-server
+  wake-word engine (openWakeWord) that hands the utterance to the existing
+  STT → agent → speech loop.
+- **Phase 4 — firmware upgrades:** with the toolchain in place, harden the 2006
+  firmware (it speaks plain HTTP, no TLS) and add improvements.
+- **Phase 5 — setup UX:** a much nicer captive/config page when you join the
+  rabbit's Wi-Fi to pair it.
 
 ## Hardware
 
