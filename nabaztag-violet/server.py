@@ -56,6 +56,19 @@ BOOTCODE_FILE = os.environ.get(
 VOICE_PIPELINE = str(os.environ.get("VOICE_PIPELINE") or _OPTS.get("voice_pipeline") or "").lower() in ("1", "true", "yes", "on")
 CONVERSATION_AGENT = os.environ.get("CONVERSATION_AGENT") or _OPTS.get("conversation_agent") or ""
 STT_LANGUAGE = os.environ.get("STT_LANGUAGE") or _OPTS.get("stt_language") or "fr"
+# Prepended to what we send the conversation agent, so it can drive the rabbit
+# by embedding action tags in its reply (executed + stripped before speaking).
+_DEFAULT_VOICE_PROMPT = (
+    "Tu es la voix d'un lapin Nabaztag espiègle. Réponds en français, en une ou "
+    "deux phrases courtes. Tu peux AGIR en insérant des balises dans ta réponse : "
+    "[ears G D] (oreilles, positions 0 à 16), "
+    "[led ZONE R V B] (ZONE = bottom|left|middle|right|top, couleurs 0 à 255), "
+    "[nose N] (nez, N = 0,1,2). Les balises sont exécutées puis retirées de ce qui "
+    "est dit à voix haute. Voici ce qu'on te dit : "
+)
+VOICE_PROMPT = os.environ.get("VOICE_PROMPT")
+if VOICE_PROMPT is None:
+    VOICE_PROMPT = _OPTS.get("voice_prompt", _DEFAULT_VOICE_PROMPT)
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-base.bin")
 
@@ -435,9 +448,42 @@ def conversation_ask(text: str) -> str:
         return ""
 
 
+_LED_ZONES = {"bottom": 0, "left": 1, "middle": 2, "right": 3, "top": 4,
+              "ventre": 0, "gauche": 1, "milieu": 2, "droite": 3, "haut": 4}
+
+
+def run_action_tags(bunny, text: str) -> str:
+    """Execute [ears L R] / [led ZONE R G B] / [nose N] tags a conversation agent
+    embedded in its reply, and return the text with those tags removed (to speak)."""
+    def repl(m):
+        parts = m.group(1).split()
+        if not parts:
+            return ""
+        kind = parts[0].lower()
+        try:
+            if kind in ("ears", "oreilles") and len(parts) >= 3:
+                l, r = int(parts[1]), int(parts[2])
+                bunny.send_choreography(200, [(0, "motor", (0, l * 18, 0)),
+                                              (0, "motor", (1, r * 18, 0))])
+            elif kind == "led" and len(parts) >= 5:
+                zone = _LED_ZONES.get(parts[1].lower(), 0)
+                bunny.send_choreography(200, [(0, "led", (zone, int(parts[2]),
+                                                          int(parts[3]), int(parts[4])))])
+            elif kind in ("nose", "nez") and len(parts) >= 2:
+                bunny.send_violet_packet(ambient_packet({SVC_NOSE: int(parts[1])}))
+            else:
+                return m.group(0)  # not an action tag — keep it
+        except Exception as exc:  # noqa
+            log.warning("voice: bad action tag %r: %s", m.group(0), exc)
+            return ""
+        log.info("voice: ran action %s", m.group(0))
+        return ""
+    return re.sub(r"\[([^\]]+)\]", repl, text)
+
+
 def handle_voice(pcm_wav: bytes):
     """Full voice loop for a button recording: STT → optional conversation agent
-    → speak the reply on the rabbit. Runs off the request thread."""
+    (which can also drive the rabbit via action tags) → speak the reply."""
     with BUNNIES_LOCK:
         bunny = next(iter(BUNNIES.values()), None)
     if bunny is None:
@@ -446,13 +492,18 @@ def handle_voice(pcm_wav: bytes):
     log.info("voice: heard %r", text)
     if not text:
         return
-    reply = conversation_ask(text) if CONVERSATION_AGENT else text
+    if CONVERSATION_AGENT:
+        reply = conversation_ask((VOICE_PROMPT or "") + text)
+    else:
+        reply = text  # no agent → echo what was heard
     if not reply:
-        reply = text  # fall back to echoing what was heard
-    log.info("voice: replying %r", reply)
+        reply = text
+    reply = run_action_tags(bunny, reply)  # execute + strip action tags
+    log.info("voice: speaking %r", reply)
     try:
-        wav = synth_tts(reply)
-        bunny.send_program(f"ST {resource_url(store_resource(wav, 'audio/wav'))}")
+        if reply.strip():
+            wav = synth_tts(reply)
+            bunny.send_program(f"ST {resource_url(store_resource(wav, 'audio/wav'))}")
     except Exception as exc:  # noqa
         log.warning("voice: reply playback failed: %s", exc)
 
