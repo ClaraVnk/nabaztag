@@ -71,7 +71,9 @@ The rabbit has **two command channels** (reverse-engineered from the bytecode):
 
 Endpoints:
 
-- `GET /api/status` — connected rabbits (and their XMPP resource).
+- `GET /api/status` — `online` (any rabbit connected), connected rabbits with
+  their XMPP resource + `uptime`, and `last_seen` (recently-dropped rabbits with
+  `offline_for`) — so a silent drop (e.g. a DHCP IP change) is visible at a glance.
 - `GET /api/say?text=Aujourd'hui… pluie !` — **local TTS** (espeak-ng → WAV,
   bundled, no cloud): the rabbit speaks the text. `&voice=fr&speed=160&pitch=50`,
   `&wait=1` to block. This is the simplest way to make the rabbit talk.

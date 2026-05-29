@@ -130,6 +130,18 @@ log = logging.getLogger("nabaztag")
 # Registry of connected rabbits: mac -> XmppSession
 BUNNIES: dict[str, "XmppSession"] = {}
 BUNNIES_LOCK = threading.Lock()
+# mac -> epoch of last disconnect; powers "offline for X" in /api/status + logs.
+LAST_SEEN: dict[str, float] = {}
+
+
+def _ago(seconds: float) -> str:
+    """Human-friendly duration: '45s', '12m03s', '1h05m'."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 # --------------------------------------------------------------------------- #
 # Violet packet helpers
@@ -799,6 +811,7 @@ class XmppSession(threading.Thread):
         self.mac = None
         self.authed = False
         self.bound = False
+        self.connected_at = None
         self.domain = SERVER_ADDRESS
         self.resource = "Boot"
         self.msg_nb = 0
@@ -1028,9 +1041,15 @@ class XmppSession(threading.Thread):
 
     def _register(self):
         if self.mac:
+            self.connected_at = time.time()
             with BUNNIES_LOCK:
                 BUNNIES[self.mac] = self
-            log.info("registered bunny mac=%s from %s", self.mac, self.addr[0])
+                gone = LAST_SEEN.pop(self.mac, None)
+            if gone:
+                log.info("registered bunny mac=%s from %s — back online after %s offline",
+                         self.mac, self.addr[0], _ago(time.time() - gone))
+            else:
+                log.info("registered bunny mac=%s from %s", self.mac, self.addr[0])
 
     def run(self):
         log.info("XMPP connection from %s", self.addr[0])
@@ -1051,11 +1070,13 @@ class XmppSession(threading.Thread):
                 with BUNNIES_LOCK:
                     if BUNNIES.get(self.mac) is self:
                         BUNNIES.pop(self.mac, None)
+                    LAST_SEEN[self.mac] = time.time()
             try:
                 self.conn.close()
             except OSError:
                 pass
-            log.info("XMPP disconnect %s (mac=%s)", self.addr[0], self.mac)
+            up = _ago(time.time() - self.connected_at) if self.connected_at else "?"
+            log.info("XMPP disconnect %s (mac=%s) — was online %s", self.addr[0], self.mac, up)
 
     def _feed(self, data: str):
         """Incremental XMPP parser: extracts complete top-level stanzas.
@@ -1281,16 +1302,23 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "unauthorized"})
 
         if path in ("", "/api", "/api/status"):
+            now = time.time()
             with BUNNIES_LOCK:
-                conn = {m: {"addr": s.addr[0], "bound": s.bound, "resource": s.resource}
+                conn = {m: {"addr": s.addr[0], "bound": s.bound, "resource": s.resource,
+                            "connected_since": s.connected_at,
+                            "uptime": _ago(now - s.connected_at) if s.connected_at else None}
                         for m, s in BUNNIES.items()}
+                seen = {m: {"epoch": ts, "offline_for": _ago(now - ts)}
+                        for m, ts in LAST_SEEN.items() if m not in conn}
             with REC_LOCK:
                 rec = {"ts": LAST_RECORDING["ts"], "mode": LAST_RECORDING["mode"],
                        "pcm_bytes": len(LAST_RECORDING["pcm_wav"] or b"")}
             with MIC_LOCK:
                 mic = {"packets": MIC_STREAM["packets"], "bytes": len(MIC_STREAM["adpcm"]),
                        "ts": MIC_STREAM["ts"], "src": MIC_STREAM["src"]}
-            return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn,
+            return self._json(200, {"server_address": SERVER_ADDRESS,
+                                    "online": bool(conn), "bunnies": conn,
+                                    "last_seen": seen,
                                     "last_recording": rec, "mic_stream": mic})
 
         if path == "/api/micwav":
