@@ -58,6 +58,12 @@ else:
 # Where Nabi should stream its mic (the hybrid bytecode's RS command). The rabbit
 # routes UDP to this host:4000; we resolve the advertised server address to an IP.
 MIC_UDP_PORT = int(os.environ.get("MIC_UDP_PORT", _OPTS.get("mic_udp_port", 4000)))
+# Phase 3B wake word: when the mic is streaming, transcribe rolling windows and,
+# if the wake word is heard, treat the rest as a command for the conversation
+# agent. auto_listen starts the stream automatically once Nabi is idle.
+WAKE_WORD = (os.environ.get("WAKE_WORD") or _OPTS.get("wake_word") or "nabi").lower()
+WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S") or _OPTS.get("wake_window_s") or 3)
+AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "").lower() in ("1", "true", "yes", "on")
 # Phase-2 voice pipeline: button push-to-talk → STT (bundled whisper.cpp) →
 # optional conversation agent (Home Assistant, e.g. Claude) → TTS, all triggered
 # by the rabbit's button. When voice_pipeline is off the recording is just stored.
@@ -654,6 +660,13 @@ class XmppSession(threading.Thread):
             f"action='execute'/></iq>"
         )
 
+    def _start_listen(self):
+        """Begin streaming the mic for the wake word (auto_listen)."""
+        WAKE["on"] = True
+        WAKE["cooldown"] = 0.0
+        log.info("auto-listen: starting mic stream on %s", self.mac)
+        self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+
     # -- handshake --------------------------------------------------------- #
     def _stream_header(self, features: str):
         self.send(
@@ -736,6 +749,8 @@ class XmppSession(threading.Thread):
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
                 threading.Timer(2.5, self.send_state_query).start()
+                if AUTO_LISTEN:
+                    threading.Timer(4.0, self._start_listen).start()
             return
 
         if "violet:iq:sources" in f and "<iq" in f:
@@ -1027,6 +1042,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn,
                                     "last_recording": rec, "mic_stream": mic})
 
+        if path == "/api/micwav":
+            # Debug: the live mic-stream buffer decoded to a PCM WAV.
+            with MIC_LOCK:
+                raw = bytes(MIC_STREAM["adpcm"])
+            wav = adpcm_stream_to_pcm_wav(raw)
+            if not wav:
+                return self._json(404, {"error": "no mic audio buffered"})
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(wav)))
+            self.end_headers()
+            self.wfile.write(wav)
+            return
+
         if path == "/api/lastrecording":
             # Fetch the last push-to-talk recording. ?format=pcm (default,
             # 16-bit PCM WAV for STT) or ?format=adpcm (the raw upload).
@@ -1135,14 +1164,16 @@ class ApiHandler(BaseHTTPRequestHandler):
                 # Ask the rabbit to report its XMPP/run state (reply is logged).
                 b.send_state_query()
             elif path == "/api/mic":
-                # Start/stop the mic stream (hybrid bytecode only). Nabi streams
-                # 8 kHz "snd" datagrams to this host:MIC_UDP_PORT.
+                # Start/stop the mic stream + wake word (hybrid bytecode only).
                 if _one("on", "1") in ("1", "true", "yes"):
                     with MIC_LOCK:
                         MIC_STREAM["adpcm"] = bytearray()
                         MIC_STREAM["packets"] = 0
+                    WAKE["on"] = True
+                    WAKE["cooldown"] = 0.0
                     b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
                 else:
+                    WAKE["on"] = False
                     b.send_program("RT")
             else:
                 return self._json(404, {"error": "unknown endpoint"})
@@ -1199,6 +1230,74 @@ def udp_mic_server():
         if now - last_log > 2:
             log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", n, total, addr[0])
             last_log = now
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3B — wake word on the mic stream: transcribe rolling windows; when the
+# wake word ("nabi") is heard, send the rest to the conversation agent.
+# --------------------------------------------------------------------------- #
+WAKE = {"on": False, "cooldown": 0.0}
+
+
+def adpcm_stream_to_pcm_wav(raw: bytes) -> bytes:
+    """Wrap the raw 256-byte-block IMA-ADPCM stream from the rabbit in a WAV
+    header, then decode to 16-bit PCM."""
+    import struct
+    raw = raw[:(len(raw) // 256) * 256]
+    if not raw:
+        return b""
+    fmt = struct.pack("<HHIIHH", 0x11, 1, 8000, 4055, 256, 4) + struct.pack("<HH", 2, 505)
+    wav = (b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(raw)) + b"WAVE" +
+           b"fmt " + struct.pack("<I", len(fmt)) + fmt +
+           b"data" + struct.pack("<I", len(raw)) + raw)
+    return ima_adpcm_to_pcm_wav(wav)
+
+
+def _strip_wake(text: str) -> str:
+    t = text
+    for w in ("hey nabi", "ok nabi", "eh nabi", "nabi", "navi"):
+        t = t.replace(w, " ")
+    return re.sub(r"\s+", " ", t).strip(" ,.!?…")
+
+
+def wake_loop():
+    """Consume mic-stream windows; on the wake word, send the rest to the agent."""
+    while True:
+        time.sleep(WAKE_WINDOW_S)
+        if not WAKE["on"] or time.time() < WAKE["cooldown"]:
+            with MIC_LOCK:
+                MIC_STREAM["adpcm"] = bytearray()  # drop audio while idle/cooling down
+            continue
+        with MIC_LOCK:
+            chunk = bytes(MIC_STREAM["adpcm"])
+            MIC_STREAM["adpcm"] = bytearray()
+        if len(chunk) < 4000:  # < ~0.5 s of audio
+            continue
+        try:
+            text = stt_transcribe(adpcm_stream_to_pcm_wav(chunk)).lower()
+        except Exception as exc:  # noqa
+            log.warning("wake: STT error %s", exc)
+            continue
+        if not text:
+            continue
+        log.info("wake: heard %r", text)
+        if not (WAKE_WORD in text or "nab" in text or "navi" in text):
+            continue
+        cmd = _strip_wake(text)
+        log.info("wake: TRIGGERED — command %r", cmd)
+        WAKE["cooldown"] = time.time() + 10  # don't react to our own reply
+        b = _bunny_any()
+        if b is None:
+            continue
+        reply = conversation_ask((VOICE_PROMPT or "") + cmd) if (CONVERSATION_AGENT and cmd) else (cmd or "Oui ?")
+        reply = run_action_tags(b, reply or "Oui ?")
+        if reply.strip():
+            try:
+                wav = synth_tts(reply)
+                b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+            except Exception as exc:  # noqa
+                log.warning("wake: reply failed %s", exc)
+        WAKE["cooldown"] = time.time() + 10
 
 
 # --------------------------------------------------------------------------- #
@@ -1328,6 +1427,7 @@ def main():
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=start_mqtt, daemon=True).start()
     threading.Thread(target=udp_mic_server, daemon=True).start()
+    threading.Thread(target=wake_loop, daemon=True).start()
     http_boot_server()  # blocks
 
 
