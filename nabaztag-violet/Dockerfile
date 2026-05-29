@@ -23,13 +23,11 @@ RUN mkdir -p /out/models && \
 FROM ${BUILD_FROM}
 WORKDIR /app
 
-# python3 = the server; espeak-ng = local TTS; libstdc++ = whisper.cpp runtime;
-# paho-mqtt = expose Nabi's controls as Home Assistant entities (MQTT discovery).
+# python3 = the server; espeak-ng = local TTS; libstdc++ = whisper.cpp runtime.
 # Nabaztag bytecodes are Violet's proprietary firmware, not committed — fetched
 # at build from the OpenJabNab distribution (selectable via the `bootcode` option:
 # violet/ojn).
-RUN apk add --no-cache python3 py3-pip curl ca-certificates espeak-ng libstdc++ && \
-    python3 -m pip install --no-cache-dir --break-system-packages paho-mqtt && \
+RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ && \
     curl -fsSL -o /app/bootcode.violet \
       https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet && \
     curl -fsSL -o /app/bootcode.ojn \

@@ -119,15 +119,20 @@ Enable it in the add-on **Configuration**:
 Keep replies short — the charm is brevity. The bundled STT model is `base`
 (decent French on an 8 kHz mic); swap to a bigger whisper model for more accuracy.
 
-## Home Assistant entities (MQTT)
+## Home Assistant integration (REST)
 
-The add-on can publish Nabi's controls as **native HA entities** via MQTT
-discovery — a **Nabaztag (Nabi)** device with a belly RGB **light**, **ear left**
-/ **ear right** sliders, a **nose** select, a **sleep** switch, and a **Say** text
-field. Point it at your MQTT broker (the same one your HA MQTT integration uses)
-with the options `mqtt_host` / `mqtt_port` / `mqtt_user` / `mqtt_password`. If you
-run the **Mosquitto** add-on it's detected automatically (leave `mqtt_host` empty).
-No broker → this is simply skipped and the rest of the add-on works as usual.
+The integration is **pure REST** — no MQTT broker. Home Assistant drives Nabi
+through this add-on's HTTP control API via `rest_command`s. Two ready-to-paste
+packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/main/home-assistant):
+
+- **`nabaztag.yaml`** — the `rest_command`s (say / play / ears / led / weather /
+  nose / sleep) plus scripts (`nabaztag_say`, `nabaztag_ask_claude`,
+  `nabaztag_weather_announce`).
+- **`ambient.yaml`** — example ambient automations (belly = colour of the day,
+  morning/night, arrival, appliance-done, intercom) built on those `rest_command`s.
+
+Set `nab_api` (`<HAOS_IP>:8099`) and `nab_mac` in `secrets.yaml`, drop the files
+in `/config/packages/`, and reload YAML.
 
 ## Status
 
