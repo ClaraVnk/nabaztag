@@ -84,7 +84,8 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 │   └── …                    #    its HTTP listener is non-functional in the upstream image
 ├── home-assistant/
 │   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
-│   └── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
+│   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
+│   └── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
 ├── README.md
 └── LICENSE
 ```
