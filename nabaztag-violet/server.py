@@ -74,7 +74,7 @@ if VOICE_PROMPT is None:
 TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak").lower()
 TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.piper"
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-base.bin")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-small.bin")
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
