@@ -67,7 +67,9 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 - 🎤 **talk to it** — hold the head button, ask a question; it transcribes
   (bundled whisper.cpp), asks a **conversation agent (e.g. Claude)**, and speaks
   the reply — which can itself move the ears/LEDs
-- 📟 (v2) react to **button** presses and **RFID** tags *(surfaced in the logs)*
+- 📟 (v2) react to **button** presses, **RFID/Ztamp** tags and **ears moved by
+  hand** — re-emitted as `nabaztag_event` **Home Assistant events** to trigger
+  automations (Nabi as an input device)
 
 ## Repository layout
 

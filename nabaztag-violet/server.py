@@ -419,6 +419,26 @@ def _supervisor_token() -> str:
     return ""
 
 
+def fire_ha_event(etype: str, data: dict):
+    """Fire a Home Assistant event via the Supervisor proxy (fire-and-forget) so
+    automations can trigger on Nabi's inputs (button / RFID / ear-move)."""
+    token = _supervisor_token()
+    if not token:
+        return
+
+    def _post():
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                f"http://supervisor/core/api/events/{etype}",
+                data=json.dumps(data).encode(), method="POST",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5).read()
+        except Exception as exc:  # noqa
+            log.warning("HA event %s failed: %s", etype, exc)
+    threading.Thread(target=_post, daemon=True).start()
+
+
 def synth_via_ha(text: str) -> bytes:
     """Synthesize via a Home Assistant TTS engine (e.g. the Piper add-on) using
     the Supervisor proxy; returns the audio bytes (MP3). "" on failure."""
@@ -837,7 +857,31 @@ class XmppSession(threading.Thread):
             self.send(f"<presence from='{self.domain}' to='{self.jid}'/>")
             log.info("rabbit %s: presence <-> presence sent (rabbit should now go free)", self.addr[0])
             return
-        # Anything else (events: button/RFID, packets) -> logged above.
+
+        if "violet:nabaztag:button" in f:
+            # The rabbit sends <button><clic>N</clic></button> on head-button
+            # presses (1=click, 2=double; long/double-long are push-to-talk record).
+            mc = re.search(r"<clic>\s*(\d+)\s*</clic>", f)
+            clic = int(mc.group(1)) if mc else 0
+            action = {1: "click", 2: "double_click", 3: "long_click",
+                      4: "double_long_click"}.get(clic, "unknown")
+            log.info("rabbit %s: button clic=%d (%s)", self.addr[0], clic, action)
+            fire_ha_event("nabaztag_event",
+                          {"mac": self.mac, "type": "button", "clic": clic, "action": action})
+            return
+
+        if "violet:nabaztag:ears" in f:
+            # The rabbit sends <ears><left>L</left><right>R</right></ears> when the
+            # ears are turned by hand (positions ~0..16).
+            ml = re.search(r"<left>\s*(\d+)\s*</left>", f)
+            mr = re.search(r"<right>\s*(\d+)\s*</right>", f)
+            left = int(ml.group(1)) if ml else None
+            right = int(mr.group(1)) if mr else None
+            log.info("rabbit %s: ears moved left=%s right=%s", self.addr[0], left, right)
+            fire_ha_event("nabaztag_event",
+                          {"mac": self.mac, "type": "ears", "left": left, "right": right})
+            return
+        # Anything else (other packets/events) -> logged above.
 
     def _register(self):
         if self.mac:
@@ -987,6 +1031,21 @@ class BootHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path.endswith("/rfid.jsp"):
+            # An RFID/Ztamp tag was shown to the rabbit. In normal mode it reports
+            # this over HTTP (not XMPP): GET /vl/rfid.jsp?sn=<mac>&t=<tag>. We fire
+            # an HA event and reply 200/empty (a safe no-op; the body would be run
+            # as a program — a hook to play a per-tag choreography later).
+            qs = parse_qs(p.query)
+            tag = qs.get("t", [""])[0]
+            log.info("rabbit RFID tag=%s from %s", tag, self.address_string())
+            if tag:
+                fire_ha_event("nabaztag_event",
+                              {"mac": qs.get("sn", [""])[0].lower(), "type": "rfid", "tag": tag})
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         # Catch-all for other /vl/* (ping/broad polls) — 200 + log for RE.
         log.info("unhandled boot GET %s from %s", self.path, self.address_string())
