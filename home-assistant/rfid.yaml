@@ -1,0 +1,61 @@
+# Nabaztag RFID — tag → action
+# ---------------------------------------------------------------------------
+# Show an RFID/Ztamp tag to Nabi → the rabbit does GET /vl/rfid.jsp?t=<id> →
+# the add-on fires a `nabaztag_event` (type: rfid, tag: <id>). On a real scan the
+# rabbit also plays its built-in "RFIDok" chime, so the actions here are the
+# *smart* layer on top (announce / scene / jingle / etc.).
+#
+# Discovering your tags' ids (you don't need to know them in advance):
+#   scan a tag, then read `input_text.nabi_last_rfid` (Developer Tools → States,
+#   or put it on a dashboard) — that's the id to paste into a branch below.
+#
+# Testing WITHOUT a physical tag (replays exactly what the rabbit sends):
+#   curl "http://<HAOS_IP>/vl/rfid.jsp?sn=<mac>&t=deadbeef01"
+#
+# Drop in /config/packages/, set nab_api/nab_mac in secrets.yaml, reload YAML.
+# ---------------------------------------------------------------------------
+
+input_text:
+  nabi_last_rfid:
+    name: "Nabi - dernier tag RFID"
+    icon: mdi:nfc-variant
+    max: 64
+
+automation:
+  - id: nabi_rfid_dispatch
+    alias: "Nabaztag - RFID tag → action"
+    mode: queued
+    trigger:
+      - platform: event
+        event_type: nabaztag_event
+        event_data:
+          type: rfid
+    action:
+      - variables:
+          tag: "{{ trigger.event.data.tag }}"
+      # Remember the last tag so you can discover ids and register new tags.
+      - service: input_text.set_value
+        target:
+          entity_id: input_text.nabi_last_rfid
+        data:
+          value: "{{ tag }}"
+      - choose:
+          # ---- Known tags: add a branch per tag (paste the id you discovered) ----
+          - conditions: "{{ tag == 'deadbeef01' }}"   # example — replace
+            sequence:
+              - service: rest_command.nabaztag_jingle
+                data: { api: !secret nab_api, mac: !secret nab_mac, name: acquired }
+              - service: rest_command.nabaztag_say
+                data: { api: !secret nab_api, mac: !secret nab_mac, text: "Bonjour toi !" }
+          # - conditions: "{{ tag == 'PASTE_ANOTHER_ID' }}"
+          #   sequence:
+          #     - service: scene.turn_on
+          #       target: { entity_id: scene.soiree_film }
+        default:
+          # Unknown tag → announce it so you can register it (the rabbit already
+          # chimed on a real scan). Change to your liking once tags are mapped.
+          - service: rest_command.nabaztag_say
+            data:
+              api: !secret nab_api
+              mac: !secret nab_mac
+              text: "Nouveau tag… {{ tag[-4:] }} !"

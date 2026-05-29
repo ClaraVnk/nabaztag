@@ -178,7 +178,10 @@ config needed). Trigger automations on it:
   `click` (single), `double_click`. *(Long / double-long presses drive
   push-to-talk recording, so they are not reported as button events.)*
 - **RFID/Ztamp** — `type: rfid`, `tag` (the tag id) — tag an object to trigger a
-  scene. Reported over HTTP (`/vl/rfid.jsp`), works on the stock bytecode.
+  scene. Reported over HTTP (`/vl/rfid.jsp`), works on the stock bytecode. The
+  ready-made **`home-assistant/rfid.yaml`** package remembers the last tag (to
+  discover ids) and dispatches known tags to actions. Test it without a physical
+  tag by replaying the request: `curl "http://<HAOS_IP>/vl/rfid.jsp?sn=<mac>&t=deadbeef01"`.
 - **Ears** — `type: ears`, `left` / `right` (~0..16) when you turn the ears by hand.
 
 ```yaml

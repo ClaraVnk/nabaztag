@@ -89,7 +89,8 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 ├── home-assistant/
 │   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
 │   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
-│   └── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
+│   ├── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
+│   └── rfid.yaml            # RFID tag → action (remembers last tag; dispatches known ones)
 ├── README.md
 └── LICENSE
 ```
