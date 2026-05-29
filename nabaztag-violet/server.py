@@ -83,6 +83,13 @@ CONNECT_JINGLE = (os.environ.get("CONNECT_JINGLE") or _OPTS.get("connect_jingle"
 # Optional short "got it" chime played after the wake word (once the mic has
 # stopped), filling the gap while the agent composes its reply. "" = off.
 WAKE_CHIME = (os.environ.get("WAKE_CHIME") or _OPTS.get("wake_chime") or "").strip()
+# Personality: "auto" = the add-on gives Nabi a life of its own (random gentle
+# ears / side-LED pulses / nose at random intervals, daytime). "off" = it just
+# breathes and you wire your own behaviours in Home Assistant (custom). The two
+# are mutually exclusive — pick one so they don't both move the ears.
+PERSONALITY = (os.environ.get("PERSONALITY") or _OPTS.get("personality") or "off").strip().lower()
+PERSONALITY_MIN_S = int(os.environ.get("PERSONALITY_MIN_S") or _OPTS.get("personality_min_s") or 360)
+PERSONALITY_MAX_S = int(os.environ.get("PERSONALITY_MAX_S") or _OPTS.get("personality_max_s") or 1500)
 # Optional shared secret for the control API. Empty = open (default; fine on a
 # trusted LAN behind Home Assistant). If set, every /api/ request must present it
 # as the X-API-Token header or a ?token= query param — the minimal guard to have
@@ -1437,6 +1444,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                     WAKE["on"] = False
                     WAKE["streaming"] = False
                     b.send_program("RT")
+            elif path == "/api/personality":
+                # Trigger one personality action now (test / manual). Threaded so
+                # the call returns immediately.
+                threading.Thread(target=_personality_action, args=(b,), daemon=True).start()
             else:
                 return self._json(404, {"error": "unknown endpoint"})
         except Exception as exc:  # noqa
@@ -1623,6 +1634,52 @@ def _bunny_any():
         return next(iter(BUNNIES.values()), None)
 
 
+def _personality_action(b):
+    """One gentle, random 'sign of life': an ear flick (then settle), a soft
+    side-LED pulse, or a nose blink. Avoids the belly LED (middle) so it never
+    fights an HA colour-of-the-day. Sleeps between sub-steps → run in a thread."""
+    import random, time as _t
+    try:
+        pick = random.random()
+        if pick < 0.45:
+            l = random.randint(3, 13); r = random.randint(3, 13); d = random.randint(0, 1)
+            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], l * 18, d)),
+                                      (0, "motor", (EAR_NAMES["right"], r * 18, d ^ 1))])
+            _t.sleep(1.2)
+            b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], 8 * 18, d ^ 1)),
+                                      (0, "motor", (EAR_NAMES["right"], 8 * 18, d))])
+        elif pick < 0.80:
+            rgb = random.choice([(255, 120, 0), (0, 160, 255), (0, 200, 90),
+                                 (220, 0, 150), (255, 210, 0), (150, 0, 255)])
+            lid = LED_NAMES[random.choice(["left", "right", "top"])]
+            b.send_choreography(200, [(0, "led", (lid, rgb[0], rgb[1], rgb[2]))])
+            _t.sleep(1.5)
+            b.send_choreography(200, [(0, "led", (lid, 0, 0, 0))])
+        else:
+            b.send_violet_packet(ambient_packet({SVC_NOSE: 1}))
+    except Exception as exc:  # noqa
+        log.warning("personality: action failed %s", exc)
+
+
+def personality_loop():
+    """personality=auto: a gentle random behaviour every few minutes, but only
+    while awake (daytime) and never on top of a voice exchange."""
+    import random
+    log.info("personality: auto on (every %d-%d s, daytime)", PERSONALITY_MIN_S, PERSONALITY_MAX_S)
+    while True:
+        time.sleep(random.randint(PERSONALITY_MIN_S, PERSONALITY_MAX_S))
+        b = _bunny_any()
+        if b is None:
+            continue
+        h = time.localtime().tm_hour
+        if h < 8 or h >= 22:                       # quiet at night
+            continue
+        if time.time() < WAKE.get("cooldown", 0.0):  # don't interrupt a voice reply
+            continue
+        log.info("personality: tick")
+        _personality_action(b)
+
+
 # --------------------------------------------------------------------------- #
 def main():
     log.info("nabaztag-violet starting | server_address=%s http=%d xmpp=%d api=%d",
@@ -1633,6 +1690,8 @@ def main():
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=udp_mic_server, daemon=True).start()
     threading.Thread(target=wake_loop, daemon=True).start()
+    if PERSONALITY == "auto":
+        threading.Thread(target=personality_loop, daemon=True).start()
     http_boot_server()  # blocks
 
 
