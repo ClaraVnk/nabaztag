@@ -27,7 +27,7 @@ WORKDIR /app
 # Nabaztag bytecodes are Violet's proprietary firmware, not committed — fetched
 # at build from the OpenJabNab distribution (selectable via the `bootcode` option:
 # violet/ojn).
-RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ && \
+RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ ffmpeg && \
     curl -fsSL -o /app/bootcode.violet \
       https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet && \
     curl -fsSL -o /app/bootcode.ojn \
