@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/protocol-Violet-orange" alt="Violet protocol">
   <img src="https://img.shields.io/badge/python-stdlib-3776AB?logo=python&logoColor=white" alt="Python stdlib">
   <img src="https://img.shields.io/badge/100%25-local-success" alt="100% local, no cloud">
-  <img src="https://img.shields.io/badge/status-talking%20%2B%20moving%20(live)-success" alt="Talking and moving — verified live">
+  <img src="https://img.shields.io/badge/status-talks·moves·listens→Claude%20(live)-success" alt="Talks, moves, listens, talks to Claude — verified live">
 </p>
 
 Bring an **original Nabaztag** (the 2005–2006 Wi-Fi rabbit by Violet/Mindscape)
@@ -64,8 +64,10 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 - 💡 **RGB light shows** on the 5 LEDs (bottom / left / middle / right / top)
 - 🌦️ **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
   air quality &nbsp; 👃 **nose** blink &nbsp; 💤 **sleep / wake**
+- 🎤 **talk to it** — hold the head button, ask a question; it transcribes
+  (bundled whisper.cpp), asks a **conversation agent (e.g. Claude)**, and speaks
+  the reply — which can itself move the ears/LEDs
 - 📟 (v2) react to **button** presses and **RFID** tags *(surfaced in the logs)*
-- 🎤 **microphone → Claude** → *Phase 2*
 
 ## Repository layout
 
@@ -128,11 +130,15 @@ Full guide (API, pairing, troubleshooting) is in
   the `ssFree` state where it executes pushed commands) and must not let `<unbind>`
   be mistaken for a bind. A ready-to-use Home Assistant package (incl. a
   *speak Claude's reply on the rabbit* script) ships in `home-assistant/`.
-- **Phase 2 — microphone & firmware:** the v2 mic needs firmware that streams it.
-  The whole toolchain is open (RedoXyde's `mtl_linux` Metal compiler + simulator,
-  the RE'd original firmware `nominal.mtl`, the `nabAsm`/`nabDasm` tools and
-  `nabgcc`), so we can build/modify the bytecode and add a clean mic stream to our
-  server — then wire it to a local STT (Whisper) and an LLM conversation agent.
+- **Phase 2 — voice → Claude — working (verified live), no firmware hacking:**
+  the stock bytecode already does **push-to-talk** — hold the head button, speak,
+  and it records the mic and POSTs the audio to `/vl/record.jsp`. The add-on
+  decodes it, runs **bundled whisper.cpp** for speech-to-text, sends the text to a
+  **Home Assistant conversation agent** (e.g. the Anthropic/Claude integration),
+  and speaks the reply back. The agent can also **drive the rabbit** by embedding
+  `[ears …]` / `[led …]` / `[nose …]` tags in its reply. TTS is bundled **espeak-ng**
+  or, for a much nicer voice, **Piper** via the HA Piper add-on. Enable it with the
+  `voice_pipeline` / `conversation_agent` / `tts_engine` options.
 
 ## Hardware
 

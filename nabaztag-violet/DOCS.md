@@ -92,17 +92,38 @@ Endpoints:
 - `GET /api/ambient?svc=8&val=1` — generic AmbientPacket (repeatable `svc`/`val`).
 - `GET /api/raw?b64=<base64>` — inject a raw violet packet.
 
+## Voice (push-to-talk → conversation agent)
+
+Hold the rabbit's **head button** and speak; on release it records the mic and
+POSTs the audio here. With the voice pipeline on, the add-on transcribes it
+(bundled **whisper.cpp**), sends the text to a Home Assistant **conversation
+agent** (e.g. Claude), and speaks the reply. The agent can also drive the rabbit
+by putting `[ears L R]`, `[led ZONE R G B]` or `[nose N]` tags in its reply.
+
+Enable it in the add-on **Configuration**:
+
+- `voice_pipeline`: `true`
+- `conversation_agent`: your agent entity, e.g. `conversation.claude_conversation`
+  (leave empty to just echo the transcription)
+- `stt_language`: `fr`
+- `tts_engine`: `espeak` (bundled, robotic) or `piper` (nicer — needs the HA
+  **Piper** add-on; the add-on fetches its audio through the Supervisor proxy)
+- `tts_entity`: the Piper TTS entity, e.g. `tts.piper`
+- `voice_prompt`: the instruction prepended for the agent (it explains the action
+  tags and asks for short replies)
+
+Keep replies short — the charm is brevity. The bundled STT model is `base`
+(decent French on an 8 kHz mic); swap to a bigger whisper model for more accuracy.
+
 ## Status
 
-- **Connection + full boot verified on the real rabbit:** it boots our bytecode,
-  does the XMPP handshake, we answer its `violet:iq:sources` query with the init
-  packet, it rebinds as `idle` and **breathes** — operational.
-- **Command formats reverse-engineered & verified against the bytecode:** the
-  `AmbientPacket`, the `SleepPacket` (`on=0` wakes, `on=1` sleeps), the
-  `MessagePacket` program obfuscation (round-trips against the bytecode's
-  de-obfuscation), and the choreography binary (ear angles + 5 RGB LEDs).
-- **Visible confirmation pending an awake rabbit:** the program/choreography and
-  audio endpoints are implemented but want a daytime check on the device. Note
-  *asleep = LEDs off + ears down*; *breathing = awake/idle* — so commands should
-  be sent while it's breathing (or send `/api/sleep?on=0` first).
-- **Next (Phase 2):** the microphone → local STT → Claude → speech back out.
+- **Phase 1 — working, verified live:** the rabbit boots our server, **breathes**,
+  and is fully driven — ears (choreography), the 5 RGB LEDs, nose, audio, and TTS
+  (it **speaks**). All packet formats were reverse-engineered and verified against
+  the bytecode. The key to pushed commands: the server answers the rabbit's
+  **presence** so it reaches `ssFree` (and treats `<unbind>` separately from bind).
+- **Phase 2 — working, verified live, no custom firmware:** button **push-to-talk**
+  → bundled **whisper.cpp** STT → **conversation agent (Claude)** → spoken reply
+  (espeak or **Piper** voice), with the agent able to move the ears/LEDs/nose.
+- *asleep = LEDs off + ears down*; *breathing = awake/idle* — command it while it
+  breathes (or send `/api/sleep?on=0` first).
