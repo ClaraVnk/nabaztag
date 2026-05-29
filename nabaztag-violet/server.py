@@ -770,6 +770,35 @@ def run_action_tags(bunny, text: str) -> str:
     return re.sub(r"\[([^\]]+)\]", repl, text)
 
 
+def _fade(data: bytes) -> bytes:
+    """Soften a segment's hard onset/cutoff with a short fade in/out (ffmpeg), so a
+    [pause] silence doesn't feel abrupt. Returns the input unchanged on failure."""
+    import tempfile, subprocess, os
+    ext = "wav" if data[:4] == b"RIFF" else "mp3"
+    src = dst = None
+    try:
+        st = max(0.0, _audio_duration_s(data) - 0.09)
+        with tempfile.NamedTemporaryFile(suffix="." + ext, delete=False) as f:
+            f.write(data); src = f.name
+        dst = src + ".out." + ext
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-af",
+             f"afade=t=in:d=0.04,afade=t=out:st={st:.2f}:d=0.09", dst],
+            check=True, capture_output=True, timeout=15)
+        with open(dst, "rb") as fh:
+            return fh.read()
+    except Exception as exc:  # noqa
+        log.warning("fade failed: %s", exc)
+        return data
+    finally:
+        for p in (src, dst):
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+
 def _speak(b, text: str) -> float:
     """Speak text on the rabbit, turning [pause] / [pause N] markers into REAL
     silences (N ms, default 600) for theatrical delivery. A single program with
@@ -779,6 +808,7 @@ def _speak(b, text: str) -> float:
     Blocks for the whole utterance; callers run it in their own thread. Returns
     the total duration (for the wake cooldown)."""
     import time as _t
+    has_pause = "[pause" in text
     pieces = re.split(r"\[pause(?:\s+(\d+))?\]", text)
     steps = []  # ("say", wav, dur) | ("pause", seconds)
     for idx, piece in enumerate(pieces):
@@ -793,7 +823,8 @@ def _speak(b, text: str) -> float:
     total = 0.0
     for i, st in enumerate(steps):
         if st[0] == "say":
-            b.send_program(f"ST {resource_url(store_resource(st[1], _audio_ctype(st[1])))}")
+            wav = _fade(st[1]) if has_pause else st[1]
+            b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
             # don't wait after the very last segment (caller's cooldown covers it)
             if i < len(steps) - 1:
                 _t.sleep(st[2] + 0.3)
