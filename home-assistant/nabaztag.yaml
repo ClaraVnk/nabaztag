@@ -212,17 +212,6 @@ automation:
     action:
       - service: script.nabaztag_weather_announce
 
-  - alias: "Nabaztag - evening brief (Claude)"
-    trigger:
-      - platform: time
-        at: "21:00:00"
-    action:
-      - service: script.nabaztag_ask_claude
-        data:
-          prompt: >-
-            En une phrase courte et malicieuse, façon Nabaztag, souhaite une
-            bonne soirée à la maison.
-
   - alias: "Nabaztag - Shiva walk reminder"
     trigger:
       - platform: time
