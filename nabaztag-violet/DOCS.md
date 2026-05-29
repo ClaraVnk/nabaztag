@@ -210,6 +210,23 @@ automation:
           text: "Tiens, un objet magique… {{ trigger.event.data.tag }} !"
 ```
 
+## Personality — let it live, or make it yours
+
+Nabi can have **a life of its own** or be **entirely driven by you** — your choice
+via the `personality` option:
+
+- **`personality: auto`** — the add-on animates Nabi on its own: a gentle random
+  behaviour (an ear flick, a soft side-LED pulse, or a nose blink) every few
+  minutes, daytime only, and never on top of a voice reply. It deliberately
+  leaves the **belly LED** alone so it won't fight a colour-of-the-day. Tune the
+  cadence with `personality_min_s` / `personality_max_s`.
+- **`personality: off`** (default) — Nabi just breathes, and **you** decide what
+  it does, when, via Home Assistant automations (see the "signs of life" example
+  in `ambient.yaml`).
+
+Pick one — don't run `auto` *and* HA idle automations at once, or they'll both
+move the ears. Test a behaviour instantly any time with `GET /api/personality`.
+
 ## Status
 
 - **Phase 1 — working, verified live:** the rabbit boots our server, **breathes**,

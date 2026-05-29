@@ -142,9 +142,10 @@ automation:
         data: {api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8}
     mode: single
 
-  # Signs of life: a subtle ear twitch now and then during the day, so Nabi
-  # feels alive even when nothing's happening. Randomised (~1 in 3 every 20 min,
-  # i.e. roughly once an hour) so it's not clockwork; daytime only.
+  # Signs of life — the CUSTOM personality path (define your own behaviours here).
+  # If you instead enable the add-on's built-in `personality: auto`, delete or
+  # disable this so they don't both move the ears. A subtle ear twitch now and
+  # then during the day (randomised ~once an hour, not clockwork; daytime only).
   - id: nabi_idle_life
     alias: "Nabaztag - signs of life (idle twitch)"
     trigger:
