@@ -141,6 +141,8 @@ not stream its microphone at all**; nothing is captured or sent. Controls:
 - `auto_listen`: `false` (default) → no passive listening. Set `true` to start it
   automatically once the rabbit is idle.
 - `wake_word`: the trigger word (default `nabi`).
+- `wake_chime`: a short jingle played as a "got it" cue after the wake word (once
+  the mic stops, while the agent thinks) — default `start_record`; `""` to disable.
 - Toggle it **at runtime** with `GET /api/mic?on=1` / `?on=0`. Turning it **off
   sends `RT`**, so the rabbit *stops capturing* — it is not a server-side mute.
   The `home-assistant/` package exposes this as the `nabaztag_listen` rest_command
