@@ -46,10 +46,18 @@ API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
 # we now send); 'violet' is the original; 'pub' is the live community server's
 # (newest) build, fetched at build for comparison/RE.
 BOOTCODE_CHOICE = (os.environ.get("BOOTCODE") or _OPTS.get("bootcode") or "ojn").lower()
-BOOTCODE_FILE = os.environ.get(
-    "BOOTCODE_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), f"bootcode.{BOOTCODE_CHOICE}"),
-)
+if BOOTCODE_CHOICE == "hybrid":
+    # The custom mic-streaming bytecode (Phase 3) is built locally and dropped in
+    # the add-on's persistent /data (it's RE-derived firmware, not shipped).
+    BOOTCODE_FILE = os.environ.get("BOOTCODE_FILE", "/data/bootcode.hybrid")
+else:
+    BOOTCODE_FILE = os.environ.get(
+        "BOOTCODE_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), f"bootcode.{BOOTCODE_CHOICE}"),
+    )
+# Where Nabi should stream its mic (the hybrid bytecode's RS command). The rabbit
+# routes UDP to this host:4000; we resolve the advertised server address to an IP.
+MIC_UDP_PORT = int(os.environ.get("MIC_UDP_PORT", _OPTS.get("mic_udp_port", 4000)))
 # Phase-2 voice pipeline: button push-to-talk → STT (bundled whisper.cpp) →
 # optional conversation agent (Home Assistant, e.g. Claude) → TTS, all triggered
 # by the rabbit's button. When voice_pipeline is off the recording is just stored.
@@ -1013,8 +1021,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             with REC_LOCK:
                 rec = {"ts": LAST_RECORDING["ts"], "mode": LAST_RECORDING["mode"],
                        "pcm_bytes": len(LAST_RECORDING["pcm_wav"] or b"")}
+            with MIC_LOCK:
+                mic = {"packets": MIC_STREAM["packets"], "bytes": len(MIC_STREAM["adpcm"]),
+                       "ts": MIC_STREAM["ts"], "src": MIC_STREAM["src"]}
             return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn,
-                                    "last_recording": rec})
+                                    "last_recording": rec, "mic_stream": mic})
 
         if path == "/api/lastrecording":
             # Fetch the last push-to-talk recording. ?format=pcm (default,
@@ -1123,6 +1134,16 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/state":
                 # Ask the rabbit to report its XMPP/run state (reply is logged).
                 b.send_state_query()
+            elif path == "/api/mic":
+                # Start/stop the mic stream (hybrid bytecode only). Nabi streams
+                # 8 kHz "snd" datagrams to this host:MIC_UDP_PORT.
+                if _one("on", "1") in ("1", "true", "yes"):
+                    with MIC_LOCK:
+                        MIC_STREAM["adpcm"] = bytearray()
+                        MIC_STREAM["packets"] = 0
+                    b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+                else:
+                    b.send_program("RT")
             else:
                 return self._json(404, {"error": "unknown endpoint"})
         except Exception as exc:  # noqa
@@ -1134,6 +1155,50 @@ def api_server():
     httpd = ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
     log.info("Control API on 0.0.0.0:%d", API_PORT)
     httpd.serve_forever()
+
+
+# --------------------------------------------------------------------------- #
+# UDP microphone-stream receiver (Phase 3) — the hybrid bytecode streams 8 kHz
+# IMA-ADPCM as "snd"-prefixed datagrams here after an RS command.
+# --------------------------------------------------------------------------- #
+MIC_STREAM = {"adpcm": bytearray(), "packets": 0, "ts": 0.0, "src": None}
+MIC_LOCK = threading.Lock()
+
+
+def _server_ip():
+    try:
+        return socket.gethostbyname(SERVER_ADDRESS)
+    except OSError:
+        return SERVER_ADDRESS
+
+
+def udp_mic_server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", MIC_UDP_PORT))
+    except OSError as exc:
+        log.warning("UDP mic: cannot bind :%d (%s)", MIC_UDP_PORT, exc)
+        return
+    log.info("UDP mic receiver on 0.0.0.0:%d", MIC_UDP_PORT)
+    last_log = 0.0
+    while True:
+        try:
+            data, addr = s.recvfrom(2048)
+        except OSError:
+            continue
+        if data[:3] != b"snd":
+            continue
+        with MIC_LOCK:
+            MIC_STREAM["adpcm"] += data[3:]
+            MIC_STREAM["packets"] += 1
+            MIC_STREAM["ts"] = time.time()
+            MIC_STREAM["src"] = addr[0]
+            n, total = MIC_STREAM["packets"], len(MIC_STREAM["adpcm"])
+        now = time.time()
+        if now - last_log > 2:
+            log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", n, total, addr[0])
+            last_log = now
 
 
 # --------------------------------------------------------------------------- #
@@ -1262,6 +1327,7 @@ def main():
     threading.Thread(target=xmpp_server, daemon=True).start()
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=start_mqtt, daemon=True).start()
+    threading.Thread(target=udp_mic_server, daemon=True).start()
     http_boot_server()  # blocks
 
 
