@@ -10,6 +10,11 @@ input_boolean:
   nabi_sleep:
     name: "Nabi sleep"
     icon: mdi:sleep
+  # Passive listening ("hey Nabi"). OFF by default (privacy): when off, the
+  # rabbit's mic does not stream at all. Push-to-talk works regardless.
+  nabi_listen:
+    name: "Nabi passive listening"
+    icon: mdi:microphone
 
 input_select:
   nabi_nose:
@@ -52,6 +57,19 @@ automation:
           api: !secret nab_api
           mac: !secret nab_mac
           on: "{{ 1 if is_state('input_boolean.nabi_sleep', 'on') else 0 }}"
+    mode: single
+
+  - id: nabi_ctrl_listen
+    alias: "Nabi control — passive listening"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.nabi_listen
+    action:
+      - service: rest_command.nabaztag_listen
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          on: "{{ 1 if is_state('input_boolean.nabi_listen', 'on') else 0 }}"
     mode: single
 
   - id: nabi_ctrl_nose
