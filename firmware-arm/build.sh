@@ -53,13 +53,17 @@ ssh "$REMOTE" "docker run --rm $TAG" | tar -xv -C "$OUTDIR/"
 
 # Sign locally on the Mac (private key lives at ~/.nabaztag/signing_key.bin
 # and never leaves this machine). Skip silently if the key isn't present yet.
+# We sign into both the mode-scoped path AND a top-level self-identifying
+# name (naboot-<mode>.signed.sim) so any file is recognizable out of context.
 if [ -f "$HOME/.nabaztag/signing_key.bin" ]; then
   echo ">> signing .sim with local Ed25519 key"
   python3 "$HERE/signing/sign_sim.py" "$OUTDIR/firmware0.0.0.13.sim" \
     -o "$OUTDIR/firmware0.0.0.13.signed.sim"
   python3 "$HERE/signing/verify_sim.py" "$OUTDIR/firmware0.0.0.13.signed.sim"
+  cp "$OUTDIR/firmware0.0.0.13.signed.sim" "$HERE/bin/naboot-${MODE}.signed.sim"
+  echo ">> also available as bin/naboot-${MODE}.signed.sim"
 else
   echo ">> SKIP signing: no key at ~/.nabaztag/signing_key.bin (run signing/gen_key.py first)"
 fi
 
-ls -la "$OUTDIR/"
+ls -la "$OUTDIR/" "$HERE/bin/"naboot-*.signed.sim 2>/dev/null
