@@ -1,0 +1,101 @@
+# Nabaztag (Nabi) — REST-backed dashboard controls
+# ---------------------------------------------------------------------------
+# Optional UI controls for Nabi (sleep / nose / ears / belly), built from input
+# helpers + automations that call the rest_commands in nabaztag.yaml. No MQTT.
+# Drop this file in /config/packages/, set nab_api/nab_mac in secrets.yaml, and
+# reload YAML. Add the helpers to a dashboard for toggles/sliders.
+# ---------------------------------------------------------------------------
+
+input_boolean:
+  nabi_sleep:
+    name: "Nabi sleep"
+    icon: mdi:sleep
+
+input_select:
+  nabi_nose:
+    name: "Nabi nose"
+    options: ["off", "blink", "double"]
+    icon: mdi:led-on
+
+input_number:
+  nabi_ears:
+    name: "Nabi ears"
+    min: 0
+    max: 16
+    step: 1
+    icon: mdi:rabbit
+  nabi_belly_r:
+    name: "Nabi belly · R"
+    min: 0
+    max: 255
+    step: 5
+  nabi_belly_g:
+    name: "Nabi belly · G"
+    min: 0
+    max: 255
+    step: 5
+  nabi_belly_b:
+    name: "Nabi belly · B"
+    min: 0
+    max: 255
+    step: 5
+
+automation:
+  - id: nabi_ctrl_sleep
+    alias: "Nabi control — sleep"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.nabi_sleep
+    action:
+      - service: rest_command.nabaztag_sleep
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          on: "{{ 1 if is_state('input_boolean.nabi_sleep', 'on') else 0 }}"
+    mode: single
+
+  - id: nabi_ctrl_nose
+    alias: "Nabi control — nose"
+    trigger:
+      - platform: state
+        entity_id: input_select.nabi_nose
+    action:
+      - service: rest_command.nabaztag_nose
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          v: "{{ {'off': 0, 'blink': 1, 'double': 2}[states('input_select.nabi_nose')] }}"
+    mode: single
+
+  - id: nabi_ctrl_ears
+    alias: "Nabi control — ears"
+    trigger:
+      - platform: state
+        entity_id: input_number.nabi_ears
+    action:
+      - service: rest_command.nabaztag_ears
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          left: "{{ states('input_number.nabi_ears') | int }}"
+          right: "{{ states('input_number.nabi_ears') | int }}"
+    mode: single
+
+  - id: nabi_ctrl_belly
+    alias: "Nabi control — belly RGB"
+    trigger:
+      - platform: state
+        entity_id:
+          - input_number.nabi_belly_r
+          - input_number.nabi_belly_g
+          - input_number.nabi_belly_b
+    action:
+      - service: rest_command.nabaztag_led
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          led: middle
+          r: "{{ states('input_number.nabi_belly_r') | int }}"
+          g: "{{ states('input_number.nabi_belly_g') | int }}"
+          b: "{{ states('input_number.nabi_belly_b') | int }}"
+    mode: single

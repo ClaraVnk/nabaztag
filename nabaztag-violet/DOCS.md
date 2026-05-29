@@ -130,6 +130,9 @@ packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/m
   `nabaztag_weather_announce`).
 - **`ambient.yaml`** — example ambient automations (belly = colour of the day,
   morning/night, arrival, appliance-done, intercom) built on those `rest_command`s.
+- **`entities.yaml`** — optional **dashboard controls** (a sleep toggle, a nose
+  selector, an ears slider, belly R/G/B sliders) built from input helpers +
+  automations on those `rest_command`s — replaces the old MQTT entities, no broker.
 
 Set `nab_api` (`<HAOS_IP>:8099`) and `nab_mac` in `secrets.yaml`, drop the files
 in `/config/packages/`, and reload YAML.
