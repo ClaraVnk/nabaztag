@@ -13,11 +13,18 @@
 
 set -euo pipefail
 REMOTE="root@192.168.1.15"
-if [ "${1:-}" = "--remote" ]; then REMOTE="$2"; shift 2; fi
+MODE="full"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --remote) REMOTE="$2"; shift 2 ;;
+    --mode)   MODE="$2";   shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TAG="nab-firmware-build"
-REMOTE_DIR="/tmp/nab-firmware-build"
+TAG="nab-firmware-build:$MODE"
+REMOTE_DIR="/tmp/nab-firmware-build-$MODE"
 
 echo ">> shipping build context to $REMOTE:$REMOTE_DIR"
 ssh "$REMOTE" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
@@ -31,7 +38,7 @@ echo ">> building image on $REMOTE"
 # Capture the full log locally and surface the relevant tail.
 LOGFILE="$HERE/bin/.build.log"
 mkdir -p "$HERE/bin"
-if ! ssh "$REMOTE" "set -o pipefail; cd $REMOTE_DIR && docker build -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
+if ! ssh "$REMOTE" "set -o pipefail; cd $REMOTE_DIR && docker build --build-arg MODE=$MODE -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
   echo "!! docker build FAILED on $REMOTE — last 80 lines:" >&2
   tail -80 "$LOGFILE" >&2
   echo "(full log at $LOGFILE)" >&2
@@ -39,19 +46,20 @@ if ! ssh "$REMOTE" "set -o pipefail; cd $REMOTE_DIR && docker build -t $TAG . 2>
 fi
 tail -30 "$LOGFILE"
 
-echo ">> extracting artifacts"
-mkdir -p "$HERE/bin"
-ssh "$REMOTE" "docker run --rm $TAG" | tar -xv -C "$HERE/bin/"
+echo ">> extracting artifacts (mode=$MODE)"
+OUTDIR="$HERE/bin/$MODE"
+mkdir -p "$OUTDIR"
+ssh "$REMOTE" "docker run --rm $TAG" | tar -xv -C "$OUTDIR/"
 
 # Sign locally on the Mac (private key lives at ~/.nabaztag/signing_key.bin
 # and never leaves this machine). Skip silently if the key isn't present yet.
 if [ -f "$HOME/.nabaztag/signing_key.bin" ]; then
   echo ">> signing .sim with local Ed25519 key"
-  python3 "$HERE/signing/sign_sim.py" "$HERE/bin/firmware0.0.0.13.sim" \
-    -o "$HERE/bin/firmware0.0.0.13.signed.sim"
-  python3 "$HERE/signing/verify_sim.py" "$HERE/bin/firmware0.0.0.13.signed.sim"
+  python3 "$HERE/signing/sign_sim.py" "$OUTDIR/firmware0.0.0.13.sim" \
+    -o "$OUTDIR/firmware0.0.0.13.signed.sim"
+  python3 "$HERE/signing/verify_sim.py" "$OUTDIR/firmware0.0.0.13.signed.sim"
 else
   echo ">> SKIP signing: no key at ~/.nabaztag/signing_key.bin (run signing/gen_key.py first)"
 fi
 
-ls -la "$HERE/bin/"
+ls -la "$OUTDIR/"

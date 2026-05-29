@@ -431,16 +431,38 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
+        "--mode",
+        choices=("full", "minimal"),
+        default="full",
+        help=(
+            "full = everything (verify-enforced bootloader + modernized UI). "
+            "minimal = opcode + crypto only; boot.mtl stays byte-identical to "
+            "vanilla wpa2. The minimal build is our rescue 'parachute' — "
+            "almost the same firmware Kevin's sysadmin already flashed safely, "
+            "plus the verifySig opcode for future OTAs."
+        ),
+    )
+    ap.add_argument(
         "--steps",
-        default="vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader",
-        help="Comma-separated steps to run. Useful for incremental debug.",
+        default=None,
+        help="Override the default step set chosen by --mode.",
     )
     args = ap.parse_args()
     root = Path(args.root).resolve()
     if not (root / "Makefile").is_file():
         sys.exit(f"not a nabgcc root: {root} (Makefile missing)")
 
-    steps = args.steps.split(",")
+    default_steps = {
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader",
+        # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
+        # the rabbit's flash + config-mode behavior is byte-equivalent to the
+        # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
+        # (dormant until called).
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile",
+    }
+    steps_str = args.steps if args.steps else default_steps[args.mode]
+    steps = steps_str.split(",")
+    print(f"=== apply-mods.py mode={args.mode} steps={steps_str} ===")
     fns = {
         "vbc": patch_vbc_h,
         "vinterp": patch_vinterp_c,

@@ -1,4 +1,5 @@
 bin/
+bin/*/
 *.sim
 *.elf
 *.bin
