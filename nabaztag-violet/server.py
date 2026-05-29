@@ -13,6 +13,7 @@ OpenJabNab source. Packet framing: 0x7F | type | len(3, big-endian) | data | 0xF
 sent base64-encoded inside <message><packet xmlns='violet:packet'>…</packet>.
 """
 import base64
+import hmac
 import json
 import logging
 import os
@@ -68,6 +69,11 @@ WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S") or _OPTS.get("wake_window_
 # silence is well under this; speech is >1000. On decode error the gate is bypassed.
 WAKE_VAD_RMS = int(os.environ.get("WAKE_VAD_RMS") or _OPTS.get("wake_vad_rms") or 300)
 AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "").lower() in ("1", "true", "yes", "on")
+# Optional shared secret for the control API. Empty = open (default; fine on a
+# trusted LAN behind Home Assistant). If set, every /api/ request must present it
+# as the X-API-Token header or a ?token= query param — the minimal guard to have
+# in place before the server is ever exposed beyond the LAN.
+API_TOKEN = (os.environ.get("API_TOKEN") or _OPTS.get("api_token") or "").strip()
 # Phase-2 voice pipeline: button push-to-talk → STT (bundled whisper.cpp) →
 # optional conversation agent (Home Assistant, e.g. Claude) → TTS, all triggered
 # by the rabbit's button. When voice_pipeline is off the recording is just stored.
@@ -1066,6 +1072,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         p = urlparse(self.path)
         q = parse_qs(p.query)
         path = p.path.rstrip("/")
+
+        if API_TOKEN:
+            got = self.headers.get("X-API-Token") or q.get("token", [""])[0]
+            if not hmac.compare_digest(got or "", API_TOKEN):
+                return self._json(401, {"error": "unauthorized"})
 
         if path in ("", "/api", "/api/status"):
             with BUNNIES_LOCK:

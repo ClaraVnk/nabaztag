@@ -52,6 +52,13 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 Reached on host port **8099** (container `:8080`). If a single rabbit is connected
 `mac` is optional; otherwise pass `?mac=<lowercase-no-colons>`.
 
+The API is **open by default** (fine on a trusted LAN behind Home Assistant). Set
+the `api_token` option to require a shared secret on every `/api/` request — pass
+it as the `X-API-Token` header or a `?token=` query param (anything else → `401`).
+This is the minimal guard to enable before exposing the server beyond the LAN. If
+you turn it on, add the token to the `rest_command`s, e.g. a `headers:` block with
+`X-API-Token: !secret nab_token` (or append `&token=…` to the URLs).
+
 The rabbit has **two command channels** (reverse-engineered from the bytecode):
 
 - **Programs** (`MessagePacket`, type `0x0A`) — the rich channel: play audio,
