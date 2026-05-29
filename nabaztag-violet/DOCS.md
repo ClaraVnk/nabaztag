@@ -83,7 +83,8 @@ Endpoints:
   from the firmware, rendered on the fly by a tiny built-in MIDI synth). `GET
   /api/jingle` (no name) lists them: `acquired, ack, abort, ministop, ears,
   rfid_ok, start_record, end_record, start_interactive, end_interactive, previous,
-  next`. `&wait=1` blocks.
+  next`. `&wait=1` blocks. Set the **`connect_jingle`** option to a jingle name to
+  have Nabi play it automatically when it comes online (empty = off).
 - `GET /api/ears?left=8&right=2` — **move the ears** to positions (~0..16) via a
   choreography; `&dir=0|1` sets rotation direction.
 - `GET /api/led?led=top&r=0&g=238&b=0` — **full RGB** on one LED

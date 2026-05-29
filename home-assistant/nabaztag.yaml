@@ -193,3 +193,14 @@ automation:
         data: { api: !secret nab_api, mac: !secret nab_mac, left: 10, right: 10 }
       - service: rest_command.nabaztag_say
         data: { api: !secret nab_api, mac: !secret nab_mac, text: "C'est l'heure de sortir Shiva !" }
+
+  # Tie Nabi's own inputs (nabaztag_event) to its jingles. Example: double-click
+  # the head → the "acquired" chime. Swap in any tag/button/jingle you like.
+  - alias: "Nabaztag - double-click → jingle"
+    trigger:
+      - platform: event
+        event_type: nabaztag_event
+        event_data: { type: button, action: double_click }
+    action:
+      - service: rest_command.nabaztag_jingle
+        data: { api: !secret nab_api, mac: !secret nab_mac, name: acquired }
