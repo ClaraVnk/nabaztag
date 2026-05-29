@@ -80,6 +80,7 @@ Endpoints:
 - `GET /api/bottomled?v=3` — bottom belly LED (palette index, no fetch).
 - `GET /api/earwiggle?left=1&right=1` — the ambient "ears wiggle home" effect.
 - `GET /api/sleep?on=0` — wake (`0`) or sleep (`1`).
+- `GET /api/state` — ask the rabbit to report its XMPP/run state (logged).
 - `GET /api/ambient?svc=8&val=1` — generic AmbientPacket (repeatable `svc`/`val`).
 - `GET /api/raw?b64=<base64>` — inject a raw violet packet.
 

@@ -310,6 +310,18 @@ class XmppSession(threading.Thread):
         token = store_resource(build_choreography(tempo_ms, actions))
         self.send_program(f"CH {resource_url(token)}")
 
+    def send_state_query(self):
+        """Ask the rabbit to report its internal state via the bytecode's
+        `getrunningstate` ad-hoc command. The reply (sState/gSleepState/run…)
+        arrives as a normal incoming stanza and is logged."""
+        self.msg_nb += 1
+        self.send(
+            f"<iq type='set' from='net.openjabnab.platform@{self.domain}/services' "
+            f"to='{self.mac}@{self.domain}/{self.resource}' id='state-{self.msg_nb}'>"
+            f"<command xmlns='http://jabber.org/protocol/commands' node='getrunningstate' "
+            f"action='execute'/></iq>"
+        )
+
     # -- handshake --------------------------------------------------------- #
     def _stream_header(self, features: str):
         self.send(
@@ -389,6 +401,8 @@ class XmppSession(threading.Thread):
             self.bound = True
             self.send(f"<iq type='result' id='{iq_id}'/>")
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
+            if self.resource == "idle":
+                threading.Timer(2.5, self.send_state_query).start()
             return
 
         if "violet:iq:sources" in f and "<iq" in f:
@@ -704,6 +718,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/sleep":
                 on = 1 if _one("on", "1") in ("1", "true", "yes") else 0
                 b.send_violet_packet(frame_packet(PKT_SLEEP, bytes([on])))
+            elif path == "/api/state":
+                # Ask the rabbit to report its XMPP/run state (reply is logged).
+                b.send_state_query()
             else:
                 return self._json(404, {"error": "unknown endpoint"})
         except Exception as exc:  # noqa
