@@ -207,6 +207,82 @@ def strip_tweetnacl(root: Path) -> None:
     print(f"[ok]   {p}: stripped {removed}/{len(unused)} unused TweetNaCl entry points")
 
 
+def modernize_pages(root: Path) -> None:
+    """Replace the 2006-era config-mode HTML (page_a, page_done, page_u,
+    page_error) with the modernized versions in firmware-arm/pages/.
+
+    The new HTML:
+      - keeps every form field name + action URL the firmware backend reads,
+      - keeps every <MARKER> template placeholder the rabbit substitutes,
+      - drops the inline <table> layout and per-element style attributes for
+        one consolidated <style> block (dark theme, system font, mobile
+        viewport).
+
+    Net effect: ~15-20 KB of ROM freed.
+    """
+    pages_dir = Path(__file__).resolve().parent / "pages"
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_text()
+    if "/* pages-modernized */" in s:
+        print(f"[skip] {boot}: pages already modernized")
+        return
+
+    pages = {
+        "page_a": pages_dir / "page_a.html",
+        "page_done": pages_dir / "page_done.html",
+        "page_u": pages_dir / "page_u.html",
+        "page_error": pages_dir / "page_error.html",
+    }
+    for name, path in pages.items():
+        if not path.is_file():
+            sys.exit(f"FAIL {boot}: missing page {path}")
+
+    # Each var assignment in boot.mtl spans many lines:
+    #   var page_a="<!DOCTYPE...
+    #   ...html...
+    #   ";;
+    # Find from `var <name>=` up to the matching `";;` (terminator).
+    total_before = sum(
+        m.end() - m.start()
+        for m in re.finditer(
+            r'^var (?:page_a|page_done|page_u|page_error)=.*?";;',
+            s, re.MULTILINE | re.DOTALL,
+        )
+    )
+
+    for name, path in pages.items():
+        html = path.read_text()
+        # Metal string literal: escape backslashes and double-quotes; literal
+        # newlines are OK inside the string.
+        escaped = html.replace("\\", "\\\\").replace('"', '\\"')
+        replacement = f'var {name}="{escaped}";;\n'
+        pat = re.compile(
+            rf'^var {name}=.*?";;\n?',
+            re.MULTILINE | re.DOTALL,
+        )
+        new_s, n = pat.subn(replacement, s, count=1)
+        if n != 1:
+            sys.exit(f"FAIL {boot}: could not find/replace {name} block")
+        s = new_s
+
+    s = "/* pages-modernized */\n" + s
+    boot.write_text(s)
+
+    # Report size delta — useful when iterating.
+    total_after = sum(
+        m.end() - m.start()
+        for m in re.finditer(
+            r'^var (?:page_a|page_done|page_u|page_error)=.*?";;',
+            s, re.MULTILINE | re.DOTALL,
+        )
+    )
+    delta = total_after - total_before
+    print(
+        f"[ok]   {boot}: modernized 4 pages, "
+        f"{total_before} → {total_after} bytes ({delta:+d})"
+    )
+
+
 def patch_makefile(root: Path) -> None:
     """Add -ffunction-sections -fdata-sections + -Wl,--gc-sections so the linker
     strips the TweetNaCl functions we don't use (only crypto_sign_open + its
@@ -328,7 +404,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
-        "--steps", default="vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader",
+        "--steps",
+        default="vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader",
         help="Comma-separated steps to run. Useful for incremental debug.",
     )
     args = ap.parse_args()
@@ -342,6 +419,7 @@ def main() -> int:
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
         "strip_tweetnacl": strip_tweetnacl,
+        "modernize_pages": modernize_pages,
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
     }
