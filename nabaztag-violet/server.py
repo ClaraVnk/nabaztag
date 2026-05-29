@@ -63,6 +63,10 @@ MIC_UDP_PORT = int(os.environ.get("MIC_UDP_PORT", _OPTS.get("mic_udp_port", 4000
 # agent. auto_listen starts the stream automatically once Nabi is idle.
 WAKE_WORD = (os.environ.get("WAKE_WORD") or _OPTS.get("wake_word") or "nabi").lower()
 WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S") or _OPTS.get("wake_window_s") or 3)
+# Skip STT on near-silent wake windows (energy gate). It's the peak RMS over short
+# frames, so a brief "nabi" in an otherwise-quiet window still passes. 8 kHz/16-bit
+# silence is well under this; speech is >1000. On decode error the gate is bypassed.
+WAKE_VAD_RMS = int(os.environ.get("WAKE_VAD_RMS") or _OPTS.get("wake_vad_rms") or 300)
 AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "").lower() in ("1", "true", "yes", "on")
 # Phase-2 voice pipeline: button push-to-talk → STT (bundled whisper.cpp) →
 # optional conversation agent (Home Assistant, e.g. Claude) → TTS, all triggered
@@ -488,6 +492,23 @@ def _resample_wav(wav_bytes: bytes, target_rate: int) -> bytes:
 def _resample_wav_16k(wav_bytes: bytes) -> bytes:
     """16 kHz mono PCM WAV (what whisper.cpp expects; the rabbit records at 8 kHz)."""
     return _resample_wav(wav_bytes, 16000)
+
+
+def _wav_peak_rms(wav_bytes: bytes, frame_ms: int = 100) -> int:
+    """Loudest short-frame RMS in the clip — cheap voice-activity gate. Returns a
+    huge value on error so the caller never gates out audio it failed to read."""
+    import wave, audioop, io
+    try:
+        w = wave.open(io.BytesIO(wav_bytes))
+        sw, rate = w.getsampwidth(), w.getframerate()
+        frames = w.readframes(w.getnframes())
+        w.close()
+        if sw != 2:
+            frames = audioop.lin2lin(frames, sw, 2); sw = 2
+        step = max(1, int(rate * frame_ms / 1000)) * sw
+        return max((audioop.rms(frames[i:i + step], 2) for i in range(0, len(frames), step)), default=0)
+    except Exception:
+        return 10 ** 9
 
 
 def stt_transcribe(pcm_wav: bytes) -> str:
@@ -1303,8 +1324,11 @@ def wake_loop():
             MIC_STREAM["adpcm"] = bytearray()
         if len(chunk) < 4000:  # < ~0.5 s of audio
             continue
+        pcm_wav = adpcm_stream_to_pcm_wav(chunk)
+        if _wav_peak_rms(pcm_wav) < WAKE_VAD_RMS:  # near silence — skip STT (CPU)
+            continue
         try:
-            text = stt_transcribe(adpcm_stream_to_pcm_wav(chunk)).lower()
+            text = stt_transcribe(pcm_wav).lower()
         except Exception as exc:  # noqa
             log.warning("wake: STT error %s", exc)
             continue
