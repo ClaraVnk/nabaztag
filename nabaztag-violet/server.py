@@ -770,6 +770,32 @@ def run_action_tags(bunny, text: str) -> str:
     return re.sub(r"\[([^\]]+)\]", repl, text)
 
 
+def _speak(b, text: str) -> float:
+    """Speak text on the rabbit, turning [pause] / [pause N] markers into REAL
+    silences (N ms, default 600) for theatrical delivery — each segment is
+    synthesized and played with MW (wait-for-sound) then WT (wait) between them.
+    Returns the estimated total duration so callers can size the wake cooldown."""
+    pieces = re.split(r"\[pause(?:\s+(\d+))?\]", text)
+    program = []
+    total = 0.0
+    for idx, piece in enumerate(pieces):
+        if idx % 2 == 0:                       # a speech segment
+            seg = (piece or "").strip()
+            if seg:
+                wav = synth_tts(seg)
+                if wav:
+                    program.append(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+                    program.append("MW")       # wait for it to finish before the pause
+                    total += _audio_duration_s(wav)
+        else:                                   # a [pause] marker
+            ms = max(100, min(int(piece) if piece else 600, 5000))
+            program.append(f"WT {ms}")
+            total += ms / 1000.0
+    if program:
+        b.send_program("\n".join(program))
+    return total
+
+
 def handle_voice(pcm_wav: bytes):
     """Full voice loop for a button recording: STT → optional conversation agent
     (which can also drive the rabbit via action tags) → speak the reply."""
@@ -791,8 +817,7 @@ def handle_voice(pcm_wav: bytes):
     log.info("voice: speaking %r", reply)
     try:
         if reply.strip():
-            wav = synth_tts(reply)
-            bunny.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+            _speak(bunny, reply)
     except Exception as exc:  # noqa
         log.warning("voice: reply playback failed: %s", exc)
 
@@ -1385,13 +1410,17 @@ class ApiHandler(BaseHTTPRequestHandler):
                 text = _one("text", "")
                 if not text:
                     return self._json(400, {"error": "give ?text="})
-                wav = synth_tts(text, _one("voice", "fr"),
-                                int(_one("speed", "160")), int(_one("pitch", "50")))
-                url = resource_url(store_resource(wav, _audio_ctype(wav)))
-                prog = f"ST {url}"
-                if _one("wait") in ("1", "true", "yes"):
-                    prog += "\nMW"
-                b.send_program(prog)
+                if "[pause" in text:
+                    # honor [pause]/[pause N] markers as real silences
+                    _speak(b, text)
+                else:
+                    wav = synth_tts(text, _one("voice", "fr"),
+                                    int(_one("speed", "160")), int(_one("pitch", "50")))
+                    url = resource_url(store_resource(wav, _audio_ctype(wav)))
+                    prog = f"ST {url}"
+                    if _one("wait") in ("1", "true", "yes"):
+                        prog += "\nMW"
+                    b.send_program(prog)
             elif path == "/api/play":
                 # Audio: ?url=<mp3/wav> streamed via ST, OR POST the audio body
                 # (stored + served from /res/ and streamed). ?wait=1 blocks (MW).
@@ -1652,9 +1681,7 @@ def wake_loop():
         dur = 4.0
         if reply.strip():
             try:
-                wav = synth_tts(reply)
-                dur = _audio_duration_s(wav)
-                b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+                dur = _speak(b, reply) or 4.0
             except Exception as exc:  # noqa
                 log.warning("wake: reply failed %s", exc)
         # Re-arm only after the reply has surely finished (it plays AFTER the
