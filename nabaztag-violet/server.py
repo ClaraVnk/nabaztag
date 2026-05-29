@@ -537,6 +537,116 @@ def _wav_peak_rms(wav_bytes: bytes, frame_ms: int = 100) -> int:
         return 10 ** 9
 
 
+JINGLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
+
+
+def list_jingles() -> list:
+    """Names of the bundled iconic-Nabaztag jingles (the .mid files extracted
+    from the original firmware)."""
+    try:
+        return sorted(f[:-4] for f in os.listdir(JINGLES_DIR) if f.endswith(".mid"))
+    except OSError:
+        return []
+
+
+def _midi_to_wav(data: bytes, rate: int = 16000) -> bytes:
+    """Tiny dependency-free Standard-MIDI-File -> mono 16-bit PCM WAV synth
+    (a percussive, music-box-ish tone). Lets us play the original Nabaztag
+    jingles through the rabbit's normal audio path. Returns b"" on bad input."""
+    import struct, wave, math, io
+    if data[:4] != b"MThd":
+        return b""
+    div = struct.unpack(">H", data[12:14])[0] or 480
+    p = data.find(b"MTrk")
+    if p < 0:
+        return b""
+    tlen = struct.unpack(">I", data[p + 4:p + 8])[0]
+    i = p + 8
+    end = min(i + tlen, len(data))
+    tempo = 500000
+    t = 0
+    status = 0
+    live = {}
+    events = []
+
+    def _vlq(j):
+        v = 0
+        while True:
+            x = data[j]; j += 1; v = (v << 7) | (x & 0x7f)
+            if not (x & 0x80):
+                return v, j
+
+    def sec(tk):
+        return tk * (tempo / 1e6) / div
+
+    while i < end:
+        dt, i = _vlq(i); t += dt
+        x = data[i]
+        if x & 0x80:
+            status = x; i += 1
+        ev = status & 0xf0
+        if ev == 0x90:
+            note = data[i]; vel = data[i + 1]; i += 2
+            if vel:
+                live[note] = (sec(t), vel)
+            else:
+                s = live.pop(note, None)
+                if s:
+                    events.append((s[0], sec(t) - s[0], 440 * 2 ** ((note - 69) / 12), s[1]))
+        elif ev == 0x80:
+            note = data[i]; i += 2
+            s = live.pop(note, None)
+            if s:
+                events.append((s[0], sec(t) - s[0], 440 * 2 ** ((note - 69) / 12), s[1]))
+        elif ev in (0xA0, 0xB0, 0xE0):
+            i += 2
+        elif ev in (0xC0, 0xD0):
+            i += 1
+        elif status == 0xFF:
+            mt = data[i]; i += 1; ln, i = _vlq(i)
+            if mt == 0x51:
+                tempo = int.from_bytes(data[i:i + 3], "big")
+            i += ln
+        elif status in (0xF0, 0xF7):
+            ln, i = _vlq(i); i += ln
+        else:
+            i += 1
+
+    total = max((s + d for s, d, _, _ in events), default=0.3) + 0.06
+    n = int(total * rate)
+    buf = [0.0] * n
+    for start, dur, freq, vel in events:
+        s0 = int(start * rate); dur = max(dur, 0.08); ns = int(dur * rate); amp = vel / 127.0
+        for k in range(ns):
+            if s0 + k >= n:
+                break
+            tt = k / rate
+            envv = math.exp(-3.2 * tt / dur) * (1 - math.exp(-tt / 0.004))
+            ph = 2 * math.pi * freq * tt
+            buf[s0 + k] += (math.sin(ph) + 0.5 * math.sin(2 * ph) + 0.2 * math.sin(3 * ph)) * envv * amp
+    peak = max((abs(v) for v in buf), default=1.0) or 1.0
+    g = 0.85 / peak
+    out = io.BytesIO()
+    w = wave.open(out, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+    w.writeframes(b"".join(struct.pack("<h", int(max(-1.0, min(1.0, v * g)) * 32767)) for v in buf))
+    w.close()
+    return out.getvalue()
+
+
+def render_jingle(name: str, rate: int = 16000):
+    """Render a bundled jingle (.mid) to WAV bytes; None if the name is unknown.
+    The name is sanitised to prevent path traversal."""
+    safe = re.sub(r"[^A-Za-z0-9_]", "", name or "")
+    path = os.path.join(JINGLES_DIR, safe + ".mid")
+    if not safe or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            return _midi_to_wav(fh.read(), rate)
+    except Exception:  # noqa
+        return None
+
+
 def stt_transcribe(pcm_wav: bytes) -> str:
     """Transcribe a PCM WAV with the bundled whisper.cpp (resampled to 16 kHz).
     Returns "" if the binary/model is missing or nothing is recognised."""
@@ -1179,6 +1289,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(wav)
             return
 
+        if path == "/api/jingle" and not q.get("name"):
+            # List the bundled jingles (works without a connected rabbit).
+            return self._json(200, {"jingles": list_jingles()})
+
         body = b""
         if self.command == "POST":
             length = int(self.headers.get("Content-Length", 0) or 0)
@@ -1220,6 +1334,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                     url = resource_url(store_resource(body, ctype))
                 if not url:
                     return self._json(400, {"error": "give ?url= or POST audio body"})
+                prog = f"ST {url}"
+                if _one("wait") in ("1", "true", "yes"):
+                    prog += "\nMW"
+                b.send_program(prog)
+            elif path == "/api/jingle":
+                # Play an original Nabaztag jingle: ?name=<jingle> (see ?name=list
+                # or GET /api/jingle). Rendered from the firmware-extracted MIDI.
+                wav = render_jingle(_one("name", ""))
+                if wav is None:
+                    return self._json(404, {"error": "unknown jingle",
+                                            "available": list_jingles()})
+                url = resource_url(store_resource(wav, _audio_ctype(wav)))
                 prog = f"ST {url}"
                 if _one("wait") in ("1", "true", "yes"):
                     prog += "\nMW"
