@@ -237,30 +237,58 @@ def modernize_pages(root: Path) -> None:
         if not path.is_file():
             sys.exit(f"FAIL {boot}: missing page {path}")
 
-    # Each var assignment in boot.mtl spans many lines:
-    #   var page_a="<!DOCTYPE...
-    #   ...html...
-    #   ";;
-    # Find from `var <name>=` up to the matching `";;` (terminator).
-    total_before = sum(
-        m.end() - m.start()
-        for m in re.finditer(
-            r'^var (?:page_a|page_done|page_u|page_error)=.*?";;',
-            s, re.MULTILINE | re.DOTALL,
-        )
+    # Each var assignment in boot.mtl spans many lines and terminates with
+    # `;;` at end of line. The tricky case: page_a ends with `"::nil;;` (it
+    # concatenates with nil), the others end with `";;`. So match up to the
+    # FIRST `;;` that is at end of a line — covers both.
+    block_re = lambda name: re.compile(
+        rf'^var {name}=.*?;;[ \t]*$\r?\n?',
+        re.MULTILINE | re.DOTALL,
     )
+    total_before = sum(
+        len(m.group(0))
+        for name in pages
+        for m in [block_re(name).search(s)]
+        if m is not None
+    )
+
+    # In Metal, page_a is a *list* of string fragments interleaved with the
+    # marker tokens (`"<MARKER>"`) — pagefill walks it via listreplacestr and
+    # swaps each marker element for its computed value. So when the source HTML
+    # contains <MARKER> placeholders, we must split the file at each marker and
+    # emit a `"frag"::"<MARKER>"::"frag"::nil` chain rather than one big string.
+    # When there are no markers we still wrap the string with `::nil` so callers
+    # always see a list (httpindex feeds page_a into strcatlist).
+    marker_re = re.compile(r'<[A-Z][A-Z0-9_-]*>')
+
+    def _esc(t: str) -> str:
+        return t.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _to_metal_list(html: str) -> str:
+        parts = []
+        i = 0
+        for m in marker_re.finditer(html):
+            if m.start() > i:
+                parts.append(f'"{_esc(html[i:m.start()])}"')
+            parts.append(f'"{m.group(0)}"')
+            i = m.end()
+        if i < len(html):
+            parts.append(f'"{_esc(html[i:])}"')
+        if not parts:
+            parts.append('""')
+        return "::".join(parts) + "::nil"
 
     for name, path in pages.items():
         html = path.read_text()
-        # Metal string literal: escape backslashes and double-quotes; literal
-        # newlines are OK inside the string.
-        escaped = html.replace("\\", "\\\\").replace('"', '\\"')
-        replacement = f'var {name}="{escaped}";;\n'
-        pat = re.compile(
-            rf'^var {name}=.*?";;\n?',
-            re.MULTILINE | re.DOTALL,
-        )
-        new_s, n = pat.subn(replacement, s, count=1)
+        # page_a is the only one walked by pagefill → keep it list-shaped.
+        # The others are returned as-is; emitting a string is shorter and
+        # backwards-compatible (the cbhttp caller accepts both).
+        if name == "page_a":
+            value = _to_metal_list(html)
+        else:
+            value = f'"{_esc(html)}"'
+        replacement = f'var {name}={value};;\n'
+        new_s, n = block_re(name).subn(replacement, s, count=1)
         if n != 1:
             sys.exit(f"FAIL {boot}: could not find/replace {name} block")
         s = new_s
@@ -270,11 +298,10 @@ def modernize_pages(root: Path) -> None:
 
     # Report size delta — useful when iterating.
     total_after = sum(
-        m.end() - m.start()
-        for m in re.finditer(
-            r'^var (?:page_a|page_done|page_u|page_error)=.*?";;',
-            s, re.MULTILINE | re.DOTALL,
-        )
+        len(m.group(0))
+        for name in pages
+        for m in [block_re(name).search(s)]
+        if m is not None
     )
     delta = total_after - total_before
     print(
