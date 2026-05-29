@@ -68,6 +68,14 @@ WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S") or _OPTS.get("wake_window_
 # frames, so a brief "nabi" in an otherwise-quiet window still passes. 8 kHz/16-bit
 # silence is well under this; speech is >1000. On decode error the gate is bypassed.
 WAKE_VAD_RMS = int(os.environ.get("WAKE_VAD_RMS") or _OPTS.get("wake_vad_rms") or 300)
+# Match the wake word (or a close whisper mistranscription) as a WHOLE word, so
+# stray substrings like "nab" inside other words don't false-trigger.
+_WAKE_PAT = re.compile(r"\b(?:" + "|".join(sorted(
+    {re.escape(WAKE_WORD), "nabi", "naby", "navi", "nabie", "nabil"},
+    key=len, reverse=True)) + r")\b")
+# Max seconds to keep capturing the command after the wake word (the capture
+# stops early once you pause — see wake_loop).
+WAKE_CAPTURE_MAX_S = float(os.environ.get("WAKE_CAPTURE_MAX_S") or _OPTS.get("wake_capture_max_s") or 4.0)
 AUTO_LISTEN = str(os.environ.get("AUTO_LISTEN") or _OPTS.get("auto_listen") or "").lower() in ("1", "true", "yes", "on")
 # Optional: play this jingle once the rabbit comes online (a little "hello").
 # Empty = none. Set to a jingle name (see /api/jingle) to enable.
@@ -1549,11 +1557,25 @@ def wake_loop():
         if not text:
             continue
         log.info("wake: heard %r", text)
-        if not (WAKE_WORD in text or "nab" in text or "navi" in text):
+        if not _WAKE_PAT.search(text):
             continue
-        # Wake heard — capture ~2.5 s more so a command spanning the window isn't
-        # clipped, then transcribe the whole utterance.
-        time.sleep(2.5)
+        # Wake heard — capture the rest of the command, but stop early once the
+        # user pauses (~0.8 s of quiet) instead of always waiting a fixed time:
+        # snappier for short commands, still safe (up to WAKE_CAPTURE_MAX_S) for
+        # long ones. The buffer was just swapped, so it now collects only the
+        # command continuation.
+        quiet = 0
+        deadline = time.time() + WAKE_CAPTURE_MAX_S
+        while time.time() < deadline:
+            time.sleep(0.4)
+            with MIC_LOCK:
+                recent = bytes(MIC_STREAM["adpcm"][-1600:])
+            if recent and _wav_peak_rms(adpcm_stream_to_pcm_wav(recent)) >= WAKE_VAD_RMS:
+                quiet = 0
+            else:
+                quiet += 1
+                if quiet >= 2:
+                    break
         with MIC_LOCK:
             tail = bytes(MIC_STREAM["adpcm"])
             MIC_STREAM["adpcm"] = bytearray()
