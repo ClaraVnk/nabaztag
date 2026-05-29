@@ -75,6 +75,12 @@ rest_command:
     method: GET
     timeout: 15
 
+  # Volume 0-100 (100 = loudest). Persists across reboots (re-applied on connect).
+  nabaztag_volume:
+    url: "http://{{ api }}/api/volume?mac={{ mac }}&level={{ level }}"
+    method: GET
+    timeout: 10
+
 script:
   # --- Talk to Claude through the rabbit -----------------------------------
   # Pipes a prompt to the Home Assistant Anthropic (Claude) conversation agent

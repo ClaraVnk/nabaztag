@@ -1006,6 +1006,8 @@ class XmppSession(threading.Thread):
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
                 threading.Timer(2.5, self.send_state_query).start()
+                if VOLUME["hw"] is not None:
+                    threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
                 if CONNECT_JINGLE:
                     threading.Timer(3.5, self._play_connect_jingle).start()
                 if AUTO_LISTEN:
@@ -1455,6 +1457,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if _one("wait") in ("1", "true", "yes"):
                     prog += "\nMW"
                 b.send_program(prog)
+            elif path == "/api/volume":
+                # ?level=0..100 (100 = loudest). Mapped to the VS1003 inverted
+                # attenuation (0 = loud .. higher = quiet) and sent as the bytecode
+                # SV command. Stored so it's re-applied on reconnect (the rabbit
+                # resets its volume on reboot).
+                lvl = max(0, min(100, int(_one("level", "80"))))
+                VOLUME["hw"] = round((100 - lvl) * 1.2)
+                b.send_program(f"SV {VOLUME['hw']}")
             elif path == "/api/ears":
                 # Real ear positioning via a choreography motor action.
                 # ?left=&right= positions (~0..16); ?dir=0|1 rotation direction.
@@ -1582,6 +1592,9 @@ def udp_mic_server():
 # wake word ("nabi") is heard, send the rest to the conversation agent.
 # --------------------------------------------------------------------------- #
 WAKE = {"on": False, "cooldown": 0.0, "streaming": False}
+# Last volume (raw VS1003 attenuation, 0=loud..higher=quiet) — re-applied on
+# reconnect since the rabbit resets it on reboot. None = never set (leave default).
+VOLUME = {"hw": None}
 
 
 def adpcm_stream_to_pcm_wav(raw: bytes) -> bytes:
