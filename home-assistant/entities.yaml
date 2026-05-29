@@ -44,6 +44,12 @@ input_number:
     min: 0
     max: 255
     step: 5
+  nabi_volume:
+    name: "Nabi volume"
+    icon: mdi:volume-high
+    min: 0
+    max: 100
+    step: 5
 
 automation:
   - id: nabi_ctrl_sleep
@@ -57,6 +63,19 @@ automation:
           api: !secret nab_api
           mac: !secret nab_mac
           on: "{{ 1 if is_state('input_boolean.nabi_sleep', 'on') else 0 }}"
+    mode: single
+
+  - id: nabi_ctrl_volume
+    alias: "Nabi control — volume"
+    trigger:
+      - platform: state
+        entity_id: input_number.nabi_volume
+    action:
+      - service: rest_command.nabaztag_volume
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          level: "{{ states('input_number.nabi_volume') | int }}"
     mode: single
 
   - id: nabi_ctrl_listen
