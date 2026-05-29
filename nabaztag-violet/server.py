@@ -435,7 +435,17 @@ class XmppSession(threading.Thread):
             iq_id = iq_id.group(1) if iq_id else "1"
             self.send(f"<iq type='result' id='{iq_id}'/>")
             return
-        # Anything else (events: button/RFID, presence, packets) -> logged above.
+
+        if f.startswith("<presence"):
+            # CRITICAL: after binding its operational resource the rabbit sends a
+            # presence and then sits in the ssPresence state WAITING to receive a
+            # presence back from the server; only then does it move to ssFree —
+            # the one state in which it acts on pushed iq/message commands. Without
+            # this reply it stays stuck and silently ignores everything we push.
+            self.send(f"<presence from='{self.domain}' to='{self.jid}'/>")
+            log.info("rabbit %s: presence <-> presence sent (rabbit should now go free)", self.addr[0])
+            return
+        # Anything else (events: button/RFID, packets) -> logged above.
 
     def _register(self):
         if self.mac:
