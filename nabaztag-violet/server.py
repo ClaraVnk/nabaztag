@@ -21,6 +21,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -236,6 +237,79 @@ def parse_choreography_spec(spec: str):
 # --------------------------------------------------------------------------- #
 RESOURCES: dict[str, tuple[str, bytes]] = {}
 RES_LOCK = threading.Lock()
+
+# Last microphone recording the rabbit uploaded (button push-to-talk → POST
+# /vl/record.jsp). The bytecode records at 8 kHz and POSTs a RIFF WAV in
+# IMA/DVI-ADPCM (mono, 4-bit, 256-byte blocks). This is the Phase-2 voice input.
+LAST_RECORDING = {"wav": None, "pcm_wav": None, "ts": 0.0, "mode": None}
+REC_LOCK = threading.Lock()
+
+
+def ima_adpcm_to_pcm_wav(wav_adpcm: bytes) -> bytes:
+    """Decode a mono IMA/DVI-ADPCM RIFF WAV (what the rabbit uploads) to a
+    standard 16-bit PCM RIFF WAV, so any STT engine can read it. Pure-Python,
+    no deps. Falls back to returning the input unchanged if it can't parse."""
+    import struct
+    try:
+        if wav_adpcm[:4] != b"RIFF" or wav_adpcm[8:12] != b"WAVE":
+            return wav_adpcm
+        # Walk chunks to find fmt + data.
+        i = 12
+        fmt = None
+        data = b""
+        while i + 8 <= len(wav_adpcm):
+            cid = wav_adpcm[i:i + 4]
+            clen = struct.unpack_from("<I", wav_adpcm, i + 4)[0]
+            body = wav_adpcm[i + 8:i + 8 + clen]
+            if cid == b"fmt ":
+                fmt = body
+            elif cid == b"data":
+                data = body
+            i += 8 + clen + (clen & 1)
+        if fmt is None or not data:
+            return wav_adpcm
+        channels = struct.unpack_from("<H", fmt, 2)[0]
+        rate = struct.unpack_from("<I", fmt, 4)[0]
+        block_align = struct.unpack_from("<H", fmt, 12)[0]
+        if channels != 1:
+            return wav_adpcm  # only mono (the rabbit is mono)
+        step_tab = [7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,
+                    60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,
+                    307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,
+                    1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,
+                    4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,
+                    13899,15289,16818,18500,20350,22385,24623,27086,29794,32767]
+        idx_tab = [-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8]
+        out = bytearray()
+        ba = block_align or 256
+        for b in range(0, len(data), ba):
+            block = data[b:b + ba]
+            if len(block) < 4:
+                break
+            pred = struct.unpack_from("<h", block, 0)[0]
+            index = block[2]
+            index = max(0, min(88, index))
+            out += struct.pack("<h", pred)
+            for nb in range(4, len(block)):
+                byte = block[nb]
+                for nibble in (byte & 0x0F, (byte >> 4) & 0x0F):
+                    step = step_tab[index]
+                    diff = step >> 3
+                    if nibble & 1: diff += step >> 2
+                    if nibble & 2: diff += step >> 1
+                    if nibble & 4: diff += step
+                    if nibble & 8: pred -= diff
+                    else: pred += diff
+                    pred = max(-32768, min(32767, pred))
+                    index = max(0, min(88, index + idx_tab[nibble]))
+                    out += struct.pack("<h", pred)
+        n = len(out)
+        hdr = (b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt " +
+               struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16) +
+               b"data" + struct.pack("<I", n))
+        return hdr + bytes(out)
+    except Exception:
+        return wav_adpcm
 
 
 def store_resource(content: bytes, content_type: str = "application/octet-stream") -> str:
@@ -624,6 +698,37 @@ class BootHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def do_POST(self):
+        p = urlparse(self.path)
+        if p.path.endswith("/record.jsp"):
+            # Push-to-talk: holding the rabbit's head button records the mic and
+            # POSTs a RIFF WAV (IMA-ADPCM, 8 kHz mono) here. Store both the raw
+            # upload and a decoded PCM WAV (for STT). This is Phase-2 voice input.
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            data = self.rfile.read(length) if length else b""
+            mode = parse_qs(p.query).get("m", [""])[0]
+            pcm = ima_adpcm_to_pcm_wav(data)
+            with REC_LOCK:
+                LAST_RECORDING.update(wav=data, pcm_wav=pcm, ts=time.time(), mode=mode)
+            try:
+                with open("/data/last_record.wav", "wb") as fh:
+                    fh.write(pcm)
+            except OSError:
+                pass
+            log.info("RECORDING received: %d bytes ADPCM -> %d bytes PCM (mode=%s) from %s",
+                     len(data), len(pcm), mode, self.address_string())
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        log.info("unhandled boot POST %s from %s", self.path, self.address_string())
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
 
 def http_boot_server():
     httpd = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), BootHandler)
@@ -672,7 +777,26 @@ class ApiHandler(BaseHTTPRequestHandler):
             with BUNNIES_LOCK:
                 conn = {m: {"addr": s.addr[0], "bound": s.bound, "resource": s.resource}
                         for m, s in BUNNIES.items()}
-            return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn})
+            with REC_LOCK:
+                rec = {"ts": LAST_RECORDING["ts"], "mode": LAST_RECORDING["mode"],
+                       "pcm_bytes": len(LAST_RECORDING["pcm_wav"] or b"")}
+            return self._json(200, {"server_address": SERVER_ADDRESS, "bunnies": conn,
+                                    "last_recording": rec})
+
+        if path == "/api/lastrecording":
+            # Fetch the last push-to-talk recording. ?format=pcm (default,
+            # 16-bit PCM WAV for STT) or ?format=adpcm (the raw upload).
+            want_adpcm = q.get("format", ["pcm"])[0] == "adpcm"
+            with REC_LOCK:
+                wav = LAST_RECORDING["wav"] if want_adpcm else LAST_RECORDING["pcm_wav"]
+            if not wav:
+                return self._json(404, {"error": "no recording yet"})
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(wav)))
+            self.end_headers()
+            self.wfile.write(wav)
+            return
 
         body = b""
         if self.command == "POST":

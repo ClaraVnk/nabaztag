@@ -85,6 +85,10 @@ Endpoints:
 - `GET /api/earwiggle?left=1&right=1` — the ambient "ears wiggle home" effect.
 - `GET /api/sleep?on=0` — wake (`0`) or sleep (`1`).
 - `GET /api/state` — ask the rabbit to report its XMPP/run state (logged).
+- `GET /api/lastrecording?format=pcm` — download the last **push-to-talk**
+  recording (hold the rabbit's head button and speak). `pcm` = 16-bit PCM WAV
+  (decoded, for STT); `adpcm` = the raw IMA-ADPCM upload. The rabbit POSTs it to
+  `/vl/record.jsp` automatically. This is the Phase-2 voice input.
 - `GET /api/ambient?svc=8&val=1` — generic AmbientPacket (repeatable `svc`/`val`).
 - `GET /api/raw?b64=<base64>` — inject a raw violet packet.
 
