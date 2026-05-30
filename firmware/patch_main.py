@@ -44,5 +44,18 @@ if '!strcmp key "FW"' not in s:
         raise SystemExit("ERROR: SV command not found (apply SV patch first)")
     s = s.replace(sv, sv + '\n\t\telse if !strcmp key "FW" then (flashFromUrl val;0)', 1)
 
+# mDNS announcer: declares "naboot.local" to anyone listening on the
+# local broadcast domain. Hook mdns_tick into the existing main loop so
+# it fires every 60 s once the network is up.
+if "#include mdns.mtl" not in s:
+    s = s.replace(inc, inc + "\n#include mdns.mtl", 1)
+# Add a single `mdns_tick time` call to the periodic block. Anchor on
+# `dnstime` which is the standard tick already called from the main loop.
+if "mdns_tick" not in s:
+    anchor = "dnstime;"
+    if anchor not in s:
+        raise SystemExit("ERROR: dnstime anchor not found — main-loop layout changed?")
+    s = s.replace(anchor, anchor + "\n\tmdns_tick time;", 1)
+
 open(path, "w", encoding="latin-1").write(s)
 print("patched OK")
