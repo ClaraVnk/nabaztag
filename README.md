@@ -160,12 +160,14 @@ Full guide (API, pairing, troubleshooting) is in
   firmware (it speaks plain HTTP, no TLS) and add improvements.
 - **Phase 5 — setup UX:** a much nicer captive/config page when you join the
   rabbit's Wi-Fi to pair it.
-- **Phase 6 — a public server for every rabbit:** the server is dependency-free
-  standalone Python, so it can run on a dedicated public host (not just as a
-  local add-on) — letting any Nabaztag in the world connect and get updates (since
-  rabbits re-download their bytecode every boot, pushing new bytecode updates the
-  whole fleet). Needs multi-tenant per-rabbit state and hardening of the plain
-  Violet protocol.
+- **Phase 6 — Le Terrier:** the public warren that unites every Naboot rabbit.
+  The local add-on grows up into a dependency-free standalone Python server,
+  hosted on a dedicated public domain, serving the bytecode any Nabaztag in
+  the world boots into — and, by extension, pushing signed firmware updates
+  (via the Ed25519-gated OTA path Naboot already ships). Multi-tenant
+  per-rabbit state, per-owner web UI for setting wake word / personality /
+  jingles / colours, and hardening of the plain Violet protocol. Naboot is
+  the firmware on the rabbit; Le Terrier is the home they all dial back to.
 - **Phase 7 — modernize the Metal toolchain in Python (two steps):**
     1. **Phase 7a — Python MTL compiler:** rewrite the existing C++ `mtl_compiler`
        in Python. Same input (`.mtl` source), same output (the rabbit's
