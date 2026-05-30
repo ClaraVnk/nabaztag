@@ -33,7 +33,7 @@ fun mdns_a_response our_ip=
 	(
 		// DNS header (id=0, flags=0x8400 response+AA, an=1)
 		strset b 0 0; strset b 1 0;
-		strset b 2 $84; strset b 3 0;
+		strset b 2 0x84; strset b 3 0;
 		strset b 4 0; strset b 5 0;
 		strset b 6 0; strset b 7 1;
 		strset b 8 0; strset b 9 0;
@@ -51,7 +51,7 @@ fun mdns_a_response our_ip=
 		// TYPE A
 		strset b 26 0; strset b 27 1;
 		// CLASS IN with cache-flush bit (0x8001)
-		strset b 28 $80; strset b 29 1;
+		strset b 28 0x80; strset b 29 1;
 		// TTL = 120 seconds
 		strset b 30 0; strset b 31 0; strset b 32 0; strset b 33 120;
 		// RDLENGTH = 4
