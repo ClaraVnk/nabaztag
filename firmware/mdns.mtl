@@ -1,21 +1,22 @@
-// mdns.mtl — multicast DNS announcer for "naboot.local".
+// mdns.mtl — defensive mDNS announcer for "naboot.local".
 //
-// Sends an unsolicited mDNS A record every 60 seconds to the standard
-// multicast group (224.0.0.251:5353) so any avahi/Bonjour client on the
-// same broadcast domain picks up "naboot.local → <our IP>". Doesn't
-// answer queries — pure announcement, simpler and still effective.
+// Every 60 s, sends an mDNS A record response to 224.0.0.251:5353 so
+// avahi / Bonjour clients on the same broadcast domain map the rabbit's
+// hostname to its current IP.
 //
-// VLAN caveat: mDNS does NOT traverse VLAN boundaries by default. For a
-// HA install that lives on a different VLAN than the rabbit, enable a
-// mDNS reflector on the upstream switch/router (UniFi: "Multicast DNS"
-// per VLAN) so announcements leak across.
+// Design choices, all aimed at minimal runtime risk:
+//   - The 40-byte DNS message is allocated *once* on the first announce
+//     and reused. Subsequent ticks only update the 4 IP bytes in place
+//     (no per-tick heap churn → no slow leak / GC pressure).
+//   - `netip` is checked for non-nil before every send (Wi-Fi might not
+//     be up yet when the loop starts).
+//   - The MAC destination for 224.0.0.251 is the canonical multicast
+//     MAC 01:00:5e:00:00:fb (RFC 1112 §6.4), so we bypass arpreq —
+//     ARPing a class-D address is what the bytecode would otherwise do.
 //
-// Mic stream already proved Metal-side UDP works via `udpsend` (it's
-// built on top of OPnetSend in the runtime bootcode, not OPudpSend
-// which nabgcc doesn't implement). We piggyback on the same primitive.
-// arpreq() is bypassed because 224.0.0.x maps to a fixed multicast MAC
-// (01:00:5e:0X:YY:ZZ derived from the IP); we hardcode it.
-
+// VLAN caveat: mDNS doesn't traverse VLANs by default. For HA on a
+// different VLAN than the rabbit, enable an mDNS reflector on the
+// upstream switch / router (UniFi: "Multicast DNS" per VLAN).
 
 // 224.0.0.251
 const MDNS_IP="\224\0\0\$fb";;
@@ -23,55 +24,67 @@ const MDNS_PORT=5353;;
 // 01:00:5e:00:00:fb — the multicast MAC for 224.0.0.251.
 const MDNS_MAC="\1\0\$5e\0\0\$fb";;
 
-// Build the 40-byte DNS message:
-//   header (12)
-//   answer name "naboot.local." = 6"naboot"5"local"0     (13)
-//   TYPE A (2) + CLASS IN|cache_flush (2)
-//   TTL 120 s (4) + RDLENGTH 4 (2) + RDATA <our_ip> (4)
-fun mdns_a_response our_ip=
+// Cached, mutated-in-place packet. Built lazily on the first tick.
+var mdns_pkt=nil;;
+
+// Time of the last successful announce. Initialized to 0 so the first
+// tick after boot triggers an announce immediately (modulo netip being
+// available).
+var mdns_last=0;;
+
+
+// Build the 40-byte DNS message once. Subsequent ticks just rewrite the
+// IP bytes (36..39). Returns the buffer.
+fun mdns_build_pkt=
 	let strnew 40 -> b in
 	(
-		// DNS header (id=0, flags=0x8400 response+AA, an=1)
-		strset b 0 0; strset b 1 0;
+		// DNS header — id=0, flags=0x8400 (response + authoritative),
+		// answer count = 1, everything else 0.
+		strset b 0 0;  strset b 1 0;
 		strset b 2 0x84; strset b 3 0;
-		strset b 4 0; strset b 5 0;
-		strset b 6 0; strset b 7 1;
-		strset b 8 0; strset b 9 0;
+		strset b 4 0;  strset b 5 0;
+		strset b 6 0;  strset b 7 1;
+		strset b 8 0;  strset b 9 0;
 		strset b 10 0; strset b 11 0;
-		// "naboot"
+		// answer name: 6 "naboot" 5 "local" 0
 		strset b 12 6;
 		strset b 13 'n'; strset b 14 'a'; strset b 15 'b';
 		strset b 16 'o'; strset b 17 'o'; strset b 18 't';
-		// "local"
 		strset b 19 5;
 		strset b 20 'l'; strset b 21 'o'; strset b 22 'c';
 		strset b 23 'a'; strset b 24 'l';
-		// terminator
 		strset b 25 0;
-		// TYPE A
+		// type A (0x0001)
 		strset b 26 0; strset b 27 1;
-		// CLASS IN with cache-flush bit (0x8001)
+		// class IN with the cache-flush bit set (0x8001)
 		strset b 28 0x80; strset b 29 1;
-		// TTL = 120 seconds
+		// TTL = 120 s
 		strset b 30 0; strset b 31 0; strset b 32 0; strset b 33 120;
 		// RDLENGTH = 4
 		strset b 34 0; strset b 35 4;
-		// RDATA = our IP
-		strset b 36 (strget our_ip 0);
-		strset b 37 (strget our_ip 1);
-		strset b 38 (strget our_ip 2);
-		strset b 39 (strget our_ip 3);
+		// RDATA = 0.0.0.0 (filled at announce time)
+		strset b 36 0; strset b 37 0; strset b 38 0; strset b 39 0;
+		set mdns_pkt = b;
 		b
 	);;
 
+
 fun mdns_announce=
-	if netip!=nil then
-	udpsend netip MDNS_PORT MDNS_IP MDNS_PORT (mdns_a_response netip) MDNS_MAC;;
+	if netip==nil then 0
+	else (
+		if mdns_pkt==nil then mdns_build_pkt;
+		// In-place patch of the IP bytes.
+		strset mdns_pkt 36 (strget netip 0);
+		strset mdns_pkt 37 (strget netip 1);
+		strset mdns_pkt 38 (strget netip 2);
+		strset mdns_pkt 39 (strget netip 3);
+		udpsend netip MDNS_PORT MDNS_IP MDNS_PORT mdns_pkt MDNS_MAC;
+		0
+	);;
 
-// Last-announce timestamp (seconds). The main loop calls mdns_tick once
-// per outer iteration; we re-announce when 60 s have elapsed.
-var mdns_last=0;;
 
+// Called every outer iteration of the main loop. Cheap when there's
+// nothing to do — just one int subtract + compare.
 fun mdns_tick now=
 	if (now - mdns_last) >= 60 then
 	(
