@@ -311,33 +311,27 @@ def modernize_pages(root: Path) -> None:
 
 
 def patch_makefile(root: Path) -> None:
-    """Two-pronged size optimization in the Makefile:
+    """Strip the upstream DEBUG_VM / DEBUG_AUDIO / DEBUG_MAIN defines.
 
-    1. --gc-sections + -ffunction-sections + -fdata-sections so the linker
-       can prune unused symbols (most of TweetNaCl, dead newlib helpers).
-    2. Strip the upstream DEBUG_VM / DEBUG_AUDIO / DEBUG_MAIN defines.
-       These wire DBG_VM(...) macros to sprintf+UART, which drags in
-       _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
-       glue. Production firmware doesn't need them; the serial console is
-       not wired up on Kevin's rabbit anyway.
+    These wire DBG_VM(...) macros to sprintf+UART, which drags in
+    _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
+    glue. Production firmware doesn't need them; the serial console is
+    not wired up on Kevin's rabbit anyway.
+
+    HISTORICAL NOTE: an earlier version of this function also tried to
+    enable --gc-sections via LDFLAGS — but the upstream `ml67q4051.ld`
+    linker script has NO `KEEP()` directives around `.intvec` /
+    `.startup.*` / `.ramfunc`, so --gc-sections is liable to prune the
+    ARM7 interrupt vector table (only referenced by hardware, not by C).
+    The old idempotency check `if "gc-sections" not in s` also
+    accidentally matched the commented `#~ LDFLAGS += -Wl,--gc-sections`
+    in upstream, so on a fresh clone the gc-sections flag was never
+    actually added — saved us from shipping a vector-table-pruned build.
+    Leaving gc-sections OUT until someone adds KEEP() to the linker
+    script.
     """
     p = root / "Makefile"
     s = p.read_text()
-    if "gc-sections" not in s:
-        s = s.replace(
-            "CFLAGS += --specs=nosys.specs\n",
-            "CFLAGS += --specs=nosys.specs\nCFLAGS += -ffunction-sections -fdata-sections\n",
-            1,
-        )
-        s = s.replace(
-            "LDFLAGS += -Wl,-Map",
-            "LDFLAGS += -Wl,--gc-sections\nLDFLAGS += -Wl,-Map",
-            1,
-        )
-        print(f"[ok]   {p}: added -ffunction-sections / -fdata-sections / --gc-sections")
-    else:
-        print(f"[skip] {p}: gc-sections already present")
-
     # Comment out the DEBUG defines (idempotent — leaves a `# disabled by
     # apply-mods` marker so re-runs are no-ops).
     disabled = False
@@ -349,6 +343,8 @@ def patch_makefile(root: Path) -> None:
             disabled = True
     if disabled:
         print(f"[ok]   {p}: disabled DEBUG_VM/AUDIO/MAIN (drops the printf family)")
+    else:
+        print(f"[skip] {p}: DEBUG_VM/AUDIO/MAIN already disabled")
     p.write_text(s)
 
 
@@ -449,14 +445,19 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal"),
+        choices=("full", "minimal", "signed-stock", "pages-only"),
         default="full",
         help=(
-            "full = everything (verify-enforced bootloader + modernized UI). "
-            "minimal = opcode + crypto only; boot.mtl stays byte-identical to "
+            "full         = everything (verify-enforced bootloader + modernized UI). "
+            "minimal      = opcode + crypto only; boot.mtl stays byte-identical to "
             "vanilla wpa2. The minimal build is our rescue 'parachute' — "
             "almost the same firmware Kevin's sysadmin already flashed safely, "
-            "plus the verifySig opcode for future OTAs."
+            "plus the verifySig opcode for future OTAs. "
+            "signed-stock = minimal + httpflash signature gate, NO page changes. "
+            "Use after minimal proves the C-side is sane, to verify the "
+            "bootloader patch in isolation. "
+            "pages-only   = minimal + modernized UI, NO bootloader patch. "
+            "Use to verify the page rewrite in isolation."
         ),
     )
     ap.add_argument(
@@ -476,6 +477,11 @@ def main() -> int:
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
         "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile",
+        # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
+        # added. Use them when full has bricked the rabbit to pinpoint which
+        # of the two boot.mtl patches is the culprit.
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")

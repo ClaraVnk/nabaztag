@@ -60,6 +60,22 @@ If the flash itself failed and the rabbit can't be put in config mode at all
 — that's the brick scenario above. Recovery requires opening the shell to
 reach the SoC's ROM bootloader. Same situation as any flash on this device.
 
+## If you suspect a specific patch — bisect
+
+When `full` broke and you want to know WHICH patch did it (page rewrite
+vs bootloader sig gate), build the two bisection variants:
+
+* `./build.sh --mode signed-stock` — minimal + sig-gated httpflash,
+  pages stay vanilla (untouched boot UI). Tests `patch_bootloader` in
+  isolation.
+* `./build.sh --mode pages-only` — minimal + modernized HTML pages,
+  no sig gate (`httpflash` keeps the upstream "flash anything" body).
+  Tests `modernize_pages` in isolation.
+
+Flash each via the config-mode upload page. See
+[BRICK_FORENSICS.md](./BRICK_FORENSICS.md) for the full decision tree
+and the most recent incident analysis.
+
 ## After the first successful flash
 
 The rabbit now runs **Naboot**. From this point on:
