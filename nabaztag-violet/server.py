@@ -998,6 +998,19 @@ class XmppSession(threading.Thread):
         WAKE["cooldown"] = 0.0
         log.info("auto-listen: starting mic stream on %s", self.mac)
         self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+        _save_state()
+
+    def _stop_listen_safely(self):
+        """Idempotent safety net called on every fresh XMPP bind: tell the
+        rabbit to stop any orphan mic stream left over from a previous
+        server lifetime (an add-on restart while listen was on leaves the
+        bytecode still streaming UDP into the void, then back into the
+        new receiver as a Larsen). Sending RT is harmless if the mic was
+        already off."""
+        try:
+            self.send_program("RT")
+        except Exception:
+            pass
 
     # -- handshake --------------------------------------------------------- #
     def _stream_header(self, features: str):
@@ -1087,11 +1100,21 @@ class XmppSession(threading.Thread):
                 # a fresh TCP (new instance) and re-arms it.
                 if not getattr(self, "_session_inited", False):
                     self._session_inited = True
+                    # Belt-and-suspenders: clear any stale mic stream from a
+                    # previous server lifetime before we decide what state to
+                    # restore. The rabbit ignores RT if it isn't streaming.
+                    threading.Timer(1.5, self._stop_listen_safely).start()
                     if VOLUME["hw"] is not None:
                         threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
                     if CONNECT_JINGLE:
                         threading.Timer(3.5, self._play_connect_jingle).start()
-                    if AUTO_LISTEN:
+                    # AUTO_LISTEN is the *default* on a fresh install; once
+                    # state.json explicitly records the listen flag, runtime
+                    # toggling (/api/mic?on=0|1) wins. This stops the rabbit
+                    # from re-arming the mic on every reconnect after a user
+                    # turned it off (the Larsen loop from 2026-05-29).
+                    want_listen = WAKE["on"] if _STATE_LOADED["has_listen"] else AUTO_LISTEN
+                    if want_listen:
                         threading.Timer(4.0, self._start_listen).start()
             return
 
@@ -1747,6 +1770,13 @@ def udp_mic_server():
             continue
         if data[:3] != b"snd":
             continue
+        if not WAKE["on"]:
+            # Belt + suspenders: even if the rabbit didn't honor our RT for
+            # some reason, the server-side wake pipeline (STT, hallucination
+            # filter) stays idle when listening is off. Don't accumulate
+            # bytes we'd just throw away — and don't log them as ongoing
+            # mic activity either.
+            continue
         with MIC_LOCK:
             MIC_STREAM["adpcm"] += data[3:]
             MIC_STREAM["packets"] += 1
@@ -1781,12 +1811,17 @@ def _save_state():
         log.warning("state save failed: %s", exc)
 
 
+_STATE_LOADED = {"yes": False, "has_listen": False}
+
+
 def _load_state():
     try:
         with open(_STATE_FILE) as fh:
             s = json.load(fh)
-        if s.get("listen"):
-            WAKE["on"] = True
+        _STATE_LOADED["yes"] = True
+        if "listen" in s:
+            _STATE_LOADED["has_listen"] = True
+            WAKE["on"] = bool(s["listen"])
         if isinstance(s.get("volume_hw"), int):
             VOLUME["hw"] = s["volume_hw"]
         log.info("state loaded: listen=%s volume_hw=%s", WAKE["on"], VOLUME["hw"])

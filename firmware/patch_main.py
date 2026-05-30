@@ -52,9 +52,12 @@ if "#include mdns.mtl" not in s:
 # Add a single `mdns_tick time` call to the periodic block. Anchor on
 # `dnstime` which is the standard tick already called from the main loop.
 if "mdns_tick" not in s:
-    anchor = "dnstime;"
+    # main.mtl's outer loop starts with `wifiRun;` (top of fun loop=). Inject
+    # the mdns tick right after — runs on every outer iteration, internal
+    # rate-limiting in mdns.mtl gates the actual announce to once / 60 s.
+    anchor = "wifiRun;"
     if anchor not in s:
-        raise SystemExit("ERROR: dnstime anchor not found — main-loop layout changed?")
+        raise SystemExit("ERROR: wifiRun anchor not found — main-loop layout changed?")
     s = s.replace(anchor, anchor + "\n\tmdns_tick time;", 1)
 
 open(path, "w", encoding="latin-1").write(s)
