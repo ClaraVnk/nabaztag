@@ -317,18 +317,6 @@ def patch_makefile(root: Path) -> None:
     _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
     glue. Production firmware doesn't need them; the serial console is
     not wired up on Kevin's rabbit anyway.
-
-    HISTORICAL NOTE: an earlier version of this function also tried to
-    enable --gc-sections via LDFLAGS — but the upstream `ml67q4051.ld`
-    linker script has NO `KEEP()` directives around `.intvec` /
-    `.startup.*` / `.ramfunc`, so --gc-sections is liable to prune the
-    ARM7 interrupt vector table (only referenced by hardware, not by C).
-    The old idempotency check `if "gc-sections" not in s` also
-    accidentally matched the commented `#~ LDFLAGS += -Wl,--gc-sections`
-    in upstream, so on a fresh clone the gc-sections flag was never
-    actually added — saved us from shipping a vector-table-pruned build.
-    Leaving gc-sections OUT until someone adds KEEP() to the linker
-    script.
     """
     p = root / "Makefile"
     s = p.read_text()
@@ -346,6 +334,91 @@ def patch_makefile(root: Path) -> None:
     else:
         print(f"[skip] {p}: DEBUG_VM/AUDIO/MAIN already disabled")
     p.write_text(s)
+
+
+def patch_linker_keep(root: Path) -> None:
+    """Wrap .intvec / .startup.* / .bytecode.* / .ramfunc in KEEP() in
+    the linker script. Prerequisite for safely enabling --gc-sections
+    (see patch_gc_sections).
+
+    These sections are referenced only by hardware:
+      - .intvec: ARM7 reset/exception vectors (CPU reads at fixed offsets)
+      - .startup.cstartup: Reset_Handler body (entry symbol pulls it in
+        but a tighter linker could miss other init in this section)
+      - .bytecode.*: dumpbc — the embedded Metal bootloader bytecode,
+        referenced via a single extern from main.c
+      - .ramfunc: flash_uc, runs from RAM while flash is being rewritten;
+        invoked via function pointer from sysFlash
+    """
+    p = root / "sys/ml67q4051.ld"
+    s = p.read_text()
+    if "KEEP(*(.intvec))" in s:
+        print(f"[skip] {p}: KEEP() already present")
+        return
+
+    edits = [
+        ("    *(.intvec)\n", "    KEEP(*(.intvec))\n"),
+        ("    *(.startup.*)\n", "    KEEP(*(.startup.*))\n"),
+        ("    *(.bytecode.*)\n", "    KEEP(*(.bytecode.*))\n"),
+        ("    *(.ramfunc)\n", "    KEEP(*(.ramfunc))\n"),
+    ]
+    n = 0
+    for old, new in edits:
+        if old in s:
+            s = s.replace(old, new, 1)
+            n += 1
+    if n != len(edits):
+        sys.exit(f"FAIL {p}: only {n}/{len(edits)} sections patched (upstream changed?)")
+    p.write_text(s)
+    print(f"[ok]   {p}: wrapped {n} sections in KEEP() (vec/startup/bytecode/ramfunc)")
+
+
+def patch_gc_sections(root: Path) -> None:
+    """Enable --gc-sections in the linker so dead code (the ~6 KB of
+    newlib printf glue made unreachable by patch_makefile's DEBUG_*
+    strip, plus other unused TweetNaCl entry points, plus dead helpers)
+    actually gets dropped from the final image.
+
+    REQUIRES the `patches/0001-ld-keep-vector-and-startup.patch` to be
+    applied first (it wraps .intvec / .startup.* / .bytecode.* /
+    .ramfunc in KEEP() so gc-sections can't prune them — those sections
+    are referenced only by hardware, not by any C call chain).
+
+    -ffunction-sections / -fdata-sections are already present upstream
+    in CFLAGS, so we only need to add `-Wl,--gc-sections` to LDFLAGS.
+    Idempotent: the check anchors on a LIVE (uncommented) flag, not
+    just the substring (upstream ships a commented `#~ LDFLAGS +=
+    -Wl,--gc-sections` line that a naive substring check would match).
+    """
+    p = root / "Makefile"
+    s = p.read_text()
+    has_live_gc = any(
+        line.lstrip().startswith("LDFLAGS")
+        and "--gc-sections" in line
+        and not line.lstrip().startswith("#")
+        for line in s.splitlines()
+    )
+    if has_live_gc:
+        print(f"[skip] {p}: --gc-sections already live")
+        return
+
+    # Sanity: the KEEP patch must have landed on the linker script. If
+    # KEEP isn't present we'd risk pruning the vector table → IRQ crash.
+    ld = root / "sys/ml67q4051.ld"
+    if "KEEP(*(.intvec))" not in ld.read_text():
+        sys.exit(
+            f"FAIL {p}: refusing to enable --gc-sections because "
+            f"{ld} has no KEEP(*(.intvec)). Apply "
+            f"patches/0001-ld-keep-vector-and-startup.patch first."
+        )
+
+    s = s.replace(
+        "LDFLAGS += -Wl,-Map",
+        "LDFLAGS += -Wl,--gc-sections\nLDFLAGS += -Wl,-Map",
+        1,
+    )
+    p.write_text(s)
+    print(f"[ok]   {p}: added -Wl,--gc-sections (KEEP-protected sections won't be pruned)")
 
 
 def patch_bootloader(root: Path) -> None:
@@ -512,7 +585,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -527,7 +600,9 @@ def main() -> int:
             "Use to verify the page rewrite in isolation. "
             "max          = full + mdns announcer; the everything-bag for a "
             "fresh flash. "
-            "mdns-only    = minimal + mdns; isolation bisect for the mdns add."
+            "mdns-only    = minimal + mdns; isolation bisect for the mdns add. "
+            "lean         = max + --gc-sections (drops dead printf glue, "
+            "~6-10 KB saved). Requires the KEEP() linker patch."
         ),
     )
     ap.add_argument(
@@ -540,25 +615,34 @@ def main() -> int:
     if not (root / "Makefile").is_file():
         sys.exit(f"not a nabgcc root: {root} (Makefile missing)")
 
+    # linker_keep is in ALL modes by default: it's idempotent + harmless
+    # (KEEP() is a no-op when --gc-sections is off) + future-proofs against
+    # someone enabling gc-sections elsewhere. Only mode `lean` adds the
+    # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,linker_keep",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,linker_keep",
+        # lean: max + gc-sections. Drops the dead newlib printf glue
+        # (~6 KB) that DEBUG_*-stripping made unreachable but the
+        # linker still kept (no DCE). Safe because linker_keep protects
+        # .intvec / .startup.* / .ramfunc / .bytecode.*.
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -572,6 +656,8 @@ def main() -> int:
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
         "mdns": patch_mdns,
+        "linker_keep": patch_linker_keep,
+        "gc_sections": patch_gc_sections,
     }
     for step in steps:
         step = step.strip()
