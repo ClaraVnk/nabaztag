@@ -77,6 +77,7 @@ Stand-alone — stdlib only.
 from __future__ import annotations
 
 import argparse
+import re as _re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -368,6 +369,296 @@ class Encoder:
 
 
 # ---------------------------------------------------------------------------
+# Text assembly parser — small line-oriented format.
+# ---------------------------------------------------------------------------
+#
+#   ; comments are //, #, or ;
+#   .global int N                ; or:  .global nil
+#   .global string "..."         ; or:  .global bytes 0xff 0xff 0x00
+#   .global tuple
+#     int 1
+#     string "foo"
+#   .end                         ; closes tuple
+#
+#   .fun NAME nargs nlocals
+#       OPintb 42
+#       OPelse else_branch
+#       OPintb 1
+#       OPgoto end
+#     else_branch:
+#       OPintb 99
+#     end:
+#       OPret
+#   .end
+#
+# Opcodes use their full mnemonic ("OPintb"), the operand is an integer
+# literal except for jumps which take a label name. Labels are `name:`
+# at the start of a line (optionally indented). Function names in .fun
+# are informational only — the funtable index is the order of .fun
+# declarations in the source.
+#
+# This isn't .mtl — it's the bytecode IR exposed as text. A future full
+# .mtl parser would lower to this representation.
+
+_MNEM_TO_OP = {name: code for code, name in
+               # importing the disassembler table would be cleaner; copy here
+               # to keep mtl_asm.py standalone.
+               {
+                   0: "OPexec", 1: "OPret", 2: "OPintb", 3: "OPint", 4: "OPnil",
+                   5: "OPdrop", 6: "OPdup", 7: "OPgetlocalb", 8: "OPgetlocal",
+                   9: "OPadd", 10: "OPsub", 11: "OPmul", 12: "OPdiv", 13: "OPmod",
+                   14: "OPand", 15: "OPor", 16: "OPeor", 17: "OPshl", 18: "OPshr",
+                   19: "OPneg", 20: "OPnot", 21: "OPnon", 22: "OPeq", 23: "OPne",
+                   24: "OPlt", 25: "OPgt", 26: "OPle", 27: "OPge",
+                   28: "OPgoto", 29: "OPelse",
+                   30: "OPmktabb", 31: "OPmktab", 32: "OPdeftabb", 33: "OPdeftab",
+                   34: "OPfetchb", 35: "OPfetch",
+                   36: "OPgetglobalb", 37: "OPgetglobal",
+                   38: "OPSecho", 39: "OPIecho",
+                   40: "OPsetlocalb", 41: "OPsetlocal", 42: "OPsetglobal",
+                   43: "OPsetstructb", 44: "OPsetstruct",
+                   45: "OPhd", 46: "OPtl", 47: "OPsetlocal2", 48: "OPstore",
+                   49: "OPcall", 50: "OPcallrb", 51: "OPcallr", 52: "OPfirst",
+                   53: "OPtime_ms", 54: "OPtabnew", 55: "OPfixarg",
+                   56: "OPabs", 57: "OPmax", 58: "OPmin",
+                   59: "OPrand", 60: "OPsrand", 61: "OPtime",
+                   62: "OPstrnew", 63: "OPstrset", 64: "OPstrcpy", 65: "OPvstrcmp",
+                   66: "OPstrfind", 67: "OPstrfindrev", 68: "OPstrlen",
+                   69: "OPstrget", 70: "OPstrsub", 71: "OPstrcat",
+                   72: "OPtablen", 73: "OPstrcatlist",
+                   74: "OPled", 75: "OPmotorset", 76: "OPmotorget",
+                   77: "OPbutton2", 78: "OPbutton3",
+                   79: "OPplayStart", 80: "OPplayFeed", 81: "OPplayStop",
+                   82: "OPload",
+                   83: "OPudpStart", 84: "OPudpCb", 85: "OPudpStop", 86: "OPudpSend",
+                   87: "OPgc",
+                   88: "OPtcpOpen", 89: "OPtcpClose", 90: "OPtcpSend",
+                   91: "OPtcpCb", 92: "OPsave", 93: "OPbytecode", 94: "OPloopcb",
+                   95: "OPIecholn", 96: "OPSecholn",
+                   97: "OPtcpListen", 98: "OPenvget", 99: "OPenvset",
+                   100: "OPsndVol", 101: "OPrfidGet", 102: "OPplayTime",
+                   103: "OPnetCb", 104: "OPnetSend", 105: "OPnetState",
+                   106: "OPnetMac", 107: "OPnetChk", 108: "OPnetSetmode",
+                   109: "OPnetScan", 110: "OPnetAuth",
+                   111: "OPrecStart", 112: "OPrecStop", 113: "OPrecVol",
+                   114: "OPnetSeqAdd",
+                   115: "OPstrgetword", 116: "OPstrputword",
+                   117: "OPatoi", 118: "OPhtoi", 119: "OPitoa", 120: "OPctoa",
+                   121: "OPitoh", 122: "OPctoh", 123: "OPitobin2",
+                   124: "OPlistswitch", 125: "OPlistswitchstr",
+                   126: "OPsndRefresh", 127: "OPsndWrite", 128: "OPsndRead",
+                   129: "OPsndFeed", 130: "OPsndAmpli",
+                   131: "OPcorePP", 132: "OPcorePush", 133: "OPcorePull",
+                   134: "OPcoreBit0", 135: "OPtcpEnable", 136: "OPreboot",
+                   137: "OPstrcmp", 138: "OPadp2wav", 139: "OPwav2adp",
+                   140: "OPalaw2wav", 141: "OPwav2alaw",
+                   142: "OPnetPmk", 143: "OPflashFirmware",
+                   144: "OPcrypt", 145: "OPuncrypt",
+                   146: "OPnetRssi", 147: "OPrfidGetList",
+                   148: "OPrfidRead", 149: "OPrfidWrite",
+                   150: "OPi2cRead", 151: "OPi2cWrite", 152: "OPverifySig",
+               }.items()}
+
+
+def _parse_int_literal(token: str) -> int:
+    token = token.strip()
+    if token.lower().startswith("0x"):
+        return int(token, 16)
+    if token.startswith("'") and token.endswith("'") and len(token) >= 3:
+        # Character literal like 'A' — handle simple cases only.
+        inner = token[1:-1]
+        if len(inner) == 1:
+            return ord(inner)
+        if inner == r"\n":
+            return 10
+        if inner == r"\t":
+            return 9
+        if inner == r"\\":
+            return ord("\\")
+    return int(token, 10)
+
+
+def _parse_string_literal(token: str) -> bytes:
+    """Parse `"..."` (with backslash-escapes) into raw bytes."""
+    if not (token.startswith('"') and token.endswith('"')):
+        raise ValueError(f"not a string literal: {token!r}")
+    out = bytearray()
+    i = 1
+    while i < len(token) - 1:
+        c = token[i]
+        if c == "\\" and i + 1 < len(token) - 1:
+            nxt = token[i + 1]
+            if nxt == "n":   out.append(10); i += 2; continue
+            if nxt == "t":   out.append(9);  i += 2; continue
+            if nxt == "r":   out.append(13); i += 2; continue
+            if nxt == "\\":  out.append(ord("\\")); i += 2; continue
+            if nxt == '"':   out.append(ord('"')); i += 2; continue
+            if nxt == "x" and i + 3 < len(token) - 1:
+                out.append(int(token[i + 2:i + 4], 16)); i += 4; continue
+        out.append(ord(c))
+        i += 1
+    return bytes(out)
+
+
+_STRING_RE = _re.compile(r'"(?:\\.|[^"\\])*"')
+
+
+def _tokenize_line(line: str) -> list[str]:
+    """Split a line into tokens. Respects double-quoted strings."""
+    tokens: list[str] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c in "#;" or line[i:i + 2] == "//":
+            break  # rest of line is a comment
+        if c == '"':
+            m = _STRING_RE.match(line, i)
+            if not m:
+                raise ValueError(f"unterminated string starting at col {i}")
+            tokens.append(m.group(0))
+            i = m.end()
+            continue
+        # Plain token: read until whitespace/comment.
+        j = i
+        while j < n and line[j] not in " \t#;" and line[j:j + 2] != "//":
+            j += 1
+        tokens.append(line[i:j])
+        i = j
+    return tokens
+
+
+def parse_text(source: str) -> Encoder:
+    """Parse the .masm text format and return a populated Encoder."""
+    enc = Encoder()
+    lines = source.splitlines()
+
+    state = "top"          # top / .fun / .global tuple
+    current_fn: FunctionBody | None = None
+    tuple_stack: list[list[Any]] = []  # nested tuple builders
+    function_index_counter = 0
+
+    def _build_tuple_top() -> tuple:
+        return tuple(tuple_stack[-1])
+
+    for lineno, raw_line in enumerate(lines, start=1):
+        tokens = _tokenize_line(raw_line)
+        if not tokens:
+            continue
+        try:
+            head = tokens[0]
+            # Labels: token ending in ':' (and only one token).
+            if head.endswith(":") and len(tokens) == 1 and state == ".fun":
+                current_fn.label(head[:-1])  # type: ignore[union-attr]
+                continue
+
+            if head == ".fun":
+                if state == ".fun":
+                    raise SyntaxError("nested .fun is not supported")
+                if state == ".global-tuple":
+                    raise SyntaxError(".fun inside a tuple is not supported")
+                # .fun NAME nargs nlocals (name is informational)
+                if len(tokens) < 4:
+                    raise SyntaxError(".fun needs NAME nargs nlocals")
+                nargs = _parse_int_literal(tokens[2])
+                nlocals = _parse_int_literal(tokens[3])
+                current_fn = enc.new_function(nargs=nargs, nlocals=nlocals)
+                function_index_counter += 1
+                state = ".fun"
+                continue
+
+            if head == ".global":
+                if state == ".fun":
+                    raise SyntaxError(".global after .fun isn't allowed — "
+                                      "declare all globals first")
+                if len(tokens) < 2:
+                    raise SyntaxError(".global needs a type")
+                kind = tokens[1]
+                if kind == "nil":
+                    if state == ".global-tuple":
+                        tuple_stack[-1].append(NIL)
+                    else:
+                        enc.add_global(NIL)
+                elif kind == "int":
+                    if len(tokens) < 3:
+                        raise SyntaxError(".global int needs a value")
+                    val = _parse_int_literal(tokens[2])
+                    if state == ".global-tuple":
+                        tuple_stack[-1].append(val)
+                    else:
+                        enc.add_global(val)
+                elif kind == "string":
+                    if len(tokens) < 3:
+                        raise SyntaxError(".global string needs a value")
+                    val = _parse_string_literal(tokens[2])
+                    if state == ".global-tuple":
+                        tuple_stack[-1].append(val)
+                    else:
+                        enc.add_global(val)
+                elif kind == "bytes":
+                    raw = bytes(_parse_int_literal(t) for t in tokens[2:])
+                    if state == ".global-tuple":
+                        tuple_stack[-1].append(raw)
+                    else:
+                        enc.add_global(raw)
+                elif kind == "tuple":
+                    tuple_stack.append([])
+                    state = ".global-tuple"
+                else:
+                    raise SyntaxError(f"unknown .global type: {kind}")
+                continue
+
+            if head == ".end":
+                if state == ".fun":
+                    current_fn = None
+                    state = "top"
+                elif state == ".global-tuple":
+                    finished = tuple(tuple_stack.pop())
+                    if tuple_stack:
+                        # nested tuple — append to parent
+                        tuple_stack[-1].append(finished)
+                    else:
+                        enc.add_global(finished)
+                        state = "top"
+                else:
+                    raise SyntaxError(".end with nothing to close")
+                continue
+
+            # In a function body — must be an opcode.
+            if state == ".fun":
+                mnem = head
+                if mnem not in _MNEM_TO_OP:
+                    raise SyntaxError(f"unknown opcode: {mnem}")
+                opcode = _MNEM_TO_OP[mnem]
+                if opcode in _OP_JMP:
+                    if len(tokens) < 2:
+                        raise SyntaxError(f"{mnem} needs a label name")
+                    current_fn.opjmp(opcode, tokens[1])  # type: ignore[union-attr]
+                elif opcode in _OP_I32:
+                    if len(tokens) < 2:
+                        raise SyntaxError(f"{mnem} needs an i32 operand")
+                    current_fn.opi(opcode, _parse_int_literal(tokens[1]))  # type: ignore[union-attr]
+                elif opcode in _OP_U8:
+                    if len(tokens) < 2:
+                        raise SyntaxError(f"{mnem} needs a u8 operand")
+                    current_fn.opb(opcode, _parse_int_literal(tokens[1]))  # type: ignore[union-attr]
+                else:
+                    current_fn.op(opcode)  # type: ignore[union-attr]
+                continue
+
+            raise SyntaxError(f"unexpected token at top-level: {head!r}")
+        except (SyntaxError, ValueError) as e:
+            raise SyntaxError(f"line {lineno}: {e}") from None
+
+    if state != "top":
+        raise SyntaxError(f"unclosed {state!r} at end of input")
+    return enc
+
+
+# ---------------------------------------------------------------------------
 # Self-test: build a tiny program, round-trip through the disassembler.
 # ---------------------------------------------------------------------------
 def self_test() -> int:
@@ -465,14 +756,27 @@ def self_test() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    ap.add_argument("input", nargs="?",
+                    help="path to a .masm text source to assemble (omit to "
+                    "use --self-test).")
+    ap.add_argument("-o", "--output", help="output .bin path (default: "
+                    "INPUT with .masm replaced by .bin)")
     ap.add_argument("--self-test", action="store_true",
                     help="build a tiny program in-memory and round-trip "
                     "through mtl_dis to verify the encoder is sane.")
     args = ap.parse_args()
     if args.self_test:
         return self_test()
-    print("nothing to do — pass --self-test or import as a library.",
-          file=sys.stderr)
+    if not args.input:
+        print("usage: mtl_asm.py [INPUT.masm] [-o OUTPUT.bin] | --self-test",
+              file=sys.stderr)
+        return 2
+    src_path = Path(args.input)
+    out_path = Path(args.output) if args.output else src_path.with_suffix(".bin")
+    enc = parse_text(src_path.read_text())
+    blob = enc.emit()
+    out_path.write_bytes(blob)
+    print(f"wrote {len(blob)} bytes to {out_path}")
     return 0
 
 
