@@ -79,22 +79,34 @@ string literal, the bytecode would be corrupted. **Strongly doubt** —
 this would have shown up in the compile log; we verified `Compiler :
 done !` cleanly.
 
-## Builds ready to flash (built on the VPS, 2026-05-31 06:38)
+## Builds ready to flash (built on the VPS, 2026-05-31)
 
-The four bisection variants are signed and waiting under `firmware-arm/bin/`:
+Six variants signed and waiting under `firmware-arm/bin/`:
 
 ```
 firmware-arm/bin/
-├── naboot-full.signed.sim          229 058 B   (rebuilt; the brick suspect)
 ├── naboot-minimal.signed.sim       238 706 B   (RESCUE — vanilla boot.mtl)
 ├── naboot-signed-stock.signed.sim  238 098 B   (bisect: bootloader patch only)
-└── naboot-pages-only.signed.sim    228 706 B   (bisect: page rewrite only)
+├── naboot-pages-only.signed.sim    228 706 B   (bisect: page rewrite only)
+├── naboot-mdns-only.signed.sim     238 850 B   (bisect: mdns only)
+├── naboot-full.signed.sim          229 058 B   (modernized UI + sig gate)
+└── naboot-max.signed.sim           230 162 B   (full + mdns; daily-driver)
 ```
 
-All four pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
+All six pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
 done with `./build.sh --remote rocky@vps-ee4c4993.vps.ovh.net:10022
---runtime podman --mode <mode>` (the build.sh now supports `--runtime
-podman` and `host:port` remotes).
+--runtime podman --mode <mode>` (build.sh supports `--runtime podman`
+and `host:port` remotes).
+
+What `max` adds vs `full`: the boot-side mDNS announcer
+(`boot-mods/mdns.mtl`) — sends a "naboot.local → <netip>" mDNS A
+response to 224.0.0.251:5353 every 60 s. Wire-identical design to the
+runtime `firmware/mdns.mtl`. Useful both in config mode
+(`naboot.local → 192.168.0.1` so the setup page is reachable by name)
+and in station mode (so HA / SSH can find the rabbit without IP
+scanning). +1.1 KB on disk, +552 B on the ARM7's flash. UNTESTED on
+hardware as of writing — flash `mdns-only` first as a smoke test if
+you want to be conservative.
 
 Sanity-check vs the previous full build: the new `full/Nab.bin` is 2.7 KB
 SMALLER than the previously-bricked `bin/Nab.bin` (114,448 vs 117,204).
@@ -170,6 +182,9 @@ Then in config mode (head-button + power → join `Nabaztag-XXXX` AP →
      fragmentation from too many list elements. Fix candidate: merge
      consecutive non-marker fragments into one big string (the marker
      is the only thing that needs to be its own element).
+3. (only after `full` proves clean) Upload `bin/mdns-only/...signed.sim`
+   to validate the mDNS code on hardware. Once it works, upload
+   `bin/max/...signed.sim` for the everything-bag daily driver.
 
 ## Fixes shipped tonight (in apply-mods.py)
 
