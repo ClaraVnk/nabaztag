@@ -100,6 +100,64 @@ Concrete uses already today:
   is among the globals as a string).
 - **Spot-check function arity / locals counts** when bisecting a brick.
 
+## Assembler — `mtl_asm.py`
+
+The inverse of the disassembler: given a structured description of a
+Metal program (globals + functions + instructions), it produces a `.bin`
+**byte-for-byte identical** to what the C++ `mtl_compiler` emits for the
+same source. This is the base layer of a future full Phase 7a Python
+`mtl_compiler`: the parser/codegen builds the structured description,
+this module turns it into bytes.
+
+Used as a library:
+
+```python
+from mtl_asm import Encoder, Op
+enc = Encoder()
+enc.add_global(42)
+enc.add_global("hello")
+main_ = enc.new_function(nargs=0, nlocals=0)
+main_.intb(1).else_("else_branch")        # if 1 then …
+main_.intb(42).goto("end")
+main_.label("else_branch").intb(99)        # else 99
+main_.label("end").ret()
+open("out.bin", "wb").write(enc.emit())
+```
+
+Self-test (round-trips a hand-built program through the disassembler +
+checker):
+
+```sh
+python3 mtl_asm.py --self-test
+```
+
+### Validation status
+
+Cross-validated byte-for-byte against `mtl_compiler` (C++, RedoXyde
+`mtl_linux`, pinned commit `7e557a15`) for:
+
+| Source | Bytes | Tested for |
+|---|---|---|
+| `fun main=42;;` | 20 | minimal — OPintb + OPret |
+| `var g=42;; const k="hello";; fun helper a=a+1;; fun main=helper g;;` | 49 | globals (int + string), function args, OPgetlocalb / OPgetglobalb, OPadd, OPexec call sites |
+| `fun main = if 1 then 42 else 99;;` | 30 | control flow — OPelse + OPgoto with forward labels |
+
+All three round-trip exactly: `cmp` reports BYTE-IDENTICAL. That covers
+all the encoder's tricky bits — relative-to-pcbase jump offsets, the
+goofy `int << 1` tagging of int globals, the tuple/string discriminator
+bits in the globals section, and the 3-byte `[nargs:u8][nlocals:u16]`
+function header.
+
+### What's NOT in mtl_asm.py yet
+
+- A parser. You build the program by direct Encoder API calls. The
+  parser → AST → Encoder calls path is Phase 7a proper.
+- A type checker. Metal has a small but real type system (used to
+  disambiguate `strcmp` vs `vstrcmp`, choose `OPset*` variants, etc.).
+  Phase 7a needs to port it.
+- Float globals (`mtl_float`). Encoder only does int/string/tuple/nil.
+  Easy add, just not needed yet.
+
 ## Format references
 
 All format details are derived from the canonical implementations:
