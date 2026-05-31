@@ -361,18 +361,45 @@ def lex(src: str) -> list[Token]:
 class Scope:
     """Lexical scope for `let`/`for` locals. Each entry: name -> stack offset
     (a 0-based call-frame index used by OPgetlocalb/OPsetlocalb).
+
+    Supports shadowing — if a name is re-declared, the previous binding
+    is saved and restored on unbind, so:
+        let X -> i in (
+            for i=0; ...   ; an INNER `i` (different local index)
+            ...
+            ; OUTER `i` is restored here, still bound at its original idx
+        )
     """
     names: dict[str, int] = field(default_factory=dict)
     next_index: int = 0
+    # Per name: stack of indices that have been declared but not yet
+    # unbound. `lookup` returns the top of the stack (innermost binding).
+    _shadow: dict[str, list[int]] = field(default_factory=dict)
 
     def declare(self, name: str) -> int:
         idx = self.next_index
+        self._shadow.setdefault(name, []).append(idx)
         self.names[name] = idx
         self.next_index += 1
         return idx
 
     def lookup(self, name: str) -> int | None:
         return self.names.get(name)
+
+    def unbind(self, name: str) -> None:
+        """Pop the innermost binding for `name`. Restores the previous
+        shadowed binding (if any). Decrements next_index by 1.
+        """
+        stack = self._shadow.get(name)
+        if not stack:
+            raise KeyError(name)
+        stack.pop()
+        if stack:
+            self.names[name] = stack[-1]
+        else:
+            del self.names[name]
+            del self._shadow[name]
+        self.next_index -= 1
 
 
 class Compiler:
@@ -391,6 +418,12 @@ class Compiler:
         # Sum-type names themselves — recorded so `ifdef Wifi { ... }`
         # can see them.
         self.types: set[str] = set()
+        # Struct fields: field name -> (field_index, struct_size).
+        # For `type Tcp = [stateT locT dstT];;`, registers:
+        #   stateT -> (0, 3)
+        #   locT   -> (1, 3)
+        #   dstT   -> (2, 3)
+        self.struct_fields: dict[str, tuple[int, int]] = {}
         # Function-being-compiled state.
         self.fn: FunctionBody | None = None
         self.scope: Scope | None = None
@@ -531,17 +564,26 @@ class Compiler:
                 depth -= 1
 
     def _type_decl(self) -> None:
-        """`type Name = Cons1 | Cons2 _ | Cons3 [type] | ...;;`
-
-        Each constructor gets an auto-incrementing tag. A bare name
-        (no payload) is CODE_CONS0; with `_` or an explicit type
-        argument it's CODE_CONS (1 payload slot).
+        """`type Name = ...;;` — three forms:
+            type Name = Cons1 | Cons2 _ | ...;;        sum (ADT)
+            type Name = [field1 field2 ...];;          struct (record)
+            type Name;;                                opaque (just declared)
         """
         self.expect("type")
-        # Type-name (e.g. `Wifi`) — record so `ifdef Wifi` can see it.
         type_name = self.advance().text
         self.types.add(type_name)
+        if self.peek().text == ";;":
+            # Opaque type — just register the name, no fields.
+            self.advance()
+            return
         self.expect("=")
+        if self.peek().text == "[":
+            self._struct_decl()
+        else:
+            self._sum_decl()
+
+    def _sum_decl(self) -> None:
+        """Sum-type body: `Cons1 | Cons2 _ | Cons3 SomeType | ...;;`"""
         tag = 0
         while True:
             cons_tok = self.advance()
@@ -549,19 +591,11 @@ class Compiler:
                 raise SyntaxError(
                     f"line {cons_tok.line}: constructor name expected, got {cons_tok.text!r}"
                 )
-            # Look ahead: is the next token `|` or `;;`? If so, this is
-            # a CODE_CONS0 (no payload). Otherwise it's CODE_CONS with
-            # a payload type (we skip the type — we don't typecheck yet,
-            # but we must consume the type tokens).
             nxt = self.peek().text
             if nxt in ("|", ";;"):
                 self.constructors[cons_tok.text] = (tag, False)
             else:
-                # Consume the type expression. The C++ creategraph reads
-                # a full type tree — for now we just skip tokens until
-                # we hit `|` or `;;`. This matches Metal's grammar for
-                # the simple case `Cons _` (the underscore) and for
-                # `Cons SomeType` (single type name).
+                # Skip the payload type tokens.
                 while self.peek().text not in ("|", ";;"):
                     self.advance()
                 self.constructors[cons_tok.text] = (tag, True)
@@ -570,6 +604,39 @@ class Compiler:
                 self.advance()
                 return
             self.expect("|")
+
+    def _struct_decl(self) -> None:
+        """Struct-type body: `[field1 field2 ... fieldN];;`
+
+        Each field name is registered with its index and the total
+        struct size (so struct-creation knows how big to allocate
+        even when not all fields are mentioned). Optional `: type`
+        per field is skipped (we don't type-check).
+        """
+        self.expect("[")
+        field_names: list[str] = []
+        while True:
+            t = self.peek()
+            if t.text == "]":
+                self.advance()
+                break
+            if t.kind != "id":
+                raise SyntaxError(
+                    f"line {t.line}: field name expected, got {t.text!r}"
+                )
+            self.advance()
+            field_names.append(t.text)
+            # Optional `: type` annotation — skip the type expression.
+            if self.peek().text == ":":
+                self.advance()
+                # Skip until next field, ']' or '|'. A type is one
+                # identifier or a parenthesized form for our use cases.
+                # Conservative: skip a single token (the type name).
+                self.advance()
+        self.expect(";;")
+        size = len(field_names)
+        for i, fname in enumerate(field_names):
+            self.struct_fields[fname] = (i, size)
 
     def _proto_decl(self) -> None:
         self.expect("proto")
@@ -604,9 +671,25 @@ class Compiler:
         self.globals_by_name[name] = idx
 
     def _const_expr(self) -> Any:
-        """Constant expression at top level — int, string, or nil only.
-        (No arithmetic on globals at decl-site, matches the C++ subset
-        we care about right now.)"""
+        """Constant expression at top level — recursively supports:
+            int, string, nil, `(EXPR)` grouping,
+            `A :: B`        — right-assoc cons (2-element tuple [A, B])
+            `[a b c]`       — n-tuple
+            `[FIELD: v ...]` — struct creation (with field name lookup)
+
+        These are constant expressions evaluated at compile time and
+        encoded into the globals section of the .bin. Matches the C++
+        which evaluates `var X = EXPR;;` once at decl-site.
+        """
+        head = self._const_term()
+        # Right-associative cons.
+        if self.peek().text == "::":
+            self.advance()
+            tail = self._const_expr()
+            return (head, tail)
+        return head
+
+    def _const_term(self) -> Any:
         t = self.advance()
         if t.kind == "int":
             return t.value
@@ -616,9 +699,50 @@ class Compiler:
             return t.value
         if t.text == "nil":
             return NIL
+        if t.text == "(":
+            v = self._const_expr()
+            self.expect(")")
+            return v
+        if t.text == "[":
+            # Could be `[FIELD: v ...]` (struct) or `[a b c]` (n-tuple).
+            if (self.peek().kind == "id"
+                    and self.peek().text in self.struct_fields
+                    and self.peek(1).text == ":"):
+                # Struct creation.
+                first_field = self.peek().text
+                _, size = self.struct_fields[first_field]
+                # Build a Python list of size `size`, filling NIL by
+                # default, then set the specified fields.
+                fields: list[Any] = [NIL] * size
+                while True:
+                    nt = self.advance()
+                    if nt.text == "]":
+                        return tuple(fields)
+                    if nt.kind != "id" or nt.text not in self.struct_fields:
+                        raise SyntaxError(
+                            f"line {nt.line}: field name expected, got {nt.text!r}"
+                        )
+                    idx, _ = self.struct_fields[nt.text]
+                    self.expect(":")
+                    fields[idx] = self._const_expr()
+            else:
+                # Plain n-tuple.
+                items: list[Any] = []
+                while True:
+                    if self.peek().text == "]":
+                        self.advance()
+                        return tuple(items)
+                    items.append(self._const_expr())
+        if t.text == "{":
+            # Array literal — same on-disk encoding as a tuple.
+            items = []
+            while True:
+                if self.peek().text == "}":
+                    self.advance()
+                    return tuple(items)
+                items.append(self._const_expr())
         raise SyntaxError(
-            f"line {t.line}: only int/string/nil constants supported "
-            f"in global initializers, got {t.text!r}"
+            f"line {t.line}: unsupported constant expression at {t.text!r}"
         )
 
     def _fun_decl(self) -> None:
@@ -811,11 +935,16 @@ class Compiler:
             self.expect(")")
             return
         if t.text in ("[", "{"):
-            # n-tuple `[a b c]` or array `{a b c}` — the C++ emits the
-            # same OPdeftabb sequence for both. Only the type system
-            # differs (tabs are mutable, tuples aren't) — for byte-
-            # identical output that doesn't matter to us.
+            # `[a b c]` (tuple), `{a b c}` (array) OR `[FIELD: v ...]`
+            # (struct creation). Look ahead one token: if it's a known
+            # field name followed by `:`, take the struct path.
             closer = "]" if t.text == "[" else "}"
+            if (closer == "]"
+                    and self.peek().kind == "id"
+                    and self.peek().text in self.struct_fields
+                    and self.peek(1).text == ":"):
+                self._parse_struct_creation()
+                return
             nval = 0
             while True:
                 if self.peek().text == closer:
@@ -1030,8 +1159,70 @@ class Compiler:
             self.fn.goto(loop_check)
 
         self.fn.label(end_label)
-        del self.scope.names[var_tok.text]
-        self.scope.next_index -= 1
+        self.scope.unbind(var_tok.text)
+
+    def _parse_struct_creation(self) -> None:
+        """`[FIELD1: v1 FIELD2: v2 ...]` — struct creation. The opening
+        `[` has already been consumed; the lookahead confirmed the
+        first token is a known field name.
+
+        Codegen (mirrors compiler_term.cpp::parsefields):
+            OPmktabb N           ; create empty struct of total size N
+            <v1>
+            OPsetstructb idx1
+            <v2>
+            OPsetstructb idx2
+            ...
+            ; closing `]` is consumed below
+        """
+        # Find the struct size from the first field — all fields of a
+        # struct share the same size.
+        first_field = self.peek().text
+        _, size = self.struct_fields[first_field]
+        if 0 <= size <= 255:
+            self.fn.opb(Op.OPmktabb, size)
+        else:
+            self.fn.int_(size)
+            self.fn.op(Op.OPmktab)
+        while True:
+            t = self.advance()
+            if t.text == "]":
+                return
+            if t.kind != "id" or t.text not in self.struct_fields:
+                raise SyntaxError(
+                    f"line {t.line}: expected field name, got {t.text!r}"
+                )
+            idx, _ = self.struct_fields[t.text]
+            self.expect(":")
+            self._parse_expression()
+            if 0 <= idx <= 255:
+                self.fn.opb(Op.OPsetstructb, idx)
+            else:
+                self.fn.int_(idx)
+                self.fn.op(Op.OPsetstruct)
+
+    def _parse_field_access_chain(self) -> None:
+        """After an expression has left a value on the stack, consume any
+        `.X` chain — emits OPfetchb for known struct fields, OPfetch for
+        dynamic index expressions (matching compiler_term.cpp::parsegetpoint).
+        """
+        while self.peek().text == ".":
+            self.advance()
+            f = self.peek()
+            if f.kind == "id" and f.text in self.struct_fields:
+                self.advance()
+                idx, _ = self.struct_fields[f.text]
+                if 0 <= idx <= 255:
+                    self.fn.opb(Op.OPfetchb, idx)
+                else:
+                    self.fn.int_(idx)
+                    self.fn.op(Op.OPfetch)
+            else:
+                # Dynamic index — parse as a term (single token; the
+                # next operator can still continue at the expression
+                # level, e.g. `arr.i + 1`).
+                self._parse_term()
+                self.fn.op(Op.OPfetch)
 
     def _parse_call(self) -> None:
         """call FUN [arg1 arg2 ...]   — dynamic dispatch to a function value
@@ -1152,8 +1343,7 @@ class Compiler:
 
         # Clean up the locals bound in this case.
         for nm in bound_locals:
-            del self.scope.names[nm]
-            self.scope.next_index -= 1
+            self.scope.unbind(nm)
 
         self.fn.goto(end_label)
         self.fn.label(next_case)
@@ -1182,10 +1372,10 @@ class Compiler:
         bound_names = self._parse_let_locals()
         self.expect("in")
         self._parse_expression()
-        # Unbind everything we declared.
-        for nm in bound_names:
-            del self.scope.names[nm]
-            self.scope.next_index -= 1
+        # Unbind everything we declared (reverse order to keep
+        # next_index decrements consistent with allocation order).
+        for nm in reversed(bound_names):
+            self.scope.unbind(nm)
 
     def _parse_let_locals(self) -> list[str]:
         """parselocals — bind the value on stack to a destination pattern.
@@ -1241,17 +1431,59 @@ class Compiler:
         return bound
 
     def _parse_set(self) -> None:
+        """`set NAME = EXPR`              — simple var assignment
+           `set NAME.field = EXPR`         — struct field write (OPstore)
+           `set NAME.field.field = EXPR`   — chained field write
+
+        Codegen for the field forms (mirrors compiler_term.cpp::parsesetpoint):
+            <get NAME>              ; push the root object
+            <OPfetchb field_idx>*   ; walk inner fields (n-1 of them)
+            <push last_field_idx>
+            <EXPR>                  ; push value
+            OPstore                 ; consumes [struct, idx, value]
+        """
         name_tok = self.advance()
         if name_tok.kind != "id":
             raise SyntaxError(f"line {name_tok.line}: set needs a NAME")
+
+        if self.peek().text == ".":
+            # Field-write path.
+            if self.scope and (loc := self.scope.lookup(name_tok.text)) is not None:
+                self.fn.opb(Op.OPgetlocalb, loc)
+            elif name_tok.text in self.globals_by_name:
+                self._emit_get_global(self.globals_by_name[name_tok.text])
+            else:
+                raise SyntaxError(
+                    f"line {name_tok.line}: set: unknown variable {name_tok.text!r}"
+                )
+            # Walk the .field chain. For each step but the LAST, emit
+            # OPfetchb. For the last, push the index, then EXPR, then
+            # OPstore.
+            field_path: list[int] = []
+            while self.peek().text == ".":
+                self.advance()
+                f = self.advance()
+                if f.text not in self.struct_fields:
+                    raise SyntaxError(
+                        f"line {f.line}: unknown field {f.text!r}"
+                    )
+                field_path.append(self.struct_fields[f.text][0])
+            # All but the last are intermediate fetches.
+            for idx in field_path[:-1]:
+                if 0 <= idx <= 255:
+                    self.fn.opb(Op.OPfetchb, idx)
+                else:
+                    self.fn.int_(idx)
+                    self.fn.op(Op.OPfetch)
+            # Last index pushed onto the stack.
+            self._emit_intb_or_int(field_path[-1])
+            self.expect("=")
+            self._parse_expression()
+            self.fn.op(Op.OPstore)
+            return
+
+        # Simple `set NAME = EXPR`.
         self.expect("=")
-        # The C++ uses the SAME pattern for both globals and locals:
-        #   1) push idx
-        #   2) evaluate rhs (leaves value on stack)
-        #   3) OPsetglobal / OPsetlocal2  (both take [idx, value] from stack)
-        # OPsetlocal2 (vs OPsetlocalb) lets the index live in `set`'s
-        # uniform [idx, value] discipline. Same final bytecode size on
-        # this path; matches the C++ emit order byte-for-byte.
         if self.scope and (loc := self.scope.lookup(name_tok.text)) is not None:
             self._emit_intb_or_int(loc)
             self._parse_expression()
@@ -1270,10 +1502,12 @@ class Compiler:
         # Local?
         if self.scope and (loc := self.scope.lookup(name)) is not None:
             self.fn.opb(Op.OPgetlocalb, loc)
+            self._parse_field_access_chain()
             return
         # Global var/const?
         if name in self.globals_by_name:
             self._emit_get_global(self.globals_by_name[name])
+            self._parse_field_access_chain()
             return
         # Sum-type constructor?
         if name in self.constructors:
