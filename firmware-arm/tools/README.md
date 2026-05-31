@@ -262,6 +262,8 @@ Tested on 11 progressively richer programs; for every one,
 | `call.mtl`         | 52 B  | `call FUN [a b c]` (dynamic dispatch via OPcallrb) |
 | `forfor2.mtl`      | 54 B  | `for VAR=INIT; COND do BODY` (Form 2, auto-increment) |
 | `destruc.mtl`      | 61 B  | `let TUPLE -> [a b c] in ...` (structured destructuring) |
+| `struct.mtl`       | 54 B  | `type Point=[x y z];;` + `[x:1 y:2 z:3]` + `.field` read |
+| `setfield.mtl`     | 62 B  | `set p.x = 99` (struct field write via OPstore) |
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -315,18 +317,37 @@ Expressions:
 - `set NAME = EXPR` — mutate a global or local
 - `( EXPR )` — grouping
 
+### Real boot.0.0.0.13.mtl — IT COMPILES (validation-passing)
+
+Phase 7a v5 added struct types (`type X = [f1 f2 ...];;`), struct
+creation `[FIELD: v ...]`, struct field READ `x.field`, struct field
+WRITE `set x.field = ...`, dynamic field access `tab.i` (when `i`
+is a variable, not a registered field), constant cons/tuple
+expressions in global initializers, and a shadowing-aware scope.
+
+End result: `python3 mtl_comp.py boot.0.0.0.13.mtl -o boot.py.bin`
+**successfully compiles all 2960 lines** of the real RedoXyde
+bootloader Metal source, producing a structurally-valid `.bin`
+that `mtl_dis.py --check` accepts (216 functions, 16 965 bytes of
+code, no structural issues).
+
+Not yet byte-identical with the C++ output on this file: ~4.5 KB
+larger globals section and 1 fewer function. Almost certainly the
+remaining diff is in how we encode the page_a constant cons list
+and a missing ifdef-branch-only function. Tracked as Phase 7a v6.
+
+### Still not byte-identical for the very-large case
+
+`boot.0.0.0.13.bin` itself: compiles, validates, but differs by
+~4 KB. The 22 dedicated test programs ARE all byte-identical.
+
 ### Not yet supported
 
-`type X=[field1 field2 ...]` (struct/record types), `[field1: v1 ...]`
-(record creation), `x.field` (field access), `update x with [...]`
-(record updates), multi-char escapes in char literals `'\n'`,
-function pointers to builtins (`#Secho`), forward fun-to-fun
-references where neither has a `proto`.
-
-These are mostly a coherent block: struct/record support together
-would let us compile boot.0.0.0.13.mtl much further. The struct
-type declaration appears on line 488 of that file (`type Tcp =
-[stateT locT dstT ...];;`).
+`update x with [...]` (record updates with explicit copy), multi-char
+escapes in char literals `'\n'`, function pointers to builtins
+(`#Secho`), forward fun-to-fun references where neither has a
+`proto`, function names DUPED via re-definition (boot.mtl has two
+`fun tcpread` for two different module scopes).
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.
