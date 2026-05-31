@@ -180,13 +180,24 @@ BUILTINS: dict[str, tuple[int, int]] = {
     "wav2alaw":       (Op.OPwav2alaw,  6),
     "crypt":          (Op.OPcrypt,     5),
     "uncrypt":        (Op.OPuncrypt,   5),
+    # fixarg1..fixarg8 all map to OPfixarg with arity 2 (per
+    # stdlib_core.cpp /*5*/: 2,2,2,2,2,2,2,2). They differ only in
+    # the type system — same bytecode emission.
+    "fixarg1":        (Op.OPfixarg,    2),
+    "fixarg2":        (Op.OPfixarg,    2),
+    "fixarg3":        (Op.OPfixarg,    2),
+    "fixarg4":        (Op.OPfixarg,    2),
+    "fixarg5":        (Op.OPfixarg,    2),
+    "fixarg6":        (Op.OPfixarg,    2),
+    "fixarg7":        (Op.OPfixarg,    2),
+    "fixarg8":        (Op.OPfixarg,    2),
 }
 
 # Keywords that terminate an expression — never lookup as identifiers.
 KEYWORDS = {
-    "fun", "var", "const", "proto", "if", "then", "else",
+    "fun", "var", "const", "proto", "type", "if", "then", "else",
     "let", "in", "set", "while", "do", "for", "match", "with",
-    "nil", "call", "update", "true", "false", "ifdef", "endif",
+    "nil", "call", "update", "true", "false", "ifdef", "ifndef",
 }
 
 
@@ -377,6 +388,9 @@ class Compiler:
         #   gomasterW   -> (1, True)
         #   stationW    -> (2, True)
         self.constructors: dict[str, tuple[int, bool]] = {}
+        # Sum-type names themselves — recorded so `ifdef Wifi { ... }`
+        # can see them.
+        self.types: set[str] = set()
         # Function-being-compiled state.
         self.fn: FunctionBody | None = None
         self.scope: Scope | None = None
@@ -439,11 +453,82 @@ class Compiler:
             self._fun_decl()
         elif t.text == "type":
             self._type_decl()
+        elif t.text == "ifdef":
+            self._ifdef_decl(invert=False)
+        elif t.text == "ifndef":
+            self._ifdef_decl(invert=True)
         else:
             raise SyntaxError(
                 f"line {t.line}: expected top-level declaration "
-                f"(proto/var/const/fun/type), got {t.text!r}"
+                f"(proto/var/const/fun/type/ifdef/ifndef), got {t.text!r}"
             )
+
+    def _is_defined(self, name: str) -> bool:
+        """Mirror of the C++'s `searchref || searchtype` check used by
+        `ifdef NAME { ... }` to decide which branch is active."""
+        return (
+            name in self.globals_by_name
+            or name in self.funs_by_name
+            or name in self.proto_by_name
+            or name in self.constructors
+            or name in self.types
+        )
+
+    def _ifdef_decl(self, *, invert: bool) -> None:
+        """`ifdef NAME { ... } [else { ... }]`  (or `ifndef NAME`).
+
+        Top-level only. The active branch is parsed as a sequence of
+        top-level decls; the inactive branch's tokens are skipped by
+        matching brace nesting (just like compiler_file.cpp::skipifdef).
+        """
+        self.advance()  # consume ifdef/ifndef
+        name_tok = self.advance()
+        if name_tok.kind != "id":
+            raise SyntaxError(
+                f"line {name_tok.line}: ifdef needs a name, got {name_tok.text!r}"
+            )
+        first = self._is_defined(name_tok.text)
+        if invert:
+            first = not first
+        self.expect("{")
+        if first:
+            self._parse_block_decls()
+            # `}` consumed by _parse_block_decls when it sees it.
+        else:
+            self._skip_braces()
+        # Optional else.
+        if self.peek().text == "else":
+            self.advance()
+            self.expect("{")
+            if first:
+                self._skip_braces()
+            else:
+                self._parse_block_decls()
+
+    def _parse_block_decls(self) -> None:
+        """Parse top-level decls until a matching `}`. Each decl can be
+        any of the top-level forms, INCLUDING nested ifdef.
+        """
+        while True:
+            t = self.peek()
+            if t.text == "}":
+                self.advance()
+                return
+            if t.kind == "eof":
+                raise SyntaxError("unexpected EOF inside ifdef block")
+            self._top_decl()
+
+    def _skip_braces(self) -> None:
+        """Skip tokens until the matching `}` (counting nesting)."""
+        depth = 1
+        while depth > 0:
+            t = self.advance()
+            if t.kind == "eof":
+                raise SyntaxError("unexpected EOF inside ifdef block")
+            if t.text == "{":
+                depth += 1
+            elif t.text == "}":
+                depth -= 1
 
     def _type_decl(self) -> None:
         """`type Name = Cons1 | Cons2 _ | Cons3 [type] | ...;;`
@@ -453,8 +538,9 @@ class Compiler:
         argument it's CODE_CONS (1 payload slot).
         """
         self.expect("type")
-        # Type-name itself (e.g. `Wifi`). Not used for codegen.
-        _type_name = self.advance().text
+        # Type-name (e.g. `Wifi`) — record so `ifdef Wifi` can see it.
+        type_name = self.advance().text
+        self.types.add(type_name)
         self.expect("=")
         tag = 0
         while True:
@@ -755,16 +841,14 @@ class Compiler:
             self._emit_get_global(idx)
             return
         if t.text == "'":
-            # Char literal: 'X' or '\n' etc. The lexer treats `'` as a
-            # single-char op so the byte between two `'` tokens is one
-            # raw token's first char (mtl_compiler does `parser->token[0]`).
+            # Char literal: 'X' or '\n' etc. The C++ takes `token[0]`,
+            # which means it grabs the first byte of the inner token —
+            # so `'\n'` becomes the byte `\\`, not 10. Tested against
+            # mtl_compiler; we match byte-for-byte.
             c_tok = self.advance()
             if c_tok.kind == "eof":
                 raise SyntaxError(f"line {t.line}: unterminated char literal")
             ch = c_tok.text[0]
-            # Re-handle a couple of escapes that the lexer wouldn't have
-            # seen inside a string. mtl_compiler also just takes the first
-            # byte of the inner token, no escape interpretation.
             self._emit_intb_or_int(ord(ch) & 0xFF)
             self.expect("'")
             return
@@ -796,6 +880,9 @@ class Compiler:
             return
         if t.text == "match":
             self._parse_match()
+            return
+        if t.text == "call":
+            self._parse_call()
             return
         if t.kind == "id":
             self._parse_ref(t.text)
@@ -906,29 +993,83 @@ class Compiler:
         # accumulator
         self.fn.op(Op.OPnil)
         loop_check = self.new_label("for_check")
-        body_label = self.new_label("for_body")
-        next_label = self.new_label("for_next")
         end_label = self.new_label("for_end")
         self.fn.label(loop_check)
         self._parse_expression()     # condition
-        self.expect(";")
         self.fn.else_(end_label)
-        self.fn.goto(body_label)
-        self.fn.label(next_label)
-        self._parse_expression()     # next-expression
-        # The NEXT expression's value is STORED INTO THE LOOP VAR (i.e.
-        # `i+1` in `for i=0;i<n;i+1 do` becomes `i = i + 1`). This is
-        # the C++ Form 1 semantics — see compiler_term.cpp::parsefor.
-        self.fn.opb(Op.OPsetlocalb, idx)
-        self.fn.goto(loop_check)
-        self.expect("do")
-        self.fn.label(body_label)
-        self.fn.drop()
-        self._parse_expression()     # body
-        self.fn.goto(next_label)
+
+        # Two forms (matching compiler_term.cpp::parsefor):
+        #   `for VAR=INIT; COND; NEXT do BODY`  (3 semicolons, Form 1)
+        #   `for VAR=INIT; COND do BODY`        (2 semicolons, Form 2;
+        #                                        auto-increment VAR by 1)
+        if self.peek().text == ";":
+            # Form 1.
+            self.advance()
+            body_label = self.new_label("for_body")
+            next_label = self.new_label("for_next")
+            self.fn.goto(body_label)
+            self.fn.label(next_label)
+            self._parse_expression()     # NEXT
+            # NEXT's value is STORED INTO THE LOOP VAR (i+1 → i=i+1).
+            self.fn.opb(Op.OPsetlocalb, idx)
+            self.fn.goto(loop_check)
+            self.expect("do")
+            self.fn.label(body_label)
+            self.fn.drop()
+            self._parse_expression()     # BODY
+            self.fn.goto(next_label)
+        else:
+            # Form 2 — auto-increment by 1 after BODY.
+            self.expect("do")
+            self.fn.drop()
+            self._parse_expression()     # BODY
+            self.fn.opb(Op.OPgetlocalb, idx)
+            self.fn.intb(1)
+            self.fn.op(Op.OPadd)
+            self.fn.opb(Op.OPsetlocalb, idx)
+            self.fn.goto(loop_check)
+
         self.fn.label(end_label)
         del self.scope.names[var_tok.text]
         self.scope.next_index -= 1
+
+    def _parse_call(self) -> None:
+        """call FUN [arg1 arg2 ...]   — dynamic dispatch to a function value
+           call FUN arg                — single-arg variant via OPcall
+
+        FUN is any expression that produces a function-shaped value
+        (e.g. from `#funname` or a stored variable). Used in boot.mtl
+        for callbacks dispatched at runtime.
+
+        Codegen (mirrors compiler_term.cpp::parsecall):
+            <FUN>
+            ; multi-arg form:
+            <arg1>
+            <arg2>
+            ...
+            OPcallrb n           (or OPint n; OPcallr if n > 255)
+            ; single-arg form:
+            <arg>
+            OPcall
+        """
+        self._parse_expression()                  # the function value
+        if self.peek().text == "[":
+            self.advance()
+            nval = 0
+            while True:
+                if self.peek().text == "]":
+                    self.advance()
+                    break
+                self._parse_expression()
+                nval += 1
+            if 0 <= nval <= 255:
+                self.fn.opb(Op.OPcallrb, nval)
+            else:
+                self.fn.int_(nval)
+                self.fn.op(Op.OPcallr)
+        else:
+            self._parse_expression()             # the single arg
+            self.fn.op(Op.OPcall)
 
     def _parse_match(self) -> None:
         """match EXPR with (Cons1 -> body1) | (Cons2 x -> body2) | (_ -> default)
@@ -1028,38 +1169,76 @@ class Compiler:
         self.fn.label(end_label)
 
     def _parse_let(self) -> None:
-        """let VALUE -> NAME in BODY — evaluates VALUE, binds it to NAME
-        as a fresh local, then evaluates BODY (which is the let's value).
+        """let VALUE -> DEST in BODY — DEST is either:
+            - a single NAME              (simple binding via OPsetlocalb)
+            - `[a b _ c]` tuple pattern  (destructure each position)
 
-        Matches the C++ compiler exactly: the value is left on the stack
-        by VALUE, OPsetlocalb i pops it into local slot i, and the body
-        re-fetches with OPgetlocalb when NAME is referenced. The body's
-        last expression's value is what the let returns.
+        Matches the C++ codegen byte-for-byte (compiler_term.cpp::parsels +
+        parselocals).
         """
         # Evaluate the source value.
         self._parse_expression()
         self.expect("->")
-        # The destination is a single label (we don't support `[a b _]`
-        # destructuring yet).
-        name_tok = self.advance()
-        if name_tok.kind != "id":
+        bound_names = self._parse_let_locals()
+        self.expect("in")
+        self._parse_expression()
+        # Unbind everything we declared.
+        for nm in bound_names:
+            del self.scope.names[nm]
+            self.scope.next_index -= 1
+
+    def _parse_let_locals(self) -> list[str]:
+        """parselocals — bind the value on stack to a destination pattern.
+        Returns the list of names introduced (so the caller can unbind
+        them after `in EXPR`).
+
+        Supported destinations:
+          - NAME            : single binding (OPsetlocalb)
+          - `[a b _ c]`     : tuple destructuring; each slot is OPdup
+                              + OPfetchb i + recursive parselocals;
+                              after all positions, OPdrop the value.
+          - `_`             : drops the value (no binding)
+        """
+        bound: list[str] = []
+        t = self.advance()
+        if t.text == "_":
+            self.fn.drop()
+            return bound
+        if t.text == "[":
+            n = 0
+            while True:
+                nxt = self.peek()
+                if nxt.text == "]":
+                    self.advance()
+                    self.fn.drop()   # drop the original tuple
+                    return bound
+                if nxt.text == "_":
+                    self.advance()
+                    n += 1
+                    continue
+                # Real binding at position n.
+                self.fn.op(Op.OPdup)
+                if 0 <= n <= 255:
+                    self.fn.opb(Op.OPfetchb, n)
+                else:
+                    self.fn.int_(n)
+                    self.fn.op(Op.OPfetch)
+                # Recursive parselocals for that field.
+                bound += self._parse_let_locals()
+                n += 1
+        if t.kind != "id":
             raise SyntaxError(
-                f"line {name_tok.line}: let destination must be a name, "
-                f"got {name_tok.text!r}"
+                f"line {t.line}: let destination must be a name, '_', or '[..]'; "
+                f"got {t.text!r}"
             )
-        # Allocate a new local. Locals share the call-stack with args.
-        idx = self.scope.declare(name_tok.text)
+        # Simple label binding.
+        idx = self.scope.declare(t.text)
         new_locals_after_args = (idx + 1) - self.fn.nargs
         if new_locals_after_args > self.nlocals_high_water:
             self.nlocals_high_water = new_locals_after_args
-        # Pop value off the stack into the new local.
         self.fn.opb(Op.OPsetlocalb, idx)
-        # `in` then body.
-        self.expect("in")
-        self._parse_expression()
-        # Remove the binding (it's out of scope after `in EXPR`).
-        del self.scope.names[name_tok.text]
-        self.scope.next_index -= 1
+        bound.append(t.text)
+        return bound
 
     def _parse_set(self) -> None:
         name_tok = self.advance()
