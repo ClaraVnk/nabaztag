@@ -355,6 +355,105 @@ escapes in char literals `'\n'`, function pointers to builtins
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.
 
+## `mtl_pyc.py` — Python source compiler (Phase 7b)
+
+The "view as Python" forward path: write Metal programs in idiomatic
+Python 3 source and compile them to the same `.bin` the C++
+`mtl_compiler` would emit from the equivalent `.mtl`. The rabbit still
+executes Metal bytecode; Python is purely contributor-facing.
+
+```sh
+python3 mtl_pyc.py program.py -o program.bin
+```
+
+### Validated byte-for-byte from Python source
+
+| Test               | Size  | Python idiom → MTL feature |
+|--------------------|-------|----------------------------|
+| `tiny.py`          | 20 B  | `def main(): return 42` |
+| `biggish.py`       | 49 B  | top-level globals + user funs |
+| `jump.py`          | 30 B  | `if … else` returning value |
+| `rich.py`          | 99 B  | `Secho("hi")` builtin call + sequencing |
+| `real_prog.py`     | 182 B | nested assignments, chained ifs |
+| `loop.py`          | 43 B  | `while x < 5: …` |
+| `forfor2.py`       | 54 B  | `for i in range(n): …` (Form 2) |
+| `char.py`          | 20 B  | `ord('A')` compile-time char |
+| `funptr.py`        | 31 B  | bare function name as value (function pointer) |
+| `cons.py`          | 31 B  | `lst(a, b, c)` builds a cons-chain |
+| `tuple.py`         | 28 B  | Python list literal `[a, b, c, d]` → n-tuple |
+| `array.py`         | 30 B  | `arr(a, b, c, d, e)` builds a mutable array |
+| `match.py`         | 66 B  | Python 3.10 `match: case Cons: … case Cons(x): …` |
+| `match2.py`        | 51 B  | match with `case _:` wildcard |
+| `statemachine.py`  | 230 B | sum-type `class State` + nested match |
+| `struct.py`        | 54 B  | `class Point: x: int` + `Point(x=…)` + `p.x` |
+| `setfield.py`      | 62 B  | `p.x = 99` struct field write |
+| `ifdef.py`         | 49 B  | top-level `if FLAG:` / `if not FLAG:` → ifdef/ifndef |
+| `call.py`          | 52 B  | `call_(f, a, b)` dynamic dispatch |
+| `destruc.py`       | 61 B  | `[a, b, c] = expr` structured destructuring |
+
+All 20 tests above produce `.bin` that is `cmp` byte-identical to the
+C++ `mtl_compiler` output for the equivalent `.mtl` source.
+
+### Python ↔ MTL idiom mapping
+
+| Python | MTL |
+|--------|-----|
+| `def f(a, b): return body` | `fun f a b = body;;` |
+| `def main(): …` (always fun#0) | `proto main 0;; fun main = …;;` |
+| `x = expr` (first time, in fn) | `let expr -> x in <rest>` |
+| `x = expr` (already a local) | `set x = expr` |
+| `x = expr` (top-level) | `var x = expr;;` (or `const …`) |
+| `if a: b else: c` (stmt) | `if a then b else c` |
+| `while c: body` | `while c do body` |
+| `for i in range(n): body` | `for i=0; i<n do body` (Form 2) |
+| `match x: case Cons: … case Cons(p): …` | `match x with (Cons -> …) | (Cons p -> …)` |
+| `[a, b, c]` literal | `[a b c]` n-tuple |
+| `[a, b, c] = expr` | `let expr -> [a b c] in …` |
+| `arr(a, b, c)` | `{a b c}` array |
+| `lst(a, b, c)` | `a :: b :: c :: nil` (right-assoc cons) |
+| `ord('A')` | `'A'` (char literal) |
+| `call_(f, a, b)` | `call f [a b]` |
+| `class S: idle = (); done = (int,)` | `type S = idle | done _;;` |
+| `class T: x: int; y: int` | `type T = [x y];;` |
+| `T(x=1, y=2)` | `[x:1 y:2]` |
+| `obj.field` | `obj.field` |
+| `obj.field = v` | `set obj.field = v` |
+| `if FLAG:` top-level | `ifdef FLAG { … }` |
+| `if not FLAG:` top-level | `ifndef FLAG { … }` |
+
+User-defined functions shadow builtins (same single-namespace rule as
+the C++ compiler — last definition wins). Function names known at
+module load time are resolved bare; arguments are positional.
+
+### Idiomatic vs byte-identical
+
+Python `for i in range(N)` has no explicit step expression, so
+`mtl_pyc` emits MTL **for Form 2** (auto-increment). The C++ compiler
+emits a different (Form 1) trampoline pattern when given the `.mtl`
+syntax `for i=0; i<n; i+1 do …`, which has explicit step semantics
+Python's `range` doesn't carry. Both forms are functionally identical;
+the bytecode is just laid out differently. If byte-equivalent Form 1
+output is needed, write the loop with explicit `while` in Python.
+
+## `mtl_depyc.py` — bytecode → Python view (Phase 7b reverse)
+
+The complement of `mtl_pyc`: read a `.bin` and emit a Python-flavored
+rendering. Useful for reviewing what's deployed on the rabbit when only
+the bytecode is available.
+
+```sh
+python3 mtl_depyc.py program.bin              # writes Python to stdout
+python3 mtl_depyc.py program.bin --src program.mtl -o view.py
+```
+
+If `--src` is given, function names are resolved from the `.mtl`
+source's `fun NAME=…` / `proto NAME …` decls (else functions appear as
+`fun_0`, `fun_1`, …). This is best-effort: the decompiler reconstructs
+if/else, returns, arithmetic and basic calls; un-recognised patches
+fall through to literal `mtl.OPxxx(...)` calls so nothing is silently
+dropped. Output is **not** guaranteed to recompile to the same bytes —
+it's a reading aid, not a round-trip transform.
+
 ## Format references
 
 All format details are derived from the canonical implementations:
