@@ -258,6 +258,10 @@ Tested on 11 progressively richer programs; for every one,
 | `array.mtl`        | 30 B  | array literal `{a b c d e}` |
 | `statemachine.mtl` | 230 B | 4-constructor sum + nested match + if + globals |
 | `realprog2.mtl`    | 344 B | sum + 5 funs + nested match + for + let + chained ifs + modulo |
+| `ifdef.mtl`        | 49 B  | `ifdef NAME { ... } else { ... }` + `ifndef` |
+| `call.mtl`         | 52 B  | `call FUN [a b c]` (dynamic dispatch via OPcallrb) |
+| `forfor2.mtl`      | 54 B  | `for VAR=INIT; COND do BODY` (Form 2, auto-increment) |
+| `destruc.mtl`      | 61 B  | `let TUPLE -> [a b c] in ...` (structured destructuring) |
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -313,11 +317,16 @@ Expressions:
 
 ### Not yet supported
 
-`update` (record-update syntax), structured let destructuring
-`let X -> [a b _] in`, multi-char escapes in char literals `'\n'`,
-`ifdef/endif` preprocessor, function pointers to builtins
-(`#Secho`), forward fun-to-fun references where neither has a
-`proto`, struct field declarations.
+`type X=[field1 field2 ...]` (struct/record types), `[field1: v1 ...]`
+(record creation), `x.field` (field access), `update x with [...]`
+(record updates), multi-char escapes in char literals `'\n'`,
+function pointers to builtins (`#Secho`), forward fun-to-fun
+references where neither has a `proto`.
+
+These are mostly a coherent block: struct/record support together
+would let us compile boot.0.0.0.13.mtl much further. The struct
+type declaration appears on line 488 of that file (`type Tcp =
+[stateT locT dstT ...];;`).
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.
