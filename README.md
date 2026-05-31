@@ -218,8 +218,8 @@ Full guide (API, pairing, troubleshooting) is in
   customisation lands later) and an "orphan claim-me" bytecode that blinks
   the pair code on the belly LEDs. **Naboot is the firmware on the rabbit;
   Le Terrier is the home they all dial back to.**
-- **Phase 7 — modernize the Metal toolchain in Python (in progress, stepping-stone tools shipped):**
-    Stepping-stone tools landed (all in `firmware-arm/tools/`):
+- **Phase 7 — modernize the Metal toolchain in Python (in progress, working v1 shipped):**
+    Toolchain landed (all in `firmware-arm/tools/`):
     - **`mtl_dis.py`** — disassembler. Decodes all 153 opcodes,
       reconstructs globals, resolves jump targets, annotates `OPexec`
       callsites with names (via `--src boot.0.0.0.13.mtl`), auto-strips
@@ -233,8 +233,16 @@ Full guide (API, pairing, troubleshooting) is in
       `.masm` text format. **Validated byte-for-byte against the C++
       `mtl_compiler`** on real production bytecode: full `bin → .masm
       → bin` round-trip on `boot.0.0.0.13.bin` (31 437 B) and
-      `bootcode_hybrid.bin` (103 525 B, 459 functions). The on-disk
-      format is fully understood and reproducible in Python.
+      `bootcode_hybrid.bin` (103 525 B, 459 functions).
+    - **`mtl_comp.py` — `.mtl` source compiler.** Recursive-descent
+      parser + codegen that emits byte-identical `.bin` to the C++
+      `mtl_compiler` for the supported subset (proto / var / const /
+      fun, integers, strings, builtins, user-fun calls, arithmetic
+      and comparison, if/then/else, let-in, set, sequencing). Tested
+      byte-for-byte on five progressively richer programs up to a
+      182-byte real program with 4-level nested let, recursion, and
+      chained ifs. The C++ toolchain is no longer the only way to
+      compile Metal source on this stack.
     1. **Phase 7a — Python MTL compiler (pending):** rewrite the existing
        C++ `mtl_compiler` in Python. Same input (`.mtl` source), same
        output (the rabbit's bytecode), zero behavioral change for the
