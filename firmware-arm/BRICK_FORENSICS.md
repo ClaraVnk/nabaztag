@@ -79,6 +79,31 @@ string literal, the bytecode would be corrupted. **Strongly doubt** —
 this would have shown up in the compile log; we verified `Compiler :
 done !` cleanly.
 
+## Builds ready to flash (built on the VPS, 2026-05-31 06:38)
+
+The four bisection variants are signed and waiting under `firmware-arm/bin/`:
+
+```
+firmware-arm/bin/
+├── naboot-full.signed.sim          229 058 B   (rebuilt; the brick suspect)
+├── naboot-minimal.signed.sim       238 706 B   (RESCUE — vanilla boot.mtl)
+├── naboot-signed-stock.signed.sim  238 098 B   (bisect: bootloader patch only)
+└── naboot-pages-only.signed.sim    228 706 B   (bisect: page rewrite only)
+```
+
+All four pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
+done with `./build.sh --remote rocky@vps-ee4c4993.vps.ovh.net:10022
+--runtime podman --mode <mode>` (the build.sh now supports `--runtime
+podman` and `host:port` remotes).
+
+Sanity-check vs the previous full build: the new `full/Nab.bin` is 2.7 KB
+SMALLER than the previously-bricked `bin/Nab.bin` (114,448 vs 117,204).
+That's likely a minor GCC patch update between yesterday's HAOS-Docker
+build and tonight's VPS build (same Debian bookworm major, possibly
+a different point release of `gcc-arm-none-eabi`). If `full` works on
+re-flash, the bug may have been a transient compiler quirk, not our
+patches — worth retrying `full` once recovery is done.
+
 ## Recovery plan (when J-Link arrives)
 
 The order maximizes information per flash.
