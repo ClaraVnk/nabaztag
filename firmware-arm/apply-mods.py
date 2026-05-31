@@ -460,9 +460,7 @@ def patch_mdns(root: Path) -> None:
 
     # 1. Inject the mDNS source. It defines top-level consts + vars + funs
     # so it must come AFTER the constants block but BEFORE `fun loop`
-    # (where mdns_boot_tick is called). Anchor on `fun pagefill l p=`
-    # which lives between the consts and loop in every variant.
-    mdns_src = (root.parent / "boot-mods" / "mdns.mtl")
+    # (which calls mdns_boot_tick).
     src_path = Path(__file__).resolve().parent / "boot-mods" / "mdns.mtl"
     if not src_path.is_file():
         sys.exit(f"FAIL {p}: missing boot-mods/mdns.mtl at {src_path}")
