@@ -219,17 +219,22 @@ Full guide (API, pairing, troubleshooting) is in
   the pair code on the belly LEDs. **Naboot is the firmware on the rabbit;
   Le Terrier is the home they all dial back to.**
 - **Phase 7 — modernize the Metal toolchain in Python (in progress, stepping-stone tools shipped):**
-    Stepping-stone tools landed:
-    - **`firmware-arm/tools/mtl_dis.py`** — disassembler for the `.bin`
-      output of `mtl_compiler`. Decodes all 153 opcodes, recursively
-      reconstructs globals (nil/int/string/tuple), resolves relative jump
-      targets, annotates `OPexec` callsites with resolved function names
-      (via `--src boot.0.0.0.13.mtl`), and auto-strips the
-      `amber<hex>...Mind` HTTP wire wrapper. Text and JSON output.
+    Stepping-stone tools landed (all in `firmware-arm/tools/`):
+    - **`mtl_dis.py`** — disassembler. Decodes all 153 opcodes,
+      reconstructs globals, resolves jump targets, annotates `OPexec`
+      callsites with names (via `--src boot.0.0.0.13.mtl`), auto-strips
+      the `amber<hex>...Mind` HTTP wire wrapper. Outputs text, JSON, or
+      `--format masm` for re-assembling.
     - **`mtl_dis.py --check`** — structural validator. Refuses
       bins with unknown opcodes, out-of-range jump targets, OPexec to
       out-of-range fun indices, or funtable entries outside the code
       section. Should gate every freshly-built `.sim` before flash.
+    - **`mtl_asm.py`** — bytecode encoder. Library API + line-oriented
+      `.masm` text format. **Validated byte-for-byte against the C++
+      `mtl_compiler`** on real production bytecode: full `bin → .masm
+      → bin` round-trip on `boot.0.0.0.13.bin` (31 437 B) and
+      `bootcode_hybrid.bin` (103 525 B, 459 functions). The on-disk
+      format is fully understood and reproducible in Python.
     1. **Phase 7a — Python MTL compiler (pending):** rewrite the existing
        C++ `mtl_compiler` in Python. Same input (`.mtl` source), same
        output (the rabbit's bytecode), zero behavioral change for the

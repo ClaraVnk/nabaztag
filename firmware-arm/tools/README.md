@@ -148,10 +148,75 @@ goofy `int << 1` tagging of int globals, the tuple/string discriminator
 bits in the globals section, and the 3-byte `[nargs:u8][nlocals:u16]`
 function header.
 
+### .masm text assembly
+
+`mtl_asm.py` accepts a text assembly format (`.masm`) and assembles it:
+
+```sh
+python3 mtl_asm.py program.masm -o program.bin
+```
+
+Format is line-oriented; example:
+
+```
+// .masm — Metal assembly (line-oriented, 1:1 with opcodes).
+.global int 42
+.global string "hello"
+
+.fun main 0 0
+    OPgetglobalb 0
+    OPintb 1
+    OPexec                  // call helper (fun#1)
+    OPret
+.end
+
+.fun helper 1 0
+    OPgetlocalb 0           // arg `a`
+    OPintb 1
+    OPadd
+    OPret
+.end
+```
+
+- Opcodes use their full vbc.h mnemonic (`OPintb`, `OPgoto`, …).
+- Jumps take a label name (`OPgoto end`); labels are `name:` (often
+  indented for readability). Forward labels are back-patched on close.
+- `.global TYPE VALUE` for globals (`nil` / `int N` / `string "..."`
+  / `bytes 0x.. 0x..` / `tuple` … `.end`).
+- `.fun NAME nargs nlocals` opens a function; `.end` closes it.
+
+### Round-trip: bin → masm → bin
+
+`mtl_dis.py --format masm` emits .masm that `mtl_asm.py` accepts:
+
+```sh
+# Disassemble a bin into a .masm source
+python3 mtl_dis.py program.bin --format masm > program.masm
+
+# Re-assemble — should match byte-for-byte
+python3 mtl_asm.py program.masm -o program.rt.bin
+cmp program.bin program.rt.bin       # → identical
+```
+
+This round-trip is validated on the largest non-trivial inputs we
+have:
+
+| Bytecode                          | Size       | .masm lines | Result |
+|-----------------------------------|------------|-------------|--------|
+| Hand-written `jump`               | 30 B       | 13          | ✅ identical |
+| Hand-written `biggish`            | 49 B       | 13          | ✅ identical |
+| Real `boot.0.0.0.13.bin`          | 31 437 B   | 11 132      | ✅ identical |
+| Real `bootcode_hybrid.bin`        | 103 525 B  | 34 447      | ✅ identical |
+
+The last one is the hybrid Violet bytecode running on every Naboot
+rabbit. So our Python toolchain can disassemble, edit, and reassemble
+production bytecode byte-for-byte.
+
 ### What's NOT in mtl_asm.py yet
 
-- A parser. You build the program by direct Encoder API calls. The
-  parser → AST → Encoder calls path is Phase 7a proper.
+- A `.mtl` source parser. The text we ingest is the line-oriented IR
+  `.masm`, not the original Metal source. A `.mtl` → AST → `.masm`
+  (or AST → Encoder calls) layer is Phase 7a proper.
 - A type checker. Metal has a small but real type system (used to
   disambiguate `strcmp` vs `vstrcmp`, choose `OPset*` variants, etc.).
   Phase 7a needs to port it.
