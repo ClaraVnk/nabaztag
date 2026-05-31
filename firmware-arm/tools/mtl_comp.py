@@ -548,9 +548,17 @@ class Compiler:
             self._parse_expression()
 
     def _parse_expression(self) -> None:
-        """expression := arithm ( :: expression )?  (cons not yet supported)"""
+        """expression := arithm ( :: expression )?  — cons is right-associative.
+
+        `A :: B` builds a 2-tuple `[A, B]` (the standard cons cell).
+        The right side is parsed recursively so `A :: B :: nil` parses
+        as `A :: (B :: nil)`.
+        """
         self._parse_arithm()
-        # :: would go here; not yet supported.
+        if self.peek().text == "::":
+            self.advance()
+            self._parse_expression()
+            self.fn.opb(Op.OPdeftabb, 2)
 
     def _parse_arithm(self) -> None:
         """arithm := a1 ( (&& | ||) a1 )*  (short-circuit)"""
@@ -662,11 +670,29 @@ class Compiler:
         self._parse_term()
 
     def _parse_term(self) -> None:
-        """term := ( prog ) | nil | int | string | identifier | if | let | set"""
+        """term := ( prog ) | [ tuple ] | nil | int | string | char | #funptr |
+                   identifier | if | let | set"""
         t = self.advance()
         if t.text == "(":
             self._parse_program()
             self.expect(")")
+            return
+        if t.text == "[":
+            # n-tuple — emit each item then OPdeftabb/OPdeftab n. The C++
+            # also handles struct-field syntax here when the first token
+            # is a registered field name; we don't support structs yet.
+            nval = 0
+            while True:
+                if self.peek().text == "]":
+                    self.advance()
+                    break
+                self._parse_expression()
+                nval += 1
+            if 0 <= nval <= 255:
+                self.fn.opb(Op.OPdeftabb, nval)
+            else:
+                self.fn.int_(nval)
+                self.fn.op(Op.OPdeftab)
             return
         if t.text == "nil":
             self.fn.op(Op.OPnil)
@@ -679,6 +705,31 @@ class Compiler:
             idx = self.enc.add_global(t.value)
             self._emit_get_global(idx)
             return
+        if t.text == "'":
+            # Char literal: 'X' or '\n' etc. The lexer treats `'` as a
+            # single-char op so the byte between two `'` tokens is one
+            # raw token's first char (mtl_compiler does `parser->token[0]`).
+            c_tok = self.advance()
+            if c_tok.kind == "eof":
+                raise SyntaxError(f"line {t.line}: unterminated char literal")
+            ch = c_tok.text[0]
+            # Re-handle a couple of escapes that the lexer wouldn't have
+            # seen inside a string. mtl_compiler also just takes the first
+            # byte of the inner token, no escape interpretation.
+            self._emit_intb_or_int(ord(ch) & 0xFF)
+            self.expect("'")
+            return
+        if t.text == "#":
+            # #FUN is a function pointer (used for loopcb, regudp etc.).
+            # Emit as OPint <fun_idx> + create the [fun_idx, NIL]-shaped
+            # tuple the runtime expects (so callsites are uniform).
+            name_tok = self.advance()
+            if name_tok.kind != "id":
+                raise SyntaxError(
+                    f"line {t.line}: #FUN expects a function name"
+                )
+            self._parse_funptr(name_tok.text)
+            return
         if t.text == "if":
             self._parse_if()
             return
@@ -688,12 +739,39 @@ class Compiler:
         if t.text == "set":
             self._parse_set()
             return
+        if t.text == "while":
+            self._parse_while()
+            return
+        if t.text == "for":
+            self._parse_for()
+            return
         if t.kind == "id":
             self._parse_ref(t.text)
             return
         raise SyntaxError(
             f"line {t.line}: unexpected term {t.text!r}"
         )
+
+    def _parse_funptr(self, name: str) -> None:
+        """Emit code for `#FUN` — a function pointer literal.
+
+        For a plain unbound function reference, the C++ compiler emits
+        just the raw funtable index (OPintb/OPint). OPexec accepts both
+        a raw-int index (regular calls) and a tuple [idx, captured]
+        (closures); for `#FUN` with no captures, the index alone is
+        enough and matches the C++ output byte-for-byte.
+        """
+        if name in self.funs_by_name:
+            fun_idx, _nargs = self.funs_by_name[name]
+        elif name in BUILTINS:
+            # The C++ also handles builtins here, but they're a small
+            # minority of real `#` use — leave for later.
+            raise SyntaxError(
+                f"#{name}: function pointer to builtins not yet supported"
+            )
+        else:
+            raise SyntaxError(f"#{name}: unknown function")
+        self._emit_intb_or_int(fun_idx)
 
     # ---- if/let/set ------------------------------------------------------
     def _parse_if(self) -> None:
@@ -711,6 +789,94 @@ class Compiler:
         else:
             self.fn.op(Op.OPnil)
         self.fn.label(end_label)
+
+    def _parse_while(self) -> None:
+        """while COND do BODY — returns the value of BODY's LAST iteration
+        (or nil if it never ran).
+
+        Codegen (matches compiler_term.cpp::parsewhile):
+            OPnil                ; push initial result
+            loop_start:
+            <cond>
+            OPelse end
+            OPdrop               ; drop previous body result
+            <body>
+            OPgoto loop_start
+            end:
+        """
+        loop_label = self.new_label("while")
+        end_label = self.new_label("endwhile")
+        self.fn.op(Op.OPnil)
+        self.fn.label(loop_label)
+        self._parse_expression()
+        self.expect("do")
+        self.fn.else_(end_label)
+        self.fn.drop()
+        self._parse_expression()
+        self.fn.goto(loop_label)
+        self.fn.label(end_label)
+
+    def _parse_for(self) -> None:
+        """for VAR=INIT; COND; NEXT do BODY  — C-style for loop.
+
+        Matches compiler_term.cpp::parsefor's emit order — the clever
+        bit is that NEXT is emitted BEFORE the body in bytecode, with
+        a goto-over-NEXT on the first iteration:
+
+            <INIT>
+            OPsetlocalb VAR
+            OPnil                ; result accumulator
+          loop_check:
+            <COND>
+            OPelse end
+            OPgoto body          ; first iter skips NEXT
+          next_block:
+            <NEXT>
+            OPdrop               ; drop NEXT's value
+            OPgoto loop_check
+          body:
+            OPdrop               ; drop previous accumulator
+            <BODY>
+            OPgoto next_block    ; subsequent iters come back to NEXT
+          end:
+        """
+        var_tok = self.advance()
+        if var_tok.kind != "id":
+            raise SyntaxError(f"line {var_tok.line}: for needs a label")
+        self.expect("=")
+        self._parse_expression()
+        idx = self.scope.declare(var_tok.text)
+        new_locals_after_args = (idx + 1) - self.fn.nargs
+        if new_locals_after_args > self.nlocals_high_water:
+            self.nlocals_high_water = new_locals_after_args
+        self.fn.opb(Op.OPsetlocalb, idx)
+        self.expect(";")
+        # accumulator
+        self.fn.op(Op.OPnil)
+        loop_check = self.new_label("for_check")
+        body_label = self.new_label("for_body")
+        next_label = self.new_label("for_next")
+        end_label = self.new_label("for_end")
+        self.fn.label(loop_check)
+        self._parse_expression()     # condition
+        self.expect(";")
+        self.fn.else_(end_label)
+        self.fn.goto(body_label)
+        self.fn.label(next_label)
+        self._parse_expression()     # next-expression
+        # The NEXT expression's value is STORED INTO THE LOOP VAR (i.e.
+        # `i+1` in `for i=0;i<n;i+1 do` becomes `i = i + 1`). This is
+        # the C++ Form 1 semantics — see compiler_term.cpp::parsefor.
+        self.fn.opb(Op.OPsetlocalb, idx)
+        self.fn.goto(loop_check)
+        self.expect("do")
+        self.fn.label(body_label)
+        self.fn.drop()
+        self._parse_expression()     # body
+        self.fn.goto(next_label)
+        self.fn.label(end_label)
+        del self.scope.names[var_tok.text]
+        self.scope.next_index -= 1
 
     def _parse_let(self) -> None:
         """let VALUE -> NAME in BODY — evaluates VALUE, binds it to NAME
