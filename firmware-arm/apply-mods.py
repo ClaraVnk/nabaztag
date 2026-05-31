@@ -440,12 +440,81 @@ def patch_bootloader(root: Path) -> None:
     print(f"[ok]   {p}: httpflash now requires a valid Ed25519 signature")
 
 
+def patch_mdns(root: Path) -> None:
+    """Inject the boot-mods/mdns.mtl announcer into boot.0.0.0.13.mtl and
+    wire mdns_boot_tick into the boot loop's !master branch.
+
+    The injection point is just after the firmwarelimit/sigmarker block
+    (top of file scope, before any function that uses udpsend) so all
+    referenced primitives (strnew/strset/udpsend/netip/time) are already
+    in scope. mdns_boot_tick is called from `fun loop` inside the
+    `!master` branch right after wifiRun / boot_leds — those checks
+    gate on netip / wifi being up, which is exactly when mDNS becomes
+    meaningful.
+    """
+    p = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = p.read_text()
+    if "mdns_boot_tick" in s:
+        print(f"[skip] {p}: mdns already wired in")
+        return
+
+    # 1. Inject the mDNS source. It defines top-level consts + vars + funs
+    # so it must come AFTER the constants block but BEFORE `fun loop`
+    # (where mdns_boot_tick is called). Anchor on `fun pagefill l p=`
+    # which lives between the consts and loop in every variant.
+    mdns_src = (root.parent / "boot-mods" / "mdns.mtl")
+    src_path = Path(__file__).resolve().parent / "boot-mods" / "mdns.mtl"
+    if not src_path.is_file():
+        sys.exit(f"FAIL {p}: missing boot-mods/mdns.mtl at {src_path}")
+    mdns_body = src_path.read_text()
+
+    loop_anchor = 'fun loop=\n'
+    if loop_anchor not in s:
+        sys.exit(f"FAIL {p}: `fun loop=` anchor not found")
+    s = s.replace(loop_anchor, mdns_body + "\n" + loop_anchor, 1)
+
+    # 2. Hook mdns_boot_tick into the !master branch of `fun loop`.
+    # Original head (vanilla wpa2 HEAD):
+    #     fun loop=
+    #         if !master then
+    #         (
+    #             if !wavrunning then
+    #             (
+    #                 wifiRun;
+    #                 boot_leds;
+    #                 boot_loop
+    #             )
+    old_branch = (
+        '\t\tif !wavrunning then\n'
+        '\t\t(\n'
+        '\t\t\twifiRun;\n'
+        '\t\t\tboot_leds;\n'
+        '\t\t\tboot_loop\n'
+        '\t\t)\n'
+    )
+    new_branch = (
+        '\t\tif !wavrunning then\n'
+        '\t\t(\n'
+        '\t\t\twifiRun;\n'
+        '\t\t\tboot_leds;\n'
+        '\t\t\tmdns_boot_tick;\n'
+        '\t\t\tboot_loop\n'
+        '\t\t)\n'
+    )
+    if old_branch not in s:
+        sys.exit(f"FAIL {p}: `fun loop` !master branch not matched. Did upstream change?")
+    s = s.replace(old_branch, new_branch, 1)
+
+    p.write_text(s)
+    print(f"[ok]   {p}: mdns announcer wired + tick added to boot loop")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -457,7 +526,10 @@ def main() -> int:
             "Use after minimal proves the C-side is sane, to verify the "
             "bootloader patch in isolation. "
             "pages-only   = minimal + modernized UI, NO bootloader patch. "
-            "Use to verify the page rewrite in isolation."
+            "Use to verify the page rewrite in isolation. "
+            "max          = full + mdns announcer; the everything-bag for a "
+            "fresh flash. "
+            "mdns-only    = minimal + mdns; isolation bisect for the mdns add."
         ),
     )
     ap.add_argument(
@@ -482,6 +554,13 @@ def main() -> int:
         # of the two boot.mtl patches is the culprit.
         "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader",
         "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages",
+        # max = full + mdns. The everything-bag for a fresh flash.
+        # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
+        # — flash mdns-only first as a less-invasive smoke test.
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns",
+        # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
+        # smoke-test the mdns add without entangling with bootloader/pages.
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -494,6 +573,7 @@ def main() -> int:
         "modernize_pages": modernize_pages,
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
+        "mdns": patch_mdns,
     }
     for step in steps:
         step = step.strip()
