@@ -218,14 +218,27 @@ Full guide (API, pairing, troubleshooting) is in
   customisation lands later) and an "orphan claim-me" bytecode that blinks
   the pair code on the belly LEDs. **Naboot is the firmware on the rabbit;
   Le Terrier is the home they all dial back to.**
-- **Phase 7 — modernize the Metal toolchain in Python (two steps, pending):**
-    1. **Phase 7a — Python MTL compiler:** rewrite the existing C++ `mtl_compiler`
-       in Python. Same input (`.mtl` source), same output (the rabbit's
-       bytecode), zero behavioral change for the device. Win: no more aging
-       C++ toolchain (g++-multilib, build dance), one fewer barrier for
-       contributors, easier to add new opcodes / sanity checks / linting.
-       Grammar is small (see `DT_metal_03_01_13_grammaire.pdf`).
-    2. **Phase 7b — "view as Python" layer:** on top of 7a, add a bidirectional
+- **Phase 7 — modernize the Metal toolchain in Python (in progress, stepping-stone tools shipped):**
+    Stepping-stone tools landed:
+    - **`firmware-arm/tools/mtl_dis.py`** — disassembler for the `.bin`
+      output of `mtl_compiler`. Decodes all 153 opcodes, recursively
+      reconstructs globals (nil/int/string/tuple), resolves relative jump
+      targets, annotates `OPexec` callsites with resolved function names
+      (via `--src boot.0.0.0.13.mtl`), and auto-strips the
+      `amber<hex>...Mind` HTTP wire wrapper. Text and JSON output.
+    - **`mtl_dis.py --check`** — structural validator. Refuses
+      bins with unknown opcodes, out-of-range jump targets, OPexec to
+      out-of-range fun indices, or funtable entries outside the code
+      section. Should gate every freshly-built `.sim` before flash.
+    1. **Phase 7a — Python MTL compiler (pending):** rewrite the existing
+       C++ `mtl_compiler` in Python. Same input (`.mtl` source), same
+       output (the rabbit's bytecode), zero behavioral change for the
+       device. Win: no more aging C++ toolchain (g++-multilib, build
+       dance), one fewer barrier for contributors, easier to add new
+       opcodes / sanity checks / linting. Grammar is small (see
+       `DT_metal_03_01_13_grammaire.pdf`). Estimated 2-4 weeks of
+       focused work.
+    2. **Phase 7b — "view as Python" layer (pending):** on top of 7a, add a bidirectional
        MTL ↔ Python source mapper so people can read, write and review bytecode
        logic in familiar Python syntax. The rabbit still executes MTL bytecode;
        the Python is purely a contributor-facing surface. Doable mechanically,
