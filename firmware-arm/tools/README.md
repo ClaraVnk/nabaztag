@@ -51,6 +51,36 @@ bottom of the file). It warns when the source and bin disagree by
 more than ±5 funs — usually that means the source has `ifdef` branches
 that weren't preprocessed, and the annotations will be best-effort.
 
+## Structural validation — `--check`
+
+Before flashing a freshly-built `.sim`, gate it on structural sanity:
+
+```sh
+python3 mtl_dis.py path/to/boot.0.0.0.13.bin --check
+# OK — 217 functions, 17111 bytes of code, no structural issues.
+# exit 0
+
+python3 mtl_dis.py path/to/corrupted.bin --check
+# fun#42@0x0070: unknown opcode 200
+# fun#88 (httpflash)@0x0123: OPgoto target 0x4000 is outside the function body [0x0100..0x0200)
+# FAIL — 2 structural issue(s).
+# exit 1
+```
+
+The checks:
+- Every opcode is one of the 153 known opcodes
+- Every operand fits inside the file
+- Every `OPgoto`/`OPelse` target lands inside the function body
+- Every `OPexec` is preceded by something pushable, and when the
+  index is an immediate (`OPint <idx>` / `OPintb <idx>`), the index
+  is within `[0, nbfun)`
+- Every funtable entry lands inside the code section
+
+This is no substitute for hardware testing, but it catches the
+class of bugs the C++ compiler would otherwise let through to a
+runtime crash — the kind of post-patch foot-gun that bricked Nabi
+the first time. Wire it into CI / pre-flash hooks.
+
 ## Why it exists
 
 Phase 7 (full Python rewrite of `mtl_compiler`) is a 2–4 week project.
