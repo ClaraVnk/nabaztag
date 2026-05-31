@@ -122,8 +122,7 @@ BUILTINS: dict[str, tuple[int, int]] = {
     "udpStart":       (Op.OPudpStart,  1),
     "udpCb":          (Op.OPudpCb,     1),
     "udpStop":        (Op.OPudpStop,   1),
-    "udpsend":        (Op.OPudpSend,   6),
-    "udpSend":        (Op.OPudpSend,   6),  # alt capitalization seen in src
+    "udpSend":        (Op.OPudpSend,   6),  # capital S per stdlib_core.cpp
     "tcpOpen":        (Op.OPtcpOpen,   2),
     "tcpClose":       (Op.OPtcpClose,  1),
     "tcpSend":        (Op.OPtcpSend,   4),
@@ -1067,16 +1066,18 @@ class Compiler:
         if name_tok.kind != "id":
             raise SyntaxError(f"line {name_tok.line}: set needs a NAME")
         self.expect("=")
-        # For globals, the stack discipline of OPsetglobal is [idx, value]:
-        # the compiler pushes the global index FIRST, then evaluates the
-        # rhs, then setglobal consumes both and leaves value as the
-        # expression's result. For locals, the order is reversed via
-        # OPsetlocalb (which takes the index inline as an operand).
+        # The C++ uses the SAME pattern for both globals and locals:
+        #   1) push idx
+        #   2) evaluate rhs (leaves value on stack)
+        #   3) OPsetglobal / OPsetlocal2  (both take [idx, value] from stack)
+        # OPsetlocal2 (vs OPsetlocalb) lets the index live in `set`'s
+        # uniform [idx, value] discipline. Same final bytecode size on
+        # this path; matches the C++ emit order byte-for-byte.
         if self.scope and (loc := self.scope.lookup(name_tok.text)) is not None:
+            self._emit_intb_or_int(loc)
             self._parse_expression()
-            self.fn.opb(Op.OPsetlocalb, loc)
+            self.fn.op(Op.OPsetlocal2)
         elif name_tok.text in self.globals_by_name:
-            # Push global index BEFORE evaluating the rhs.
             self._emit_intb_or_int(self.globals_by_name[name_tok.text])
             self._parse_expression()
             self.fn.op(Op.OPsetglobal)
