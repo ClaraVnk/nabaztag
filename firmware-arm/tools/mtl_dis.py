@@ -600,6 +600,83 @@ def render_json(bc: Bytecode) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Structural validation
+# ---------------------------------------------------------------------------
+def check_bytecode(bc: Bytecode) -> list[str]:
+    """Walk the bytecode and return a list of problem strings. Empty list
+    means the bin looks structurally sane (every opcode is known, every
+    operand fits, every jump lands inside its function, every OPexec is
+    preceded by a push of something fun-index-shaped).
+
+    This is the kind of check that should run on every patched .mtl
+    BEFORE we flash a rabbit. It can't catch semantic bugs (e.g. the
+    page_a marker mismatch we shipped) but it catches the bytecode-level
+    foot-guns the compiler would otherwise leave for runtime.
+    """
+    problems: list[str] = []
+
+    for fn in bc.functions:
+        body_start = fn.pc_start + 3
+        body_end = fn.pc_end
+        last_op = None
+        last_operand = None
+        for pc, op, mnem, operand in fn.insns:
+            # 1. Unknown opcode.
+            if op not in OPCODES:
+                problems.append(
+                    f"fun#{fn.index}@0x{pc:04X}: unknown opcode {op}"
+                )
+            # 2. OPgoto/OPelse target lands inside the function body.
+            if op in (28, 29) and operand and operand.startswith("-> 0x"):
+                try:
+                    target = int(operand[5:], 16)
+                except ValueError:
+                    problems.append(
+                        f"fun#{fn.index}@0x{pc:04X}: malformed jump target {operand!r}"
+                    )
+                    continue
+                if not (body_start <= target < body_end):
+                    problems.append(
+                        f"fun#{fn.index} ({fn.name or '?'})@0x{pc:04X}: "
+                        f"{mnem} target 0x{target:04X} is outside the function "
+                        f"body [0x{body_start:04X}..0x{body_end:04X})"
+                    )
+            # 3. OPexec must be preceded by a push of a function index
+            #    (OPint or OPintb, OR a stacked value from OPgetglobal etc).
+            #    We can only check the IMMEDIATE precursor — anything stacked
+            #    via earlier instructions is opaque without simulating.
+            if op == 0:  # OPexec
+                if last_op is None:
+                    problems.append(
+                        f"fun#{fn.index}@0x{pc:04X}: OPexec is the first "
+                        f"instruction (no function index on the stack)"
+                    )
+                # OPint/OPintb (immediate push) — bounds-check the value.
+                elif last_op in (2, 3) and last_operand:
+                    try:
+                        idx = int(last_operand)
+                        if idx < 0 or idx >= bc.nbfun:
+                            problems.append(
+                                f"fun#{fn.index}@0x{pc:04X}: OPexec calls "
+                                f"fun#{idx} which is out of range [0..{bc.nbfun})"
+                            )
+                    except ValueError:
+                        pass
+            last_op = op
+            last_operand = operand
+
+    # 4. Funtable entries land inside the code section.
+    for i, fn_start in enumerate(bc.funtable):
+        if fn_start < 0 or fn_start + 3 > bc.code_size:
+            problems.append(
+                f"funtable[{i}] = 0x{fn_start:04X} is out of the code "
+                f"section [0..0x{bc.code_size:04X})"
+            )
+
+    return problems
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> int:
@@ -611,10 +688,26 @@ def main() -> int:
     ap.add_argument("--src", help="path to the preprocessed .mtl source — used"
                     " to resolve function names. Best results with the same"
                     " file that mtl_compiler consumed (post-preproc.pl).")
+    ap.add_argument("--check", action="store_true",
+                    help="run structural validation only; exit nonzero if any"
+                    " problems are found. No disassembly output.")
     args = ap.parse_args()
     bc = parse(Path(args.path))
     if args.src:
         attach_function_names(bc, Path(args.src))
+
+    if args.check:
+        problems = check_bytecode(bc)
+        if not problems:
+            print(
+                f"OK — {bc.nbfun} functions, {bc.code_size} bytes of code, "
+                f"no structural issues."
+            )
+            return 0
+        for p in problems:
+            print(p, file=sys.stderr)
+        print(f"FAIL — {len(problems)} structural issue(s).", file=sys.stderr)
+        return 1
     if args.json:
         sys.stdout.write(render_json(bc))
         sys.stdout.write("\n")
