@@ -257,6 +257,7 @@ Tested on 11 progressively richer programs; for every one,
 | `match2.mtl`       | 51 B  | match with `_` wildcard fallback |
 | `array.mtl`        | 30 B  | array literal `{a b c d e}` |
 | `statemachine.mtl` | 230 B | 4-constructor sum + nested match + if + globals |
+| `realprog2.mtl`    | 344 B | sum + 5 funs + nested match + for + let + chained ifs + modulo |
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
