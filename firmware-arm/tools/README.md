@@ -215,13 +215,82 @@ production bytecode byte-for-byte.
 ### What's NOT in mtl_asm.py yet
 
 - A `.mtl` source parser. The text we ingest is the line-oriented IR
-  `.masm`, not the original Metal source. A `.mtl` → AST → `.masm`
-  (or AST → Encoder calls) layer is Phase 7a proper.
+  `.masm`, not the original Metal source. The `.mtl` → AST → encoder
+  layer is in `mtl_comp.py` (see below).
 - A type checker. Metal has a small but real type system (used to
   disambiguate `strcmp` vs `vstrcmp`, choose `OPset*` variants, etc.).
-  Phase 7a needs to port it.
+  Phase 7a v1 skips this (trusts the source); the C++ port is the
+  follow-up.
 - Float globals (`mtl_float`). Encoder only does int/string/tuple/nil.
   Easy add, just not needed yet.
+
+## `mtl_comp.py` — `.mtl` source compiler (Phase 7a v1)
+
+A Python compiler from `.mtl` source to `.bin`, **byte-identical to the
+C++ `mtl_compiler`** for the supported subset. Built on top of the
+encoder; uses recursive descent that mirrors `compiler_term.cpp`'s
+precedence ladder.
+
+```sh
+python3 mtl_comp.py program.mtl -o program.bin
+```
+
+### Validated byte-for-byte against mtl_compiler (C++)
+
+Tested on five progressively richer programs; for every one,
+`cmp original.bin mtl_comp_output.bin` reports BYTE-IDENTICAL:
+
+| Test               | Size  | What it exercises |
+|--------------------|-------|-------------------|
+| `tiny.mtl`         | 20 B  | proto + fun returning int constant |
+| `jump.mtl`         | 30 B  | if/then/else with both branches |
+| `biggish.mtl`      | 49 B  | var + const + multi-fun + user fun call |
+| `rich.mtl`         | 99 B  | Secho (builtin) + set global + let-in + sequencing |
+| `real_prog.mtl`    | 182 B | 4-level nested let, recursion, chained ifs |
+
+`real_prog.mtl` has 5 functions, 2 globals, nested let bindings,
+recursion, a multi-step `classify` (int → 1/2/3), and uses set on a
+global. The compiled bytecode is identical to what the C++ produces
+on a fresh build of the same source.
+
+### Supported `.mtl` subset
+
+Top-level:
+- `proto NAME ARITY;;` — reserve a fun index (forward decl)
+- `var NAME [= EXPR];;` — mutable global (int/string/nil initializer)
+- `const NAME = EXPR;;` — same shape as var (no read-only enforcement
+  yet — the C++ doesn't enforce it either at runtime, only at type)
+- `fun NAME [arg1 arg2 ...] = body;;`
+
+Expressions:
+- Int literals (decimal, hex `0x..`)
+- String literals `"..."` with `\n \t \r \\ \" \DECIMAL \$HEX` escapes
+- `nil`
+- Identifier — local var / global / builtin call / user fun call
+  (juxtaposition is application: `MACecho netMac 0 1`)
+- `EXPR ; EXPR` — sequence (returns last; drops earlier values)
+- `EXPR :: EXPR` — cons (NOT YET — token recognized but no codegen)
+- `&& ||` — short-circuit logical
+- `== != < > <= >=` — comparison
+- `+ - * / %` — arithmetic
+- `& | ^ << >>` — bitwise + shift
+- `!` (logical not), `-` (negation), `~` (bitwise not)
+- `if EXPR then EXPR [else EXPR]` — expression; both arms must produce
+  a stack value (else branch defaults to `nil`)
+- `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME,
+  evaluate BODY in that scope; BODY's value is the let's value
+- `set NAME = EXPR` — mutate a global or local
+- `( EXPR )` — grouping
+
+### Not yet supported
+
+`'a'` (char literals), `[tuples]`, `{arrays}`, `match/with`,
+`while/do`, `for`, `update`, `#funptr` (callback refs), structured
+let destructuring `let X -> [a b _] in`, `ifdef/endif` preprocessor,
+forward function-to-function references where neither has a `proto`.
+
+These come incrementally — each is ~30-100 lines added with a fresh
+byte-identical test case to anchor it.
 
 ## Format references
 
