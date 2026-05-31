@@ -253,6 +253,10 @@ Tested on 11 progressively richer programs; for every one,
 | `tuple.mtl`        | 28 B  | tuple `[a b c d]` |
 | `loop.mtl`         | 43 B  | `while COND do BODY` |
 | `forloop.mtl`      | 60 B  | `for i=0; i<5; i+1 do ...` |
+| `match.mtl`        | 66 B  | `type ... ;;` + `match x with (Cons -> y) | (Cons p -> y)` |
+| `match2.mtl`       | 51 B  | match with `_` wildcard fallback |
+| `array.mtl`        | 30 B  | array literal `{a b c d e}` |
+| `statemachine.mtl` | 230 B | 4-constructor sum + nested match + if + globals |
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -269,6 +273,12 @@ Top-level:
 - `const NAME = EXPR;;` — same shape as var (no read-only enforcement
   yet — the C++ doesn't enforce it either at runtime, only at type)
 - `fun NAME [arg1 arg2 ...] = body;;`
+- `type NAME = Cons1 | Cons2 _ | Cons3 [type];;` — sum-type
+  declaration. Each constructor gets an auto-incrementing tag (0, 1,
+  2, …); a bare name is CODE_CONS0 (no payload), with `_` or a type
+  after the name it's CODE_CONS (one-arg). Constructors are referenced
+  later as values (`initS`, `connected n`) and as match patterns
+  (`(initS -> …)`, `(connected x -> …)`).
 
 Expressions:
 - Int literals (decimal, hex `0x..`)
@@ -286,20 +296,27 @@ Expressions:
 - `+ - * / %` — arithmetic
 - `& | ^ << >>` — bitwise + shift
 - `!` (logical not), `-` (negation), `~` (bitwise not)
+- `{a b c}` — n-element array (mutable; same opcode shape as tuple)
 - `if EXPR then EXPR [else EXPR]`
 - `while COND do BODY`
 - `for VAR=INIT; COND; NEXT do BODY` — NEXT is auto-assigned to VAR
+- `match X with (Cons -> body) | (Cons x -> body) | (_ -> default)`
+  — sum-type pattern match. Each case is either a constructor name
+  (CONS0, no binding), `Cons x` (binds payload to local `x`),
+  `Cons _` (drops payload), or `_` (wildcard catch-all). Codegen
+  uses `OPfirst` (tag fetch) + `OPeq` + `OPelse` chain, with
+  back-patched gotos to the end label — byte-identical to the C++.
 - `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME
 - `set NAME = EXPR` — mutate a global or local
 - `( EXPR )` — grouping
 
 ### Not yet supported
 
-`match/with` (needs ADT sum types), `{arrays}`, `update`, structured
-let destructuring `let X -> [a b _] in`, multi-char escapes in char
-literals `'\n'`, `ifdef/endif` preprocessor, function pointers to
-builtins (`#Secho`), forward fun-to-fun references where neither has
-a `proto`.
+`update` (record-update syntax), structured let destructuring
+`let X -> [a b _] in`, multi-char escapes in char literals `'\n'`,
+`ifdef/endif` preprocessor, function pointers to builtins
+(`#Secho`), forward fun-to-fun references where neither has a
+`proto`, struct field declarations.
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.

@@ -372,6 +372,12 @@ class Compiler:
         self.globals_by_name: dict[str, int] = {}    # var/const name -> globals index
         self.funs_by_name: dict[str, tuple[int, int]] = {}  # fun name -> (funtable idx, nargs)
         self.proto_by_name: dict[str, tuple[int, int]] = {}  # proto name -> (idx, nargs)
+        # Sum-type constructors: name -> (tag, has_payload).
+        # `type Wifi = initW | gomasterW _ | stationW _;;` registers:
+        #   initW       -> (0, False)
+        #   gomasterW   -> (1, True)
+        #   stationW    -> (2, True)
+        self.constructors: dict[str, tuple[int, bool]] = {}
         # Function-being-compiled state.
         self.fn: FunctionBody | None = None
         self.scope: Scope | None = None
@@ -432,11 +438,53 @@ class Compiler:
             self._var_decl(is_const=True)
         elif t.text == "fun":
             self._fun_decl()
+        elif t.text == "type":
+            self._type_decl()
         else:
             raise SyntaxError(
                 f"line {t.line}: expected top-level declaration "
-                f"(proto/var/const/fun), got {t.text!r}"
+                f"(proto/var/const/fun/type), got {t.text!r}"
             )
+
+    def _type_decl(self) -> None:
+        """`type Name = Cons1 | Cons2 _ | Cons3 [type] | ...;;`
+
+        Each constructor gets an auto-incrementing tag. A bare name
+        (no payload) is CODE_CONS0; with `_` or an explicit type
+        argument it's CODE_CONS (1 payload slot).
+        """
+        self.expect("type")
+        # Type-name itself (e.g. `Wifi`). Not used for codegen.
+        _type_name = self.advance().text
+        self.expect("=")
+        tag = 0
+        while True:
+            cons_tok = self.advance()
+            if cons_tok.kind != "id":
+                raise SyntaxError(
+                    f"line {cons_tok.line}: constructor name expected, got {cons_tok.text!r}"
+                )
+            # Look ahead: is the next token `|` or `;;`? If so, this is
+            # a CODE_CONS0 (no payload). Otherwise it's CODE_CONS with
+            # a payload type (we skip the type — we don't typecheck yet,
+            # but we must consume the type tokens).
+            nxt = self.peek().text
+            if nxt in ("|", ";;"):
+                self.constructors[cons_tok.text] = (tag, False)
+            else:
+                # Consume the type expression. The C++ creategraph reads
+                # a full type tree — for now we just skip tokens until
+                # we hit `|` or `;;`. This matches Metal's grammar for
+                # the simple case `Cons _` (the underscore) and for
+                # `Cons SomeType` (single type name).
+                while self.peek().text not in ("|", ";;"):
+                    self.advance()
+                self.constructors[cons_tok.text] = (tag, True)
+            tag += 1
+            if self.peek().text == ";;":
+                self.advance()
+                return
+            self.expect("|")
 
     def _proto_decl(self) -> None:
         self.expect("proto")
@@ -677,13 +725,15 @@ class Compiler:
             self._parse_program()
             self.expect(")")
             return
-        if t.text == "[":
-            # n-tuple — emit each item then OPdeftabb/OPdeftab n. The C++
-            # also handles struct-field syntax here when the first token
-            # is a registered field name; we don't support structs yet.
+        if t.text in ("[", "{"):
+            # n-tuple `[a b c]` or array `{a b c}` — the C++ emits the
+            # same OPdeftabb sequence for both. Only the type system
+            # differs (tabs are mutable, tuples aren't) — for byte-
+            # identical output that doesn't matter to us.
+            closer = "]" if t.text == "[" else "}"
             nval = 0
             while True:
-                if self.peek().text == "]":
+                if self.peek().text == closer:
                     self.advance()
                     break
                 self._parse_expression()
@@ -744,6 +794,9 @@ class Compiler:
             return
         if t.text == "for":
             self._parse_for()
+            return
+        if t.text == "match":
+            self._parse_match()
             return
         if t.kind == "id":
             self._parse_ref(t.text)
@@ -878,6 +931,103 @@ class Compiler:
         del self.scope.names[var_tok.text]
         self.scope.next_index -= 1
 
+    def _parse_match(self) -> None:
+        """match EXPR with (Cons1 -> body1) | (Cons2 x -> body2) | (_ -> default)
+
+        Codegen (mirrors compiler_term.cpp::parsematch + parsematchcons):
+          <EXPR>                       ; push the value-to-match
+          ; For each case:
+          OPfirst                      ; get tag (first elem of tuple)
+          <push case tag>              ; emit OPintb tag
+          OPeq
+          OPelse <next_case>
+          ; ---- CONS0 case: drop value entirely ----
+          OPdrop
+          <body>
+          OPgoto <end>
+          next_case:
+          ; ---- CONS case (with payload): bind payload as local ----
+          OPfetchb 1                   ; get payload
+          OPsetlocalb i                ; bind to local
+          <body>
+          OPgoto <end>
+          ; ---- _ wildcard case ----
+          OPdrop                       ; drop the value
+          <body>
+          end:
+        """
+        self._parse_expression()        # value to match
+        self.expect("with")
+        end_label = self.new_label("match_end")
+        self._parse_matchcons(end_label)
+
+    def _parse_matchcons(self, end_label: str) -> None:
+        """One match case `( Cons args -> body )`, possibly followed by
+        `| ( more cases )` recursively.
+        """
+        self.expect("(")
+        head = self.advance()
+        if head.text == "_":
+            # Wildcard: drop the value and parse the body.
+            self.fn.drop()
+            self.expect("->")
+            self._parse_program()
+            self.expect(")")
+            self.fn.label(end_label)
+            return
+
+        if head.kind != "id" or head.text not in self.constructors:
+            raise SyntaxError(
+                f"line {head.line}: constructor expected, got {head.text!r}"
+            )
+        tag, has_payload = self.constructors[head.text]
+        next_case = self.new_label("match_case")
+        self.fn.op(Op.OPfirst)             # get tag
+        self._emit_intb_or_int(tag)
+        self.fn.op(Op.OPeq)
+        self.fn.else_(next_case)
+
+        # Inside the case: payload handling.
+        bound_locals: list[str] = []
+        if has_payload:
+            # Get payload (fetch[1]) then bind to a single local. (We
+            # don't support multi-arg destructuring `Cons [a b _]` yet.)
+            self.fn.opb(Op.OPfetchb, 1)
+            payload_name = self.advance().text
+            if payload_name == "_":
+                self.fn.drop()
+            else:
+                idx = self.scope.declare(payload_name)
+                new_locals_after_args = (idx + 1) - self.fn.nargs
+                if new_locals_after_args > self.nlocals_high_water:
+                    self.nlocals_high_water = new_locals_after_args
+                self.fn.opb(Op.OPsetlocalb, idx)
+                bound_locals.append(payload_name)
+        else:
+            self.fn.drop()
+
+        self.expect("->")
+        self._parse_program()
+        self.expect(")")
+
+        # Clean up the locals bound in this case.
+        for nm in bound_locals:
+            del self.scope.names[nm]
+            self.scope.next_index -= 1
+
+        self.fn.goto(end_label)
+        self.fn.label(next_case)
+
+        if self.peek().text == "|":
+            self.advance()
+            self._parse_matchcons(end_label)
+            return
+
+        # No more cases — fall through to nil + end.
+        self.fn.drop()
+        self.fn.op(Op.OPnil)
+        self.fn.label(end_label)
+
     def _parse_let(self) -> None:
         """let VALUE -> NAME in BODY — evaluates VALUE, binds it to NAME
         as a fresh local, then evaluates BODY (which is the let's value).
@@ -944,6 +1094,16 @@ class Compiler:
         # Global var/const?
         if name in self.globals_by_name:
             self._emit_get_global(self.globals_by_name[name])
+            return
+        # Sum-type constructor?
+        if name in self.constructors:
+            tag, has_payload = self.constructors[name]
+            self._emit_intb_or_int(tag)
+            if has_payload:
+                self._parse_expression()
+                self.fn.opb(Op.OPdeftabb, 2)
+            else:
+                self.fn.opb(Op.OPdeftabb, 1)
             return
         # Builtin call?
         if name in BUILTINS:
