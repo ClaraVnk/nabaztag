@@ -269,31 +269,49 @@ def lex(src: str) -> list[Token]:
             while j < n and src[j] != '"':
                 if src[j] == "\\" and j + 1 < n:
                     nxt = src[j + 1]
+                    # MTL string escape semantics — read from parser_xml.cpp:
+                    #   if escape-char is a CONTROL char (<32, i.e. \n, \r,
+                    #   \t at SOURCE level), it's a line-continuation:
+                    #   skip the backslash AND every consecutive control
+                    #   char (which collapses indentation on the next
+                    #   line). NOT an output character.
+                    if ord(nxt) < 32:
+                        j += 2
+                        while j < n and ord(src[j]) < 32:
+                            if src[j] == "\n":
+                                line += 1
+                                line_start = j + 1
+                            j += 1
+                        continue
+                    # `\n` (the literal 2-char sequence) → newline 10.
                     if nxt == "n":   out_str.append(10); j += 2; continue
-                    if nxt == "t":   out_str.append(9);  j += 2; continue
-                    if nxt == "r":   out_str.append(13); j += 2; continue
-                    if nxt == "\\":  out_str.append(ord("\\")); j += 2; continue
-                    if nxt == '"':   out_str.append(ord('"')); j += 2; continue
-                    if nxt == "0":
-                        # Look for a multi-digit decimal escape like \255 or
-                        # \13 — the source code uses these for byte values.
-                        end = j + 2
-                        while end < n and src[end].isdigit():
-                            end += 1
-                        out_str.append(int(src[j + 1:end]))
-                        j = end
-                        continue
-                    if nxt.isdigit():
-                        end = j + 2
-                        while end < n and src[end].isdigit():
-                            end += 1
-                        out_str.append(int(src[j + 1:end]) & 0xFF)
-                        j = end
-                        continue
+                    # `\z` → NUL (Metal-specific).
+                    if nxt == "z":   out_str.append(0);  j += 2; continue
+                    # `\$XX` → hex byte.
                     if nxt == "$" and j + 3 < n:
                         out_str.append(int(src[j + 2:j + 4], 16))
                         j += 4
                         continue
+                    # `\DDD` → decimal byte (1, 2, or 3 digits).
+                    if nxt.isdigit():
+                        end = j + 2
+                        while end < n and src[end].isdigit() and (end - (j + 1)) < 3:
+                            end += 1
+                        out_str.append(int(src[j + 1:end]) & 0xFF)
+                        j = end
+                        continue
+                    # Anything else (incl. `\\`, `\"`, `\t`, `\r`,
+                    # `\anything-printable`): the C++ treats this as
+                    # an OUTPUT char of value `nxt`. (Tested against
+                    # parser_xml.cpp::getstring: the default branch
+                    # is `output->addchar(c)` where c is the second
+                    # char raw.)
+                    out_str.append(ord(nxt))
+                    j += 2
+                    continue
+                if src[j] == "\n":
+                    line += 1
+                    line_start = j + 1
                 out_str.append(ord(src[j]))
                 j += 1
             if j >= n:
@@ -1519,20 +1537,23 @@ class Compiler:
             else:
                 self.fn.opb(Op.OPdeftabb, 1)
             return
-        # Builtin call?
-        if name in BUILTINS:
-            opcode, nargs = BUILTINS[name]
-            for _ in range(nargs):
-                self._parse_expression()
-            self.fn.op(opcode)
-            return
-        # User function call?
+        # User functions take priority over same-named builtins —
+        # boot.mtl defines its own `fun itobin2 i=...` that shadows the
+        # builtin opcode. C++ resolution is single-namespace: a user
+        # decl with the same name overrides the builtin in the package.
         if name in self.funs_by_name:
             fun_idx, nargs = self.funs_by_name[name]
             for _ in range(nargs):
                 self._parse_expression()
             self._emit_intb_or_int(fun_idx)
             self.fn.op(Op.OPexec)
+            return
+        # Builtin call?
+        if name in BUILTINS:
+            opcode, nargs = BUILTINS[name]
+            for _ in range(nargs):
+                self._parse_expression()
+            self.fn.op(opcode)
             return
         raise SyntaxError(f"unknown identifier {name!r}")
 
@@ -1563,7 +1584,11 @@ def main() -> int:
     out_path = Path(args.output) if args.output else src_path.with_suffix(".bin")
     c = Compiler()
     try:
-        blob = c.compile_source(src_path.read_text())
+        # IMPORTANT: read in binary + decode latin-1 to preserve original
+        # line endings (CRLF in particular) — Python's read_text() does
+        # universal-newlines translation, which the C++ does NOT. Strings
+        # in the source can intentionally contain \r\n that must round-trip.
+        blob = c.compile_source(src_path.read_bytes().decode("latin-1"))
     except SyntaxError as e:
         print(f"compile error: {e}", file=sys.stderr)
         return 1

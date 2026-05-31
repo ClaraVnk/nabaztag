@@ -317,29 +317,32 @@ Expressions:
 - `set NAME = EXPR` — mutate a global or local
 - `( EXPR )` — grouping
 
-### Real boot.0.0.0.13.mtl — IT COMPILES (validation-passing)
+### Real boot.0.0.0.13.mtl — BYTE-IDENTICAL ✅
 
-Phase 7a v5 added struct types (`type X = [f1 f2 ...];;`), struct
-creation `[FIELD: v ...]`, struct field READ `x.field`, struct field
-WRITE `set x.field = ...`, dynamic field access `tab.i` (when `i`
-is a variable, not a registered field), constant cons/tuple
-expressions in global initializers, and a shadowing-aware scope.
+`python3 mtl_comp.py boot.0.0.0.13.mtl -o boot.py.bin` produces
+36 263 bytes that match the C++ `mtl_compiler` output byte-for-byte
+(`cmp` reports identical). 217 functions, 16 971 bytes of code,
+17 028 bytes of globals — including the multi-KB `page_a` constant
+cons-list that ships the embedded captive-portal HTML.
 
-End result: `python3 mtl_comp.py boot.0.0.0.13.mtl -o boot.py.bin`
-**successfully compiles all 2960 lines** of the real RedoXyde
-bootloader Metal source, producing a structurally-valid `.bin`
-that `mtl_dis.py --check` accepts (216 functions, 16 965 bytes of
-code, no structural issues).
+The Phase 7a v6 fixes that closed the last gaps:
 
-Not yet byte-identical with the C++ output on this file: ~4.5 KB
-larger globals section and 1 fewer function. Almost certainly the
-remaining diff is in how we encode the page_a constant cons list
-and a missing ifdef-branch-only function. Tracked as Phase 7a v6.
+- **Universal-newlines suppressed.** Python's default `read_text()`
+  collapses CRLF → LF, but `boot.0.0.0.13.mtl` (and many older Metal
+  sources) contains intentional `\r\n` byte sequences inside string
+  literals. Fixed by reading the source as bytes and decoding latin-1.
+- **`\<control-char>` line-continuation** in string literals. The C++
+  parser eats the backslash and ALL subsequent control chars (< 32),
+  collapsing source-level line-breaks with indentation. Python's
+  string lexer now does the same byte-for-byte.
+- **User-fun-shadows-builtin name resolution.** boot.mtl defines its
+  own `fun itobin2 i = ...` that overrides the builtin opcode with
+  the same name. The C++ resolver treats user-defined refs and
+  builtins as a single namespace, last-write-wins. Python now checks
+  `funs_by_name` BEFORE `BUILTINS`.
 
-### Still not byte-identical for the very-large case
-
-`boot.0.0.0.13.bin` itself: compiles, validates, but differs by
-~4 KB. The 22 dedicated test programs ARE all byte-identical.
+That's it — three fixes worth ~6 KB across the boot binary, all
+isolated to the lexer + name-resolution layer.
 
 ### Not yet supported
 
