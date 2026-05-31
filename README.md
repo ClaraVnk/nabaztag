@@ -25,12 +25,15 @@ directly: the rabbit phones home to it (the real Violet servers died around
 2011), and Home Assistant drives the rabbit — ears, belly weather icons, nose —
 through a simple control API.
 
-> ⚠️ **Uncertain-outcome project.** A stock rabbit is a "dumb" Wi-Fi client that
-> downloads its bytecode from the server on every boot (nothing is flashed) and
-> talks plain HTTP + XMPP (no TLS pinning). Booting it against our own server and
-> getting it to connect is **Phase 1 (done)**. Capturing its **microphone** for
-> voice is **Phase 2** and genuinely harder (see Roadmap). If a wall proves too
-> high, the hardware fallback is a **tagtagtag/pynab** card — out of scope here.
+> ✅ **It works end-to-end.** A stock rabbit is a "dumb" Wi-Fi client that
+> downloads its bytecode from the server on every boot (nothing is flashed by
+> default) and talks plain HTTP + XMPP (no TLS pinning). Phases 1, 2, 3 and 6
+> are all working live: the rabbit boots, breathes, speaks, plays jingles,
+> moves its ears, lights up — and listens hands-free for "hey Nabi", asks
+> Claude, and answers. The custom firmware (Naboot, Phase 4) adds Ed25519-gated
+> OTA and a modernized config UI; Le Terrier (Phase 6) is the public warren
+> live at <https://terrier.cyberloutre.fr/>. See Roadmap for the current
+> status of each phase.
 
 ## How it works
 
@@ -86,6 +89,23 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 │   └── DOCS.md              #    install / pairing / API / status
 ├── nabaztag-server/         # OpenJabNab add-on (superseded — kept for reference)
 │   └── …                    #    its HTTP listener is non-functional in the upstream image
+├── terrier/                 # Le Terrier — public warren (Phase 6, live at
+│   ├── server.py            #    terrier.cyberloutre.fr). Same Violet protocol as the
+│   ├── ui.py                #    add-on but multi-tenant, with an owner Web UI,
+│   ├── xmpp.py / protocol.py #    SQLite for per-MAC state, Caddy+Podman deploy.
+│   ├── deploy/              #    Caddy / Quadlet / OVH firewall snippets.
+│   └── SPEC.md
+├── firmware-arm/            # Naboot — custom ARM7 firmware (Phase 4/5). Forks
+│   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2 + Ed25519-gated httpflash +
+│   ├── boot-mods/mdns.mtl   #    modernized config UI + boot-side mDNS announcer.
+│   ├── crypto/              #    Build via ./build.sh --remote HOST --runtime
+│   ├── pages/               #    {docker,podman} --mode {minimal|full|max|lean|…}.
+│   ├── BRICK_FORENSICS.md   #    Recovery plan + bisection ladder.
+│   └── RECOVERY.md
+├── firmware/                # Runtime-side bytecode add-ons (mic stream, mDNS,
+│   ├── micstream.mtl        #    OTA helper) compiled into the hybrid bootcode
+│   ├── mdns.mtl             #    served by the add-on.
+│   └── patch_main.py
 ├── home-assistant/
 │   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
 │   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
@@ -146,29 +166,59 @@ Full guide (API, pairing, troubleshooting) is in
   `[ears …]` / `[led …]` / `[nose …]` tags in its reply. TTS is bundled **espeak-ng**
   or, for a much nicer voice, **Piper** via the HA Piper add-on. Enable it with the
   `voice_pipeline` / `conversation_agent` / `tts_engine` options.
-- **Phase 3 — wake word & custom firmware — in progress:** push-to-talk needs no
-  firmware change, but a hands-free wake word ("hey Nabi") does: reverse-engineering
-  the bytecode shows the **stock firmware only records the mic on a physical button
-  press** — the server can't start a recording. So passive listening requires
-  **custom mic-streaming firmware**. The open **Metal toolchain now stands up and
-  compiles bytecode end-to-end** (RedoXyde's `mtl_linux` compiler, built in a Linux
-  x86 container). The plan: a *hybrid* bytecode — the stock Violet firmware plus a
-  server-triggered **UDP microphone stream** (à la `openab`) — feeding an on-server
-  wake-word engine (openWakeWord) that hands the utterance to the existing
-  STT → agent → speech loop.
-- **Phase 4 — firmware upgrades:** with the toolchain in place, harden the 2006
-  firmware (it speaks plain HTTP, no TLS) and add improvements.
-- **Phase 5 — setup UX:** a much nicer captive/config page when you join the
-  rabbit's Wi-Fi to pair it.
-- **Phase 6 — Le Terrier:** the public warren that unites every Naboot rabbit.
-  The local add-on grows up into a dependency-free standalone Python server,
-  hosted on a dedicated public domain, serving the bytecode any Nabaztag in
-  the world boots into — and, by extension, pushing signed firmware updates
-  (via the Ed25519-gated OTA path Naboot already ships). Multi-tenant
-  per-rabbit state, per-owner web UI for setting wake word / personality /
-  jingles / colours, and hardening of the plain Violet protocol. Naboot is
-  the firmware on the rabbit; Le Terrier is the home they all dial back to.
-- **Phase 7 — modernize the Metal toolchain in Python (two steps):**
+- **Phase 3 — wake word — working (verified live):** push-to-talk needs no
+  firmware change; a hands-free wake word ("hey Nabi") does. The stock firmware
+  only records the mic on a physical button press — the server can't start a
+  recording. So passive listening required a **custom mic-streaming bytecode**.
+  Solution: a *hybrid* bytecode that adds a server-triggered **UDP microphone
+  stream** (`firmware/micstream.mtl`, à la `openab`) to the stock Violet
+  bytecode, compiled with RedoXyde's `mtl_linux` in a Linux x86 container.
+  Server-side `wake_loop` swaps the audio buffer every few seconds, runs bundled
+  whisper.cpp, and if "Nabi" is heard, the rest of the utterance is sent to the
+  conversation agent and the reply spoken back. Confirmed live: "Nabi, raconte
+  une blague" → Claude reply spoken full-voice in the Piper voice with action
+  tags driving ears + LEDs simultaneously.
+- **Phase 4 — firmware upgrades — done (Naboot, not yet hardware-verified on
+  the new build):** with the toolchain stood up, built **Naboot**, a fork of
+  `RedoXyde/nabgcc` (wpa2 branch) compiled as a `.sim` flashable via the
+  config-mode upload page (no JTAG / no opening). Adds an **Ed25519-gated OTA**
+  path (`verifySig` opcode 152 + `flashFirmware` gated on signature against
+  `firmware-arm/keys/signing_pubkey.h`), strips the upstream debug `printf`
+  glue, and wraps the linker script's vector / startup / bytecode sections in
+  `KEEP()` so `--gc-sections` is safe to enable. Build is reproducible from
+  the pinned upstream commits (`nabgcc` `2c05b53f`, `mtl_linux` `7e557a15`).
+  Status: the rabbit is currently bricked from a Naboot-full flash that broke
+  config-mode AP setup — recovery via JTAG (DollaTek J-Link V8 ordered) +
+  bisection-mode flashes is documented in `firmware-arm/BRICK_FORENSICS.md`,
+  with six pre-built variants ready: `minimal` (rescue, vanilla bootloader +
+  verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
+  bisects), `full` (sig-gated OTA + modernized UI), `max` (`full` + boot-side
+  mDNS), `lean` (`max` + `--gc-sections`).
+- **Phase 5 — setup UX — done (not yet hardware-verified):** rewrote the four
+  config-mode HTML pages (`page_a / page_done / page_u / page_error`) in
+  modern semantic HTML with a dark theme, mobile viewport, and the same form
+  field names + template markers the firmware backend expects, so the existing
+  `cbhttp` / `httpindex` / `httpflash` paths in `boot.0.0.0.13.mtl` keep
+  working unchanged. Saved ~5 KB of ROM in the process. Source HTML lives
+  under `firmware-arm/pages/`; injection into the boot bytecode is done by
+  `firmware-arm/apply-mods.py:modernize_pages`.
+- **Phase 6 — Le Terrier — DONE (live at https://terrier.cyberloutre.fr/):**
+  the public warren every Naboot rabbit dials back to. Dependency-free Python
+  (stdlib + Flask for the owner UI), deployed on Loutre's VPS via a rootless
+  Podman quadlet behind Caddy 2 (auto-Let's-Encrypt). Reachable from any
+  network: `/vl/locate.jsp` → ping/broad/xmpp_domain, `/vl/bc.jsp` →
+  signed `.hybrid` baseline bytecode (103 542 B), XMPP `:5222` published
+  direct (the rabbit hardware has no TLS, so Caddy stays on the HTTP/HTTPS
+  layer). The owner UI is FR/EN, has Open Graph + Twitter card metadata (so
+  the link previews cleanly in iMessage), and walks an owner through signup
+  → claim → pair → drive in three steps. Multi-tenant per-MAC state in
+  SQLite; per-owner / per-rabbit accounts; ProxyFix so HTTPS canonical URLs
+  resolve cleanly behind Caddy. Not yet in the platform: per-rabbit bytecode
+  minting (every paired rabbit gets the same baseline today — owner-driven
+  customisation lands later) and an "orphan claim-me" bytecode that blinks
+  the pair code on the belly LEDs. **Naboot is the firmware on the rabbit;
+  Le Terrier is the home they all dial back to.**
+- **Phase 7 — modernize the Metal toolchain in Python (two steps, pending):**
     1. **Phase 7a — Python MTL compiler:** rewrite the existing C++ `mtl_compiler`
        in Python. Same input (`.mtl` source), same output (the rabbit's
        bytecode), zero behavioral change for the device. Win: no more aging
@@ -180,15 +230,16 @@ Full guide (API, pairing, troubleshooting) is in
        logic in familiar Python syntax. The rabbit still executes MTL bytecode;
        the Python is purely a contributor-facing surface. Doable mechanically,
        not research.
-- **Phase 8 — shrink the firmware by moving Metal logic to C:** the rabbit's
-  bootloader is ~3000 lines of Metal bytecode (`mtl/boot/boot.0.0.0.13.mtl`)
-  running on top of a tiny stack VM. Native ARM is roughly 3× denser than
-  Metal bytecode, so rewriting hot paths (HTTP server, locate parsing, audio
-  bootstrap) in C — and stripping the corresponding VM opcodes — would free
-  10–20 KB of ROM and headroom for richer features. Trade-off: Metal is small,
-  readable, and changeable without rebuilding the whole firmware; C is denser
-  but every change requires a full reflash. Worth it for stable, well-understood
-  paths; not for fast-iterating UI bits.
+- **Phase 8 — shrink the firmware by moving Metal logic to C (pending):** the
+  rabbit's bootloader is ~3000 lines of Metal bytecode
+  (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM. Native ARM
+  is roughly 3× denser than Metal bytecode, so rewriting hot paths (HTTP
+  server, locate parsing, audio bootstrap) in C — and stripping the
+  corresponding VM opcodes — would free 10–20 KB of ROM and headroom for
+  richer features. Trade-off: Metal is small, readable, and changeable
+  without rebuilding the whole firmware; C is denser but every change
+  requires a full reflash. Worth it for stable, well-understood paths; not
+  for fast-iterating UI bits.
 
 ## Hardware
 
