@@ -237,7 +237,7 @@ python3 mtl_comp.py program.mtl -o program.bin
 
 ### Validated byte-for-byte against mtl_compiler (C++)
 
-Tested on five progressively richer programs; for every one,
+Tested on 11 progressively richer programs; for every one,
 `cmp original.bin mtl_comp_output.bin` reports BYTE-IDENTICAL:
 
 | Test               | Size  | What it exercises |
@@ -247,11 +247,19 @@ Tested on five progressively richer programs; for every one,
 | `biggish.mtl`      | 49 B  | var + const + multi-fun + user fun call |
 | `rich.mtl`         | 99 B  | Secho (builtin) + set global + let-in + sequencing |
 | `real_prog.mtl`    | 182 B | 4-level nested let, recursion, chained ifs |
+| `char.mtl`         | 20 B  | char literal `'A'` |
+| `funptr.mtl`       | 31 B  | function pointer reference `#fname` |
+| `cons.mtl`         | 31 B  | list construction `a :: b :: nil` (right-assoc) |
+| `tuple.mtl`        | 28 B  | tuple `[a b c d]` |
+| `loop.mtl`         | 43 B  | `while COND do BODY` |
+| `forloop.mtl`      | 60 B  | `for i=0; i<5; i+1 do ...` |
 
-`real_prog.mtl` has 5 functions, 2 globals, nested let bindings,
-recursion, a multi-step `classify` (int → 1/2/3), and uses set on a
-global. The compiled bytecode is identical to what the C++ produces
-on a fresh build of the same source.
+`forloop.mtl` is interesting because the C++ codegen uses a clever
+"skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
+bytecode BEFORE BODY, with the first iteration goto-ing past NEXT
+straight to BODY, and subsequent iterations falling back into NEXT
+from a goto at the end of BODY). Our Python codegen mirrors this
+exactly — the bytecode order is identical.
 
 ### Supported `.mtl` subset
 
@@ -265,29 +273,33 @@ Top-level:
 Expressions:
 - Int literals (decimal, hex `0x..`)
 - String literals `"..."` with `\n \t \r \\ \" \DECIMAL \$HEX` escapes
+- Char literals `'a'` (single char, no escapes inside)
 - `nil`
 - Identifier — local var / global / builtin call / user fun call
   (juxtaposition is application: `MACecho netMac 0 1`)
+- `#FUN` — function pointer (used for callbacks: `loopcb #handler`)
 - `EXPR ; EXPR` — sequence (returns last; drops earlier values)
-- `EXPR :: EXPR` — cons (NOT YET — token recognized but no codegen)
+- `EXPR :: EXPR` — cons (right-assoc)
+- `[a b c]` — n-tuple
 - `&& ||` — short-circuit logical
 - `== != < > <= >=` — comparison
 - `+ - * / %` — arithmetic
 - `& | ^ << >>` — bitwise + shift
 - `!` (logical not), `-` (negation), `~` (bitwise not)
-- `if EXPR then EXPR [else EXPR]` — expression; both arms must produce
-  a stack value (else branch defaults to `nil`)
-- `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME,
-  evaluate BODY in that scope; BODY's value is the let's value
+- `if EXPR then EXPR [else EXPR]`
+- `while COND do BODY`
+- `for VAR=INIT; COND; NEXT do BODY` — NEXT is auto-assigned to VAR
+- `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME
 - `set NAME = EXPR` — mutate a global or local
 - `( EXPR )` — grouping
 
 ### Not yet supported
 
-`'a'` (char literals), `[tuples]`, `{arrays}`, `match/with`,
-`while/do`, `for`, `update`, `#funptr` (callback refs), structured
-let destructuring `let X -> [a b _] in`, `ifdef/endif` preprocessor,
-forward function-to-function references where neither has a `proto`.
+`match/with` (needs ADT sum types), `{arrays}`, `update`, structured
+let destructuring `let X -> [a b _] in`, multi-char escapes in char
+literals `'\n'`, `ifdef/endif` preprocessor, function pointers to
+builtins (`#Secho`), forward fun-to-fun references where neither has
+a `proto`.
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.
