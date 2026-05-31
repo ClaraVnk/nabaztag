@@ -48,7 +48,7 @@ REMOTE_DIR="/tmp/nab-firmware-build-$MODE"
 echo ">> shipping build context to $REMOTE_HOST:$REMOTE_DIR"
 "${SSH[@]}" "$REMOTE_HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
 "${SCP[@]}" "$HERE/Dockerfile" "$HERE/apply-mods.py" "$REMOTE_HOST:$REMOTE_DIR/"
-"${SCP[@]}" -r "$HERE/upstream" "$HERE/crypto" "$HERE/keys" "$HERE/patches" "$HERE/pages" \
+"${SCP[@]}" -r "$HERE/upstream" "$HERE/crypto" "$HERE/keys" "$HERE/patches" "$HERE/pages" "$HERE/boot-mods" \
   "$REMOTE_HOST:$REMOTE_DIR/"
 
 echo ">> building image on $REMOTE_HOST ($RUNTIME)"

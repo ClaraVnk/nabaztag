@@ -39,6 +39,7 @@ COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 # Apply our source modifications (idempotent, prints what landed).
 COPY apply-mods.py /build/apply-mods.py
 COPY pages/ /build/pages/
+COPY boot-mods/ /build/boot-mods/
 
 # MODE controls which mods land:
 #   full    = everything (default; verify-enforced + modernized UI)
