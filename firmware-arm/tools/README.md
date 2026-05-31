@@ -34,9 +34,22 @@ python3 mtl_dis.py firmware/bootcode_hybrid.bin
 # Skip the globals dump (faster, smaller — when you only care about code)
 python3 mtl_dis.py firmware/bootcode_hybrid.bin --no-globals
 
+# Resolve function names from the .mtl source (huge legibility win):
+# instead of `fun#206`, see `fun#206 wifiInit`, and OPexec annotations
+# read `; → MACecho` instead of `; → call fun#25`.
+python3 mtl_dis.py path/to/boot.0.0.0.13.bin \
+    --src path/to/boot.0.0.0.13.mtl --no-globals
+
 # JSON output (for tooling / further processing)
 python3 mtl_dis.py firmware/bootcode_hybrid.bin --json > bc.json
 ```
+
+Name resolution handles `proto NAME ARITY;;` forward-declarations
+correctly (so `proto main 0;;` at the top of `boot.0.0.0.13.mtl`
+reserves index 0 for `main` even though the definition is at the
+bottom of the file). It warns when the source and bin disagree by
+more than ±5 funs — usually that means the source has `ifdef` branches
+that weren't preprocessed, and the annotations will be best-effort.
 
 ## Why it exists
 
