@@ -250,6 +250,7 @@ class Function:
     pc_start: int   # offset into code section
     pc_end: int     # exclusive
     insns: list = field(default_factory=list)  # [(pc, op, mnemonic, operand_text)]
+    name: str | None = None  # resolved from .mtl source if --src supplied
 
 
 @dataclass
@@ -380,12 +381,121 @@ def _disassemble_body(code: bytes, pc: int, end: int) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Name resolution: parse a .mtl source for top-level `fun NAME` declarations.
+# ---------------------------------------------------------------------------
+import re as _re
+
+_MTL_COMMENT = _re.compile(r"//[^\n]*|/\*.*?\*/", _re.DOTALL)
+_MTL_STRING  = _re.compile(r'"(?:\\.|[^"\\])*"', _re.DOTALL)
+
+
+def _strip_mtl_lexical(src: str) -> str:
+    """Strip comments + string literals from .mtl source so a top-level
+    keyword scan doesn't trip on `// fun foo`-in-a-comment or `"fun"`.
+    Replaces stripped regions with spaces to preserve byte offsets (so
+    line numbers stay correct for any subsequent error report).
+    """
+    def _blank(m):
+        return " " * (m.end() - m.start())
+    # Strings first (they may contain // or /*), then comments.
+    src = _MTL_STRING.sub(_blank, src)
+    src = _MTL_COMMENT.sub(_blank, src)
+    return src
+
+
+_FUN_DECL   = _re.compile(r"(?m)^[ \t]*fun[ \t]+([A-Za-z_][A-Za-z_0-9]*)\b")
+_PROTO_DECL = _re.compile(r"(?m)^[ \t]*proto[ \t]+([A-Za-z_][A-Za-z_0-9]*)\b")
+
+
+def extract_fun_names(src: str) -> list[str]:
+    """Walk the source, return a list of names in funtable-index order.
+
+    Compiler semantics (cross-referenced against mtl_linux source):
+      - `proto NAME ARITY;;` reserves a funtable slot at the *current*
+        next-free index. So `proto main 0;;` at the top of boot.mtl
+        burns index 0 for `main`.
+      - `fun NAME args = body;;` either fills a proto-reserved slot
+        (same NAME) or, if no matching proto, takes a new index.
+      - `ifdef X { ... } else { ... }` — only the active branch's funs
+        are emitted. We can't tell which branch is active without
+        running preproc.pl. For best results, feed the PREPROCESSED
+        source (the same blob mtl_compiler consumes); the linter will
+        warn if the count is off.
+
+    Strategy:
+      1. Walk the source linearly, recording protos (reserves an index)
+         and fun-defs (fills a proto slot OR takes a new index).
+      2. Order: protos take their index at the moment they appear; fun
+         definitions either complete the proto or get the next free
+         index.
+    """
+    src = _strip_mtl_lexical(src)
+    # We walk linearly, finding both protos and funs in source order.
+    events = []  # list of (offset, kind, name)
+    for m in _PROTO_DECL.finditer(src):
+        events.append((m.start(), "proto", m.group(1)))
+    for m in _FUN_DECL.finditer(src):
+        events.append((m.start(), "fun", m.group(1)))
+    events.sort()
+
+    # Allocate indices in source order.
+    name_by_idx: dict[int, str] = {}
+    next_idx = 0
+    proto_idx_by_name: dict[str, int] = {}
+    for _off, kind, name in events:
+        if kind == "proto":
+            proto_idx_by_name[name] = next_idx
+            name_by_idx[next_idx] = name
+            next_idx += 1
+        else:  # fun
+            if name in proto_idx_by_name:
+                # Already reserved — definition fills it.
+                name_by_idx[proto_idx_by_name[name]] = name
+            else:
+                name_by_idx[next_idx] = name
+                next_idx += 1
+    if not name_by_idx:
+        return []
+    return [name_by_idx.get(i, f"_unknown_{i}") for i in range(max(name_by_idx) + 1)]
+
+
+def attach_function_names(bc: Bytecode, src_path: Path) -> int:
+    """Read .mtl source, parse top-level `fun NAME`s, attach to bc.functions
+    by index. Returns the number of names matched.
+
+    If the count mismatches nbfun by ±1 we still attach what we can, and
+    print a warning to stderr. A larger mismatch usually means the source
+    isn't the preprocessed form — flag it.
+    """
+    src = src_path.read_text()
+    names = extract_fun_names(src)
+    if not names:
+        print(f"warn: no `fun NAME` declarations found in {src_path}", file=sys.stderr)
+        return 0
+    if abs(len(names) - bc.nbfun) > 5:
+        print(
+            f"warn: source has {len(names)} `fun` decls but bin has {bc.nbfun} "
+            f"functions — likely not the preprocessed source. Annotation "
+            f"is best-effort and may be off.",
+            file=sys.stderr,
+        )
+    for fn in bc.functions:
+        if fn.index < len(names):
+            fn.name = names[fn.index]
+    return min(len(names), bc.nbfun)
+
+
+# ---------------------------------------------------------------------------
 # Annotations: look at OPint <idx>; OPexec sequences -> "call fun#<idx>"
 # ---------------------------------------------------------------------------
 def annotate_calls(functions: list[Function]) -> dict[tuple[int, int], str]:
     """Return {(fn_index, pc): annotation} for OPexec sites whose preceding
     instruction was OPint or OPintb pushing a function index.
+
+    When function names have been attached (--src), use them in the
+    annotation: `; → MACecho` instead of `; → call fun#56`.
     """
+    name_by_idx = {f.index: f.name for f in functions if f.name}
     notes: dict[tuple[int, int], str] = {}
     for fn in functions:
         for i, (pc, op, _, _) in enumerate(fn.insns):
@@ -395,7 +505,11 @@ def annotate_calls(functions: list[Function]) -> dict[tuple[int, int], str]:
                     if prev_op in (2, 3) and prev_operand:  # OPintb or OPint
                         try:
                             idx = int(prev_operand)
-                            notes[(fn.index, pc)] = f"; → call fun#{idx}"
+                            name = name_by_idx.get(idx)
+                            if name:
+                                notes[(fn.index, pc)] = f"; → {name}"
+                            else:
+                                notes[(fn.index, pc)] = f"; → call fun#{idx}"
                         except ValueError:
                             pass
             elif op in BUILTIN_NAMES:
@@ -428,9 +542,10 @@ def render_text(bc: Bytecode, show_globals: bool = True) -> str:
         header_pc = fn.pc_start
         body_pc = fn.pc_start + 3
         size = fn.pc_end - fn.pc_start
+        name_part = f" {fn.name}" if fn.name else ""
         out.append("")
         out.append(
-            f"--- fun#{fn.index}  nargs={fn.nargs} nlocals={fn.nlocals}  "
+            f"--- fun#{fn.index}{name_part}  nargs={fn.nargs} nlocals={fn.nlocals}  "
             f"@ 0x{header_pc:04X}..0x{fn.pc_end:04X} ({size} bytes) ---"
         )
         for pc, op, mnem, operand in fn.insns:
@@ -467,6 +582,7 @@ def render_json(bc: Bytecode) -> str:
             "functions": [
                 {
                     "index": f.index,
+                    "name": f.name,
                     "nargs": f.nargs,
                     "nlocals": f.nlocals,
                     "pc_start": f.pc_start,
@@ -492,8 +608,13 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit JSON, not text")
     ap.add_argument("--no-globals", action="store_true",
                     help="skip globals dump (text only)")
+    ap.add_argument("--src", help="path to the preprocessed .mtl source — used"
+                    " to resolve function names. Best results with the same"
+                    " file that mtl_compiler consumed (post-preproc.pl).")
     args = ap.parse_args()
     bc = parse(Path(args.path))
+    if args.src:
+        attach_function_names(bc, Path(args.src))
     if args.json:
         sys.stdout.write(render_json(bc))
         sys.stdout.write("\n")
