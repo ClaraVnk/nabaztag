@@ -230,16 +230,21 @@ Full guide (API, pairing, troubleshooting) is in
        logic in familiar Python syntax. The rabbit still executes MTL bytecode;
        the Python is purely a contributor-facing surface. Doable mechanically,
        not research.
-- **Phase 8 — shrink the firmware by moving Metal logic to C (pending):** the
-  rabbit's bootloader is ~3000 lines of Metal bytecode
+- **Phase 8 — shrink the firmware by moving boot-bytecode logic to C
+  (deferred):** the rabbit's bootloader is ~3000 lines of Metal bytecode
   (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM. Native ARM
-  is roughly 3× denser than Metal bytecode, so rewriting hot paths (HTTP
-  server, locate parsing, audio bootstrap) in C — and stripping the
-  corresponding VM opcodes — would free 10–20 KB of ROM and headroom for
-  richer features. Trade-off: Metal is small, readable, and changeable
-  without rebuilding the whole firmware; C is denser but every change
-  requires a full reflash. Worth it for stable, well-understood paths; not
-  for fast-iterating UI bits.
+  is roughly 3× denser than Metal bytecode, so rewriting boot-side hot paths
+  (HTTP server, locate parsing, audio bootstrap) in C — and stripping the
+  corresponding VM opcodes — would free 10–20 KB of ROM (the flash budget is
+  124 KB and `max` already uses ~92%). **Scope clarification:** Phase 8 only
+  touches the **boot bytecode**, which is already inside the `.sim` and
+  already requires a flash to change. It does **NOT** touch the runtime
+  bytecode (`firmware/*.mtl`), which is downloaded fresh from the server on
+  every boot and stays OTA-instant. So the flash-cost trade-off is null —
+  boot-side updates are flash-only either way. The real cost is the
+  rewrite effort (~3000 lines + cross-validating the new C-side does
+  byte-equivalent work). Deferred until we actually hit the 124 KB flash
+  wall and need the headroom.
 
 ## Hardware
 
