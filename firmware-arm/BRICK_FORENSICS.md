@@ -90,8 +90,19 @@ firmware-arm/bin/
 ├── naboot-pages-only.signed.sim    228 706 B   (bisect: page rewrite only)
 ├── naboot-mdns-only.signed.sim     238 850 B   (bisect: mdns only)
 ├── naboot-full.signed.sim          229 058 B   (modernized UI + sig gate)
-└── naboot-max.signed.sim           230 162 B   (full + mdns; daily-driver)
+├── naboot-max.signed.sim           230 162 B   (full + mdns; daily-driver)
+└── naboot-lean.signed.sim          226 658 B   (max + --gc-sections; -1.7 KB)
 ```
+
+`lean` = `max` + `--gc-sections` enabled (with the new in-script
+`linker_keep` step ensuring `.intvec / .startup.* / .bytecode.* /
+.ramfunc` are wrapped in `KEEP()` so the linker can't prune them).
+Real savings on this build: 1 752 B vs `max`. Smaller than the
+theoretical ~6 KB of newlib printf glue because `libc_nano` isn't
+function-sectioned without `--specs=nano.specs`; the printf symbols
+remain at full size. Pursuing `--specs=nano.specs` would need extra
+care (no float-printf, different locking model) — deferred until the
+rabbit is alive again.
 
 All six pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
 done with `./build.sh --remote rocky@vps-ee4c4993.vps.ovh.net:10022
