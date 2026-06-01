@@ -266,23 +266,25 @@ Full guide (API, pairing, troubleshooting) is in
   is already inside the `.sim` and already requires a flash to change. It
   does **NOT** touch the runtime bytecode (`firmware/*.mtl`), which is
   downloaded fresh from the server on every boot and stays OTA-instant.
-  **`phase8-rom` build mode** stacks 7 source-level slices on top of
+  **`phase8-rom` build mode** stacks 8 source-level slices on top of
   `lean`: (1) the 4 config-portal HTML pages move from Metal globals
   into a C-side `const char[]` and render through a new `OPpageRender`
-  opcode; (2) `mkwav 8000 1 16` is precomputed at build time and inlined
-  as a 46-byte literal; (3) `dump`/`dumpscan` reduced to identity;
-  (4) all 92 `Secho{ln} "literal"` calls replaced with `nil`;
-  (5) user echo helpers `MACecho`/`SEQecho`/`IPecho` collapsed to
-  identity (return-value contract preserved for the `let X -> mac/ip/seq`
-  callers); (6) every dynamic-arg `Secho`/`Iecho`/`{ln}` opcode keyword
-  deleted — verified against vinterp.c as pure stack passthroughs;
-  (7) `dump`/`dumpscan` callsites inlined and the now-dead defs
-  dropped. The resulting `.sim` is **220 762 B — 17.5 KB smaller than
-  minimal/rescue (238 706 B), 5.8 KB smaller than the previous best
-  (`lean` at 226 658 B)** — and ~10 KB of vmem RAM is freed at runtime.
-  The remaining big bytecode is concentrated in stateful paths (`loop`,
-  `cbnettcp`, `tcpwrite`, `tcpevent`) where C rewrites would require
-  hardware-tested validation; this stack stays at the safe envelope.
+  opcode; (2) `pagefill`/`listreplacestr` and 4 stillborn helpers
+  pruned as orphans after rom_pages obsoleted their callers;
+  (3) `mkwav 8000 1 16` precomputed at build time and inlined as a
+  46-byte literal; (4) `dump`/`dumpscan` reduced to identity, callsites
+  inlined, defs dropped; (5) all 86 `Secho{ln} "literal"` calls
+  replaced with `nil`; (6) user echo helpers `MACecho`/`SEQecho`/`IPecho`
+  collapsed to identity (return-value contract preserved); (7) every
+  dynamic-arg `Secho`/`Iecho`/`{ln}` opcode keyword deleted — verified
+  as pure stack passthroughs in vinterp.c; (8) every prior slice
+  composable + idempotent. The resulting `.sim` is **220 330 B —
+  17.9 KB smaller than minimal/rescue (238 706 B), 6.2 KB smaller
+  than the previous best (`lean` at 226 658 B)** — and ~10 KB of
+  vmem RAM is freed at runtime. The remaining big bytecode is
+  concentrated in stateful paths (`loop`, `cbnettcp`, `tcpwrite`,
+  `tcpevent`) where C rewrites would require hardware-tested validation;
+  this stack stays at the safe envelope.
 
 ## Hardware
 
