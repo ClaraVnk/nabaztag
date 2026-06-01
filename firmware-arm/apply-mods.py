@@ -1099,6 +1099,45 @@ def patch_strip_dump(root: Path) -> None:
     print(f"[ok]   {boot}: stripped dump + dumpscan to identity passthrough")
 
 
+def patch_strip_secho(root: Path) -> None:
+    """Strip all `Secho "<literal>"` and `Secholn "<literal>"` calls — the
+    UART pad is unwired on the production rabbit and DEBUG_VM/AUDIO/MAIN
+    are already off, so the output goes nowhere. Replace each call with
+    `nil` (a valid Metal expression) so the surrounding statement / body
+    structure stays valid.
+
+    Saves ~1 KB across the bytecode (97 callsites × ~6 B opcodes +
+    deduped string globals).
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* secho-stripped */" in s:
+        print(f"[skip] {boot}: Secho calls already stripped")
+        return
+
+    # Match `Secho` or `Secholn` followed by whitespace then a Metal string
+    # literal. Metal strings: " ... " with \\ to escape, \" for embedded
+    # quote. We DON'T want to match inside other strings; risk-mitigation
+    # is that all big string globals (page_a/done/u/error) are already
+    # gone by the time this step runs, so the few remaining inline `var`
+    # values are tiny and the regex is safe enough in practice.
+    pat = re.compile(
+        r'\bSecho(?:ln)?\s+"(?:[^"\\]|\\.)*"',
+        re.DOTALL,
+    )
+    n = 0
+    def _sub(m):
+        nonlocal n
+        n += 1
+        return "nil"
+    s = pat.sub(_sub, s)
+
+    eol = "\r\n" if "\r\n" in s else "\n"
+    s = f"/* secho-stripped */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: stripped {n} Secho/Secholn string-literal calls")
+
+
 def patch_inline_mkwav(root: Path) -> None:
     """Replace `(mkwav 8000 1 16)::nil` with the precomputed 46-byte WAV
     header literal, then delete the `fun mkwav freq channel bps=...`
@@ -1223,7 +1262,7 @@ def main() -> int:
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,strip_secho,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1242,6 +1281,7 @@ def main() -> int:
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
         "strip_dump": patch_strip_dump,
+        "strip_secho": patch_strip_secho,
     }
     for step in steps:
         step = step.strip()

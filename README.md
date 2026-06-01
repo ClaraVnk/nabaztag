@@ -266,13 +266,19 @@ Full guide (API, pairing, troubleshooting) is in
   is already inside the `.sim` and already requires a flash to change. It
   does **NOT** touch the runtime bytecode (`firmware/*.mtl`), which is
   downloaded fresh from the server on every boot and stays OTA-instant.
-  **First slice — `phase8-rom`:** moves the 4 config-portal HTML pages
-  from Metal globals into a C-side `const char[]` and renders them via a
-  new `OPpageRender` opcode. Build mode `phase8-rom` is the smallest .sim
-  in the matrix (226 074 B, vs 226 658 B `lean` and 238 706 B `minimal`)
-  and frees ~10 KB of vmem RAM at runtime. Remaining hot paths (mkwav,
-  cbnettcp, wifiConnected) still pending — each rewrite would push the
-  number further down.
+  **`phase8-rom` build mode** stacks 4 size-shrink slices on top of
+  `lean`: (1) the 4 config-portal HTML pages move from Metal globals
+  into a C-side `const char[]` and render through a new `OPpageRender`
+  opcode; (2) `mkwav 8000 1 16` is precomputed at build time and inlined
+  as a 46-byte literal (delete the `fun mkwav` body); (3) `dump`/`dumpscan`
+  passthrough trace utilities are reduced to identity; (4) all 92
+  `Secho{ln} "literal"` debug-print calls are replaced with `nil`. The
+  resulting `.sim` is 221 210 B — **17 KB smaller than minimal/rescue
+  (238 706 B), 5.4 KB smaller than the previous best (`lean` at
+  226 658 B)** — and ~10 KB of vmem RAM is freed at runtime. The
+  remaining big bytecode is concentrated in stateful paths (`loop`,
+  `cbnettcp`, `tcpwrite`, `tcpevent`) where C rewrites would require
+  hardware-tested validation; this stack stays at the safe envelope.
 
 ## Hardware
 
