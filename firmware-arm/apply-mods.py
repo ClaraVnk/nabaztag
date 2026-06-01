@@ -1099,6 +1099,101 @@ def patch_strip_dump(root: Path) -> None:
     print(f"[ok]   {boot}: stripped dump + dumpscan to identity passthrough")
 
 
+def patch_prune_orphans(root: Path) -> None:
+    """Delete fun defs that are unreachable after the rom_pages rewrite.
+
+    `pagefill` and `listreplacestr` were the Metal-side templating
+    machinery for the HTML pages: pagefill walked a list of `[marker
+    val]` pairs and applied listreplacestr per marker. After rom_pages
+    rerouted every callsite (httpindex/httpdone/httpupgrade) to the
+    C-side `pageRender` opcode, both funs lost every external caller.
+
+    The Metal compiler doesn't do dead-code elimination, so they
+    survive in the bytecode unless we delete the source.
+
+    Idempotent + load-bearing: verifies each target has *exactly* the
+    expected reference pattern (def + self-recursion only) before
+    deleting; if any unexpected caller has appeared, abort rather than
+    silently breaking the build.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* orphans-pruned */" in s:
+        print(f"[skip] {boot}: orphan funs already pruned")
+        return
+    if "/* pages-modernized */" in s or "pageRender" not in s:
+        sys.exit(
+            "FAIL prune_orphans: requires rom_pages to have run first "
+            "(the funs are only orphan after pageRender takes over)"
+        )
+
+    eol = "\r\n" if "\r\n" in s else "\n"
+
+    def find_block(src: str, head: str) -> tuple[int, int]:
+        start = src.find(head)
+        if start < 0:
+            return -1, -1
+        i = start + len(head)
+        n = len(src)
+        while i < n - 1:
+            if src[i:i+2] == ";;":
+                j = i + 2
+                while j < n and src[j] in " \t":
+                    j += 1
+                if j < n and src[j] in "\r\n":
+                    if src[j:j+2] == "\r\n":
+                        j += 2
+                    else:
+                        j += 1
+                    return start, j
+            i += 1
+        return -1, -1
+
+    # 1. Verify expected orphans: each name's only refs are inside its own
+    # body (def line + N self-recursive calls). External callers = 0.
+    targets = [
+        # name              expected_refs   reason for being orphan
+        ("pagefill",        2),  # def + 1 self; only caller was httpindex (gone)
+        ("listreplacestr",  4),  # def + 2 self + 1 from pagefill (gone)
+        ("wifiConnected",   1),  # def only; never referenced (stillborn helper)
+        ("listnth",         2),  # def + 1 self; never wired in
+        ("itoanil",         1),  # def only; never wired in
+        ("unregudp",        1),  # def only; never wired in
+    ]
+    for name, expected in targets:
+        n_refs = len(re.findall(rf"\b{name}\b", s))
+        if n_refs != expected:
+            sys.exit(
+                f"FAIL prune_orphans: `{name}` has {n_refs} refs, expected "
+                f"{expected}. Did upstream change or did an earlier step "
+                f"leave a caller behind?"
+            )
+
+    # 2. Delete each fun body in order. The recursive-call cleanup order
+    # matters only across funs that call each other (pagefill →
+    # listreplacestr); within-orphans deletion order is arbitrary.
+    fun_heads = [
+        "fun pagefill l p=",
+        "fun listreplacestr l key val=",
+        "fun wifiConnected= ",  # bare-args form (no args)
+        "fun listnth l i=",
+        "fun itoanil l=",
+        "fun unregudp port=",
+    ]
+    for head in fun_heads:
+        start, end = find_block(s, head)
+        if start < 0:
+            # Try without trailing space (wifiConnected variant).
+            start, end = find_block(s, head.rstrip())
+        if start < 0:
+            sys.exit(f"FAIL prune_orphans: couldn't delimit `{head!r}`")
+        s = s[:start] + s[end:]
+
+    s = f"/* orphans-pruned */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: pruned {len(fun_heads)} orphan funs")
+
+
 def patch_inline_dump_calls(root: Path) -> None:
     """After patch_strip_dump reduced `dump`/`dumpscan` to identity
     (`fun dump s = s;;`, `fun dumpscan l0 = l0;;`), every callsite
@@ -1396,7 +1491,7 @@ def main() -> int:
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1419,6 +1514,7 @@ def main() -> int:
         "strip_echo_funs": patch_strip_echo_funs,
         "strip_echo_opcodes": patch_strip_echo_opcodes,
         "inline_dump_calls": patch_inline_dump_calls,
+        "prune_orphans": patch_prune_orphans,
     }
     for step in steps:
         step = step.strip()
