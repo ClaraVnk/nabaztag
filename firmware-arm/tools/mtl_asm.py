@@ -128,6 +128,7 @@ class Op:
     OPcrypt = 144;    OPuncrypt = 145;    OPnetRssi = 146;   OPrfidGetList = 147
     OPrfidRead = 148; OPrfidWrite = 149;  OPi2cRead = 150;   OPi2cWrite = 151
     OPverifySig = 152
+    OPpageRender = 153  # Phase 8: render a ROM HTML page with marker substitution
 
 
 # Opcodes that take a 1-byte unsigned operand.
@@ -457,6 +458,7 @@ _MNEM_TO_OP = {name: code for code, name in
                    146: "OPnetRssi", 147: "OPrfidGetList",
                    148: "OPrfidRead", 149: "OPrfidWrite",
                    150: "OPi2cRead", 151: "OPi2cWrite", 152: "OPverifySig",
+                   153: "OPpageRender",
                }.items()}
 
 

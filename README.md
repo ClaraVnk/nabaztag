@@ -257,20 +257,22 @@ Full guide (API, pairing, troubleshooting) is in
        the Python is purely a contributor-facing surface. Doable mechanically,
        not research.
 - **Phase 8 — shrink the firmware by moving boot-bytecode logic to C
-  (deferred):** the rabbit's bootloader is ~3000 lines of Metal bytecode
-  (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM. Native ARM
-  is roughly 3× denser than Metal bytecode, so rewriting boot-side hot paths
-  (HTTP server, locate parsing, audio bootstrap) in C — and stripping the
-  corresponding VM opcodes — would free 10–20 KB of ROM (the flash budget is
-  124 KB and `max` already uses ~92%). **Scope clarification:** Phase 8 only
-  touches the **boot bytecode**, which is already inside the `.sim` and
-  already requires a flash to change. It does **NOT** touch the runtime
-  bytecode (`firmware/*.mtl`), which is downloaded fresh from the server on
-  every boot and stays OTA-instant. So the flash-cost trade-off is null —
-  boot-side updates are flash-only either way. The real cost is the
-  rewrite effort (~3000 lines + cross-validating the new C-side does
-  byte-equivalent work). Deferred until we actually hit the 124 KB flash
-  wall and need the headroom.
+  (prototype landed):** the rabbit's bootloader is ~3000 lines of Metal
+  bytecode (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM.
+  Native ARM is roughly 3× denser than Metal bytecode, so rewriting boot-side
+  hot paths in C — and stripping the corresponding VM opcodes — would free
+  10–20 KB of ROM (the flash budget is 124 KB and `max` uses ~92%).
+  **Scope clarification:** Phase 8 only touches the **boot bytecode**, which
+  is already inside the `.sim` and already requires a flash to change. It
+  does **NOT** touch the runtime bytecode (`firmware/*.mtl`), which is
+  downloaded fresh from the server on every boot and stays OTA-instant.
+  **First slice — `phase8-rom`:** moves the 4 config-portal HTML pages
+  from Metal globals into a C-side `const char[]` and renders them via a
+  new `OPpageRender` opcode. Build mode `phase8-rom` is the smallest .sim
+  in the matrix (226 074 B, vs 226 658 B `lean` and 238 706 B `minimal`)
+  and frees ~10 KB of vmem RAM at runtime. Remaining hot paths (mkwav,
+  cbnettcp, wifiConnected) still pending — each rewrite would push the
+  number further down.
 
 ## Hardware
 
