@@ -1014,6 +1014,148 @@ def _rewrite_boot_for_rom_pages(boot: Path) -> None:
     boot.write_bytes(s.encode("latin-1"))
 
 
+def _wav_header(freq: int, channel: int, bps: int) -> bytes:
+    """Reproduce mkwav's byte output exactly — see boot.0.0.0.13.mtl L2203.
+
+    Note: bps is emitted as a 4-byte field (itobin4) here, not the
+    standard 2-byte WAV field. We preserve the Metal-original layout so
+    downstream consumers (the wav player on the rabbit) see the same
+    bytes they always saw.
+    """
+    import struct
+    c = (
+        b"WAVEfmt "
+        + struct.pack("<I", 0x12)
+        + struct.pack("<H", 1)
+        + struct.pack("<H", channel)
+        + struct.pack("<I", freq)
+        + struct.pack("<I", freq * channel * bps // 8)
+        + struct.pack("<H", channel * bps // 8)
+        + struct.pack("<I", bps)
+        + b"data"
+        + struct.pack("<I", 0)
+    )
+    return b"RIFF" + struct.pack("<I", len(c)) + c
+
+
+def _bytes_to_metal_literal(b: bytes) -> str:
+    """Encode a byte string as a Metal `"..."` literal, using `\\$xx` hex
+    escapes for non-printable bytes / quotes / backslashes."""
+    parts = []
+    for ch in b:
+        if 32 <= ch < 127 and ch not in (ord('"'), ord('\\')):
+            parts.append(chr(ch))
+        else:
+            parts.append(f"\\${ch:02x}")
+    return '"' + ''.join(parts) + '"'
+
+
+def patch_strip_dump(root: Path) -> None:
+    """Replace the boot.mtl debug-trace functions `dump s` and `dumpscan l0`
+    with identity (`s` / `l0`). Both are passthrough Secho-based hex
+    dumpers — they print to UART then return their argument unchanged.
+    With DEBUG_VM/MAIN disabled by patch_makefile (and the UART pad
+    unwired on the production rabbit), nobody reads that output, so we
+    just delete the bodies and keep the passthrough semantics.
+
+    Saves ~300 B of boot bytecode. Caller sites stay 1:1 valid.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* dump-stripped */" in s:
+        print(f"[skip] {boot}: dump/dumpscan already stripped")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+
+    def replace_fun(src: str, head: str, identity_arg: str) -> str:
+        start = src.find(head)
+        if start < 0:
+            sys.exit(f"FAIL strip_dump: `{head}` definition not found")
+        i = start + len(head)
+        n = len(src)
+        end = None
+        while i < n - 1:
+            if src[i:i+2] == ";;":
+                j = i + 2
+                while j < n and src[j] in " \t":
+                    j += 1
+                if j < n and src[j] in "\r\n":
+                    if src[j:j+2] == "\r\n":
+                        j += 2
+                    else:
+                        j += 1
+                    end = j
+                    break
+            i += 1
+        if end is None:
+            sys.exit(f"FAIL strip_dump: could not delimit `{head}` body")
+        replacement = f"{head}{identity_arg};;{eol}"
+        return src[:start] + replacement + src[end:]
+
+    s = replace_fun(s, "fun dump s=", "s")
+    s = replace_fun(s, "fun dumpscan l0=", "l0")
+    s = f"/* dump-stripped */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: stripped dump + dumpscan to identity passthrough")
+
+
+def patch_inline_mkwav(root: Path) -> None:
+    """Replace `(mkwav 8000 1 16)::nil` with the precomputed 46-byte WAV
+    header literal, then delete the `fun mkwav freq channel bps=...`
+    definition. Boot.mtl has exactly ONE mkwav callsite (at fifotest
+    init) with fixed args, so this is a pure refactor — no behavior
+    change, just no longer paying ~520 B of bytecode for a value we
+    already know at build time.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* mkwav-inlined */" in s:
+        print(f"[skip] {boot}: mkwav already inlined")
+        return
+
+    eol = "\r\n" if "\r\n" in s else "\n"
+    wav_literal = _bytes_to_metal_literal(_wav_header(8000, 1, 16))
+
+    # 1. Substitute the single call site.
+    call_anchor = "(mkwav 8000 1 16)"
+    if call_anchor not in s:
+        sys.exit(f"FAIL inline_mkwav: callsite {call_anchor!r} not found")
+    s = s.replace(call_anchor, wav_literal, 1)
+
+    # 2. Delete the `fun mkwav freq channel bps= ... ;;` definition.
+    # The body ends at the FIRST `;;` followed by line break — same rule as
+    # _blank_global. Replace the entire block with the marker comment so the
+    # skip-guard works on re-runs.
+    head = "fun mkwav freq channel bps="
+    start = s.find(head)
+    if start < 0:
+        sys.exit(f"FAIL inline_mkwav: 'fun mkwav' definition not found")
+    i = start + len(head)
+    n = len(s)
+    end = None
+    while i < n - 1:
+        if s[i:i+2] == ";;":
+            j = i + 2
+            while j < n and s[j] in " \t":
+                j += 1
+            if j < n and s[j] in "\r\n":
+                if s[j:j+2] == "\r\n":
+                    j += 2
+                else:
+                    j += 1
+                end = j
+                break
+        i += 1
+    if end is None:
+        sys.exit(f"FAIL inline_mkwav: could not delimit `fun mkwav` body")
+    marker = f"// mkwav-inlined: precomputed 46-byte WAV header above{eol}"
+    s = s[:start] + marker + s[end:]
+
+    s = f"/* mkwav-inlined */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: inlined mkwav (deleted fun + substituted callsite)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
@@ -1081,7 +1223,7 @@ def main() -> int:
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1098,6 +1240,8 @@ def main() -> int:
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "rom_pages": patch_rom_pages,
+        "inline_mkwav": patch_inline_mkwav,
+        "strip_dump": patch_strip_dump,
     }
     for step in steps:
         step = step.strip()
