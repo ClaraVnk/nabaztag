@@ -8,6 +8,7 @@ differ only in how invasive they are on the bootloader:
 |------------|-----------|-------------------|-----------------|
 | **minimal** (rescue) | 122 KB | +6.4 KB | C side only: TweetNaCl + nab_sig + OPverifySig opcode. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD.** Bootloader UI + `httpflash` flow stay exactly as the version Kevin's sysadmin already flashed safely. |
 | **full** (recommended) | 117 KB | +1.7 KB | Everything in minimal, **plus**: `httpflash` rejects unsigned/tampered .sim, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
+| **phase8-rom** (experimental) | 113 KB | -2 KB | Everything in `full` + `--gc-sections` **plus**: 4 portal HTML pages live in C-side flash ROM rendered via a new `OPpageRender` opcode. Smallest .sim of all modes. Frees ~10 KB of vmem RAM at runtime by removing the pages from Metal globals. Untested on hardware as of 2026-06-01 — flash `full` first, treat `phase8-rom` as the experimental headroom slice. |
 
 Both files live under `bin/<mode>/`:
 

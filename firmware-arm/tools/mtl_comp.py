@@ -169,6 +169,9 @@ BUILTINS: dict[str, tuple[int, int]] = {
     "strcmp":         (Op.OPstrcmp,    2),
     "flashFirmware":  (Op.OPflashFirmware, 3),
     "verifySig":      (Op.OPverifySig, 2),
+    # Phase 8: render a ROM-resident HTML page with marker substitution.
+    # Args: page_idx (int), replacements (list of [marker_str val_str] pairs).
+    "pageRender":     (Op.OPpageRender, 2),
     "rfidGetList":    (Op.OPrfidGetList, 0),
     "rfidRead":       (Op.OPrfidRead,  2),
     "rfidWrite":      (Op.OPrfidWrite, 3),

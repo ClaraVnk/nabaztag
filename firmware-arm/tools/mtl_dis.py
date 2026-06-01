@@ -80,6 +80,7 @@ OPCODES: dict[int, str] = {
     # OPstrright also = 152 in upstream vbc.h — collision; OPverifySig wins
     # since it's the live VM case in our patched vinterp.c. The compiler-side
     # `strright/strcrypt8/loadf/savef` builtins all share opcode 152.
+    153: "OPpageRender",  # Phase 8: render ROM page with marker substitution
 }
 
 
@@ -157,6 +158,7 @@ BUILTIN_NAMES: dict[int, str] = {
     144: "crypt", 145: "uncrypt",
     146: "netRssi", 147: "rfidGetList", 148: "rfidRead", 149: "rfidWrite",
     150: "i2cRead", 151: "i2cWrite", 152: "verifySig",
+    153: "pageRender",
     55: "fixarg",
 }
 
