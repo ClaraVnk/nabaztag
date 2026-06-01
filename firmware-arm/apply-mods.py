@@ -1099,6 +1099,140 @@ def patch_strip_dump(root: Path) -> None:
     print(f"[ok]   {boot}: stripped dump + dumpscan to identity passthrough")
 
 
+def patch_inline_dump_calls(root: Path) -> None:
+    """After patch_strip_dump reduced `dump`/`dumpscan` to identity
+    (`fun dump s = s;;`, `fun dumpscan l0 = l0;;`), every callsite
+    still spends a `push-arg + OPexec + return` cycle for nothing.
+    Delete the keyword at every callsite, then delete the now-dead
+    function definitions. Net per call: ~5 B saved.
+
+    Requires patch_strip_dump to have run first (the deletions assume
+    the funs are already identity, otherwise we'd silently drop a
+    side effect).
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* dump-inlined */" in s:
+        print(f"[skip] {boot}: dump callsites already inlined")
+        return
+    if "/* dump-stripped */" not in s:
+        sys.exit("FAIL inline_dump_calls: requires strip_dump to run first")
+
+    eol = "\r\n" if "\r\n" in s else "\n"
+
+    # 1. Delete `dump ` and `dumpscan ` keywords from code. These are
+    #    1-arg functions reduced to identity by patch_strip_dump, so
+    #    deleting the keyword is a no-op semantically.
+    pat = re.compile(r"\b(?:dumpscan|dump)\b[ \t]+")
+    n_call = 0
+    def _sub(_m):
+        nonlocal n_call
+        n_call += 1
+        return ""
+    s = pat.sub(_sub, s)
+
+    # 2. Delete the now-dead `fun dump s=s;;` and `fun dumpscan l0=l0;;`
+    #    definitions. We re-locate the exact form patch_strip_dump wrote
+    #    (no leading whitespace per its `replacement = f"{head}{identity_arg};;{eol}"`).
+    for head, body in (("fun dump s=", "s"), ("fun dumpscan l0=", "l0")):
+        target = f"{head}{body};;{eol}"
+        if target in s:
+            s = s.replace(target, "", 1)
+    s = f"/* dump-inlined */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: inlined {n_call} dump/dumpscan callsites + dropped defs")
+
+
+def patch_strip_echo_opcodes(root: Path) -> None:
+    """Delete every dynamic-arg `Secho`/`Secholn`/`Iecho`/`Iecholn` opcode
+    keyword from boot.mtl. Confirmed against upstream vinterp.c: all four
+    opcodes are pure stack passthroughs (they call logSecho/logIecho on
+    `VSTACKGET(0)` but never `VPULL`/`VSTACKSET`, so the top-of-stack
+    value flows through unchanged). With the UART pad unwired, the side
+    effect is invisible, and deleting the keyword leaves the argument
+    expression in place — zero behaviour change for any caller using the
+    return value (`let Iecholn EXPR -> X in ...` becomes `let EXPR -> X
+    in ...`; `Iecholn rssi;` becomes `rssi;` which the sequence drop
+    swallows just the same).
+
+    Saves ~5 B per callsite (opcode + arg push folded into the argument's
+    own emission).
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* echo-opcodes-stripped */" in s:
+        print(f"[skip] {boot}: echo opcodes already stripped")
+        return
+
+    # Match `Secho`, `Secholn`, `Iecho`, or `Iecholn` as a whole word
+    # (word boundary) followed by at least one space/tab. The argument
+    # expression that comes next stays untouched.
+    pat = re.compile(r"\b(?:Secholn|Secho|Iecholn|Iecho)\b[ \t]+")
+    n = 0
+    def _sub(_m):
+        nonlocal n
+        n += 1
+        return ""
+    s = pat.sub(_sub, s)
+    eol = "\r\n" if "\r\n" in s else "\n"
+    s = f"/* echo-opcodes-stripped */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: dropped {n} echo-opcode keywords (Secho/Iecho/{{ln}})")
+
+
+def patch_strip_echo_funs(root: Path) -> None:
+    """Reduce the user-defined echo helpers (`MACecho`, `SEQecho`, `IPecho`)
+    to identity. Each was a `print bytes to UART, then return src`
+    construct; with UART unwired and the print side stripped of its
+    constant strings already, the for-loop body is dead weight while
+    the `src` return value IS observed by callers (`netSend ... (MACecho
+    mac 0 1) ...`, `set t.ackT = SEQecho ...`, etc.). Reducing each to
+    `src;;` preserves the return-value contract every caller relies on.
+
+    Saves ~120 B across the 3 fun bodies + their callees (Secho/Iecho
+    dynamic-arg calls that drop out as dead code).
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* echo-funs-identity */" in s:
+        print(f"[skip] {boot}: echo helper funs already identity")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+
+    n_replaced = 0
+    for head in (
+        "fun MACecho src i0 ln=",
+        "fun SEQecho src i0 ln=",
+        "fun IPecho src i0 ln=",
+    ):
+        start = s.find(head)
+        if start < 0:
+            sys.exit(f"FAIL strip_echo_funs: `{head}` not found")
+        i = start + len(head)
+        n = len(s)
+        end = None
+        while i < n - 1:
+            if s[i:i+2] == ";;":
+                j = i + 2
+                while j < n and s[j] in " \t":
+                    j += 1
+                if j < n and s[j] in "\r\n":
+                    if s[j:j+2] == "\r\n":
+                        j += 2
+                    else:
+                        j += 1
+                    end = j
+                    break
+            i += 1
+        if end is None:
+            sys.exit(f"FAIL strip_echo_funs: could not delimit `{head}` body")
+        s = s[:start] + f"{head}src;;{eol}" + s[end:]
+        n_replaced += 1
+    s = f"/* echo-funs-identity */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: collapsed {n_replaced} echo helpers to identity")
+
+
 def patch_strip_secho(root: Path) -> None:
     """Strip all `Secho "<literal>"` and `Secholn "<literal>"` calls — the
     UART pad is unwired on the production rabbit and DEBUG_VM/AUDIO/MAIN
@@ -1262,7 +1396,7 @@ def main() -> int:
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,strip_secho,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1282,6 +1416,9 @@ def main() -> int:
         "inline_mkwav": patch_inline_mkwav,
         "strip_dump": patch_strip_dump,
         "strip_secho": patch_strip_secho,
+        "strip_echo_funs": patch_strip_echo_funs,
+        "strip_echo_opcodes": patch_strip_echo_opcodes,
+        "inline_dump_calls": patch_inline_dump_calls,
     }
     for step in steps:
         step = step.strip()
