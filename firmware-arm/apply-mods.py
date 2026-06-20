@@ -361,6 +361,15 @@ def patch_linker_keep(root: Path) -> None:
         ("    *(.startup.*)\n", "    KEEP(*(.startup.*))\n"),
         ("    *(.bytecode.*)\n", "    KEEP(*(.bytecode.*))\n"),
         ("    *(.ramfunc)\n", "    KEEP(*(.ramfunc))\n"),
+        # CRITICAL FIX: with -fdata-sections the compiler splits .bss into
+        # per-variable .bss.* sections. Upstream collects only *(.bss), so the
+        # .bss.* sections land OUTSIDE the __bss_start__..__bss_end__ bracket
+        # and the cstartup zero-loop never clears them -> uninitialized globals
+        # (e.g. audioFifoPlay index) hold garbage -> out-of-bounds read ->
+        # data abort at boot. Collecting *(.bss.*) into the bracket fixes both
+        # the zeroing AND the __heap_start__/_end placement (which sit right
+        # after __bss_end__).  Found 2026-06-20 via JTAG on the real rabbit.
+        ("    *(.bss)\n", "    *(.bss .bss.*)\n"),
     ]
     n = 0
     for old, new in edits:
@@ -1469,7 +1478,7 @@ def main() -> int:
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,linker_keep",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
