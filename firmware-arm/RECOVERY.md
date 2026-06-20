@@ -34,6 +34,40 @@ firmware-arm/bin/
   via UART pads on the PCB — which means opening the shell. That risk is
   unchanged from what Kevin already accepted with the sysadmin flash.
 
+## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
+
+When the rabbit can't re-enter config mode (true brick), reflash over **JTAG**.
+You don't need a J-Link/BusBlaster: a **Raspberry Pi** drives the JTAG lines
+directly (bit-bang) with **F/F Dupont wires**.
+
+* **Rabbit JTAG header:** top-LEFT corner of the board (rabbit seen from the
+  front), under the base (4 tri-wing screws). 8-pin, top→bottom:
+  `1=3V3(Vref, leave NC) 2=GND 3=nTRST 4=TDI 5=TMS 6=TCK 7=TDO 8=RESETN`.
+  (Source: wk.redox.ws/dev/nab/v2/jtag + journaldulapin.com debriquer-nabaztag.)
+* **Wiring (Pi 40-pin header → JTAG, straight-through):** TDI→pin19(GPIO10),
+  TMS→pin24(GPIO8), TCK→pin23(GPIO11), TDO→pin21(GPIO9), GND→pin20.
+  Do NOT wire the Pi 3V3 — the **rabbit must be on its own mains power** for
+  JTAG to respond (the Pi only talks; it doesn't power the SoC).
+* **OpenOCD:** `adapter driver linuxgpiod` + the stock
+  `interface/raspberrypi-gpio-connector.cfg`, `transport select jtag`,
+  `adapter speed 100`. Target is a generic `arm7tdmi` (IDCODE `0x3f0f0f0f`,
+  flash mapped at `0x08000000`, 128 KB). Don't bother with SRST/`reset halt`
+  on arm7tdmi (it errors / hangs) — **power-cycle to reset**.
+* **Flash writes:** OpenOCD has no OKI flash driver, and the documented patched
+  OpenOCD 0.8.0 can't drive the Pi GPIO (no `linuxgpiod`; modern kernels
+  dropped sysfs-GPIO). So the OKI ML67Q4051 flash sequence is reimplemented in
+  **TCL** on stock OpenOCD (FLACON `0xB7000100`, unlock `0x15554`/`0x0AAA8`,
+  sector-erase `0x30`, program 4 bytes/cmd `0xA0`, poll `FLACON&0x0E==0x02`).
+  ~19 ms/word over bit-bang → ~10 min for a full image. Read/dump is fast.
+* **Procedure:** dump first (`dump_image bricked.bin 0x08000000 0x20000`) to
+  back up, then erase the firmware sectors and program `bin/<mode>/Nab.bin`,
+  then `dump_image` again and `cmp` against the source to verify byte-exact.
+
+> ⚠️ Before re-flashing, make sure your build carries the **`.bss` zeroing fix**
+> (commit `97e05d1`, `patch_linker_keep` → `*(.bss .bss.*)`). Without it every
+> mode boots into a Data Abort on the first uninitialized global — see
+> [BRICK_FORENSICS.md](./BRICK_FORENSICS.md).
+
 ## Flash procedure (recommended path)
 
 1. **Power off** the rabbit.
