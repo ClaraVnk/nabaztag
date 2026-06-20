@@ -178,8 +178,8 @@ Full guide (API, pairing, troubleshooting) is in
   conversation agent and the reply spoken back. Confirmed live: "Nabi, raconte
   une blague" → Claude reply spoken full-voice in the Piper voice with action
   tags driving ears + LEDs simultaneously.
-- **Phase 4 — firmware upgrades — done (Naboot, not yet hardware-verified on
-  the new build):** with the toolchain stood up, built **Naboot**, a fork of
+- **Phase 4 — firmware upgrades — done (Naboot, hardware-verified
+  2026-06-20):** with the toolchain stood up, built **Naboot**, a fork of
   `RedoXyde/nabgcc` (wpa2 branch) compiled as a `.sim` flashable via the
   config-mode upload page (no JTAG / no opening). Adds an **Ed25519-gated OTA**
   path (`verifySig` opcode 152 + `flashFirmware` gated on signature against
@@ -197,8 +197,10 @@ Full guide (API, pairing, troubleshooting) is in
   `*(.bss .bss.*)`; `minimal` gains `gc_sections`) — commit `97e05d1`. Recovered
   with a **Raspberry Pi as a bit-bang JTAG adapter** (no probe, F/F Dupont to
   the 8-pin header) + a TCL reimplementation of the OKI ML67Q4051 flash
-  sequence on stock OpenOCD; flash read/erase/program verified byte-exact. The
-  corrected build is being reflashed + hardware-boot-verified. See
+  sequence on stock OpenOCD; flash read/erase/program verified byte-exact.
+  Both `minimal` and the full **`lean`** build (modernized pages + sig-gated OTA
+  + mDNS) now **boot and run** on the rabbit — JTAG confirms it executes in User
+  mode with a live main loop, no longer the Abort dead-loop. See
   `firmware-arm/RECOVERY.md` and `BRICK_FORENSICS.md`. Six pre-built variants:
   `minimal` (rescue, vanilla bootloader +
   verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
