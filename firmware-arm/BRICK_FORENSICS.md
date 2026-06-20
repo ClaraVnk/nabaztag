@@ -1,5 +1,32 @@
 # Naboot full — config-mode AP regression — forensics & recovery plan
 
+## ✅ RESOLVED — 2026-06-20: it was the linker, not modernize_pages
+
+The brick was **`.bss` never being zeroed at startup**, a latent bug in the
+nabgcc linker script — **not** `modernize_pages` (Hypothesis A below was
+wrong). `sys/ml67q4051.ld` collected only `*(.bss)`, but `-fdata-sections`
+splits uninitialized globals into per-variable `.bss.*` sections. Those land
+OUTSIDE `__bss_start__..__bss_end__`, so the cstartup zero-loop cleared only
+12 bytes and left ~11.7 KB of `.bss.*` as garbage. The first garbage global
+hit at boot is the `audioFifoPlay` ring-buffer index → out-of-bounds `ldrb` in
+`audioPlayFetchByte+20` (0x08009ecc) → **Data Abort** → the CPU dead-loops in
+the Data Abort vector (`0x08000178`, `b .`). This affected **every** mode,
+including `minimal`/vanilla, which is why the rescue image bricked too.
+
+**Fix** (commit `97e05d1`): `apply-mods.py:patch_linker_keep` now collects
+`*(.bss .bss.*)`; `minimal` gains `gc_sections` so the correctly-sized `.bss`
+fits the 16 KB SRAM. Rebuild any mode and `__bss_end__` covers the full `.bss`.
+
+**How it was recovered (no probe):** a Raspberry Pi 4 as a bit-banged JTAG
+adapter (OpenOCD + `linuxgpiod`, F/F Dupont to the 8-pin JTAG header) plus a
+TCL reimplementation of the OKI ML67Q4051 flash sequence on stock OpenOCD
+(the documented patched OpenOCD 0.8.0 can't drive the Pi GPIO). See
+`RECOVERY.md`.
+
+---
+
+## Original (pre-2026-06-20) hypothesis — kept for the record, now disproven
+
 Loutre flashed `naboot-full.signed.sim` on Nabi. The rabbit no longer brings
 up its config-mode AP (the `Nabaztag-XXXX` SSID never appears). Recovery
 needs JTAG (DollaTek J-Link V8 ordered, ETA ~3-5 jours), then we can

@@ -187,10 +187,20 @@ Full guide (API, pairing, troubleshooting) is in
   glue, and wraps the linker script's vector / startup / bytecode sections in
   `KEEP()` so `--gc-sections` is safe to enable. Build is reproducible from
   the pinned upstream commits (`nabgcc` `2c05b53f`, `mtl_linux` `7e557a15`).
-  Status: the rabbit is currently bricked from a Naboot-full flash that broke
-  config-mode AP setup — recovery via JTAG (DollaTek J-Link V8 ordered) +
-  bisection-mode flashes is documented in `firmware-arm/BRICK_FORENSICS.md`,
-  with six pre-built variants ready: `minimal` (rescue, vanilla bootloader +
+  Status (2026-06-20): **brick root-caused and fixed.** It was a linker bug,
+  not a Naboot mod — `-fdata-sections` splits `.bss` into per-variable `.bss.*`
+  sections that the nabgcc linker (`sys/ml67q4051.ld`) left outside
+  `__bss_start__..__bss_end__`, so the startup zero-loop never cleared them →
+  garbage globals → Data Abort at boot. This hit *every* mode (even
+  `minimal`/vanilla), which **exonerates `modernize_pages`** (the original
+  suspect). Fixed in `apply-mods.py` (`patch_linker_keep` now collects
+  `*(.bss .bss.*)`; `minimal` gains `gc_sections`) — commit `97e05d1`. Recovered
+  with a **Raspberry Pi as a bit-bang JTAG adapter** (no probe, F/F Dupont to
+  the 8-pin header) + a TCL reimplementation of the OKI ML67Q4051 flash
+  sequence on stock OpenOCD; flash read/erase/program verified byte-exact. The
+  corrected build is being reflashed + hardware-boot-verified. See
+  `firmware-arm/RECOVERY.md` and `BRICK_FORENSICS.md`. Six pre-built variants:
+  `minimal` (rescue, vanilla bootloader +
   verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
   bisects), `full` (sig-gated OTA + modernized UI), `max` (`full` + boot-side
   mDNS), `lean` (`max` + `--gc-sections`).
