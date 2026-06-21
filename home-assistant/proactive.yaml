@@ -1,0 +1,153 @@
+# Nabaztag — proactive companion ("Nabi, alive")
+# ===========================================================================
+# Turns Nabi from a thing you *command* into a little presence that pipes up on
+# its own — in Violet's terse, poetic cult tone ("Aujourd'hui… pluie !"), never
+# a flat readout. Claude writes the lines in Nabi's voice; HA decides when.
+#
+# Everything is gated on a master switch (input_boolean.nabaztag_proactive) and
+# quiet hours so it stays charming, not chatty.
+#
+# Requires nabaztag.yaml (rest_commands + the nab_api / nab_mac secrets).
+# Adjust the entity ids marked  # <-- adjust  to your setup, then:
+#   Settings → Devices & Services → Helpers won't be needed (this declares its
+#   own input_boolean); just Developer Tools → YAML → Reload all (or reload
+#   Automations + Scripts + Input booleans). Flip "Nabi — proactive companion" on.
+#
+# Pairs nicely with the add-on's `personality` option (off|discret|normal|vif),
+# which adds autonomous micro-movements (gentle ears / side-LED / nose) so Nabi
+# fidgets quietly between these spoken moments.
+
+input_boolean:
+  nabaztag_proactive:
+    name: "Nabi — proactive companion"
+    icon: mdi:rabbit
+
+script:
+  # --- Nabi pipes up: ONE Violet-style line via Claude ----------------------
+  # Builds a tiny context (time of day · weather · who's home) and asks Claude
+  # for a single short line in Nabi's voice, then speaks it with an ear flourish.
+  nabaztag_quip:
+    alias: "Nabaztag - Nabi says something (Violet style)"
+    fields:
+      about:
+        description: "Optional extra context/topic for the remark"
+        example: "quelqu'un vient de rentrer"
+    variables:
+      moment: >-
+        {% set h = now().hour %}
+        {{ 'le matin' if h < 11 else 'le midi' if h < 14 else
+           "l'après-midi" if h < 18 else 'le soir' if h < 22 else 'la nuit' }}
+      weather: "{{ states('weather.home') }}"            # <-- adjust
+      who: >-
+        {% set p = states.person | selectattr('state','eq','home') | list %}
+        {{ p | map(attribute='name') | join(' et ') if p | length else 'personne' }}
+    sequence:
+      - service: conversation.process
+        data:
+          agent_id: conversation.claude_conversation     # <-- adjust to your Anthropic agent
+          text: >-
+            Tu es Nabi, un lapin Nabaztag de 2006 : malicieux, tendre, un brin
+            poète. Dis UNE seule phrase TRÈS courte (8 mots maximum), dans le ton
+            culte de Violet (« Aujourd'hui… pluie ! »). Contexte : nous sommes
+            {{ moment }}, la météo est « {{ weather }} », à la maison il y a
+            {{ who }}. {{ about }} Pas d'emoji, pas de météo récitée, pas de
+            préambule — juste une petite remarque vivante. Réponds uniquement
+            par la phrase, rien d'autre.
+        response_variable: nabi
+      - service: rest_command.nabaztag_ears
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 2, right: 13 }
+      - service: rest_command.nabaztag_say
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          text: "{{ nabi.response.speech.plain.speech }}"
+
+automation:
+  # --- Good morning: a greeting, then the weather "à la Violet" --------------
+  - alias: "Nabi - good morning"
+    trigger:
+      - platform: time
+        at: "07:30:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+      - condition: state
+        entity_id: group.household        # <-- adjust (a people group, or a person)
+        state: "home"
+    action:
+      - service: rest_command.nabaztag_ears
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 0, right: 0 }
+      - service: script.nabaztag_quip
+        data: { about: "On se réveille : dis un petit bonjour." }
+      - delay: "00:00:07"
+      - service: script.nabaztag_weather_announce
+
+  # --- Welcome home: a fresh Claude line instead of a canned phrase ---------
+  - alias: "Nabi - welcome home (spoken)"
+    trigger:
+      - platform: state
+        entity_id: person.kevin           # <-- adjust
+        to: "home"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+    action:
+      - service: rest_command.nabaztag_jingle
+        data: { api: !secret nab_api, mac: !secret nab_mac, name: acquired }
+      - service: script.nabaztag_quip
+        data: { about: "Quelqu'un vient de rentrer : accueille-le chaleureusement." }
+
+  # --- Everyone left: a soft goodbye, then a nap ----------------------------
+  - alias: "Nabi - goodbye when empty"
+    trigger:
+      - platform: state
+        entity_id: group.household        # <-- adjust
+        to: "not_home"
+        for: "00:02:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+    action:
+      - service: script.nabaztag_quip
+        data: { about: "Tout le monde s'en va : dis au revoir, tu vas faire la sieste." }
+      - delay: "00:00:07"
+      - service: rest_command.nabaztag_sleep
+        data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
+
+  # --- Spontaneous: Nabi pipes up on its own, daytime, ~every 3 h -----------
+  # The heart of the "alive" feel — an unprompted little remark when you're home.
+  - alias: "Nabi - spontaneous quip"
+    trigger:
+      - platform: time_pattern
+        hours: "/3"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+      - condition: time
+        after: "10:00:00"
+        before: "21:00:00"
+      - condition: state
+        entity_id: group.household        # <-- adjust: only when someone's home
+        state: "home"
+    action:
+      - service: script.nabaztag_quip
+
+  # --- Good night: a whisper, then sleep ------------------------------------
+  - alias: "Nabi - good night"
+    trigger:
+      - platform: time
+        at: "22:30:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+    action:
+      - service: script.nabaztag_quip
+        data: { about: "C'est l'heure de dormir : souhaite une bonne nuit, tout doucement." }
+      - delay: "00:00:07"
+      - service: rest_command.nabaztag_sleep
+        data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
