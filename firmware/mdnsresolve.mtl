@@ -1,0 +1,42 @@
+// mdnsresolve.mtl — resolve ".local" names over multicast mDNS instead of
+// unicast DNS to the gateway.
+//
+// Why: some gateways silently drop a single client's unicast DNS queries (a
+// per-client ACL / DNS-flood guard). The rabbit then loops forever on
+// `A? <xmpp-domain>` and never reaches XMPP — it stays all-orange. mDNS
+// sidesteps the gateway entirely: a ".local" query goes to the multicast group
+// 224.0.0.251:5353 and any responder on the segment (e.g. avahi on the HA host)
+// answers it. No gateway DNS, no reply-spoofing.
+//
+// How it plugs in: dns.mtl's `dnsreq` already builds a perfectly ordinary DNS A
+// query and (unpatched) sends it to `netdns:53`. We change ONLY the destination
+// when the name ends in ".local": send it to the mDNS group instead. Because our
+// source port stays DNSLOCAL (1597, != 5353), an RFC 6762 §6.7 responder treats
+// it as a "legacy unicast query" and unicasts the answer back to :1597 with our
+// query id echoed — so dns.mtl's existing `cbnetdns` matches and parses it with
+// zero changes. The canonical multicast MAC (01:00:5e:00:00:fb, RFC 1112 §6.4)
+// lets `udpsend` skip arpreq for the class-D address.
+//
+// Pairs with the add-on: locate.jsp must return a ".local" xmpp domain and a
+// responder on the HA host must answer it. The announcer (mdns.mtl) is the
+// opposite direction (publishes the rabbit) and is unrelated to this.
+//
+// VLAN caveat: mDNS doesn't cross VLANs by default. If HA sits on another VLAN
+// than the rabbit, enable an mDNS reflector for that group on the switch/router
+// (UniFi: per-network "Multicast DNS").
+//
+// Constants are namespaced (MDNSR_*) so they never clash with mdns.mtl's
+// announcer constants, whatever the include order is.
+
+// 224.0.0.251
+const MDNSR_IP="\224\0\0\$fb";;
+const MDNSR_PORT=5353;;
+// 01:00:5e:00:00:fb — the multicast MAC for 224.0.0.251.
+const MDNSR_MAC="\1\0\$5e\0\0\$fb";;
+
+// True if `s` ends in ".local" (case-sensitive — locate controls the name).
+// strcmp returns 0 when equal, so `!strcmp a b` reads "a equals b".
+fun mdnsr_islocal s=
+	let strlen s -> n in
+	if n<6 then 0
+	else !strcmp (strsub s n-6 nil) ".local";;
