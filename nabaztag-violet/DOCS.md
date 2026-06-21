@@ -192,6 +192,12 @@ packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/m
 - **`entities.yaml`** — optional **dashboard controls** (a sleep toggle, a nose
   selector, an ears slider, belly R/G/B sliders) built from input helpers +
   automations on those `rest_command`s — replaces the old MQTT entities, no broker.
+- **`blueprints/nabaztag_event_reaction.yaml`** — a **point-and-click blueprint**:
+  pick any entity + the state that should fire + a message, and Nabi reacts in its
+  voice (via `nabaztag_notify`) — no YAML. The easy way to wire house events
+  (doorbell, laundry done, a door opening…) to Nabi. Drop it in
+  `/config/blueprints/automation/` then **Settings → Automations → Create →
+  *Use a blueprint***.
 
 Set `nab_api` (`<HAOS_IP>:8099`) and `nab_mac` in `secrets.yaml`, drop the files
 in `/config/packages/`, and reload YAML.
