@@ -1,79 +1,76 @@
-# DNS helper — when the gateway drops the rabbit's queries
+# Resolving the rabbit's server when the gateway drops its DNS
 
 ## Symptom
 
 The rabbit reboots, fetches its bytecode and `locate.jsp` fine, then loops
-forever on `A? nabaztag.lan` to the gateway **with no answer**, and stays
+forever on `A? <xmpp-domain>` to the gateway **with no answer**, and stays
 "all orange" (no server). Meanwhile *other* hosts on the same network resolve
-`nabaztag.lan` just fine.
+the same name just fine.
 
 ## Root cause
 
 The gateway's DNS selectively refuses queries coming **from the rabbit's IP**.
-Proven with a control test: the *same* `A? nabaztag.lan` query sent with the
-HA host's source IP is answered; sent with the rabbit's source IP it gets
-nothing. The only variable is the source IP → a per-client DNS ACL / DNS-flood
-guard on the gateway (the rabbit hammers ~1 query/s, which can trip flood
-protection). It is **not** the firmware, the source port, or L2 isolation.
+Proven with a control test: the *same* query sent with the HA host's source IP
+is answered; sent with the rabbit's source IP it gets nothing. The only variable
+is the source IP → a per-client DNS ACL / DNS-flood guard on the gateway (the
+rabbit hammers ~1 query/s, which can trip flood protection). It is **not** the
+firmware, the source port, or L2 isolation.
 
-## The clean fix (network side — preferred)
+## Deployed solution: mDNS (no gateway DNS, no spoofing)
 
-On the gateway, allow the rabbit's DNS, e.g. one of:
+The rabbit asks for its server over **multicast mDNS** instead of unicast DNS to
+the gateway, and HA answers with a standard mDNS responder. Three pieces:
 
-* whitelist the rabbit's IP in the DNS-flood / threat protection, or
-* an explicit **Allow** rule `RABBIT_IP -> GATEWAY_IP udp/tcp 53` above any block, or
-* hand the rabbit a working resolver via DHCP (point its DNS at the HA host,
-  which already resolves `nabaztag.lan`).
+1. **Firmware** (`firmware/mdnsresolve.mtl` + `patch_dns.py`): the bootcode's
+   `dnsreq` routes `.local` names to `224.0.0.251:5353` instead of `netdns:53`.
+   Built into the served bytecode — no flashing. See `firmware/README.md`.
+2. **locate** returns a `.local` xmpp domain: set the add-on option
+   `server_address = nabaztag.local`.
+3. **`nabmdns.py`** answers `nabaztag.local` on the multicast group. Because the
+   rabbit queries from port 1597 (!= 5353) it's an RFC 6762 §6.7 "legacy unicast
+   query", so the reply is unicast straight back to the rabbit. This is a
+   *standard* responder — no gateway spoofing, not tied to a client IP. (Avahi
+   on the host could do the same job if it can publish the name.)
 
-If you can do this, you don't need the helper below — remove it.
-
-## The workaround (host side — no firewall change)
-
-`nabdns.py` runs on a host that shares the rabbit's L2 segment (host
-networking) and answers the rabbit *on the gateway's behalf*: it sniffs the
-rabbit's `A? <NAME>` and injects a spoofed reply (source = gateway:53) pointing
-`<NAME>` at the server. It only ever answers one name for one client.
-
-### Deploy as a persistent, auto-restarting container
-
-Run on the HA host (needs Docker access, host networking, `CAP_NET_RAW`).
-Replace the placeholders with your values:
-
-* `<L2_IFACE>`   — interface on the rabbit's segment (e.g. `eth0`)
-* `<RABBIT_IP>`  — the rabbit's fixed IP
-* `<GATEWAY_IP>` — the DNS the rabbit queries (its gateway)
-* `<HA_IP>`      — where `nabaztag.lan` should resolve (the add-on host)
-* `<IMAGE>`      — any image with Python 3 (the nabaztag-violet add-on image works,
-                   so nothing extra is pulled)
+Deploy the responder as a persistent, auto-restarting container (host
+networking, no special caps). Replace the placeholders:
 
 ```sh
-B64=$(base64 nabdns.py | tr -d '\n')
-docker rm -f nabaztag-dns 2>/dev/null
-docker run -d --name nabaztag-dns \
-  --network host --cap-add NET_RAW --restart unless-stopped \
-  -e NABDNS_IFACE=<L2_IFACE> \
-  -e NABDNS_RABBIT=<RABBIT_IP> \
-  -e NABDNS_GATEWAY=<GATEWAY_IP> \
-  -e NABDNS_ANSWER=<HA_IP> \
-  -e NABDNS_NAME=nabaztag.lan \
+B64=$(base64 nabmdns.py | tr -d '\n')
+docker rm -f nabaztag-mdns 2>/dev/null
+docker run -d --name nabaztag-mdns \
+  --network host --restart unless-stopped \
+  -e NABMDNS_NAME=nabaztag.local \
+  -e NABMDNS_ANSWER=<HA_IP> \
   --entrypoint /bin/sh <IMAGE> \
-  -c "echo $B64 | base64 -d > /nabdns.py && exec python3 /nabdns.py"
+  -c "echo $B64 | base64 -d > /m.py && exec python3 /m.py"
 ```
 
-Check it: `docker logs nabaztag-dns` → `nabdns up: answering ...` and, once the
-rabbit queries, `answered #1 ...`.
+`docker logs nabaztag-mdns` → `nabmdns up: ...` then, once the rabbit boots,
+`answered #N from <RABBIT_IP>:1597`.
 
-### Remove it (once the network-side fix is in place)
+VLAN caveat: mDNS doesn't cross VLANs. If HA and the rabbit are on different
+VLANs, enable an mDNS reflector for the group on the switch/router (UniFi:
+per-network "Multicast DNS").
 
-```sh
-docker rm -f nabaztag-dns
-```
+> Mic streaming caveat: the add-on's `_server_ip()` does `gethostbyname(
+> server_address)` for the optional `RS` mic command. With a `.local` name it
+> can't resolve that itself (bridge network, no mDNS), so if you enable
+> `auto_listen`/`personality`, give the add-on container a hosts entry
+> (`nabaztag.local <HA_IP>`) or set the server IP another way. The default
+> (mic off) is unaffected.
 
-## Note on firmware mDNS
+## The clean fix (network side)
 
-The boot-loader carries an mDNS **announcer** (`boot-mods/mdns.mtl`) that
-publishes `naboot.local -> rabbit IP`. That helps you *reach the rabbit by
-name*; it does **not** resolve the server, so it does not replace this helper.
-A firmware mDNS **resolver** (rabbit resolves a `.local` server name over
-multicast, bypassing the gateway DNS entirely) is the proper firmware-side
-alternative — see the project notes.
+If you can change the gateway: whitelist the rabbit's IP in the DNS-flood /
+threat protection, or add an explicit Allow rule `RABBIT_IP -> GATEWAY_IP
+udp/tcp 53`, or hand the rabbit a working resolver via DHCP. Then you don't need
+any of the above.
+
+## Legacy fallback: unicast spoofer (`nabdns.py`)
+
+Before the mDNS resolver existed, `nabdns.py` answered the rabbit's *unicast*
+`A? <name>` on the gateway's behalf (it sniffs the query and injects a spoofed
+reply, needs `CAP_NET_RAW`). Superseded by the mDNS path above; kept for a stock
+(un-patched) bytecode that still does unicast DNS. Deploy/remove docs are in the
+file's header; container name was `nabaztag-dns`.
