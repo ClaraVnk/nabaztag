@@ -25,7 +25,7 @@
   <img src="https://img.shields.io/badge/breathes-live-success?style=flat-square" alt="breathes">
   <img src="https://img.shields.io/badge/speaks-live-success?style=flat-square" alt="speaks">
   <img src="https://img.shields.io/badge/moves%20%26%20glows-live-success?style=flat-square" alt="moves and glows">
-  <img src="https://img.shields.io/badge/%22hey%20Nabi%22-live-success?style=flat-square" alt="wake word">
+  <img src="https://img.shields.io/badge/%22hey%20Nabi%22-beta-dbab09?style=flat-square" alt="wake word (beta)">
   <img src="https://img.shields.io/badge/asks%20Claude-live-success?style=flat-square" alt="asks Claude">
   <img src="https://img.shields.io/badge/signed%20OTA-verified-success?style=flat-square" alt="signed OTA verified">
   <br><sub>every capability above verified live on a real Nabaztag:tag&nbsp;v2 🐰</sub>
@@ -44,8 +44,9 @@ through a simple control API.
 
 - 🐰 **Revives a 2006 rabbit** with **zero hardware mods** and **nothing flashed**
   by default — a stock rabbit just downloads its bytecode from the add-on on boot.
-- 🗣️ **Talk to Claude through the rabbit** — hold the head button (or say
-  "hey Nabi"), ask, and it answers in its own voice while moving its ears + LEDs.
+- 🗣️ **Talk to Claude through the rabbit** — hold the head button, ask, and it
+  answers in its own voice while moving its ears + LEDs. Hands-free **"hey Nabi"
+  wake word is in beta** — opt-in and off by default (see the privacy note below).
 - 🔒 **100&nbsp;% local** — bundled whisper.cpp STT + Piper / espeak-ng TTS. No
   cloud, no account, no telemetry.
 - 🧩 **Driven from Home Assistant** — speak text, play audio, original Violet
@@ -225,8 +226,12 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   `[ears …]` / `[led …]` / `[nose …]` tags in its reply. TTS is bundled **espeak-ng**
   or, for a much nicer voice, **Piper** via the HA Piper add-on. Enable it with the
   `voice_pipeline` / `conversation_agent` / `tts_engine` options.
-- **Phase 3 — wake word — working (verified live):** push-to-talk needs no
-  firmware change; a hands-free wake word ("hey Nabi") does. The stock firmware
+- **Phase 3 — wake word — beta (opt-in, off by default):** push-to-talk is
+  stable and needs no firmware change; the hands-free wake word ("hey Nabi") is
+  **beta** — always-listening is opt-in and **off at source by default** (the mic
+  does not stream until you turn it on; turning it off stops capture at the
+  rabbit, not just server-side). It works end-to-end but the wake-word accuracy
+  and barge-in handling are still being tuned. The stock firmware
   only records the mic on a physical button press — the server can't start a
   recording. So passive listening required a **custom mic-streaming bytecode**.
   Solution: a *hybrid* bytecode that adds a server-triggered **UDP microphone
