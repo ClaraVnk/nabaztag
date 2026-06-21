@@ -1746,11 +1746,49 @@ MIC_STREAM = {"adpcm": bytearray(), "packets": 0, "ts": 0.0, "src": None}
 MIC_LOCK = threading.Lock()
 
 
+_HOST_IP_CACHE = {"ip": None}
+
+
+def _host_lan_ip():
+    """The HA host's primary LAN IP — the address the rabbit must actually reach
+    for UDP mic / audio (the add-on's ports are published on the host). When
+    `server_address` is a `.local` name (mDNS) the bridge container can't
+    gethostbyname it, so ask the Supervisor for the host's default interface."""
+    if _HOST_IP_CACHE["ip"]:
+        return _HOST_IP_CACHE["ip"]
+    tok = _supervisor_token()
+    if not tok:
+        return None
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://supervisor/network/info",
+                                     headers={"Authorization": f"Bearer {tok}"})
+        itfs = json.loads(urllib.request.urlopen(req, timeout=5).read().decode()) \
+            .get("data", {}).get("interfaces", [])
+        # prefer the primary/enabled interface, else any with an IPv4
+        for want_primary in (True, False):
+            for itf in itfs:
+                if want_primary and not itf.get("primary"):
+                    continue
+                addrs = (itf.get("ipv4") or {}).get("address") or []
+                if addrs:
+                    _HOST_IP_CACHE["ip"] = addrs[0].split("/")[0]
+                    return _HOST_IP_CACHE["ip"]
+    except Exception as exc:  # noqa
+        log.warning("host IP lookup failed: %s", exc)
+    return None
+
+
 def _server_ip():
     try:
-        return socket.gethostbyname(SERVER_ADDRESS)
+        ip = socket.gethostbyname(SERVER_ADDRESS)
+        if ip and not ip.startswith("127."):
+            return ip
     except OSError:
-        return SERVER_ADDRESS
+        pass
+    # a `.local` (or otherwise unresolvable) server_address: hand the rabbit the
+    # host's LAN IP it can actually reach, not the unresolved name.
+    return _host_lan_ip() or SERVER_ADDRESS
 
 
 def udp_mic_server():
