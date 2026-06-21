@@ -340,6 +340,35 @@ Full guide (API, pairing, troubleshooting) is in
   the config-mode upload page) for signed OTA + a modern config UI.
 - Host architecture: **amd64**.
 
+## Troubleshooting
+
+### "After a reboot the belly LEDs are stuck blinking/solid orange — did I brick it?"
+
+**No — don't panic.** Orange (blinking or solid) means the rabbit is *awake and
+looking for its Wi-Fi / server*, not dead. A bricked rabbit shows **no** boot
+animation at all. These 2006 radios are simply **flaky at re-associating Wi-Fi on
+boot** — after a power-cycle, a firmware OTA, an add-on restart, or any reboot, the
+rabbit often comes up orange and just sits there with no network traffic for a
+minute or more.
+
+**The fix is almost always a clean power-cycle:** unplug the power, wait ~10
+seconds (so it fully discharges), plug it back in. It then boots → fetches its
+bytecode → `locate` → connects → **breathes**. If the first try doesn't catch,
+do it once more — it's normal, not a fault.
+
+Tips: it's the Wi-Fi association that's flaky, so a strong signal / 2.4 GHz / a
+less crowded channel helps. Don't restart the add-on repeatedly in a short window
+(each restart drops the rabbit's connection and makes it re-seek). A `ping` from
+HA failing is **not** a sign of trouble if the rabbit is on a different VLAN
+(cross-VLAN ICMP is usually blocked) — check the add-on's status/logs instead.
+
+### Telling a real brick apart from Wi-Fi flakiness
+
+| Symptom | Meaning | Fix |
+|---|---|---|
+| Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | Power-cycle (unplug ~10 s) |
+| **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); JTAG as last resort |
+
 ## TTS note
 
 The rabbit's original TTS relied on Acapela's now-dead web service. The add-on
