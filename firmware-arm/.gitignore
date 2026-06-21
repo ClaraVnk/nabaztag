@@ -5,6 +5,13 @@ bin/*/
 *.bin
 *.map
 __pycache__/
+
+# Exception: DO version the last hardware-verified STABLE release — the signed
+# .sim the community downloads + our emergency backup. Test / dev / unstable
+# builds under bin/ stay ignored (that was always the rule). See releases/README.
+!releases/
+!releases/*.signed.sim
+!releases/*.md
 # Private signing key never leaves the dev machine. Only the public header
 # (keys/signing_pubkey.h) is committed.
 signing/*.key
