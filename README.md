@@ -173,7 +173,7 @@ Full guide (API, pairing, troubleshooting) is in
 ## Flash Naboot & adopt your rabbit on Le Terrier
 
 Don't want to run a server at home? Put your rabbit on the public warren —
-**[Le Terrier](https://terrier.cyberloutre.fr/)** — in three steps:
+**[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
 1. **Download Naboot** — the signed firmware lives at
    **[`firmware-arm/releases/naboot-stable.signed.sim`](firmware-arm/releases/)**
@@ -184,10 +184,16 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
    upgrade* and upload the file. **Don't unplug** during the ~30 s flash. This is
    the only manual flash — from here on, updates are **signed OTA**, over the air.
-3. **Adopt it.** Once flashed, the rabbit dials Le Terrier and **says its
-   adoption code out loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type
-   that code on the **`/pair`** page — the rabbit is yours, and any update reaches
-   it automatically. *Missed the code? Unplug/replug — it repeats it on every
+3. **Point it at Le Terrier.** After it reboots, re-enter config mode (head
+   button while plugging in → belly **blue** again) and reopen
+   `http://192.168.0.1` — it now shows *Naboot's* setup page. Enter your home
+   Wi-Fi, then under **Advanced → Server** set **Boot URL host** to
+   `terrier.cyberloutre.fr` and tap *Connect rabbit*. (Running your own warren?
+   Put your server's hostname here instead.)
+4. **Adopt it.** The rabbit dials Le Terrier and **says its adoption code out
+   loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type that code on the
+   **`/pair`** page — the rabbit is yours, and any update reaches it
+   automatically. *Missed the code? Unplug/replug — it repeats it on every
    connect until it's claimed.*
 
 > The custom firmware is **optional**: a stock rabbit works fine on the Home
