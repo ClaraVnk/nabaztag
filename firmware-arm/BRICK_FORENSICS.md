@@ -17,6 +17,14 @@ including `minimal`/vanilla, which is why the rescue image bricked too.
 `*(.bss .bss.*)`; `minimal` gains `gc_sections` so the correctly-sized `.bss`
 fits the 16 KB SRAM. Rebuild any mode and `__bss_end__` covers the full `.bss`.
 
+**Trigger (how it actually bricked):** the bug is LATENT — it only bites when
+something reads the uninitialized audio index, i.e. when audio actually plays.
+Loutre had just enabled the add-on's **"connection jingle"** option, which makes
+the server tell the rabbit to play a sound on connect → `audioPlayFetchByte`
+reads the garbage index → out-of-bounds → brick. The jingle didn't cause the
+bug, it exposed it. With the `.bss` fix the audio ring-buffer inits cleanly, so
+the connection jingle (and all audio) is safe again.
+
 **How it was recovered (no probe):** a Raspberry Pi 4 as a bit-banged JTAG
 adapter (OpenOCD + `linuxgpiod`, F/F Dupont to the 8-pin JTAG header) plus a
 TCL reimplementation of the OKI ML67Q4051 flash sequence on stock OpenOCD
