@@ -173,6 +173,30 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 Full guide (API, pairing, troubleshooting) is in
 **[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
 
+## Flash Naboot & adopt your rabbit on Le Terrier
+
+Don't want to run a server at home? Put your rabbit on the public warren —
+**[Le Terrier](https://terrier.cyberloutre.fr/)** — in three steps:
+
+1. **Download Naboot** — the signed firmware lives at
+   **[`firmware-arm/releases/naboot-stable.signed.sim`](firmware-arm/releases/)**
+   (hardware-verified, reproducible). The illustrated 5-minute flashing guide is
+   at <https://terrier.cyberloutre.fr/naboot>.
+2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
+   the head button while plugging the power back in (belly turns **blue**), join
+   the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
+   upgrade* and upload the file. **Don't unplug** during the ~30 s flash. This is
+   the only manual flash — from here on, updates are **signed OTA**, over the air.
+3. **Adopt it.** Once flashed, the rabbit dials Le Terrier and **says its
+   adoption code out loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type
+   that code on the **`/pair`** page — the rabbit is yours, and any update reaches
+   it automatically. *Missed the code? Unplug/replug — it repeats it on every
+   connect until it's claimed.*
+
+> The custom firmware is **optional**: a stock rabbit works fine on the Home
+> Assistant add-on above (nothing flashed). Naboot is what unlocks **signed OTA**
+> + the modern config UI + dialing a remote warren like Le Terrier.
+
 ## Roadmap
 
 - **Phase 1 — working (verified live):** the rabbit boots our bytecode, completes
