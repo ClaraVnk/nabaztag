@@ -43,10 +43,19 @@ python3 patch_dns.py  <bootcode>/sources/dns.mtl
 
 # 3) preprocess + compile
 cd <bootcode>/sources && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl
-# NB: use RedoXyde/mtl_linux's mtl_compiler (-m32). The compiler bundled under
-# <bootcode>/compiler (mtl_comp) is the 64-bit build and SEGFAULTS — don't use it.
-mtl_linux/mtl_compiler -s <bootcode>/bootcode.mtl bootcode_hybrid.bin
+# NB: use RedoXyde/mtl_linux's compiler (-m32). The bundled <bootcode>/compiler/
+# mtl_comp is the 64-bit build and SEGFAULTS. The full hybrid pulls in fwota.mtl,
+# which uses the custom `verifySig` opcode (152) — so use the *patched* compiler
+# (mtl_compiler_patched); the plain mtl_compiler errors "unknown label verifySig".
+mtl_linux/mtl_compiler_patched -s <bootcode>/bootcode.mtl bootcode_hybrid.bin
 ```
+
+**One command for steps 2–3:** `./build-bytecode.sh <bootcode-dir>` copies all
+our modules, applies `patch_main.py` + `patch_dns.py`, and compiles with the
+patched compiler — so a rebuild can never silently drop a module (the mDNS
+resolver in particular). Hardware-verified: the full hybrid (104 827 B — resolver
++ announcer + RS/RT/SV + OTA) boots, resolves over mDNS, binds XMPP, broadcasts
+`naboot.local`, and speaks. The FW/OTA path only *runs* on Naboot firmware.
 
 The compiled `*.bin` is **not committed** (it's derived from reverse-engineered
 proprietary firmware — like the stock bootcodes, it's built/served locally, not
