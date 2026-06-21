@@ -206,14 +206,22 @@ Full guide (API, pairing, troubleshooting) is in
   verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
   bisects), `full` (sig-gated OTA + modernized UI), `max` (`full` + boot-side
   mDNS), `lean` (`max` + `--gc-sections`).
-- **Phase 5 — setup UX — done (not yet hardware-verified):** rewrote the four
+- **Phase 5 — setup UX — done (hardware-verified 2026-06-21):** rewrote the four
   config-mode HTML pages (`page_a / page_done / page_u / page_error`) in
   modern semantic HTML with a dark theme, mobile viewport, and the same form
   field names + template markers the firmware backend expects, so the existing
   `cbhttp` / `httpindex` / `httpflash` paths in `boot.0.0.0.13.mtl` keep
   working unchanged. Saved ~5 KB of ROM in the process. Source HTML lives
   under `firmware-arm/pages/`; injection into the boot bytecode is done by
-  `firmware-arm/apply-mods.py:modernize_pages`.
+  `firmware-arm/apply-mods.py:modernize_pages`. The modernized pages, rendered
+  on a real rabbit (the `lean` build) from a phone at `192.168.0.1`:
+
+  <p align="center">
+    <img src="images/naboot-config-setup.png" alt="Naboot config — Wi-Fi setup" height="380">
+    &nbsp;&nbsp;
+    <img src="images/naboot-config-upgrade.png" alt="Naboot config — firmware upgrade" height="380">
+  </p>
+
 - **Phase 6 — Le Terrier — DONE (live at https://terrier.cyberloutre.fr/):**
   the public warren every Naboot rabbit dials back to. Dependency-free Python
   (stdlib + Flask for the owner UI), deployed on Loutre's VPS via a rootless
