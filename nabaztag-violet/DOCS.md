@@ -23,8 +23,9 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
    `:80`/`:5222` ports.
 3. Install **Nabaztag Violet Server**. Set `server_address` to a **hostname**
    (e.g. `nabaztag.lan`) — **not a raw IP**: the bytecode resolves the XMPP server
-   by DNS, so it must be a resolvable name. (`bootcode` option: `ojn` is the
-   default and works.) Then **Start**.
+   by DNS, so it must be a resolvable name. Then **Start**. (The runtime bytecode
+   is bundled — a *hybrid* build, so passive listening and volume work out of the
+   box; there's nothing to choose.)
 
 ## Point the rabbit at the server
 
@@ -132,21 +133,26 @@ Enable it in the add-on **Configuration**:
     controls your home, tells the time, etc.), or
   - *empty* → just echo the transcription back.
 - `stt_language`: `fr`
+- `stt_model`: `tiny | base | small` (default **`small`**) — the bundled
+  whisper.cpp model. Bigger = more accurate but slower; even `base` does decent
+  French on the rabbit's 8 kHz mic.
 - `tts_engine`: `espeak` (bundled, robotic) or `piper` (nicer — needs the HA
-  **Piper** add-on; the add-on fetches its audio through the Supervisor proxy)
-- `tts_entity`: the Piper TTS entity, e.g. `tts.piper`. For a softer French voice
-  use **`fr_FR-siwis-medium`** in the Piper add-on (the clearest French female).
+  **Piper** add-on; the add-on fetches its audio through the Supervisor proxy).
+  The Piper entity defaults to **`tts.piper`**; for a softer French voice use
+  **`fr_FR-siwis-medium`** in the Piper add-on (the clearest French female).
 - `voice_pitch`: shift the voice **up** by this many percent for a cuter / younger,
   more playful timbre (`0` = off; ~`12`–`18` is a nice "mignonne" range; `>30` =
   chipmunk). Stock Piper voices are neutral, so this is how you make Nabi sound
   more espiègle without a custom voice. Needs ffmpeg (bundled).
-- `voice_prompt`: the instruction prepended for the agent (it explains the action
-  tags and asks for short replies)
 
-Keep replies short — the charm is brevity. The bundled STT model is `base`
-(decent French on an 8 kHz mic); swap to a bigger whisper model for more accuracy.
+Keep replies short — the charm is brevity. The agent's instruction (the Nabi
+persona + the action-tag explanation) is built in; you shape the *content* by
+choosing the conversation agent and its own system prompt.
 
-### Passive listening ("hey Nabi") & privacy
+### Passive listening ("hey Nabi") & privacy — BETA
+
+> **Beta.** Hands-free "hey Nabi" works end-to-end but wake-word accuracy and
+> barge-in handling are still being tuned. **Push-to-talk is the stable path.**
 
 A hands-free wake word is **opt-in and OFF by default** — a deliberate privacy
 choice (push-to-talk needs no always-on mic). When it is **off, the rabbit does
@@ -154,16 +160,16 @@ not stream its microphone at all**; nothing is captured or sent. Controls:
 
 - `auto_listen`: `false` (default) → no passive listening. Set `true` to start it
   automatically once the rabbit is idle.
-- `wake_word`: the trigger word (default `nabi`).
+- The wake word is **`nabi`** (built in).
 - `wake_chime`: a short jingle played as a "got it" cue after the wake word (once
-  the mic stops, while the agent thinks) — default `start_record`; `""` to disable.
+  the mic stops, while the agent thinks) — default `start_record`; `none` to disable.
 - Toggle it **at runtime** with `GET /api/mic?on=1` / `?on=0`. Turning it **off
   sends `RT`**, so the rabbit *stops capturing* — it is not a server-side mute.
   The `home-assistant/` package exposes this as the `nabaztag_listen` rest_command
-  and (via `entities.yaml`) a **"Nabi passive listening" toggle** for a dashboard.
+  and a **"Nabi passive listening" toggle** for a dashboard.
 
-Passive listening needs the **hybrid bytecode** (`bootcode: hybrid`); push-to-talk
-works on the stock bytecode and is always available regardless of this setting.
+The bundled bytecode is already a *hybrid* build, so passive listening works out
+of the box; push-to-talk is always available regardless of this setting.
 
 ## Home Assistant integration (REST)
 
@@ -172,10 +178,17 @@ through this add-on's HTTP control API via `rest_command`s. Two ready-to-paste
 packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/main/home-assistant):
 
 - **`nabaztag.yaml`** — the `rest_command`s (say / play / ears / led / weather /
-  nose / sleep) plus scripts (`nabaztag_say`, `nabaztag_ask_claude`,
-  `nabaztag_weather_announce`).
-- **`ambient.yaml`** — example ambient automations (belly = colour of the day,
-  morning/night, arrival, appliance-done, intercom) built on those `rest_command`s.
+  nose / sleep / jingle / volume / listen) plus helper scripts.
+- **`proactive.yaml`** — the **Claude-driven proactive companion**: Nabi pipes up
+  on its own in Violet's tone (morning greeting + agenda/weather briefing, welcome
+  home, spontaneous remarks where Claude may stay silent, "the sky turned", a
+  silent belly that mirrors the weather), plus a reusable **`nabaztag_notify`**
+  script (route any house event through Nabi's voice). Gated by a master switch +
+  a **night-mode** sensor that silences speech *and* sleeps the rabbit 22:00→08:00.
+- **`rfid.yaml`** — remembers the last scanned tag (to discover ids) and dispatches
+  known RFID/Ztamp tags to actions.
+- **`ambient.yaml`** — simpler example ambient automations (belly = colour of the
+  day, morning/night, arrival, appliance-done, intercom).
 - **`entities.yaml`** — optional **dashboard controls** (a sleep toggle, a nose
   selector, an ears slider, belly R/G/B sliders) built from input helpers +
   automations on those `rest_command`s — replaces the old MQTT entities, no broker.
@@ -229,18 +242,24 @@ automation:
 Nabi can have **a life of its own** or be **entirely driven by you** — your choice
 via the `personality` option:
 
-- **`personality: subtle | auto | lively`** — the add-on animates Nabi on its
+- **`personality: discret | normal | vif`** — the add-on animates Nabi on its
   own: a gentle random behaviour (an ample ear wiggle, a soft side-LED pulse, or
   a nose blink) at random intervals, **daytime only**, and never on top of a
   voice reply. It deliberately leaves the **belly LED** alone so it won't fight a
-  colour-of-the-day. The level sets the cadence — `subtle` ≈ a few times/hour,
-  `auto` ≈ hourly-ish, `lively` ≈ every few minutes (override with
-  `personality_min_s` / `personality_max_s`).
+  colour-of-the-day. The level sets the cadence — `discret` ≈ a few times/hour,
+  `normal` ≈ every ~10–25 min, `vif` ≈ every few minutes (advanced env overrides
+  `personality_min_s` / `personality_max_s` exist but aren't exposed in the UI).
 - **`personality: off`** (default) — Nabi just breathes, and **you** decide what
-  it does, when, via Home Assistant automations (see the "signs of life" example
-  in `ambient.yaml`).
+  it does, when, via Home Assistant automations (see `proactive.yaml` for the full
+  Claude-driven companion, or `ambient.yaml` for simpler "signs of life").
 
-Pick one — don't run `auto` *and* HA idle automations at once, or they'll both
+> **Note — `off` does not mean asleep.** It only removes the *extra* autonomous
+> moves; a connected rabbit still **breathes** (the stock idle animation) until
+> something explicitly sends it to sleep (`/api/sleep?on=1`). "Night mode" in the
+> companion package silences proactive speech *and* sleeps the rabbit through the
+> quiet window — the breathing is not the `personality` option.
+
+Pick one — don't run `vif` *and* HA idle automations at once, or they'll both
 move the ears. Test a behaviour instantly any time with `GET /api/personality`.
 
 ## Status
