@@ -140,7 +140,7 @@ care (no float-printf, different locking model) — deferred until the
 rabbit is alive again.
 
 All six pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
-done with `./build.sh --remote rocky@vps-ee4c4993.vps.ovh.net:10022
+done with `./build.sh --remote rocky@vps.example.net:10022
 --runtime podman --mode <mode>` (build.sh supports `--runtime podman`
 and `host:port` remotes).
 
