@@ -1,19 +1,34 @@
 <p align="center">
-  <img src="images/nabaztag.jpg" alt="Nabaztag" height="140">
+  <img src="images/nabaztag.jpg" alt="Nabaztag" height="150">
   &nbsp;&nbsp;&nbsp;
-  <img src="images/home-assistant.png" alt="Home Assistant" height="44">
+  <img src="images/home-assistant.png" alt="Home Assistant" height="48">
 </p>
 
-# Nabaztag for Home Assistant OS
+<h1 align="center">Nabaztag&nbsp;&nbsp;×&nbsp;&nbsp;Home Assistant</h1>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache 2.0"></a>
-  <img src="https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?logo=home-assistant&logoColor=white" alt="Home Assistant add-on">
-  <img src="https://img.shields.io/badge/arch-amd64-lightgrey" alt="amd64">
-  <img src="https://img.shields.io/badge/protocol-Violet-orange" alt="Violet protocol">
-  <img src="https://img.shields.io/badge/python-stdlib-3776AB?logo=python&logoColor=white" alt="Python stdlib">
-  <img src="https://img.shields.io/badge/100%25-local-success" alt="100% local, no cloud">
-  <img src="https://img.shields.io/badge/status-talks·moves·listens→Claude%20(live)-success" alt="Talks, moves, listens, talks to Claude — verified live">
+  <strong>Bring the 2006 Wi-Fi rabbit back to life — and let it talk to Claude.</strong><br>
+  <sub>100&nbsp;% local · no cloud · no account. The Violet servers died in 2011; this is its new home.</sub>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="Home Assistant add-on">
+  <img src="https://img.shields.io/badge/100%25-local-44cc11?style=flat-square" alt="100% local, no cloud">
+  <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
+  <img src="https://img.shields.io/badge/firmware-Naboot-8957e5?style=flat-square" alt="Naboot custom firmware">
+  <img src="https://img.shields.io/badge/protocol-Violet-6f42c1?style=flat-square" alt="Violet protocol">
+  <img src="https://img.shields.io/badge/python-stdlib%20only-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python stdlib only">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/breathes-live-success?style=flat-square" alt="breathes">
+  <img src="https://img.shields.io/badge/speaks-live-success?style=flat-square" alt="speaks">
+  <img src="https://img.shields.io/badge/moves%20%26%20glows-live-success?style=flat-square" alt="moves and glows">
+  <img src="https://img.shields.io/badge/%22hey%20Nabi%22-live-success?style=flat-square" alt="wake word">
+  <img src="https://img.shields.io/badge/asks%20Claude-live-success?style=flat-square" alt="asks Claude">
+  <img src="https://img.shields.io/badge/signed%20OTA-verified-success?style=flat-square" alt="signed OTA verified">
+  <br><sub>every capability above verified live on a real Nabaztag:tag&nbsp;v2 🐰</sub>
 </p>
 
 Bring an **original Nabaztag** (the 2005–2006 Wi-Fi rabbit by Violet/Mindscape)
@@ -25,15 +40,32 @@ directly: the rabbit phones home to it (the real Violet servers died around
 2011), and Home Assistant drives the rabbit — ears, belly weather icons, nose —
 through a simple control API.
 
-> ✅ **It works end-to-end.** A stock rabbit is a "dumb" Wi-Fi client that
-> downloads its bytecode from the server on every boot (nothing is flashed by
-> default) and talks plain HTTP + XMPP (no TLS pinning). Phases 1, 2, 3 and 6
-> are all working live: the rabbit boots, breathes, speaks, plays jingles,
-> moves its ears, lights up — and listens hands-free for "hey Nabi", asks
-> Claude, and answers. The custom firmware (Naboot, Phase 4) adds Ed25519-gated
-> OTA and a modernized config UI; Le Terrier (Phase 6) is the public warren
-> live at <https://terrier.cyberloutre.fr/>. See Roadmap for the current
-> status of each phase.
+### ✨ Highlights
+
+- 🐰 **Revives a 2006 rabbit** with **zero hardware mods** and **nothing flashed**
+  by default — a stock rabbit just downloads its bytecode from the add-on on boot.
+- 🗣️ **Talk to Claude through the rabbit** — hold the head button (or say
+  "hey Nabi"), ask, and it answers in its own voice while moving its ears + LEDs.
+- 🔒 **100&nbsp;% local** — bundled whisper.cpp STT + Piper / espeak-ng TTS. No
+  cloud, no account, no telemetry.
+- 🧩 **Driven from Home Assistant** — speak text, play audio, original Violet
+  jingles, ear choreographies, RGB light shows, weather / mail / air belly icons;
+  button / RFID / ear-move events come back as HA events for your automations.
+- 🔧 **Optional custom firmware (Naboot)** — Ed25519-**signed OTA**, *verified
+  end-to-end on hardware* (flashed over the air, no JTAG), plus a modern config UI.
+- 📡 **Survives a hostile network** — a tiny firmware mDNS resolver lets the rabbit
+  find its server over multicast even when the gateway refuses its unicast DNS.
+- 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
+  anyone can adopt a rabbit without running their own server.
+
+> ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** A
+> stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on every boot
+> (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit boots,
+> breathes, speaks, plays jingles, moves its ears, lights up, listens hands-free
+> for "hey Nabi", asks **Claude** and answers. The custom **Naboot** firmware
+> adds a signed OTA path (proven by actually flashing over the air) and a modern
+> config UI; **Le Terrier** is the public warren. See the **Roadmap** below for
+> the status of every phase.
 
 ## How it works
 
