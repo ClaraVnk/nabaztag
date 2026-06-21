@@ -121,12 +121,9 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 │   └── DOCS.md              #    install / pairing / API / status
 ├── nabaztag-server/         # OpenJabNab add-on (superseded — kept for reference)
 │   └── …                    #    its HTTP listener is non-functional in the upstream image
-├── terrier/                 # Le Terrier — public warren (Phase 6, live at
-│   ├── server.py            #    terrier.cyberloutre.fr). Same Violet protocol as the
-│   ├── ui.py                #    add-on but multi-tenant, with an owner Web UI,
-│   ├── xmpp.py / protocol.py #    SQLite for per-MAC state, Caddy+Podman deploy.
-│   ├── deploy/              #    Caddy / Quadlet / OVH firewall snippets.
-│   └── SPEC.md
+│                            # (Le Terrier — the public warren at
+│                            #  terrier.cyberloutre.fr — lives in a separate
+│                            #  private repo; the live site is the showcase.)
 ├── firmware-arm/            # Naboot — custom ARM7 firmware (Phase 4/5). Forks
 │   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2 + Ed25519-gated httpflash +
 │   ├── boot-mods/mdns.mtl   #    modernized config UI + boot-side mDNS announcer.
@@ -295,10 +292,13 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   the link previews cleanly in iMessage), and walks an owner through signup
   → claim → pair → drive in three steps. Multi-tenant per-MAC state in
   SQLite; per-owner / per-rabbit accounts; ProxyFix so HTTPS canonical URLs
-  resolve cleanly behind Caddy. Not yet in the platform: per-rabbit bytecode
-  minting (every paired rabbit gets the same baseline today — owner-driven
-  customisation lands later) and an "orphan claim-me" bytecode that blinks
-  the pair code on the belly LEDs. **Naboot is the firmware on the rabbit;
+  resolve cleanly behind Caddy. **Adoption is wired up:** an unclaimed rabbit
+  that dials in mints a pair code and **says it out loud** ("BRAMBLE 4 2") so its
+  human can claim it on `/pair`; the on-device **download + flash + adopt guide**
+  is at [`/naboot`](https://terrier.cyberloutre.fr/naboot). Still on the list:
+  per-rabbit bytecode minting (every paired rabbit gets the same baseline today).
+  The Terrier **source now lives in a private repo** (it carries the warren's
+  state); the live site is the showcase. **Naboot is the firmware on the rabbit;
   Le Terrier is the home they all dial back to.**
 - **Phase 7 — modernize the Metal toolchain in Python (in progress, working v1 shipped):**
     Toolchain landed (all in `firmware-arm/tools/`):
