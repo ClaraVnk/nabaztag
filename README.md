@@ -193,8 +193,14 @@ Full guide (API, pairing, troubleshooting) is in
   `__bss_start__..__bss_end__`, so the startup zero-loop never cleared them →
   garbage globals → Data Abort at boot. This hit *every* mode (even
   `minimal`/vanilla), which **exonerates `modernize_pages`** (the original
-  suspect). Fixed in `apply-mods.py` (`patch_linker_keep` now collects
-  `*(.bss .bss.*)`; `minimal` gains `gc_sections`) — commit `97e05d1`. Recovered
+  suspect). The *first* fix (`97e05d1`) bracketed `*(.bss .bss.*)` so the
+  zero-loop clears all of it — but on the 16 KB SRAM that pushes
+  `__heap_start__` past the end of `.bss`, leaving **zero VM heap**, so the
+  bytecode loader stalls right after `bc.jsp`. The **final** fix (`3cd45d8`)
+  reverts the bracket (keeping the ~9 KB heap the working firmware relies on)
+  and instead forces the one global that actually faulted — the audio FIFO
+  indices `play_w`/`play_r` — into `.data` (init 0), so `audioPlayFetchByte()`
+  can't read a garbage index before `audioPlayStart()` runs. Recovered
   with a **Raspberry Pi as a bit-bang JTAG adapter** (no probe, F/F Dupont to
   the 8-pin header) + a TCL reimplementation of the OKI ML67Q4051 flash
   sequence on stock OpenOCD; flash read/erase/program verified byte-exact.
@@ -305,6 +311,25 @@ Full guide (API, pairing, troubleshooting) is in
   concentrated in stateful paths (`loop`, `cbnettcp`, `tcpwrite`,
   `tcpevent`) where C rewrites would require hardware-tested validation;
   this stack stays at the safe envelope.
+- **Phase 9 — gateway-independent resolution (mDNS) — done, Claude live on the
+  recovered rabbit (2026-06-21):** after the un-brick the rabbit booted and
+  reached XMPP, but the home gateway **silently dropped its unicast DNS** — a
+  per-client ACL / DNS-flood guard, *proven* with a control test: the same
+  `A? <name>` query is answered for other hosts and refused only when the source
+  IP is the rabbit's. So it could never resolve its server and stayed all-orange.
+  Rather than touch the firewall, taught the rabbit to resolve over **multicast
+  mDNS**: `firmware/mdnsresolve.mtl` + `patch_dns.py` make the runtime bytecode's
+  `dnsreq` route `.local` names to `224.0.0.251:5353` instead of the gateway —
+  **no flash** (runtime bytecode, served fresh by `bc.jsp`). The rabbit queries
+  from port 1597, so an RFC 6762 §6.7 responder answers it as a legacy unicast
+  query and the existing response path parses it unchanged. `locate` returns
+  `nabaztag.local`; a standard mDNS responder (`nabaztag-violet/tools/nabmdns.py`,
+  no spoofing) answers it. Confirmed live: fresh boot → multicast resolve → full
+  XMPP bind → **the whole Phase 2 voice loop runs on the recovered rabbit**
+  (button → whisper → Claude → Piper TTS, spoken full-voice with ears/LED action
+  tags). No gateway DNS, no reply-spoofing. The unicast fallback (`nabdns.py`,
+  for stock un-patched bytecode) and the deploy steps live in
+  `nabaztag-violet/tools/DNS-HELPER.md`.
 
 ## Hardware
 
