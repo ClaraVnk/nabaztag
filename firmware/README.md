@@ -34,13 +34,17 @@ apt-get install -y git build-essential gcc-multilib g++-multilib flex bison perl
 git clone https://github.com/RedoXyde/mtl_linux && (cd mtl_linux && make)
 
 # 2) the stock Violet bytecode sources come from the OpenJabNab image
-#    (/var/www/OpenJabNab/bootcode). Drop micstream.mtl into its sources/,
-#    then patch main.mtl to #include it + add the RS/RT commands:
-cp micstream.mtl <bootcode>/sources/
+#    (/var/www/OpenJabNab/bootcode). Drop micstream.mtl + mdnsresolve.mtl into
+#    its sources/, then patch main.mtl (#include + RS/RT/SV/FW + mdns announcer)
+#    and dns.mtl (route ".local" names over multicast mDNS):
+cp micstream.mtl mdnsresolve.mtl <bootcode>/sources/
 python3 patch_main.py <bootcode>/sources/main.mtl
+python3 patch_dns.py  <bootcode>/sources/dns.mtl
 
 # 3) preprocess + compile
 cd <bootcode>/sources && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl
+# NB: use RedoXyde/mtl_linux's mtl_compiler (-m32). The compiler bundled under
+# <bootcode>/compiler (mtl_comp) is the 64-bit build and SEGFAULTS — don't use it.
 mtl_linux/mtl_compiler -s <bootcode>/bootcode.mtl bootcode_hybrid.bin
 ```
 
@@ -53,6 +57,12 @@ redistributed).
 - ✅ Toolchain builds; stock Violet bytecode rebuilds from source (~103 KB).
 - ✅ Hybrid compiles (`startmicstream`/`cbrecstream`/`stopmicstream` verified in
   the output).
+- ✅ mDNS **resolver** (`mdnsresolve.mtl` + `patch_dns.py`): `dnsreq` routes
+  `.local` xmpp domains to the 224.0.0.251:5353 multicast group instead of the
+  gateway DNS, so a rabbit whose gateway drops its unicast DNS still resolves its
+  server (paired with locate returning a `.local` name + an mDNS responder on the
+  HA host). Compiles clean → 103 779 B (+208 B vs the unpatched hybrid). The
+  announcer (`mdns.mtl`, publishes the rabbit) is the opposite direction.
 - ⏳ Serve the hybrid from the add-on, add a **UDP/4000 receiver** + an on-server
   wake-word engine (openWakeWord, "hey Nabi") that hands the utterance to the
   existing STT → conversation-agent → TTS loop. Live-test on the device (a bad
