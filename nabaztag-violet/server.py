@@ -606,27 +606,29 @@ def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -
 
 
 def _resample_wav(wav_bytes: bytes, target_rate: int) -> bytes:
-    """Return a mono 16-bit PCM WAV at target_rate."""
-    import wave, audioop, io
+    """Return a mono 16-bit PCM WAV at target_rate. Uses ffmpeg (already bundled)
+    rather than the stdlib `audioop`, which was removed in Python 3.13."""
+    import tempfile, subprocess, os
+    src = dst = None
     try:
-        w = wave.open(io.BytesIO(wav_bytes))
-        ch, sw, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-        frames = w.readframes(n)
-        w.close()
-        if sw != 2:
-            frames = audioop.lin2lin(frames, sw, 2)
-        if ch != 1:
-            frames = audioop.tomono(frames, 2, 0.5, 0.5)
-        if rate != target_rate:
-            frames, _ = audioop.ratecv(frames, 2, 1, rate, target_rate, None)
-        out = io.BytesIO()
-        ww = wave.open(out, "wb")
-        ww.setnchannels(1); ww.setsampwidth(2); ww.setframerate(target_rate)
-        ww.writeframes(frames)
-        ww.close()
-        return out.getvalue()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_bytes); src = f.name
+        dst = src + ".out.wav"
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-ac", "1", "-ar", str(target_rate),
+             "-sample_fmt", "s16", "-f", "wav", dst],
+            check=True, capture_output=True, timeout=20)
+        with open(dst, "rb") as fh:
+            return fh.read()
     except Exception:
         return wav_bytes
+    finally:
+        for p in (src, dst):
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
 
 def _resample_wav_16k(wav_bytes: bytes) -> bytes:
@@ -636,17 +638,27 @@ def _resample_wav_16k(wav_bytes: bytes) -> bytes:
 
 def _wav_peak_rms(wav_bytes: bytes, frame_ms: int = 100) -> int:
     """Loudest short-frame RMS in the clip — cheap voice-activity gate. Returns a
-    huge value on error so the caller never gates out audio it failed to read."""
-    import wave, audioop, io
+    huge value on error so the caller never gates out audio it failed to read.
+    Pure-python (no stdlib `audioop`, removed in Python 3.13); 16-bit PCM only."""
+    import wave, io, array, math
     try:
         w = wave.open(io.BytesIO(wav_bytes))
         sw, rate = w.getsampwidth(), w.getframerate()
         frames = w.readframes(w.getnframes())
         w.close()
-        if sw != 2:
-            frames = audioop.lin2lin(frames, sw, 2); sw = 2
-        step = max(1, int(rate * frame_ms / 1000)) * sw
-        return max((audioop.rms(frames[i:i + step], 2) for i in range(0, len(frames), step)), default=0)
+        if sw != 2:  # only 16-bit handled here — don't gate out what we can't read
+            return 10 ** 9
+        samples = array.array("h")  # native (little-endian on amd64) signed 16-bit
+        samples.frombytes(frames[: len(frames) // 2 * 2])
+        step = max(1, int(rate * frame_ms / 1000))
+        peak = 0
+        for i in range(0, len(samples), step):
+            chunk = samples[i:i + step]
+            if chunk:
+                rms = int(math.sqrt(sum(s * s for s in chunk) / len(chunk)))
+                if rms > peak:
+                    peak = rms
+        return peak
     except Exception:
         return 10 ** 9
 
