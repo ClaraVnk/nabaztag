@@ -15,7 +15,7 @@
 #   ./build.sh --remote rocky@vps:10022 --runtime podman   # build on the VPS
 
 set -euo pipefail
-REMOTE="root@192.168.1.15"
+REMOTE="root@192.0.2.15"
 MODE="full"
 RUNTIME="docker"
 while [ $# -gt 0 ]; do

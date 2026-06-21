@@ -308,8 +308,11 @@ Full guide (API, pairing, troubleshooting) is in
 
 ## Hardware
 
-- Works with the **Nabaztag** (v1, 2005) and **Nabaztag:tag** (v2, 2006 — mic +
-  RFID). Targets the **stock** rabbit; no hardware mod, nothing flashed.
+- Tested on the **Nabaztag:tag** (v2, 2006 — mic + RFID). The v1 (2005) likely
+  works (same Violet protocol) but is **untested**. The Violet add-on drives a
+  **stock** rabbit with no hardware mod and **no flashing required** — but the
+  optional **Naboot** custom firmware (Phase 4) *is* flashed (over the air or
+  the config-mode upload page) for signed OTA + a modern config UI.
 - Host architecture: **amd64**.
 
 ## TTS note
