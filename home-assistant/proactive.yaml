@@ -72,6 +72,33 @@ script:
           mac: !secret nab_mac
           text: "{{ nabi.response.speech.plain.speech }}"
 
+  # --- Belly reflects the sky: a silent colour, no speech -------------------
+  # Sets the bottom belly LED to a colour that matches the weather. Wordless —
+  # a gentle ambient presence, like Violet's rabbit glowing with the sky.
+  nabaztag_sky_belly:
+    alias: "Nabaztag - belly reflects the sky (silent)"
+    variables:
+      cond: "{{ states('weather.home') }}"          # <-- adjust
+      rgb: >-
+        {% set m = {
+          'sunny': '255,170,40', 'clear-night': '40,40,120',
+          'partlycloudy': '180,150,120', 'cloudy': '110,110,130',
+          'fog': '120,120,120', 'rainy': '40,90,200', 'pouring': '20,60,200',
+          'snowy': '200,220,255', 'snowy-rainy': '150,180,230',
+          'lightning': '150,60,220', 'lightning-rainy': '150,60,220',
+          'windy': '120,160,150', 'windy-variant': '120,160,150',
+          'hail': '170,200,255', 'exceptional': '220,60,60' } %}
+        {{ m.get(cond, '90,70,140') }}
+    sequence:
+      - service: rest_command.nabaztag_led
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          led: bottom
+          r: "{{ rgb.split(',')[0] }}"
+          g: "{{ rgb.split(',')[1] }}"
+          b: "{{ rgb.split(',')[2] }}"
+
 automation:
   # Every proactive moment is gated on: companion ON + NOT quiet hours.
 
@@ -113,8 +140,18 @@ automation:
     action:
       - service: rest_command.nabaztag_jingle
         data: { api: !secret nab_api, mac: !secret nab_mac, name: acquired }
+      # How long were they out? Lets Nabi tease a quick errand vs. miss a long day.
+      - variables:
+          away_h: >-
+            {{ ((now() - trigger.from_state.last_changed).total_seconds() / 3600)
+               | round(1) if trigger.from_state else 0 }}
       - service: script.nabaztag_quip
-        data: { about: "Quelqu'un vient de rentrer : accueille-le chaleureusement." }
+        data:
+          about: >-
+            Quelqu'un vient de rentrer après {{ away_h }} h dehors :
+            {{ "tu l'as à peine vu partir, taquine-le gentiment" if away_h < 1
+               else "accueille-le chaleureusement" if away_h < 6
+               else "il t'a manqué toute la journée, dis-le tendrement" }}.
 
   # --- Everyone left: a soft goodbye, then a nap ----------------------------
   - alias: "Nabi - goodbye when empty"
@@ -174,3 +211,61 @@ automation:
       - delay: "00:00:07"
       - service: rest_command.nabaztag_sleep
         data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
+
+  # --- The sky turned: rain/snow/storm just started — Violet's signature -----
+  # The literal "Aujourd'hui… pluie !" moment, but fired by the real weather:
+  # belly goes the colour of the sky, ears perk up, Nabi remarks on it.
+  - alias: "Nabi - the sky turned"
+    trigger:
+      - platform: state
+        entity_id: weather.home          # <-- adjust
+        to: ["rainy", "pouring", "snowy", "snowy-rainy", "lightning", "lightning-rainy", "hail"]
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.nabi_quiet_hours
+        state: "off"
+      # Only when it actually *changed* from a dry sky (not rainy→pouring churn).
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state.state not in
+             ["rainy","pouring","snowy","snowy-rainy","lightning","lightning-rainy","hail"] }}
+      - condition: template
+        value_template: "{{ states.person | selectattr('state','eq','home') | list | count > 0 }}"
+    action:
+      - service: script.nabaztag_sky_belly
+      - service: rest_command.nabaztag_weather_icon
+        data:
+          api: !secret nab_api
+          mac: !secret nab_mac
+          v: >-
+            {{ 'snow' if trigger.to_state.state in ['snowy','snowy-rainy','hail']
+               else 'storm' if 'lightning' in trigger.to_state.state else 'rain' }}
+      - service: rest_command.nabaztag_ears
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 13, right: 13 }
+      - service: script.nabaztag_quip
+        data:
+          about: >-
+            Le ciel vient de changer, il s'est mis à
+            {{ 'neiger' if trigger.to_state.state in ['snowy','snowy-rainy','hail']
+               else 'tonner' if 'lightning' in trigger.to_state.state else 'pleuvoir' }} :
+            réagis comme Violet (« Aujourd'hui… pluie ! »), émerveillé.
+
+  # --- Belly reflects the sky, refreshed through the day (silent) ------------
+  - alias: "Nabi - belly reflects the sky"
+    trigger:
+      - platform: time_pattern
+        minutes: "/30"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.nabi_quiet_hours
+        state: "off"      # belly rests dark at night with everything else
+      - condition: template
+        value_template: "{{ states.person | selectattr('state','eq','home') | list | count > 0 }}"
+    action:
+      - service: script.nabaztag_sky_belly
