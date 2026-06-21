@@ -1,0 +1,59 @@
+blueprint:
+  name: "Nabi réagit à un événement de la maison"
+  description: >
+    Quand une entité passe dans un état donné, Nabi le dit à voix haute, dans sa
+    voix de lapin Violet (Claude reformule ton message — il ne le récite pas).
+    Idéal pour : sonnette, lave-linge/sèche-linge fini, porte ou boîte aux
+    lettres ouverte, alarme, retour d'un enfant, etc. Aucune ligne de YAML à
+    écrire — choisis l'entité, l'état déclencheur et le message.
+
+    Pré-requis : le package `proactive.yaml` (pour le script `nabaztag_notify`)
+    et `nabaztag.yaml` (rest_commands + secrets nab_api / nab_mac).
+  domain: automation
+  source_url: https://github.com/ClaraVnk/nabaztag/blob/main/home-assistant/blueprints/nabaztag_event_reaction.yaml
+  input:
+    trigger_entity:
+      name: Entité à surveiller
+      description: Le capteur / interrupteur / personne dont le changement déclenche Nabi.
+      selector:
+        entity: {}
+    to_state:
+      name: Quand elle devient…
+      description: 'L''état déclencheur (ex. "on", "home", "Détecté", "finished").'
+      default: "on"
+      selector:
+        text: {}
+    message:
+      name: Ce qui se passe
+      description: >
+        Décris l'événement en clair — Nabi le reformulera dans sa voix
+        (ex. « le lave-linge a fini », « quelqu'un sonne à la porte »).
+      selector:
+        text: {}
+    respect_night:
+      name: Rester silencieux la nuit
+      description: >
+        Si activé, Nabi se tait pendant les heures calmes (mode nuit). Désactive
+        pour les alertes importantes qui doivent passer même la nuit.
+      default: true
+      selector:
+        boolean: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  rn: !input respect_night
+
+trigger:
+  - platform: state
+    entity_id: !input trigger_entity
+    to: !input to_state
+
+condition: []
+
+action:
+  - service: script.nabaztag_notify
+    data:
+      message: !input message
+      urgent: "{{ not rn }}"
