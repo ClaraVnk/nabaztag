@@ -17,6 +17,9 @@ configuration:
   stt_language:
     name: "Langue de reconnaissance vocale"
     description: "Code langue pour la transcription (ex. fr, en)."
+  stt_model:
+    name: "Modèle de reconnaissance vocale"
+    description: "Taille du modèle Whisper. small est le plus précis (embarqué) ; base et tiny sont bien plus rapides sur CPU (réponse moins longue) au prix d'un peu de précision. base/tiny sont téléchargés une fois à la première utilisation."
   tts_engine:
     name: "Moteur de synthèse vocale"
     description: "espeak (embarqué, robotique, 100% local) ou piper (bien plus joli — nécessite l'add-on Piper de Home Assistant)."

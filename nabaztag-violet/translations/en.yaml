@@ -17,6 +17,9 @@ configuration:
   stt_language:
     name: "Speech-to-text language"
     description: "Language code used for transcription (e.g. fr, en)."
+  stt_model:
+    name: "Speech-to-text model"
+    description: "Whisper model size. small is the most accurate (bundled); base and tiny are much faster on CPU (lower reply latency) at some accuracy cost. base/tiny are downloaded once on first use."
   tts_engine:
     name: "Text-to-speech engine"
     description: "espeak (bundled, robotic, fully local) or piper (much nicer — needs the Home Assistant Piper add-on)."

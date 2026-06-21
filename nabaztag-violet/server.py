@@ -133,7 +133,38 @@ TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.pip
 # younger/cuter, more playful timbre. 0 = off; ~10-18 ≈ "mignonne"; >30 = chipmunk.
 VOICE_PITCH = int(os.environ.get("VOICE_PITCH") or _OPTS.get("voice_pitch") or 0)
 WHISPER_BIN = os.environ.get("WHISPER_BIN", "/usr/local/bin/whisper-cli")
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "/app/models/ggml-small.bin")
+# STT model size — the dominant lever on voice latency. `small` (bundled) is the
+# most accurate; `base`/`tiny` are markedly faster on CPU (lower latency) at some
+# accuracy cost. Non-bundled sizes are fetched once into /data/models (persistent)
+# on first use, so switching is just a config change.
+STT_MODEL = (os.environ.get("STT_MODEL") or _OPTS.get("stt_model") or "small").strip().lower()
+_STT_MODEL_PATH = {"p": os.environ.get("WHISPER_MODEL")}
+
+
+def whisper_model_path():
+    """Resolve (and lazily download) the ggml model for STT_MODEL. Cached."""
+    if _STT_MODEL_PATH["p"]:
+        return _STT_MODEL_PATH["p"]
+    name = f"ggml-{STT_MODEL}.bin"
+    for cand in (f"/app/models/{name}", f"/data/models/{name}"):
+        if os.path.exists(cand):
+            _STT_MODEL_PATH["p"] = cand
+            return cand
+    import urllib.request
+    cached = f"/data/models/{name}"
+    try:
+        os.makedirs("/data/models", exist_ok=True)
+        log.info("STT: downloading model %s (first use, one-off)…", name)
+        tmp = cached + ".part"
+        urllib.request.urlretrieve(
+            f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{name}", tmp)
+        os.replace(tmp, cached)
+        log.info("STT: model %s ready", name)
+        _STT_MODEL_PATH["p"] = cached
+    except Exception as exc:  # noqa
+        log.warning("STT: model %s download failed (%s) — using bundled small", name, exc)
+        _STT_MODEL_PATH["p"] = "/app/models/ggml-small.bin"
+    return _STT_MODEL_PATH["p"]
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -733,15 +764,16 @@ def render_jingle(name: str, rate: int = 16000):
 def stt_transcribe(pcm_wav: bytes) -> str:
     """Transcribe a PCM WAV with the bundled whisper.cpp (resampled to 16 kHz).
     Returns "" if the binary/model is missing or nothing is recognised."""
-    if not (os.path.exists(WHISPER_BIN) and os.path.exists(WHISPER_MODEL)):
-        log.warning("STT unavailable (whisper missing: %s / %s)", WHISPER_BIN, WHISPER_MODEL)
+    model = whisper_model_path()
+    if not (os.path.exists(WHISPER_BIN) and os.path.exists(model)):
+        log.warning("STT unavailable (whisper missing: %s / %s)", WHISPER_BIN, model)
         return ""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         tf.write(_resample_wav_16k(pcm_wav))
         path = tf.name
     try:
         subprocess.run(
-            [WHISPER_BIN, "-m", WHISPER_MODEL, "-f", path, "-l", STT_LANGUAGE,
+            [WHISPER_BIN, "-m", model, "-f", path, "-l", STT_LANGUAGE,
              "-nt", "-otxt", "-of", path],
             check=True, capture_output=True, timeout=120,
         )
@@ -886,6 +918,15 @@ def handle_voice(pcm_wav: bytes):
         bunny = next(iter(BUNNIES.values()), None)
     if bunny is None:
         return
+    # Immediate "got it — thinking…" cue so the user isn't left wondering during
+    # the STT + agent latency: a soft cyan belly pulse that fades back to off. It
+    # gets overwritten when the reply's own LED/ear actions or speech play.
+    try:
+        bunny.send_choreography(120,
+                                [(0, "led", (z, 0, 60, 130)) for z in range(5)]
+                                + [(8, "led", (z, 0, 0, 0)) for z in range(5)])
+    except Exception:  # noqa
+        pass
     text = stt_transcribe(pcm_wav)
     log.info("voice: heard %r", text)
     if not text:
