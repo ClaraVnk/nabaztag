@@ -361,15 +361,15 @@ def patch_linker_keep(root: Path) -> None:
         ("    *(.startup.*)\n", "    KEEP(*(.startup.*))\n"),
         ("    *(.bytecode.*)\n", "    KEEP(*(.bytecode.*))\n"),
         ("    *(.ramfunc)\n", "    KEEP(*(.ramfunc))\n"),
-        # CRITICAL FIX: with -fdata-sections the compiler splits .bss into
-        # per-variable .bss.* sections. Upstream collects only *(.bss), so the
-        # .bss.* sections land OUTSIDE the __bss_start__..__bss_end__ bracket
-        # and the cstartup zero-loop never clears them -> uninitialized globals
-        # (e.g. audioFifoPlay index) hold garbage -> out-of-bounds read ->
-        # data abort at boot. Collecting *(.bss.*) into the bracket fixes both
-        # the zeroing AND the __heap_start__/_end placement (which sit right
-        # after __bss_end__).  Found 2026-06-20 via JTAG on the real rabbit.
-        ("    *(.bss)\n", "    *(.bss .bss.*)\n"),
+        # NOTE (2026-06-21): we deliberately do NOT bracket *(.bss.*) here.
+        # Doing so zeroes the whole .bss correctly, but on the 16 KB SRAM it
+        # pushes __heap_start__ to the end of .bss, leaving ZERO VM heap -> the
+        # bytecode loader (VMALLOC) can't allocate and the rabbit stalls right
+        # after bc.jsp (downloads its bytecode, never reaches locate/XMPP).
+        # Upstream's *(.bss)-only bracket accidentally leaves a ~9 KB heap (the
+        # .bss.* sit, unzeroed, over the heap) -- which the working firmware
+        # relied on. So we keep that layout and instead fix the ONE
+        # uninitialized global that actually faulted: see patch_audio_fifo_data.
     ]
     n = 0
     for old, new in edits:
@@ -380,6 +380,31 @@ def patch_linker_keep(root: Path) -> None:
         sys.exit(f"FAIL {p}: only {n}/{len(edits)} sections patched (upstream changed?)")
     p.write_text(s)
     print(f"[ok]   {p}: wrapped {n} sections in KEEP() (vec/startup/bytecode/ramfunc)")
+
+
+def patch_audio_fifo_data(root: Path) -> None:
+    """Force the play-FIFO indices play_w/play_r into .data (init 0).
+
+    With .bss left un-zeroed (see patch_linker_keep), these globals hold garbage
+    at boot. audioPlayFetchByte() reads them BEFORE audioPlayStart() inits them,
+    so a garbage index reads out of audioFifoPlay[] -> data abort (the original
+    brick, triggered by the connection jingle). Putting them in .data (which the
+    cstartup DOES copy/init from flash) makes the FIFO start empty, so the fetch
+    returns "empty" instead of faulting. Surgical fix that preserves the VM heap
+    the bytecode loader needs. Found 2026-06-21 via JTAG on the real rabbit.
+    """
+    p = root / "src/vm/vaudio.c"
+    s = p.read_text()
+    old = "int32_t play_w;\nint32_t play_r;"
+    new = ('int32_t play_w __attribute__((section(".data")))=0;\n'
+           'int32_t play_r __attribute__((section(".data")))=0;')
+    if new in s:
+        print(f"[skip] {p}: play_w/play_r already in .data")
+        return
+    if old not in s:
+        sys.exit(f"FAIL {p}: play_w/play_r declarations not found (upstream changed?)")
+    p.write_text(s.replace(old, new, 1))
+    print(f"[ok]   {p}: play_w/play_r forced into .data (audio FIFO safe without .bss zero)")
 
 
 def patch_gc_sections(root: Path) -> None:
@@ -1473,7 +1498,7 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
@@ -1495,7 +1520,7 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
@@ -1516,6 +1541,7 @@ def main() -> int:
         "mdns": patch_mdns,
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
+        "audio_fifo_data": patch_audio_fifo_data,
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
         "strip_dump": patch_strip_dump,
