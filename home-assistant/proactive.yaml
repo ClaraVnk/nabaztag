@@ -4,26 +4,30 @@
 # its own — in Violet's terse, poetic cult tone ("Aujourd'hui… pluie !"), never
 # a flat readout. Claude writes the lines in Nabi's voice; HA decides when.
 #
-# 🌙 NIGHT MODE (important): a "quiet hours" sensor (22:00 → 08:00 by default)
-# blocks EVERY proactive spoken/sound moment. Nothing here will wake you — the
-# morning greeting waits until 08:00, the good-night whisper is at 21:30 (while
-# you're still up), and a late-night arrival stays silent. Move the window in the
-# binary_sensor below.
+# Requires nabaztag.yaml (its rest_commands + the nab_api / nab_mac secrets).
+# Adjust the entity ids marked  # <-- adjust  to your setup, then Developer
+# Tools → YAML → "Reload all", and flip "Nabi — proactive companion" on.
 #
-# Everything is also gated on a master switch (input_boolean.nabaztag_proactive).
-# Requires nabaztag.yaml (rest_commands + the nab_api / nab_mac secrets). Adjust
-# the entity ids marked  # <-- adjust  to your setup, then Developer Tools → YAML
-# → "Reload all", and flip "Nabi — proactive companion" on.
+# 🌙 NIGHT MODE: a "quiet hours" sensor (22:00 → 08:00) blocks EVERY proactive
+# spoken/sound moment AND sleeps the rabbit through the window. Nothing here will
+# wake you. (`personality: off` on the add-on is NOT night mode — a connected
+# rabbit still "breathes"; only /api/sleep makes it dormant, which night mode
+# now does.) Move the window in the binary_sensor below.
 #
-# Pairs nicely with the add-on's `personality` option (off|discret|normal|vif),
-# which adds autonomous micro-movements between these spoken moments.
+# 🧠 Claude does more than one-off lines:
+#   • anti-repetition memory (input_text.nabi_recent_quips) — it sees its last
+#     few lines and won't repeat them;
+#   • optional silence — the spontaneous quip lets Claude answer "[silence]"
+#     when nothing's worth saying, so Nabi only pipes up with something real;
+#   • morning briefing — Claude reads today's agenda + weather into one line;
+#   • nabaztag_notify — route ANY house event through Nabi's voice (one script).
 
 template:
   - binary_sensor:
       - name: "Nabi quiet hours"
         unique_id: nabaztag_quiet_hours
         icon: mdi:sleep
-        # ON = quiet (no proactive speech). 22:00 → 08:00 by default.
+        # ON = quiet (no proactive speech, rabbit asleep). 22:00 → 08:00.
         state: >-
           {{ now() >= today_at('22:00') or now() < today_at('08:00') }}
 
@@ -32,16 +36,25 @@ input_boolean:
     name: "Nabi — proactive companion"
     icon: mdi:rabbit
 
+input_text:
+  # Rolling memory of Nabi's last few spoken lines (newest first, " | " joined),
+  # fed back to Claude so it doesn't repeat itself.
+  nabi_recent_quips:
+    name: "Nabi — recent quips"
+    max: 255
+
 script:
   # --- Nabi pipes up: ONE Violet-style line via Claude ----------------------
-  # Builds a tiny context (time of day · weather · who's home) and asks Claude
-  # for a single short line in Nabi's voice, then speaks it with an ear flourish.
+  # Knows its recent lines (won't repeat). With optional: true, Claude may answer
+  # "[silence]" and Nabi stays quiet — used for the spontaneous quip.
   nabaztag_quip:
     alias: "Nabaztag - Nabi says something (Violet style)"
     fields:
       about:
         description: "Optional extra context/topic for the remark"
-        example: "quelqu'un vient de rentrer"
+      optional:
+        description: "If true, Nabi may stay silent ([silence])"
+        example: "true"
     variables:
       moment: >-
         {% set h = now().hour %}
@@ -51,34 +64,124 @@ script:
       who: >-
         {% set p = states.person | selectattr('state','eq','home') | list %}
         {{ p | map(attribute='name') | join(' et ') if p | length else 'personne' }}
+      recent: "{{ states('input_text.nabi_recent_quips') }}"
     sequence:
       - service: conversation.process
         data:
-          agent_id: conversation.claude_conversation     # <-- adjust to your Anthropic agent
+          agent_id: conversation.claude_conversation   # <-- adjust to your agent
           text: >-
             Tu es Nabi, un lapin Nabaztag de 2006 : malicieux, tendre, un brin
             poète. Dis UNE seule phrase TRÈS courte (8 mots maximum), dans le ton
             culte de Violet (« Aujourd'hui… pluie ! »). Contexte : nous sommes
             {{ moment }}, la météo est « {{ weather }} », à la maison il y a
-            {{ who }}. {{ about }} Pas d'emoji, pas de météo récitée, pas de
-            préambule — juste une petite remarque vivante. Réponds uniquement
-            par la phrase, rien d'autre.
+            {{ who }}. {{ about }}
+            {% if recent %} Tu as dit récemment : « {{ recent }} ». Ne répète
+            pas ces phrases ; tu peux éventuellement y faire un petit clin d'œil.
+            {% endif %}
+            {% if optional | default(false) %} Si rien ne mérite vraiment d'être
+            dit là, maintenant, réponds EXACTEMENT « [silence] » et rien d'autre.
+            {% endif %}
+            Pas d'emoji, pas de météo récitée, pas de préambule — juste une
+            petite remarque vivante. Réponds uniquement par la phrase.
         response_variable: nabi
+      - variables:
+          line: "{{ (nabi.response.speech.plain.speech | default('')) | trim }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ (optional | default(false)) and ('[silence]' in line or line == '') }}"
+            sequence:
+              - stop: "Nabi reste silencieux"
       - service: rest_command.nabaztag_ears
         data: { api: !secret nab_api, mac: !secret nab_mac, left: 2, right: 13 }
       - service: rest_command.nabaztag_say
+        data: { api: !secret nab_api, mac: !secret nab_mac, text: "{{ line }}" }
+      # Remember it (newest first, keep last 3).
+      - service: input_text.set_value
+        target: { entity_id: input_text.nabi_recent_quips }
         data:
-          api: !secret nab_api
-          mac: !secret nab_mac
-          text: "{{ nabi.response.speech.plain.speech }}"
+          value: >-
+            {{ (([line] + (recent.split(' | ') if recent else []))[:3]
+                | join(' | ')) | truncate(250, true, '') }}
+
+  # --- Morning briefing: Claude reads today's agenda + weather --------------
+  nabaztag_morning_briefing:
+    alias: "Nabaztag - morning briefing (agenda + weather)"
+    variables:
+      weather: "{{ states('weather.home') }}"           # <-- adjust
+    sequence:
+      - service: calendar.get_events
+        target:
+          entity_id:
+            - calendar.personal                          # <-- adjust (one or several)
+        data:
+          start_date_time: "{{ today_at('00:00') }}"
+          end_date_time: "{{ today_at('23:59') }}"
+        response_variable: cal
+      - variables:
+          events: >-
+            {% set ns = namespace(items=[]) %}
+            {% for cid, c in cal.items() %}
+              {% for e in (c.events | default([])) %}
+                {% set ns.items = ns.items + [ e.summary ] %}
+              {% endfor %}
+            {% endfor %}
+            {{ ns.items | join(', ') }}
+      - service: conversation.process
+        data:
+          agent_id: conversation.claude_conversation     # <-- adjust
+          text: >-
+            Tu es Nabi, lapin Nabaztag malicieux et tendre. C'est le matin.
+            Météo du jour : « {{ weather }} ». Au programme aujourd'hui :
+            {{ events if events else 'rien de particulier' }}. Dis UNE seule
+            phrase TRÈS courte façon Violet qui résume la journée, en mêlant
+            l'agenda et la météo (par ex. « Aujourd'hui… deux rendez-vous et la
+            pluie ! »). Si l'agenda est vide, parle juste du temps. Pas d'emoji,
+            pas de liste, pas de préambule — juste la phrase.
+        response_variable: nabi
+      - service: rest_command.nabaztag_say
+        data: { api: !secret nab_api, mac: !secret nab_mac, text: "{{ nabi.response.speech.plain.speech }}" }
+
+  # --- "Parle en Nabi": say anything in Nabi's voice ------------------------
+  # Reusable from ANY automation: pass a raw message, Claude rephrases it in
+  # Nabi's voice and the rabbit says it. Self-mutes in quiet hours unless urgent.
+  #   - service: script.nabaztag_notify
+  #     data: { message: "le lave-linge a fini", urgent: false }
+  nabaztag_notify:
+    alias: "Nabaztag - say anything in Nabi's voice"
+    fields:
+      message:
+        description: "Raw text/event to announce"
+        example: "le lave-linge a fini"
+      urgent:
+        description: "Speak even during quiet hours"
+        example: "false"
+    sequence:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ not (urgent | default(false)) and is_state('binary_sensor.nabi_quiet_hours','on') }}"
+            sequence:
+              - stop: "Quiet hours — not urgent"
+      - service: conversation.process
+        data:
+          agent_id: conversation.claude_conversation     # <-- adjust
+          text: >-
+            Tu es Nabi, lapin Nabaztag malicieux et tendre. Reformule ce message
+            en UNE phrase courte dans ta voix (ton culte de Violet), sans le
+            réciter mot à mot ni ajouter d'emoji : « {{ message }} ». Réponds
+            uniquement par la phrase.
+        response_variable: nabi
+      - service: rest_command.nabaztag_ears
+        data: { api: !secret nab_api, mac: !secret nab_mac, left: 8, right: 8 }
+      - service: rest_command.nabaztag_say
+        data: { api: !secret nab_api, mac: !secret nab_mac, text: "{{ nabi.response.speech.plain.speech }}" }
 
   # --- Belly reflects the sky: a silent colour, no speech -------------------
-  # Sets the bottom belly LED to a colour that matches the weather. Wordless —
-  # a gentle ambient presence, like Violet's rabbit glowing with the sky.
   nabaztag_sky_belly:
     alias: "Nabaztag - belly reflects the sky (silent)"
     variables:
-      cond: "{{ states('weather.home') }}"          # <-- adjust
+      cond: "{{ states('weather.home') }}"               # <-- adjust
       rgb: >-
         {% set m = {
           'sunny': '255,170,40', 'clear-night': '40,40,120',
@@ -102,7 +205,6 @@ script:
 automation:
   # Every proactive moment is gated on: companion ON + NOT quiet hours.
 
-  # --- Good morning: a greeting, then the weather "à la Violet" --------------
   - alias: "Nabi - good morning"
     trigger:
       - platform: time
@@ -122,13 +224,12 @@ automation:
       - service: script.nabaztag_quip
         data: { about: "On se réveille : dis un petit bonjour." }
       - delay: "00:00:07"
-      - service: script.nabaztag_weather_announce      # from nabaztag.yaml
+      - service: script.nabaztag_morning_briefing
 
-  # --- Welcome home: a fresh Claude line (silent at night) ------------------
   - alias: "Nabi - welcome home (spoken)"
     trigger:
       - platform: state
-        entity_id: person.kevin           # <-- adjust (one or several people)
+        entity_id: person.you           # <-- adjust (one or several people)
         to: "home"
     condition:
       - condition: state
@@ -153,7 +254,6 @@ automation:
                else "accueille-le chaleureusement" if away_h < 6
                else "il t'a manqué toute la journée, dis-le tendrement" }}.
 
-  # --- Everyone left: a soft goodbye, then a nap ----------------------------
   - alias: "Nabi - goodbye when empty"
     trigger:
       - platform: template
@@ -173,8 +273,8 @@ automation:
       - service: rest_command.nabaztag_sleep
         data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
 
-  # --- Spontaneous: Nabi pipes up on its own, daytime, ~every 3 h -----------
-  # The heart of the "alive" feel — an unprompted little remark when you're home.
+  # The heart of the "alive" feel — but Claude may answer "[silence]" so Nabi
+  # only speaks when there's genuinely something worth a remark.
   - alias: "Nabi - spontaneous quip"
     trigger:
       - platform: time_pattern
@@ -193,12 +293,12 @@ automation:
         value_template: "{{ states.person | selectattr('state','eq','home') | list | count > 0 }}"
     action:
       - service: script.nabaztag_quip
+        data: { optional: true }
 
-  # --- Good night: a whisper at 21:30 (while you're up), then sleep ----------
   - alias: "Nabi - good night"
     trigger:
       - platform: time
-        at: "21:30:00"
+        at: "21:30:00"          # before quiet hours, while you're still up
     condition:
       - condition: state
         entity_id: input_boolean.nabaztag_proactive
@@ -213,8 +313,6 @@ automation:
         data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
 
   # --- The sky turned: rain/snow/storm just started — Violet's signature -----
-  # The literal "Aujourd'hui… pluie !" moment, but fired by the real weather:
-  # belly goes the colour of the sky, ears perk up, Nabi remarks on it.
   - alias: "Nabi - the sky turned"
     trigger:
       - platform: state
@@ -227,7 +325,6 @@ automation:
       - condition: state
         entity_id: binary_sensor.nabi_quiet_hours
         state: "off"
-      # Only when it actually *changed* from a dry sky (not rainy→pouring churn).
       - condition: template
         value_template: >-
           {{ trigger.from_state.state not in
@@ -264,8 +361,40 @@ automation:
         state: "on"
       - condition: state
         entity_id: binary_sensor.nabi_quiet_hours
-        state: "off"      # belly rests dark at night with everything else
+        state: "off"
       - condition: template
         value_template: "{{ states.person | selectattr('state','eq','home') | list | count > 0 }}"
     action:
       - service: script.nabaztag_sky_belly
+
+  # --- Night mode actually means dormant: sleep through the quiet window -----
+  - alias: "Nabi - sleep through quiet hours"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.nabi_quiet_hours
+        to: "on"
+      - platform: time_pattern
+        minutes: "/15"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.nabi_quiet_hours
+        state: "on"
+    action:
+      - service: rest_command.nabaztag_sleep
+        data: { api: !secret nab_api, mac: !secret nab_mac, on: 1 }
+
+  - alias: "Nabi - wake at end of quiet hours"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.nabi_quiet_hours
+        to: "off"
+    condition:
+      - condition: state
+        entity_id: input_boolean.nabaztag_proactive
+        state: "on"
+    action:
+      - service: rest_command.nabaztag_sleep
+        data: { api: !secret nab_api, mac: !secret nab_mac, on: 0 }
