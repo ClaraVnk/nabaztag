@@ -185,6 +185,15 @@ packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/m
   silent belly that mirrors the weather), plus a reusable **`nabaztag_notify`**
   script (route any house event through Nabi's voice). Gated by a master switch +
   a **night-mode** sensor that silences speech *and* sleeps the rabbit 22:00→08:00.
+- **`nabaztag_tasks.yaml`** — **standing orders by voice** (« préviens-moi quand la
+  batterie de l'aspirateur est pleine », « rappelle-moi de sortir le linge dans 40
+  minutes », « oublie tout »). Exposes three scripts as **tools** to your Claude
+  conversation agent — `nabaztag_remember_task` (watch an entity state/threshold),
+  `nabaztag_remind` (timed reminder), `nabaztag_forget` — backed by a 5-slot store
+  and a 1-minute engine that announces via `nabaztag_notify`, then forgets the task.
+  Needs the **Anthropic integration's "Control Home Assistant"** enabled, and the
+  three scripts **plus the entities to watch** exposed to Assist. See the file
+  header for the exact steps.
 - **`rfid.yaml`** — remembers the last scanned tag (to discover ids) and dispatches
   known RFID/Ztamp tags to actions.
 - **`ambient.yaml`** — simpler example ambient automations (belly = colour of the
