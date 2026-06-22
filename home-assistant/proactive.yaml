@@ -35,6 +35,14 @@ input_boolean:
   nabaztag_proactive:
     name: "Nabi — proactive companion"
     icon: mdi:rabbit
+  # Opt-in (OFF by default): paint a PERSISTENT weather icon on the belly when the
+  # sky turns (rain/snow/storm) — the "Sky Turned" belly icon. Leave it off if you
+  # run the add-on's `personality` LED colour life: a persistent icon would fight
+  # the colour dances and never fade. The spoken reaction + ear move happen either
+  # way; only the lasting belly icon is gated by this switch.
+  nabaztag_sky_turned:
+    name: "Nabi — weather icon on belly (Sky Turned)"
+    icon: mdi:weather-lightning-rainy
 
 input_text:
   # Rolling memory of Nabi's last few spoken lines (newest first, " | " joined),
@@ -333,13 +341,20 @@ automation:
         value_template: "{{ states.person | selectattr('state','eq','home') | list | count > 0 }}"
     action:
       - service: script.nabaztag_sky_belly
-      - service: rest_command.nabaztag_weather_icon
-        data:
-          api: !secret nab_api
-          mac: !secret nab_mac
-          v: >-
-            {{ 'snow' if trigger.to_state.state in ['snowy','snowy-rainy','hail']
-               else 'storm' if 'lightning' in trigger.to_state.state else 'rain' }}
+      # Persistent belly weather icon — OPT-IN (see input_boolean.nabaztag_sky_turned).
+      # Off by default so it doesn't fight the add-on's personality LED colour life.
+      - if:
+          - condition: state
+            entity_id: input_boolean.nabaztag_sky_turned
+            state: "on"
+        then:
+          - service: rest_command.nabaztag_weather_icon
+            data:
+              api: !secret nab_api
+              mac: !secret nab_mac
+              v: >-
+                {{ 'snow' if trigger.to_state.state in ['snowy','snowy-rainy','hail']
+                   else 'storm' if 'lightning' in trigger.to_state.state else 'rain' }}
       - service: rest_command.nabaztag_ears
         data: { api: !secret nab_api, mac: !secret nab_mac, left: 13, right: 13 }
       - service: script.nabaztag_quip
