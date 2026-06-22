@@ -85,10 +85,11 @@ if CONNECT_JINGLE == "none":
 WAKE_CHIME = (os.environ.get("WAKE_CHIME") or _OPTS.get("wake_chime") or "").strip()
 if WAKE_CHIME == "none":
     WAKE_CHIME = ""
-# Personality: "auto" = the add-on gives Nabi a life of its own (random gentle
-# ears / side-LED pulses / nose at random intervals, daytime). "off" = it just
-# breathes and you wire your own behaviours in Home Assistant (custom). The two
-# are mutually exclusive — pick one so they don't both move the ears.
+# Personality: discret|normal|vif = the add-on gives Nabi a life of its own — a
+# random LED colour dance (the iconic Nabaztag "alive" show: LEDs lighting up in
+# a random order/colour, belly included, then fading out), plus the odd ear
+# wiggle / nose blink, at random intervals during the daytime. "off" = it just
+# breathes and you wire your own behaviours in Home Assistant (custom).
 PERSONALITY = (os.environ.get("PERSONALITY") or _OPTS.get("personality") or "off").strip().lower()
 # Intensity → how often Nabi acts on its own (random seconds in range). off =
 # none (you drive it from HA). subtle ≈ a few times/hour, auto ≈ hourly-ish,
@@ -2043,14 +2044,43 @@ def _bunny_any():
         return next(iter(BUNNIES.values()), None)
 
 
+# Vivid palette for the autonomous LED colour dance (the iconic Nabaztag
+# "sign of life": LEDs lighting up in a random order, in random colours).
+_LED_PALETTE = [(255, 120, 0), (0, 160, 255), (0, 200, 90), (220, 0, 150),
+                (255, 210, 0), (150, 0, 255), (255, 0, 60), (0, 230, 200),
+                (255, 255, 255), (255, 60, 0)]
+
+
+def _led_color_dance(b):
+    """One random LED colour show: light several of the 5 LEDs (belly included)
+    one after another, in a random order with random vivid colours, hold a beat,
+    then fade them all back out — so between shows the rabbit is calm, not stuck
+    on a colour. This is THE autonomous 'alive' animation."""
+    import random
+    ids = list(LED_NAMES.values())
+    random.shuffle(ids)
+    ids = ids[:random.randint(3, len(ids))]      # how many LEDs join in
+    actions, t = [], 0
+    for lid in ids:                               # light them one by one
+        r, g, bl = random.choice(_LED_PALETTE)
+        actions.append((t, "led", (lid, r, g, bl)))
+        t += 1
+    for lid in ids:                               # …then all off together
+        actions.append((t + 2, "led", (lid, 0, 0, 0)))
+    b.send_choreography(300, actions)             # ~ (t+2)*0.3 s of colour
+
+
 def _personality_action(b):
-    """One gentle, random 'sign of life': an ear flick (then settle), a soft
-    side-LED pulse, or a nose blink. Avoids the belly LED (middle) so it never
-    fights an HA colour-of-the-day. Sleeps between sub-steps → run in a thread."""
+    """One random 'sign of life': mostly a LED colour dance (random order/colour
+    across all 5 LEDs, belly included), sometimes an ample ear wiggle or a nose
+    blink. Each LED show fades out, so it never leaves a stuck colour. Sleeps
+    between sub-steps → run in a thread."""
     import random, time as _t
     try:
         pick = random.random()
-        if pick < 0.45:
+        if pick < 0.65:
+            _led_color_dance(b)
+        elif pick < 0.88:
             # An AMPLE, clearly visible wiggle: opposite extremes, swap, then
             # settle to neutral (8). Small random moves were invisible.
             p, q = random.choice([(2, 14), (14, 2), (1, 12), (15, 4), (4, 15)])
@@ -2062,13 +2092,6 @@ def _personality_action(b):
             _t.sleep(0.9)
             b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], 8 * 18, 0)),
                                       (0, "motor", (EAR_NAMES["right"], 8 * 18, 1))])
-        elif pick < 0.80:
-            rgb = random.choice([(255, 120, 0), (0, 160, 255), (0, 200, 90),
-                                 (220, 0, 150), (255, 210, 0), (150, 0, 255)])
-            lid = LED_NAMES[random.choice(["left", "right", "top"])]
-            b.send_choreography(200, [(0, "led", (lid, rgb[0], rgb[1], rgb[2]))])
-            _t.sleep(1.5)
-            b.send_choreography(200, [(0, "led", (lid, 0, 0, 0))])
         else:
             b.send_violet_packet(ambient_packet({SVC_NOSE: 1}))
     except Exception as exc:  # noqa

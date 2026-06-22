@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.3
+
+- **Personality is now a real LED colour show.** When `personality` is
+  `discret | normal | vif`, Nabi's autonomous "sign of life" is mostly a **random
+  LED colour dance** — the 5 LEDs (belly included) light up one after another in a
+  random order and random vivid colours, hold a beat, then fade out — so between
+  shows the rabbit stays calm instead of sitting on a single colour. Ear wiggles
+  and nose blinks still happen, less often. Previously personality only nudged the
+  side LEDs and deliberately avoided the belly.
+
 ## 0.15.2
 
 - **Docs refresh** — `DOCS.md` brought in line with the current options:
