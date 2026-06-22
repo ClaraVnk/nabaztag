@@ -105,9 +105,44 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 - 🎤 **talk to it** — hold the head button, ask a question; it transcribes
   (bundled whisper.cpp), asks a **conversation agent (e.g. Claude)**, and speaks
   the reply — which can itself move the ears/LEDs
+- 🐇 **give it standing orders** — *"préviens-moi quand la batterie de
+  l'aspirateur est pleine"*, *"rappelle-moi de sortir le linge dans 40 minutes"*.
+  Nabi remembers, watches the condition (or the clock) and pipes up on its own —
+  then forgets the task. See [Give Nabi standing orders](#give-nabi-standing-orders).
 - 📟 (v2) react to **button** presses, **RFID/Ztamp** tags and **ears moved by
   hand** — re-emitted as `nabaztag_event` **Home Assistant events** to trigger
   automations (Nabi as an input device)
+
+## Give Nabi standing orders
+
+Beyond one-off questions, you can hand Nabi a **deferred task** in plain French and
+let it watch for you:
+
+> *"Nabi, préviens-moi quand la batterie de l'aspirateur est pleine."*
+> *"Rappelle-moi de sortir le linge dans 40 minutes."*
+> *"Oublie tout."*
+
+Nabi remembers the order, **Home Assistant watches the condition** (a state
+threshold, an entity state, or the clock), and the rabbit **announces it on its
+own** in Violet's voice once it's met — then forgets the task (single shot, up to
+5 at a time).
+
+It works by exposing three scripts as **tools** to your Claude conversation agent
+(no add-on change): the spoken request already flows to that agent, which calls
+`nabaztag_remember_task` / `nabaztag_remind` / `nabaztag_forget`. A 1-minute
+engine in `home-assistant/nabaztag_tasks.yaml` evaluates the stored tasks and
+routes the announcement through `script.nabaztag_notify` (so quiet hours still
+apply unless the reminder is marked urgent).
+
+**Setup (once):**
+
+1. Drop `home-assistant/nabaztag_tasks.yaml` into `/config/packages/` (it reuses
+   `proactive.yaml`'s `script.nabaztag_notify` — install that too).
+2. **Anthropic integration → enable "Control Home Assistant"** (the LLM API).
+3. **Settings → Voice assistants → Expose** the three `nabaztag_*` scripts **and
+   the entities Nabi should watch** (vacuum, washer, weather…) so Claude knows
+   their `entity_id`.
+4. Reload YAML. Try it by voice, or test from **Developer Tools → Actions**.
 
 ## Repository layout
 
@@ -140,6 +175,8 @@ bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
 │   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
 │   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
 │   ├── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
+│   ├── proactive.yaml       # Nabi "alive" — proactive companion (quips, briefing, notify)
+│   ├── nabaztag_tasks.yaml  # standing orders ("préviens-moi quand…") via Claude tools
 │   └── rfid.yaml            # RFID tag → action (remembers last tag; dispatches known ones)
 ├── README.md
 └── LICENSE

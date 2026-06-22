@@ -1,0 +1,277 @@
+# Nabaztag — « donne des ordres à Nabi » (tâches permanentes & rappels)
+# ===========================================================================
+# Permet de dire au lapin : « préviens-moi quand la batterie de l'aspirateur est
+# pleine », « rappelle-moi de sortir le linge dans 40 minutes », « oublie tout ».
+# Nabi mémorise l'ordre, surveille la condition côté HA, et annonce de lui-même
+# (voix Violet) une fois remplie — puis oublie la tâche (un seul tir).
+#
+# COMMENT ÇA MARCHE
+#   La phrase parlée passe déjà par l'agent conversation Claude (add-on voix).
+#   Ici on EXPOSE 3 scripts comme OUTILS à cet agent. Claude appelle l'outil avec
+#   l'entité/la condition qu'il déduit, et un moteur HA (poll 1 min) surveille.
+#   AUCUNE modif de l'add-on n'est nécessaire.
+#
+# PRÉREQUIS (à faire une fois, sinon le lapin « comprend » mais n'agit pas) :
+#   1. Intégration Anthropic → activer « Contrôler Home Assistant » (API LLM).
+#   2. Réglages → Assistants vocaux → Exposer : les 3 scripts ci-dessous
+#      (nabaztag_remember_task, nabaztag_remind, nabaztag_forget).
+#   3. Exposer aussi à Assist les ENTITÉS à surveiller (aspirateur, lave-linge,
+#      météo…) pour que Claude connaisse leurs entity_id.
+#
+# INSTALLATION : déposer dans /config/packages/, régler les # <-- adjust de
+# proactive.yaml (ce package réutilise son script.nabaztag_notify), puis
+# Outils de développement → YAML → « Tout recharger ».
+# Requiert proactive.yaml (script.nabaztag_notify) et nabaztag.yaml (secrets).
+# ===========================================================================
+
+input_text:
+  # 5 créneaux de tâches. Vide = libre. Sinon un JSON compact :
+  #   état : {"t":"state","e":"vacuum.x","a":"battery_level","op":">=","v":"95","m":"…"}
+  #   temps: {"t":"time","at":"2026-06-22T18:30:00","m":"…","u":false}
+  nabi_task_1: { name: "Nabi — tâche 1", max: 255, icon: mdi:rabbit }
+  nabi_task_2: { name: "Nabi — tâche 2", max: 255, icon: mdi:rabbit }
+  nabi_task_3: { name: "Nabi — tâche 3", max: 255, icon: mdi:rabbit }
+  nabi_task_4: { name: "Nabi — tâche 4", max: 255, icon: mdi:rabbit }
+  nabi_task_5: { name: "Nabi — tâche 5", max: 255, icon: mdi:rabbit }
+
+template:
+  - sensor:
+      # Ce que Nabi surveille en ce moment (pour un dashboard / « tu surveilles quoi ? »).
+      - name: "Nabi tasks"
+        unique_id: nabaztag_tasks_list
+        icon: mdi:format-list-checks
+        state: >-
+          {% set ns = namespace(items=[]) %}
+          {% for i in range(1, 6) %}
+            {% set raw = states('input_text.nabi_task_' ~ i) %}
+            {% if raw and raw not in ['unknown','unavailable'] %}
+              {% set t = raw | from_json %}
+              {% set ns.items = ns.items + [ t.m | default('?') ] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.items | count }}
+        attributes:
+          tasks: >-
+            {% set ns = namespace(items=[]) %}
+            {% for i in range(1, 6) %}
+              {% set raw = states('input_text.nabi_task_' ~ i) %}
+              {% if raw and raw not in ['unknown','unavailable'] %}
+                {% set t = raw | from_json %}
+                {% set ns.items = ns.items + [ t.m | default('?') ] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.items }}
+
+script:
+  # --- OUTIL 1 : surveiller un état --------------------------------------------
+  # « préviens-moi quand <entité> <op> <valeur> » → annonce une fois rempli.
+  nabaztag_remember_task:
+    alias: "Nabaztag - se souvenir : surveiller un état"
+    description: >-
+      Mémorise un ordre permanent : surveille une entité et préviens Kevin à voix
+      haute (via Nabi) quand la condition devient vraie. À utiliser pour
+      « préviens-moi quand … » sur un état (batterie pleine, lave-linge fini,
+      porte ouverte, il pleut…). Se déclenche UNE fois puis s'oublie.
+    fields:
+      entity_id:
+        description: "L'entité à surveiller (ex. vacuum.robot, sensor.lave_linge, weather.home)."
+        required: true
+        example: "vacuum.robot"
+        selector: { entity: {} }
+      attribute:
+        description: "Attribut à comparer plutôt que l'état (ex. battery_level). Laisser vide pour comparer l'état."
+        example: "battery_level"
+      operator:
+        description: "Opérateur de comparaison."
+        required: true
+        default: "=="
+        selector:
+          select:
+            options: [">=", "<=", ">", "<", "==", "!="]
+      value:
+        description: "Valeur cible (nombre pour >=/<=/>/<, ou état texte comme 'on', 'docked', 'finished' pour ==/!=)."
+        required: true
+        example: "95"
+      message:
+        description: "Ce que Nabi devra annoncer une fois la condition remplie (texte brut, Nabi le reformule)."
+        required: true
+        example: "la batterie de l'aspirateur est pleine"
+    variables:
+      # Premier créneau libre (1..5), 0 si tout est plein.
+      free: >-
+        {% set ns = namespace(slot=0) %}
+        {% for i in range(1, 6) %}
+          {% set raw = states('input_text.nabi_task_' ~ i) %}
+          {% if ns.slot == 0 and (not raw or raw in ['unknown','unavailable','']) %}
+            {% set ns.slot = i %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.slot }}
+    sequence:
+      - choose:
+          - conditions: "{{ free | int == 0 }}"
+            sequence:
+              - stop: "Plus de créneau libre (5 tâches max)."
+      - service: input_text.set_value
+        target: { entity_id: "input_text.nabi_task_{{ free }}" }
+        data:
+          value: >-
+            {{ {
+              't': 'state',
+              'e': entity_id,
+              'a': attribute | default('', true),
+              'op': operator,
+              'v': value | string,
+              'm': message
+            } | to_json }}
+      # Évalue tout de suite (au cas où la condition serait déjà vraie).
+      - event: nabaztag_task_eval
+
+  # --- OUTIL 2 : rappel minuté --------------------------------------------------
+  # « rappelle-moi de … dans N minutes » ou « … à <date/heure> ».
+  nabaztag_remind:
+    alias: "Nabaztag - rappel minuté"
+    description: >-
+      Programme un rappel que Nabi annoncera à voix haute à une échéance. À
+      utiliser pour « rappelle-moi de … dans 10 minutes » (in_minutes) ou « …
+      demain à 8h » (at, datetime ISO). Se déclenche UNE fois puis s'oublie.
+    fields:
+      in_minutes:
+        description: "Délai en minutes à partir de maintenant. Utiliser ceci OU 'at'."
+        example: 40
+        selector: { number: { min: 1, max: 10080, mode: box } }
+      at:
+        description: "Échéance absolue (datetime ISO, ex. 2026-06-23T08:00:00). Utiliser ceci OU 'in_minutes'."
+        example: "2026-06-23T08:00:00"
+      message:
+        description: "Ce que Nabi devra rappeler (texte brut)."
+        required: true
+        example: "sortir le linge"
+      urgent:
+        description: "Si vrai, Nabi parle même pendant les heures calmes (nuit)."
+        default: false
+        selector: { boolean: {} }
+    variables:
+      target: >-
+        {% if in_minutes is defined and in_minutes %}
+          {{ (now() + timedelta(minutes = in_minutes | int)).isoformat() }}
+        {% elif at is defined and at %}
+          {{ as_datetime(at).isoformat() }}
+        {% else %}
+          {{ '' }}
+        {% endif %}
+      free: >-
+        {% set ns = namespace(slot=0) %}
+        {% for i in range(1, 6) %}
+          {% set raw = states('input_text.nabi_task_' ~ i) %}
+          {% if ns.slot == 0 and (not raw or raw in ['unknown','unavailable','']) %}
+            {% set ns.slot = i %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.slot }}
+    sequence:
+      - choose:
+          - conditions: "{{ target | trim == '' }}"
+            sequence:
+              - stop: "Échéance manquante (in_minutes ou at requis)."
+          - conditions: "{{ free | int == 0 }}"
+            sequence:
+              - stop: "Plus de créneau libre (5 tâches max)."
+      - service: input_text.set_value
+        target: { entity_id: "input_text.nabi_task_{{ free }}" }
+        data:
+          value: >-
+            {{ {
+              't': 'time',
+              'at': target | trim,
+              'm': message,
+              'u': urgent | default(false)
+            } | to_json }}
+
+  # --- OUTIL 3 : oublier --------------------------------------------------------
+  nabaztag_forget:
+    alias: "Nabaztag - oublier des tâches"
+    description: >-
+      Oublie une ou plusieurs tâches/rappels que Nabi surveille. 'all' efface
+      tout ; sinon un mot-clé efface les tâches dont le message le contient
+      (ex. 'aspirateur', 'linge').
+    fields:
+      which:
+        description: "'all' pour tout effacer, sinon un mot-clé recherché dans le message de la tâche."
+        required: true
+        default: "all"
+        example: "aspirateur"
+    sequence:
+      - repeat:
+          for_each: "{{ range(1, 6) | list }}"
+          sequence:
+            - variables:
+                raw: "{{ states('input_text.nabi_task_' ~ repeat.item) }}"
+            - choose:
+                - conditions: >-
+                    {{ raw and raw not in ['unknown','unavailable',''] and
+                       ( which | lower == 'all'
+                         or which | lower in (raw | from_json).m | lower ) }}
+                  sequence:
+                    - service: input_text.set_value
+                      target: { entity_id: "input_text.nabi_task_{{ repeat.item }}" }
+                      data: { value: "" }
+
+automation:
+  # --- Le moteur : évalue chaque créneau, annonce, puis oublie ----------------
+  - alias: "Nabi - moteur de tâches"
+    id: nabaztag_tasks_engine
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/1"            # poll régulier (latence ≤ 60 s)
+      - platform: event
+        event_type: nabaztag_task_eval   # évaluation immédiate à l'enregistrement
+    action:
+      - repeat:
+          for_each: "{{ range(1, 6) | list }}"
+          sequence:
+            - variables:
+                raw: "{{ states('input_text.nabi_task_' ~ repeat.item) }}"
+                # true seulement si le créneau remplit sa condition MAINTENANT.
+                # (renvoie false sur créneau vide → pas de `condition` nue, qui
+                #  avorterait toute la boucle au premier slot libre)
+                fired: >-
+                  {% if not raw or raw in ['unknown','unavailable',''] %}
+                    {{ false }}
+                  {% else %}
+                    {% set t = raw | from_json %}
+                    {% if t.t == 'time' %}
+                      {{ t.at and as_timestamp(now()) >= as_timestamp(t.at, 0) }}
+                    {% else %}
+                      {% set cur = state_attr(t.e, t.a) if (t.a | default('')) else states(t.e) %}
+                      {% if cur in [None, 'unknown', 'unavailable'] %}
+                        {{ false }}
+                      {% elif t.op in ['>=','<=','>','<'] %}
+                        {% set a = cur | float(none) %}
+                        {% set b = t.v | float(none) %}
+                        {% if a is none or b is none %}{{ false }}
+                        {% elif t.op == '>=' %}{{ a >= b }}
+                        {% elif t.op == '<=' %}{{ a <= b }}
+                        {% elif t.op == '>' %}{{ a > b }}
+                        {% else %}{{ a < b }}{% endif %}
+                      {% elif t.op == '!=' %}
+                        {{ (cur | string) != (t.v | string) }}
+                      {% else %}
+                        {{ (cur | string) == (t.v | string) }}
+                      {% endif %}
+                    {% endif %}
+                  {% endif %}
+            - choose:
+                - conditions: "{{ fired }}"
+                  sequence:
+                    - variables:
+                        task: "{{ raw | from_json }}"
+                    # Vider AVANT d'annoncer : un seul tir, pas de course.
+                    - service: input_text.set_value
+                      target: { entity_id: "input_text.nabi_task_{{ repeat.item }}" }
+                      data: { value: "" }
+                    - service: script.nabaztag_notify
+                      data:
+                        message: "{{ task.m }}"
+                        urgent: "{{ task.u | default(false) }}"
