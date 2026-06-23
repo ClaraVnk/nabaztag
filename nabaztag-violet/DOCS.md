@@ -136,14 +136,24 @@ Enable it in the add-on **Configuration**:
 - `stt_model`: `tiny | base | small` (default **`small`**) — the bundled
   whisper.cpp model. Bigger = more accurate but slower; even `base` does decent
   French on the rabbit's 8 kHz mic.
-- `tts_engine`: `espeak` (bundled, robotic) or `piper` (nicer — needs the HA
-  **Piper** add-on; the add-on fetches its audio through the Supervisor proxy).
-  The Piper entity defaults to **`tts.piper`**; for a softer French voice use
-  **`fr_FR-siwis-medium`** in the Piper add-on (the clearest French female).
+- `tts_engine`: `espeak` (bundled, robotic, fully local) or **`piper` / `ha`**
+  (speak through **any** Home Assistant TTS entity — fetched via the Supervisor
+  proxy). Use `piper`/`ha` for a natural voice.
+- `tts_entity`: **which HA voice** to speak through when the engine is `piper`/`ha`.
+  Point it at any `tts.*` entity in your Home Assistant — this is the dial for
+  "Siri/Alexa-natural":
+  - `tts.piper` (default) — local neural, free; for a softer French voice pick
+    **`fr_FR-siwis-medium`** in the Piper add-on.
+  - `tts.home_assistant_cloud` — HA Cloud / Nabu Casa, very natural, privacy-friendly.
+  - `tts.elevenlabs` — the most natural (cloud, paid).
+  - `tts.google_cloud` / `tts.azure` / `tts.openai` — natural neural cloud voices.
+  - self-hosted Kokoro / XTTS via Wyoming — natural *and* local (more setup).
+
+  > `espeak`/`piper` stay on your network; the cloud entities send the spoken text
+  > to a third party. Choose to taste.
 - `voice_pitch`: shift the voice **up** by this many percent for a cuter / younger,
-  more playful timbre (`0` = off; ~`12`–`18` is a nice "mignonne" range; `>30` =
-  chipmunk). Stock Piper voices are neutral, so this is how you make Nabi sound
-  more espiègle without a custom voice. Needs ffmpeg (bundled).
+  more playful timbre (`0` = off and **the most natural**; ~`12`–`18` is a nice
+  "mignonne" range; `>30` = chipmunk). Needs ffmpeg (bundled).
 
 Keep replies short — the charm is brevity. The agent's instruction (the Nabi
 persona + the action-tag explanation) is built in; you shape the *content* by

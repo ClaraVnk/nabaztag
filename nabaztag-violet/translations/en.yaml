@@ -22,10 +22,13 @@ configuration:
     description: "Whisper model size. small is the most accurate (bundled); base and tiny are much faster on CPU (lower reply latency) at some accuracy cost. base/tiny are downloaded once on first use."
   tts_engine:
     name: "Text-to-speech engine"
-    description: "espeak (bundled, robotic, fully local) or piper (much nicer — needs the Home Assistant Piper add-on)."
+    description: "espeak (bundled, robotic, fully local) or piper/ha (speak through the Home Assistant TTS entity chosen below — a neural voice). Use piper/ha for a natural voice."
+  tts_entity:
+    name: "Home Assistant voice (TTS entity)"
+    description: "When the engine is piper/ha, the HA TTS entity to speak through. For a more natural (Siri/Alexa-like) voice, point it at a neural one: tts.piper (local), tts.home_assistant_cloud (Nabu Casa), tts.elevenlabs, tts.google_cloud, tts.azure, tts.openai… any tts.* entity in your HA works."
   voice_pitch:
     name: "Voice pitch-up (percent)"
-    description: "Shift the voice up for a cuter, younger, more playful timbre. 0 = off; around 12 to 18 is a nice 'mignonne' range; above 30 sounds chipmunk-y."
+    description: "Shift the voice up for a cuter, younger, more playful timbre. 0 = off (most natural); around 12 to 18 is a nice 'mignonne' range; above 30 sounds chipmunk-y."
   auto_listen:
     name: "Passive listening (privacy)"
     description: "OFF by default. When on, Nabi listens continuously for the wake word and its microphone streams. When off the mic never streams — push-to-talk still works. (Runtime toggling via the dashboard now also survives add-on restarts.)"

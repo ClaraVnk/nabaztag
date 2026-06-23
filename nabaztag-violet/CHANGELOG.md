@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.4
+
+- **Pick any voice — up to Siri/Alexa-natural.** New **`tts_entity`** option: when
+  `tts_engine` is `piper`/`ha`, Nabi speaks through *any* Home Assistant TTS entity
+  you name — `tts.piper` (local neural), `tts.home_assistant_cloud` (Nabu Casa),
+  `tts.elevenlabs`, `tts.google_cloud`, `tts.azure`, `tts.openai`, or a self-hosted
+  Wyoming voice. `tts_engine` now accepts `ha` as a clearer synonym of `piper`
+  ("use the HA TTS entity"). README + DOCS gained a voice/TTS guide (local ↔ cloud
+  trade-off table); the docs note `voice_pitch: 0` is the most natural setting.
+
 ## 0.15.3
 
 - **Personality is now a real LED colour show.** When `personality` is

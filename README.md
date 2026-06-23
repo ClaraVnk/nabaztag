@@ -473,14 +473,36 @@ HA failing is **not** a sign of trouble if the rabbit is on a different VLAN
 | Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | Power-cycle (unplug ~10 s) |
 | **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); JTAG as last resort |
 
-## TTS note
+## Voice / TTS — make Nabi sound as natural as you like
 
 The rabbit's original TTS relied on Acapela's now-dead web service. The add-on
-ships its own **fully-local TTS** (`espeak-ng`): `GET /api/say?text=…` makes the
-rabbit speak — no cloud, nothing to install. For a nicer voice, generate audio
-with Home Assistant's local TTS (e.g. Piper) and hand the media URL to
-`GET /api/play?url=…` (the rabbit decodes MP3 and 22 kHz/16-bit mono WAV), or
-`POST` the audio bytes directly and the add-on serves them.
+ships its own **fully-local TTS** (`espeak-ng`, robotic but offline) **and** can
+speak through **any Home Assistant TTS engine** — so the voice is *your* choice,
+from robotic-and-local to Siri/Alexa-natural. Set it in the add-on options:
+
+- **`tts_engine`** — `espeak` (bundled, robotic, 100% local) or **`piper` / `ha`**
+  (speak through the HA TTS entity below).
+- **`tts_entity`** — when the engine is `piper`/`ha`, *which* HA voice to use.
+  Point it at any `tts.*` entity in your Home Assistant:
+
+  | `tts_entity` | Voice | Local? | Naturalness |
+  |---|---|---|---|
+  | `tts.piper` | Piper (neural, on-device) | ✅ local, free | good |
+  | `tts.home_assistant_cloud` | HA Cloud / Nabu Casa | ☁️ (privacy-friendly) | very natural |
+  | `tts.elevenlabs` | ElevenLabs | ☁️ paid | the most natural |
+  | `tts.google_cloud` / `tts.azure` / `tts.openai` | Google / Azure / OpenAI | ☁️ paid | very natural |
+  | (Wyoming) Kokoro / XTTS | newer neural, self-hosted | ✅ local | very natural, more setup |
+
+  Whatever you install in HA appears as a `tts.*` entity — just name it here.
+- **`voice_pitch`** — pitch-shift up for a cuter timbre. **`0` is the most natural**;
+  `~12–18` is the playful "mignonne" range; `>30` goes chipmunk.
+
+> Privacy note: `espeak` and `piper` stay on your network; the cloud engines send
+> the spoken text to a third party. Pick the row that matches your trade-off.
+
+You can also bypass TTS entirely: generate audio elsewhere and hand the rabbit a
+media URL via `GET /api/play?url=…` (it decodes MP3 and 22 kHz/16-bit mono WAV),
+or `POST` the audio bytes directly and the add-on serves them.
 
 ## Credits
 
