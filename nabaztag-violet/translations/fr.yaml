@@ -22,10 +22,13 @@ configuration:
     description: "Taille du modèle Whisper. small est le plus précis (embarqué) ; base et tiny sont bien plus rapides sur CPU (réponse moins longue) au prix d'un peu de précision. base/tiny sont téléchargés une fois à la première utilisation."
   tts_engine:
     name: "Moteur de synthèse vocale"
-    description: "espeak (embarqué, robotique, 100% local) ou piper (bien plus joli — nécessite l'add-on Piper de Home Assistant)."
+    description: "espeak (embarqué, robotique, 100% local) ou piper/ha (parle via le moteur TTS de Home Assistant choisi ci-dessous — voix neuronale). Mets piper/ha pour une voix naturelle."
+  tts_entity:
+    name: "Voix Home Assistant (entité TTS)"
+    description: "Quand le moteur est piper/ha, l'entité TTS de HA utilisée pour parler. Pour une voix plus naturelle (style Siri/Alexa), pointe vers une voix neuronale : tts.piper (local), tts.home_assistant_cloud (Nabu Casa), tts.elevenlabs, tts.google_cloud, tts.azure, tts.openai… N'importe quelle entité tts.* de ton HA marche."
   voice_pitch:
     name: "Aigu de la voix (pourcentage)"
-    description: "Monte la voix pour un timbre plus mignon, jeune et espiègle. 0 = off ; environ 12 à 18 donne un joli côté « mignonne » ; au-delà de 30 ça fait chipmunk."
+    description: "Monte la voix pour un timbre plus mignon, jeune et espiègle. 0 = off (le plus naturel) ; environ 12 à 18 donne un joli côté « mignonne » ; au-delà de 30 ça fait chipmunk."
   auto_listen:
     name: "Écoute passive (vie privée)"
     description: "DÉSACTIVÉE par défaut. Activée, Nabi écoute en continu le mot d'éveil et son micro diffuse. Désactivée, le micro ne diffuse jamais — le push-to-talk (bouton) fonctionne quand même."

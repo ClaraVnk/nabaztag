@@ -126,9 +126,13 @@ VOICE_PROMPT = os.environ.get("VOICE_PROMPT") or (
     "[led ZONE R V B] (ZONE = bottom|left|middle|right|top, couleurs 0 à 255), "
     "[nose N] (nez 0,1,2). Voici ce qu'on te dit : "
 )
-# TTS engine: "espeak" (bundled, robotic) or "piper" (nicer; via the Home
-# Assistant Piper add-on, fetched through the Supervisor proxy).
+# TTS engine: "espeak" = bundled, robotic, fully local. "piper"/"ha" = synthesize
+# through ANY Home Assistant TTS entity (set by tts_entity, fetched via the
+# Supervisor proxy) — Piper for a local neural voice, or point tts_entity at a
+# natural cloud/HA-Cloud voice (HA Cloud, ElevenLabs, Google, Azure, OpenAI…).
 TTS_ENGINE = (os.environ.get("TTS_ENGINE") or _OPTS.get("tts_engine") or "espeak").lower()
+# Which HA TTS entity to speak through when tts_engine is piper/ha (e.g. tts.piper,
+# tts.home_assistant_cloud, tts.elevenlabs, tts.google_cloud, tts.openai…).
 TTS_ENTITY = os.environ.get("TTS_ENTITY") or _OPTS.get("tts_entity") or "tts.piper"
 # Pitch-shift the TTS up by this many percent (ffmpeg, tempo preserved) for a
 # younger/cuter, more playful timbre. 0 = off; ~10-18 ≈ "mignonne"; >30 = chipmunk.
@@ -577,16 +581,16 @@ def _pitch(data: bytes) -> bytes:
 
 
 def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
-    """Make speech audio for the rabbit. Uses the Home Assistant Piper add-on when
-    tts_engine=piper (nicer voice), otherwise the bundled espeak-ng (always works,
-    fully local). Returns MP3 (Piper) or WAV (espeak); the rabbit decodes both.
-    A VOICE_PITCH > 0 shifts it up for a cuter timbre."""
+    """Make speech audio for the rabbit. When tts_engine is piper/ha it synthesizes
+    through the chosen Home Assistant TTS entity (tts_entity) — a neural voice;
+    otherwise the bundled espeak-ng (always works, fully local). Returns MP3 (HA
+    TTS) or WAV (espeak); the rabbit decodes both. VOICE_PITCH > 0 shifts it up."""
     text = _clean_for_tts(text)
-    if TTS_ENGINE == "piper":
+    if TTS_ENGINE in ("piper", "ha"):
         audio = synth_via_ha(text)
         if audio:
             return _pitch(audio)
-        log.warning("Piper TTS returned nothing — falling back to espeak")
+        log.warning("HA TTS (%s) returned nothing — falling back to espeak", TTS_ENTITY)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         path = tf.name
     try:
