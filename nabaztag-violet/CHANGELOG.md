@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.5
+
+- **Personality: no more autonomous nose blink.** The `personality` "sign of life"
+  is now only the random LED colour dance or an ear wiggle — the occasional nose
+  blink was removed by preference. (Dance ~75% / ear wiggle ~25%.)
+
 ## 0.15.4
 
 - **Pick any voice — up to Siri/Alexa-natural.** New **`tts_entity`** option: when

@@ -2076,15 +2076,14 @@ def _led_color_dance(b):
 
 def _personality_action(b):
     """One random 'sign of life': mostly a LED colour dance (random order/colour
-    across all 5 LEDs, belly included), sometimes an ample ear wiggle or a nose
-    blink. Each LED show fades out, so it never leaves a stuck colour. Sleeps
-    between sub-steps → run in a thread."""
+    across all 5 LEDs, belly included), sometimes an ample ear wiggle. Each LED
+    show fades out, so it never leaves a stuck colour. Sleeps between sub-steps →
+    run in a thread. (No autonomous nose blink — by preference.)"""
     import random, time as _t
     try:
-        pick = random.random()
-        if pick < 0.65:
+        if random.random() < 0.75:
             _led_color_dance(b)
-        elif pick < 0.88:
+        else:
             # An AMPLE, clearly visible wiggle: opposite extremes, swap, then
             # settle to neutral (8). Small random moves were invisible.
             p, q = random.choice([(2, 14), (14, 2), (1, 12), (15, 4), (4, 15)])
@@ -2096,8 +2095,6 @@ def _personality_action(b):
             _t.sleep(0.9)
             b.send_choreography(200, [(0, "motor", (EAR_NAMES["left"], 8 * 18, 0)),
                                       (0, "motor", (EAR_NAMES["right"], 8 * 18, 1))])
-        else:
-            b.send_violet_packet(ambient_packet({SVC_NOSE: 1}))
     except Exception as exc:  # noqa
         log.warning("personality: action failed %s", exc)
 
