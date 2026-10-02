@@ -1,0 +1,61 @@
+name: Security
+
+# Weekly, and on demand. A vulnerability published about something already in
+# the images is found here even when nobody pushes.
+on:
+  schedule:
+    - cron: "41 5 * * 1"  # Mondays 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OSV_SCANNER: ghcr.io/google/osv-scanner:v2.6.0
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks, whole history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  image:
+    name: Image scan (nabaztag-violet, report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the add-on image
+        run: podman build -t nabaztag-violet:scan nabaztag-violet
+      - name: Scan its packages (osv-scanner)
+        # Report only: Alpine images routinely carry advisories with no fix yet,
+        # and a job that fails every Monday on those teaches everyone to ignore
+        # it. The findings are in the job summary and the uploaded report.
+        continue-on-error: true
+        run: |
+          podman save -o image.tar nabaztag-violet:scan
+          set -o pipefail
+          podman run --rm -v "$PWD/image.tar:/image.tar:ro" "$OSV_SCANNER" \
+            scan image --archive /image.tar | tee osv-report.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## osv-scanner — nabaztag-violet"
+            echo '```'
+            tail -n 60 osv-report.txt 2>/dev/null || echo "no report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osv-report
+          path: osv-report.txt
+          if-no-files-found: ignore
