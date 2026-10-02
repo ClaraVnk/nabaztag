@@ -6,6 +6,14 @@ on:
   schedule:
     - cron: "41 5 * * 1"  # Mondays 05:41 UTC
   workflow_dispatch:
+  # A change to an image (Dependabot's included) is built and scanned before
+  # it merges, not discovered on Monday.
+  pull_request:
+    paths:
+      - "nabaztag-violet/**"
+      - "nabaztag-server/**"
+      - "firmware-arm/**"
+      - ".github/**"
 
 permissions:
   contents: read
@@ -59,3 +67,24 @@ jobs:
           name: osv-report
           path: osv-report.txt
           if-no-files-found: ignore
+
+  upstream:
+    name: Pinned upstreams not covered by Dependabot (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare the pinned whisper.cpp release with the latest one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pinned=$(sed -n 's/^ARG WHISPER_VERSION=//p' nabaztag-violet/Dockerfile)
+          latest=$(gh api repos/ggml-org/whisper.cpp/releases/latest --jq .tag_name)
+          {
+            echo "## Pinned upstreams"
+            if [ "$pinned" = "$latest" ]; then
+              echo "whisper.cpp: $pinned is the latest release."
+            else
+              echo "whisper.cpp: pinned $pinned, latest is **$latest** — update WHISPER_VERSION and WHISPER_COMMIT in nabaztag-violet/Dockerfile."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
