@@ -61,7 +61,7 @@ jobs:
             tail -n 60 osv-report.txt 2>/dev/null || echo "no report"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: osv-report
