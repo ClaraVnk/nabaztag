@@ -1,6 +1,6 @@
 # Layered on the prebuilt OpenJabNab image (see build.yaml). Supervisor passes
 # BUILD_FROM at build time; the default keeps `docker build` working standalone.
-ARG BUILD_FROM=antoineaumjaud/docker-openjabnab:latest
+ARG BUILD_FROM=antoineaumjaud/docker-openjabnab:latest@sha256:77e335bcfc336bd401b5462c11e4bf361018ff0817ba8a5a22961509cb8a19bb
 FROM ${BUILD_FROM}
 
 # OpenJabNab's HTTP listener binds 127.0.0.1 only, so Apache reverse-proxies
