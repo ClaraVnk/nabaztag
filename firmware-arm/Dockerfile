@@ -80,4 +80,9 @@ RUN cd /build/nabgcc \
  && ls -la bin/Nab.bin bin/firmware0.0.0.13.sim
 
 # Outputs the artifacts to a tar on stdout when run with no command.
-CMD ["sh", "-c", "tar -C /build/nabgcc/bin -cf - Nab.bin Nab.elf Nab.map firmware0.0.0.13.sim 2>/dev/null || tar -C /build/nabgcc/bin -cf - Nab.bin firmware0.0.0.13.sim"]
+# ONE tar stream only: the previous `tar A || tar B` form appended a second
+# stream to the first one's partial output whenever an optional member was
+# missing (Nab.map is written to obj/, never bin/), which made the extracting
+# tar exit non-zero and killed build.sh before it could sign. Required members
+# are listed outright (missing one must fail); optional ones are globbed in.
+CMD ["sh", "-c", "cd /build/nabgcc/bin && exec tar -cf - Nab.bin firmware0.0.0.13.sim $(ls Nab.elf Nab.map 2>/dev/null)"]
