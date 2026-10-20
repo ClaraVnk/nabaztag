@@ -6,14 +6,57 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 
 ## What it does
 
-- **HTTP boot (`:80`)** — `/vl/bc.jsp` serves the original bytecode
-  (`bootcode.violet`, bundled), `/vl/locate.jsp` points the rabbit at this host.
+- **HTTP boot (`:80`)** — `/vl/bc.jsp` serves the runtime bytecode (the
+  **hybrid** build, see *Bytecodes* below), `/vl/locate.jsp` points the rabbit
+  at this host.
 - **XMPP (`:5222`)** — accepts the rabbit's connection using the documented
   **SASL success-bypass** (no Violet password needed), binds it, keeps it idle,
   and can push `violet:packet` commands. **Every byte the rabbit sends is
   logged** — this doubles as the platform to finish reverse-engineering the
   command/event packets on the real device.
 - **Control API (`:8080`)** — small HTTP API for Home Assistant.
+
+
+## Bytecodes — and running the server outside the add-on
+
+The server serves whatever `BOOTCODE_FILE` points at; it defaults to
+`/data/bootcode.hybrid`, which the add-on puts there. Run `server.py` by hand
+without that file and `/vl/bc.jsp` answers 500 with
+`bootcode file not found` — the rabbit then boots and does nothing, silently.
+
+**You do not need anything proprietary to get past this.** The hybrid runtime
+bytecode is committed in this repo:
+
+```sh
+BOOTCODE_FILE=/path/to/repo/firmware/bootcode_hybrid.bin python3 server.py
+# sha256 072496206b2319c920d56fd9d5a07c3057ec81707ba0f40117d91768f2970d4a
+```
+
+That is the build you want: stock Violet runtime **plus** the mic stream, the
+volume command, Ed25519-gated OTA, and the mDNS announcer *and resolver*. Every
+option has an environment-variable override (`SERVER_ADDRESS`, `HTTP_PORT`,
+`XMPP_PORT`, `API_PORT`…), so no Home Assistant and no `options.json` are
+required.
+
+**The stock Violet / OpenJabNab bytecodes** are a different matter: they are
+Violet's proprietary firmware, so they are **not** committed here. The add-on
+image fetches them at build time, and you can fetch them the same way if you
+want the original behaviour instead of the hybrid:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet
+curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.ojn
+```
+
+Verify what you downloaded:
+
+```
+59e91c6a432056ee94b7c8fe8a1eb7da23a9f4539b9c60e031290322bce4de53  bootcode.violet
+4b051f42a647e55deacea95d30bdf14c31283cfc2048e3bbe78991e4df7e6724  bootcode.ojn
+```
+
+Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
+`BOOTCODE_FILE` at one of them only for comparison or protocol work.
 
 ## Install
 
