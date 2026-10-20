@@ -57,6 +57,29 @@ resolver in particular). Hardware-verified: the full hybrid (104 827 B — resol
 + announcer + RS/RT/SV + OTA) boots, resolves over mDNS, binds XMPP, broadcasts
 `naboot.local`, and speaks. The FW/OTA path only *runs* on Naboot firmware.
 
+## Why the rabbit no longer reboots when the server restarts
+
+Stock `main.mtl` reboots the rabbit when the XMPP socket closes — the comment
+says so, and says the authors considered reconnecting instead and chose the
+reboot as "the most effective". On a server that never went away, it was.
+
+Measured on real hardware (2026-10-20), on a warren that redeploys: the drop
+is at 17:12:12, the rabbit re-fetches its 103 KB of bytecode at **17:12:25**,
+and then stops — it never even asks for `locate.jsp`. It stays orange until
+someone unplugs it. A soft `reboot` does not bring the 2006 rt2501 USB radio
+back; a power cycle does.
+
+`patch_reconnect.py` routes the closed-socket case to `XmppSessionIsDisconnected`
+instead: stop what we are doing, reset to idle, base LED violet, wait 5 s plus a
+random 0-30 s (so a whole warren does not stampede back at once), then
+`XmppGateReconnect`. The network stack is never torn down, so there is nothing
+to bring back. That path is not new code — Violet already uses it for BOSH, for
+a server-closed stream and for stanza errors; this only routes the TCP case
+there too.
+
+It ships in the **bytecode**, which the rabbit downloads at every boot, so it
+needs no flashing and carries no brick risk: build, serve, power-cycle once.
+
 The compiled `*.bin` in this directory is **not committed**. The copy the
 add-on actually ships *is*: `nabaztag-violet/bootcode.hybrid`, checksum-verified
 by `nabaztag-violet/Dockerfile`. After a rebuild, copy the new output there and
