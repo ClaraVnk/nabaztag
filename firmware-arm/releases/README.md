@@ -1,8 +1,9 @@
-# Naboot — stable release
+# Naboot — shipped releases
 
-This folder holds the **one** firmware build we vouch for: hardware-verified,
-reproducible, signed. It's what the community downloads and our emergency backup.
-Test / dev / experimental builds stay out of git (see `../.gitignore`).
+This folder holds the firmware builds we ship: the hardware-verified **stable**
+release the community downloads, plus the **minimal rescue** build to roll back to
+when a flash goes wrong. Both are reproducible and signed. Test / dev /
+experimental builds stay out of git (see `../.gitignore`).
 
 ## `naboot-stable.signed.sim`
 
@@ -18,6 +19,23 @@ Test / dev / experimental builds stay out of git (see `../.gitignore`).
 over multicast mDNS, completes the XMPP handshake, speaks — and a full
 **signed OTA was flashed over the air and recovered cleanly** (the rabbit
 re-flashed itself with this exact `.sim` and came back operational).
+
+## `naboot-minimal.signed.sim`
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep` + `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
+| **Firmware version** | `0.0.0.13` |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `keys/signing_pubkey.h`) |
+| **sha256** | `449974dd9b42d3fffb80562d9682a26985bf26bc2cc74594568d3316545f3fe6` |
+
+**When to use it:** flash this when a build (`lean`/`full`) left the rabbit in a
+state where config mode still answers but the modernized UI misbehaves, or when
+you simply want back to stock bootloader behavior. It keeps the `verifySig`
+opcode in place, so signed OTAs stay possible afterwards. It is **not**
+hardware-verified the way `naboot-stable.signed.sim` is — it's the parachute,
+built from the same pinned sources. See `../RECOVERY.md`.
 
 ## Flashing it
 
@@ -35,6 +53,13 @@ flash + recovery procedure and `../BRICK_FORENSICS.md` if anything goes wrong.
 ./build.sh --mode lean --remote <user@dev-vm> --runtime podman
 ```
 
-The build is deterministic: a fresh rebuild is byte-identical to this file
-(same sha256). Other modes (`minimal` rescue, `full`, `max`, `phase8-rom`) build
-the same way — only this verified `lean` build is committed.
+```sh
+# the minimal rescue build, same way
+./build.sh --mode minimal --remote <user@dev-vm> --runtime podman
+# → bin/minimal/firmware0.0.0.13.signed.sim, copied here as naboot-minimal.signed.sim
+```
+
+The build is deterministic: a fresh rebuild is byte-identical to these files
+(same sha256). Only these two builds — the verified `lean` stable and the
+`minimal` rescue — are committed; the other modes (`full`, `max`, `mdns-only`,
+`phase8-rom`) build the same way but stay under the ignored `bin/`.
