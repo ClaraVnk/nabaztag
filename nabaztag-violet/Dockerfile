@@ -50,11 +50,12 @@ COPY --from=whisper /out/models /app/models
 
 # The runtime bytecode the rabbit downloads at /vl/bc.jsp — the hybrid build,
 # versioned HERE (firmware/build-bytecode.sh writes a new one locally; copy it
-# to bootcode.hybrid and update the checksum below in the same commit). The
+# to bootcode.hybrid and update the checksum below in the same commit — the one
+# on the bootcode line, not the Whisper model's a few lines up). The
 # checksum is verified at build so the file can never drift unnoticed. Without
 # it a fresh install has no bytecode at all and every boot 500s (issue #2).
 COPY bootcode.hybrid /app/bootcode.hybrid
-RUN echo "072496206b2319c920d56fd9d5a07c3057ec81707ba0f40117d91768f2970d4a  /app/bootcode.hybrid" \
+RUN echo "59bc7bbbd1bdb412eaa1391c246010d83d1369830ab386a673e4e0fc76cc8334  /app/bootcode.hybrid" \
     | sha256sum -c -
 
 # Dependency-free server (Python stdlib only); reads /data/options.json at runtime.
