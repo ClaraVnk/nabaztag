@@ -12,7 +12,7 @@ experimental builds stay out of git (see `../.gitignore`).
 | **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
 | **Build mode** | `lean` (modernized config UI + Ed25519-gated OTA + mDNS announcer **and resolver** + `--gc-sections`, with the surgical `.bss`/audio-FIFO fix) |
 | **Firmware version** | `0.0.0.13` |
-| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `keys/signing_pubkey.h`) |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
 | **sha256** | `8d6111193bce6a7a16689b893efa0d7b30a119fee4867a79bf1f40a705ed4ba8` |
 
 **Verified live (2026-06-21):** boots, loads its bytecode, resolves its server
@@ -27,7 +27,7 @@ re-flashed itself with this exact `.sim` and came back operational).
 | **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
 | **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep` + `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
 | **Firmware version** | `0.0.0.13` |
-| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `keys/signing_pubkey.h`) |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
 | **sha256** | `449974dd9b42d3fffb80562d9682a26985bf26bc2cc74594568d3316545f3fe6` |
 
 **When to use it:** flash this when a build (`lean`/`full`) left the rabbit in a

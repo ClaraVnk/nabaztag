@@ -1,14 +1,20 @@
 # Naboot — flash + recovery guide
 
-The `firmware-arm/` tree now produces two `.sim` flavors. Both embed the
-Ed25519 verifySig opcode (so future OTAs can be signature-gated). They
-differ only in how invasive they are on the bootloader:
+The `firmware-arm/` tree builds several `.sim` *modes* from the same pinned
+sources (`apply-mods.py --mode …`). All embed the Ed25519 `verifySig` opcode (so
+OTAs can be signature-gated); they differ in how invasive they are on the
+bootloader. The ones that matter for flashing and recovery:
 
-| Build      | `Nab.bin` | Δ vs vanilla wpa2 | What's modified |
-|------------|-----------|-------------------|-----------------|
-| **minimal** (rescue) | 122 KB | +6.4 KB | C side only: TweetNaCl + nab_sig + OPverifySig opcode. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD.** Bootloader UI + `httpflash` flow stay exactly as the version Kevin's sysadmin already flashed safely. |
-| **full** (recommended) | 117 KB | +1.7 KB | Everything in minimal, **plus**: `httpflash` rejects unsigned/tampered .sim, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
-| **phase8-rom** (experimental) | 108 KB | -6.6 KB | Everything in `full` + `--gc-sections` **plus** the Phase 8 stack of 8 source-level slices: (1) 4 portal HTML pages live in C-side flash ROM rendered via a new `OPpageRender` opcode; (2) `pagefill`/`listreplacestr` + 4 stillborn helpers (`wifiConnected`, `listnth`, `itoanil`, `unregudp`) pruned as orphans after rom_pages obsoleted their callers (each verified to have zero external refs before deletion); (3) `mkwav 8000 1 16` precomputed and inlined as a 46-byte literal; (4) `dump`/`dumpscan` reduced to identity (UART unwired so the prints go to a sink nobody reads), then callsites inlined and defs dropped; (5) all 86 `Secho{ln} "literal"` calls replaced with `nil`; (6) user echo helpers `MACecho`/`SEQecho`/`IPecho` collapsed to identity (passthrough preserved for callers using their return); (7) every dynamic-arg `Secho`/`Secholn`/`Iecho`/`Iecholn` opcode keyword deleted — they're confirmed stack passthroughs in vinterp.c. **Smallest .sim of all modes (220 330 B)**, -18 376 B vs minimal/rescue, -6 328 B vs lean. Frees ~10 KB of vmem RAM at runtime. Every slice is idempotent and composable in the mode's step list. Untested on hardware as of 2026-06-01 — flash `full` first, treat `phase8-rom` as the experimental headroom slice. |
+| Build | `Nab.bin` | Shipped? | What's modified |
+|---|---|---|---|
+| **lean** (stable) | 113 256 B | **yes** — `releases/naboot-stable.signed.sim`, hardware-verified | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, and the surgical `.bss`/audio-FIFO fix. The build the community runs. |
+| **minimal** (rescue) | 117 520 B | **yes** — `releases/naboot-minimal.signed.sim` | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
+| **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
+| **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Smallest image of all; untested on hardware as of 2026-06-01. |
+
+Sizes are those of the 2026-10-20 builds; `./build.sh` prints the current ones.
+Bisection modes (`signed-stock`, `pages-only`, `mdns-only`, `lean-nomdns`) are
+described in `apply-mods.py --help` and [BRICK_FORENSICS.md](./BRICK_FORENSICS.md).
 
 Every build lands under `bin/<mode>/` (ignored by git), but the signed `.sim`
 files we actually **ship** live in `releases/`:
@@ -19,22 +25,22 @@ firmware-arm/releases/
 └── naboot-minimal.signed.sim  ← upload this one (rescue / rollback — mode `minimal`)
 ```
 
-`full` is **not shipped**: no `releases/naboot-full.signed.sim` exists. If you
+`full` is **not shipped**: there is no full build under `releases/`. If you
 want it, build and sign it yourself with
 `./build.sh --mode full --remote <user@dev-vm> --runtime podman`, which leaves
 it at `bin/full/firmware0.0.0.13.signed.sim` on your own machine.
 
 ## Risk model
 
-* **First-flash risk** is the same as the vanilla wpa2 flash Kevin's sysadmin
-  successfully performed a year ago — the bootloader bytecode and config-mode
-  UI are unchanged in `minimal`, and our additions in `full` are surgical
+* **First-flash risk** is the same as the original vanilla wpa2 flash this
+  rabbit already survived — the bootloader bytecode and config-mode UI are
+  unchanged in `minimal`, and our additions in `full`/`lean` are surgical
   (Metal compiler validates everything; the simulator confirms the source
   compiles cleanly with no unresolved labels).
 * **Brick scenario:** a corrupted upload mid-flash could leave the rabbit
   unable to re-enter config mode. The OKI ML67Q4051 ROM bootloader recovers
   via UART pads on the PCB — which means opening the shell. That risk is
-  unchanged from what Kevin already accepted with the sysadmin flash.
+  unchanged from any flash on this device, including the original wpa2 one.
 
 ## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
 
@@ -120,7 +126,7 @@ The rabbit now runs **Naboot**. From this point on:
 
 * The bootloader refuses to flash any `.sim` lacking a valid Ed25519
   signature against `firmware-arm/keys/signing_pubkey.h`.
-* `httpflash` (config-mode upload) still works — Kevin can re-flash any
+* `httpflash` (config-mode upload) still works — you can re-flash any
   signed `.sim` the normal way.
 * OTAs become possible via the add-on: stage with `POST /api/ota`, then
   `?trigger=1` to push a `FW <url>` command to the rabbit. This last step
@@ -131,12 +137,13 @@ The rabbit now runs **Naboot**. From this point on:
 
 ## Recovery key facts
 
-* **Private signing key:** `~/.nabaztag/signing_key.bin` (Kevin's Mac only,
-  chmod 600). Never copied anywhere. If lost, future OTAs are dead in the
+* **Private signing key:** `~/.nabaztag/signing_key.bin` on the maintainer's
+  machine only (chmod 600). Never copied anywhere. If lost, future OTAs are dead in the
   water — keep a backup somewhere safe.
 * **Public key:** `firmware-arm/keys/signing_pubkey.h`, committed to the
   repo, embedded in the firmware. Public, no secrecy required.
 * **Both builds are reproducible** from the pinned upstream commits
   (`NABGCC_COMMIT=2c05b53fe…`, `MTL_LINUX_COMMIT=7e557a153…` in the
-  Dockerfile). `./build.sh --mode minimal` and `./build.sh --mode full`
-  rebuild from scratch on the HAOS host.
+  Dockerfile). `./build.sh --mode <mode> --remote <user@dev-vm> --runtime podman`
+  rebuilds from scratch on the build VM — **never on the Home Assistant host**
+  (building there takes the rabbit's server down; see `releases/README.md`).

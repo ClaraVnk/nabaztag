@@ -48,11 +48,11 @@ RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ ffmpeg &
 COPY --from=whisper /out/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=whisper /out/models /app/models
 
-# The runtime bytecode the rabbit downloads at /vl/bc.jsp. Source of truth is
-# firmware/bootcode_hybrid.bin at the repo root; this is a copy, because a HA
-# add-on build context is the add-on directory and COPY cannot reach outside it.
-# The checksum is verified so the two can never silently diverge. Without this
-# file a fresh install has no bytecode at all and every boot 500s (issue #2).
+# The runtime bytecode the rabbit downloads at /vl/bc.jsp — the hybrid build,
+# versioned HERE (firmware/build-bytecode.sh writes a new one locally; copy it
+# to bootcode.hybrid and update the checksum below in the same commit). The
+# checksum is verified at build so the file can never drift unnoticed. Without
+# it a fresh install has no bytecode at all and every boot 500s (issue #2).
 COPY bootcode.hybrid /app/bootcode.hybrid
 RUN echo "072496206b2319c920d56fd9d5a07c3057ec81707ba0f40117d91768f2970d4a  /app/bootcode.hybrid" \
     | sha256sum -c -

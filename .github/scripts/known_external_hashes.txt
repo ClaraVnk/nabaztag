@@ -1,0 +1,7 @@
+# sha256 values the docs may quote for artifacts we fetch but do not host.
+# One per line; anything after '#' is a comment. check_promises.py reads this.
+#
+# Stock Violet / OpenJabNab bytecodes, fetched at add-on build time from
+# https://github.com/OpenJabNab/OpenJabNab (http-wrapper/ojn_local/bootcode/).
+59e91c6a432056ee94b7c8fe8a1eb7da23a9f4539b9c60e031290322bce4de53  bootcode.violet
+4b051f42a647e55deacea95d30bdf14c31283cfc2048e3bbe78991e4df7e6724  bootcode.ojn

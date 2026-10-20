@@ -26,7 +26,7 @@ ports:
 ports_description:
   "80/tcp": "Boot: /vl/bc.jsp serves the bytecode, /vl/locate.jsp points the rabbit at us."
   "5222/tcp": "XMPP: the rabbit connects here; the server pushes violet:packet commands."
-  "8080/tcp": "Control API for Home Assistant — reached on host port 8099 (8080 is taken by signal-cli)."
+  "8080/tcp": "Control API for Home Assistant — reached on host port 8099 (8080 is commonly taken on the host)."
   "4000/udp": "Microphone stream from the rabbit (hybrid bytecode only) — Phase-2/3 voice."
 options:
   server_address: "192.0.2.10"

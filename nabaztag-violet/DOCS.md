@@ -24,16 +24,17 @@ The server picks the first bytecode that exists, in this order:
 1. `$BOOTCODE_FILE`, if you set it — always wins;
 2. `/data/bootcode.hybrid` — a bytecode you built yourself and dropped in the
    add-on's persistent storage;
-3. the copy bundled in the add-on image;
-4. `firmware/bootcode_hybrid.bin` from this repo.
+3. `nabaztag-violet/bootcode.hybrid` — the copy **committed in this repo** and
+   bundled in the add-on image;
+4. `firmware/bootcode_hybrid.bin` — the local output of `firmware/build-bytecode.sh`,
+   if you rebuilt the bytecode yourself (not committed).
 
-So running it outside Home Assistant takes nothing special, and nothing
-proprietary — the hybrid bytecode is committed here:
+So running it outside Home Assistant takes nothing special:
 
 ```sh
 python3 nabaztag-violet/server.py          # from a checkout, just works
 # or, from anywhere:
-BOOTCODE_FILE=/path/to/repo/firmware/bootcode_hybrid.bin python3 server.py
+BOOTCODE_FILE=/path/to/repo/nabaztag-violet/bootcode.hybrid python3 server.py
 # sha256 072496206b2319c920d56fd9d5a07c3057ec81707ba0f40117d91768f2970d4a
 ```
 
@@ -263,7 +264,7 @@ packages ship in [`home-assistant/`](https://github.com/ClaraVnk/nabaztag/tree/m
 - **`entities.yaml`** — optional **dashboard controls** (a sleep toggle, a nose
   selector, an ears slider, belly R/G/B sliders) built from input helpers +
   automations on those `rest_command`s — replaces the old MQTT entities, no broker.
-- **`blueprints/nabaztag_event_reaction.yaml`** — a **point-and-click blueprint**:
+- **`home-assistant/blueprints/nabaztag_event_reaction.yaml`** — a **point-and-click blueprint**:
   pick any entity + the state that should fire + a message, and Nabi reacts in its
   voice (via `nabaztag_notify`) — no YAML. The easy way to wire house events
   (doorbell, laundry done, a door opening…) to Nabi. Drop it in

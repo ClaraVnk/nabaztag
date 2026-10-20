@@ -483,3 +483,9 @@ sed -n '/corename\[\]/,/^};/p' .../stdlib_core.cpp        # builtin names
   structure is Phase 7b ("view as Python" layer).
 - Globals are shown as values; we don't yet correlate `OPgetglobalb 42`
   back to the matching global slot label. Mechanical to add.
+
+> **Note on the test programs.** The small `.mtl` / `.py` fixtures named above
+> (`tiny`, `jump`, `statemachine`, …) were a local scratch suite and are **not
+> committed**; only the production inputs (`boot.0.0.0.13.bin`, the hybrid
+> bytecode) are reproducible from this repo. Treat the per-feature claims as the
+> author's log, not as a test suite you can re-run.

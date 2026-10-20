@@ -56,10 +56,11 @@ def _resolve_bootcode():
 
     /data wins over the bundled copy so a hand-built bytecode dropped in the
     add-on's persistent storage keeps overriding the image, which is how this
-    has always worked. The bundled copy comes next, so a fresh install serves
-    something instead of 500ing (issue #2). The repo path is last, so
-    `python3 server.py` works straight from a checkout with no options.json
-    and no Home Assistant at all.
+    has always worked. The copy next to this file comes next: it is the one
+    committed in the repo and bundled in the image, so a fresh install — or a
+    plain `python3 server.py` from a checkout — serves something instead of
+    500ing (issue #2). firmware/bootcode_hybrid.bin is last: the local output
+    of firmware/build-bytecode.sh, for whoever rebuilds the bytecode.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     explicit = os.environ.get("BOOTCODE_FILE")
