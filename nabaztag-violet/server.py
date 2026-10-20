@@ -50,7 +50,29 @@ API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
 # command. Hardcoded; the choice was removed from the UI to keep it lambda-clean.
 # The .bin is built locally and dropped in the add-on's persistent /data.
 BOOTCODE_CHOICE = "hybrid"
-BOOTCODE_FILE = os.environ.get("BOOTCODE_FILE", "/data/bootcode.hybrid")
+
+def _resolve_bootcode():
+    """First bytecode that actually exists, in order of authority.
+
+    /data wins over the bundled copy so a hand-built bytecode dropped in the
+    add-on's persistent storage keeps overriding the image, which is how this
+    has always worked. The bundled copy comes next, so a fresh install serves
+    something instead of 500ing (issue #2). The repo path is last, so
+    `python3 server.py` works straight from a checkout with no options.json
+    and no Home Assistant at all.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    explicit = os.environ.get("BOOTCODE_FILE")
+    if explicit:
+        return explicit
+    for cand in ("/data/bootcode.hybrid",
+                 os.path.join(here, "bootcode.hybrid"),
+                 os.path.join(here, os.pardir, "firmware", "bootcode_hybrid.bin")):
+        if os.path.exists(cand):
+            return os.path.normpath(cand)
+    return "/data/bootcode.hybrid"
+
+BOOTCODE_FILE = _resolve_bootcode()
 # Where /api/ota stages signed .sim files. The rabbit fetches them at the
 # matching /ota/<basename> URL when the server sends a FW program command.
 OTA_DIR = os.environ.get("OTA_DIR", "/data/ota")
@@ -2123,7 +2145,10 @@ def main():
     log.info("nabaztag-violet starting | server_address=%s http=%d xmpp=%d api=%d",
              SERVER_ADDRESS, HTTP_PORT, XMPP_PORT, API_PORT)
     if not os.path.exists(BOOTCODE_FILE):
-        log.warning("bootcode file not found at %s — /vl/bc.jsp will 500", BOOTCODE_FILE)
+        log.warning("bootcode file not found at %s — /vl/bc.jsp will 500. The "
+                    "add-on image bundles one; outside it, set BOOTCODE_FILE to "
+                    "firmware/bootcode_hybrid.bin from the repo (see DOCS.md, "
+                    "'Bytecodes')", BOOTCODE_FILE)
     threading.Thread(target=xmpp_server, daemon=True).start()
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=udp_mic_server, daemon=True).start()
