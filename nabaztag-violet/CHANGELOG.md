@@ -2,6 +2,11 @@
 
 ## 0.15.6
 
+- **arm64/aarch64 declared (provisional, #7).** The add-on no longer refuses
+  to install on a Raspberry Pi. It builds whisper.cpp from source on the same
+  musl base, so it *should* work — but it has not been built or run on real
+  arm hardware, so treat it as untested until someone confirms.
+
 - **Fixed: a fresh install had no bytecode at all** (#2). The server reads
   `/data/bootcode.hybrid`, but nothing ever put a file there — it was dropped in
   by hand on the dev machine, so every clean install logged `bootcode file not
