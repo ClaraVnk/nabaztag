@@ -72,8 +72,9 @@ Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
 
 1. Add the repo `https://github.com/ClaraVnk/nabaztag` (Settings → Add-ons →
    Store → ⋮ → Repositories) if not already.
-2. **Stop the "Nabaztag Server (OpenJabNab)" add-on** — it uses the same
-   `:80`/`:5222` ports.
+2. Still running the old **"Nabaztag Server (OpenJabNab)"** add-on from this
+   repo's early days? **Stop it** — it uses the same `:80`/`:5222` ports. (It is
+   no longer offered in the store; see `legacy/nabaztag-server/`.)
 3. Install **Nabaztag Violet Server**. Set `server_address` to a **hostname**
    (e.g. `nabaztag.lan`) — **not a raw IP**: the bytecode resolves the XMPP server
    by DNS, so it must be a resolvable name. Then **Start**. (The runtime bytecode

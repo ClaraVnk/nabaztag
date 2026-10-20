@@ -1,5 +1,13 @@
 # Nabaztag Server (OpenJabNab) — Add-on documentation
 
+> **Superseded — kept for reference.** This was the first add-on in this repo:
+> a thin layer over a prebuilt OpenJabNab image whose HTTP listener turned out
+> to be non-functional. It was replaced by **`nabaztag-violet`**, our own
+> server, and is **no longer offered in the add-on store** (it lives under
+> `legacy/`, which Home Assistant does not scan). If you still have it
+> installed it keeps running but will never update; stop it before installing
+> `nabaztag-violet`, which needs the same ports.
+
 This add-on runs an [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) server
 inside Home Assistant OS. An **original Nabaztag / Nabaztag:tag** (the 2005–2006
 Wi-Fi rabbit by Violet/Mindscape) is a "dumb" Wi-Fi client: on boot it phones
