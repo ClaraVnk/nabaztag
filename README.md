@@ -56,6 +56,8 @@ through a simple control API.
   end-to-end on hardware* (flashed over the air, no JTAG), plus a modern config UI.
 - 📡 **Survives a hostile network** — a tiny firmware mDNS resolver lets the rabbit
   find its server over multicast even when the gateway refuses its unicast DNS.
+- 🔁 **Comes back by itself** — restart the server and the rabbit reconnects in
+  seconds, base LED violet, with nobody touching the plug.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server.
 
@@ -357,7 +359,7 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   (stdlib + Flask for the owner UI), deployed on Loutre's VPS via a rootless
   Podman quadlet behind Caddy 2 (auto-Let's-Encrypt). Reachable from any
   network: `/vl/locate.jsp` → ping/broad/xmpp_domain, `/vl/bc.jsp` →
-  signed `.hybrid` baseline bytecode (103 542 B), XMPP `:5222` published
+  signed `.hybrid` baseline bytecode (104 824 B), XMPP `:5222` published
   direct (the rabbit hardware has no TLS, so Caddy stays on the HTTP/HTTPS
   layer). The owner UI is FR/EN, has Open Graph + Twitter card metadata (so
   the link previews cleanly in iMessage), and walks an owner through signup
@@ -457,6 +459,39 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   tags). No gateway DNS, no reply-spoofing. The unicast fallback (`nabdns.py`,
   for stock un-patched bytecode) and the deploy steps live in
   `nabaztag-violet/tools/DNS-HELPER.md`.
+
+- **Phase 10 — the rabbit reconnects instead of rebooting — done
+  (hardware-verified 2026-10-20):** every server restart — a deploy, a crash,
+  a Home Assistant update — left the rabbit orange until someone unplugged it.
+  The cause was not a missing recovery: stock Violet bytecode *does* recover,
+  by rebooting the rabbit when the XMPP socket closes
+  (`main.mtl:XmppGateStreamClosed`), and its own comment says the authors
+  weighed reconnecting gently and chose the reboot as *"le plus efficace"*.
+  Measured on the device: the drop is logged at 17:12:12, the rabbit reboots
+  and re-downloads its 103 KB of bytecode at **17:12:25** — so the reboot path
+  fires — and then stops, never even asking for `locate.jsp`. **A soft reboot
+  does not bring the 2006 rt2501 USB radio back; a power cycle does.** That
+  also kills the "watchdog that reboots" idea we had queued since June: it
+  would have failed the same way.
+  So take the branch Violet declined — `firmware/patch_reconnect.py` routes the
+  closed socket to `XmppSessionIsDisconnected`: stop, reset to idle, base LED
+  violet, wait 5 s plus a random 0-30 s (so a whole warren does not stampede
+  back at once), then `XmppGateReconnect`. The network stack is never torn
+  down, so there is nothing to bring back. It ships in the **runtime bytecode**,
+  downloaded at every boot — **no flashing, no brick risk**, and the firmware
+  image is untouched. A control build without the patch comes out at 104 827 B,
+  exactly the size documented here, against 104 824 B with it: three bytes.
+  **Proven live:** disconnect 19:41:12 → connect 19:41:25 → operational
+  19:41:26 → probe 254 ms, with **no boot event in between**.
+  Found on the way: the bytecode being served had 459 functions instead of 468
+  — it had been built **without the mDNS resolver** of Phase 9. The rebuild
+  restores it.
+  *Still open:* a rabbit that loses its Wi-Fi **association** is a different
+  failure, and this does not cover it. `wifi.mtl`'s `reconnectW` only calls
+  `wifiAuth`, which authenticates against the scan **cached at boot** and never
+  re-scans — only a cold start does. That is why an AP deauth strands the
+  rabbit with amber LEDs until it is unplugged. Diagnosed, not yet patched: it
+  cannot be tested without hardware that reproduces it.
 
 ## Hardware
 

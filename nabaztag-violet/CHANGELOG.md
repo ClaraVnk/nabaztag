@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.7
+
+- **Your rabbit comes back on its own when the server restarts.** Until now a
+  restart of this add-on — an update, a Home Assistant reboot, a crash — left
+  the rabbit orange until someone unplugged it. Stock Violet bytecode reboots
+  the rabbit when the server's socket closes, and it does: measured on
+  hardware, it reboots and re-downloads its bytecode 13 seconds later, then
+  dies before it even asks for `locate.jsp`. A soft reboot does not bring the
+  2006 rt2501 radio back; a power cycle does. The bundled bytecode now takes
+  the gentler branch Violet wrote and declined: reset to idle, base LED violet,
+  wait 5 s plus a random 0-30 s, reconnect — the network stack is never torn
+  down. Proven on hardware: drop at 19:41:12, operational again at 19:41:26,
+  no reboot in between.
+- **The mDNS resolver is back.** The bundled bytecode had been built without
+  it (459 functions instead of 468), so a rabbit whose gateway drops its DNS
+  queries could not resolve a `.local` server name. It can again.
+- **One power cycle to pick this up**, since the rabbit only downloads its
+  bytecode at boot. It should be the last one.
+
 ## 0.15.6
 
 - **arm64/aarch64 declared (provisional, #7).** The add-on no longer refuses
