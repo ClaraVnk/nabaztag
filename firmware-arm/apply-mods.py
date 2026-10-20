@@ -1463,7 +1463,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "phase8-rom"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-nomdns", "phase8-rom"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -1476,6 +1476,9 @@ def main() -> int:
             "bootloader patch in isolation. "
             "pages-only   = minimal + modernized UI, NO bootloader patch. "
             "Use to verify the page rewrite in isolation. "
+            "lean-nomdns  = lean minus the mDNS announcer/resolver, nothing "
+            "else changed. Diagnostic build for the connection drops "
+            "reported on lean; needs working DNS to find its server. "
             "max          = full + mdns announcer; the everything-bag for a "
             "fresh flash. "
             "mdns-only    = minimal + mdns; isolation bisect for the mdns add. "
@@ -1521,6 +1524,12 @@ def main() -> int:
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,linker_keep,gc_sections",
+        # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
+        # NOTHING else changed. Diagnostic build for the connection drops
+        # reported on `lean`: mdns is the only new *network* feature in that
+        # mode, so flashing this isolates it from the rest of the stack.
+        # A rabbit on this build needs working DNS to find its server.
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
