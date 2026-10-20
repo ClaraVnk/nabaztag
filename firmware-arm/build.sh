@@ -68,7 +68,14 @@ tail -30 "$LOGFILE"
 echo ">> extracting artifacts (mode=$MODE)"
 OUTDIR="$HERE/bin/$MODE"
 mkdir -p "$OUTDIR"
-"${SSH[@]}" "$REMOTE_HOST" "$RUNTIME run --rm $TAG" | tar -xv -C "$OUTDIR/"
+# Drop the previous run's SIGNED outputs first. If anything below fails, a
+# stale .signed.sim must not survive next to a fresh unsigned .sim — that
+# pair looks current and is exactly how an old signature gets published.
+rm -f "$OUTDIR/firmware0.0.0.13.signed.sim" "$HERE/bin/naboot-${MODE}.signed.sim"
+if ! "${SSH[@]}" "$REMOTE_HOST" "$RUNTIME run --rm $TAG" | tar -xv -C "$OUTDIR/"; then
+  echo "!! extracting the artifact tar FAILED — nothing signed, nothing stale left" >&2
+  exit 1
+fi
 
 # Sign locally on the Mac (private key lives at ~/.nabaztag/signing_key.bin
 # and never leaves this machine). Skip silently if the key isn't present yet.
@@ -82,7 +89,8 @@ if [ -f "$HOME/.nabaztag/signing_key.bin" ]; then
   cp "$OUTDIR/firmware0.0.0.13.signed.sim" "$HERE/bin/naboot-${MODE}.signed.sim"
   echo ">> also available as bin/naboot-${MODE}.signed.sim"
 else
-  echo ">> SKIP signing: no key at ~/.nabaztag/signing_key.bin (run signing/gen_key.py first)"
+  echo ">> SKIP signing: no key at ~/.nabaztag/signing_key.bin (run signing/gen_key.py first)" >&2
+  echo ">> bin/$MODE/ holds the UNSIGNED .sim only — do not flash or publish it" >&2
 fi
 
 ls -la "$OUTDIR/" "$HERE/bin/"naboot-*.signed.sim 2>/dev/null
