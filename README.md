@@ -200,6 +200,11 @@ apply unless the reminder is marked urgent).
 5. Watch the add-on log: `serving bootcode → … → bound and idle — ready for
    commands`. Optionally drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
 
+> Running the server **outside** Home Assistant (a Pi, a VPS)? The bytecode it
+> serves is not bundled in the image you build yourself — point `BOOTCODE_FILE`
+> at the committed `firmware/bootcode_hybrid.bin`. See `nabaztag-violet/DOCS.md`,
+> *Bytecodes — and running the server outside the add-on*.
+
 > **Rabbit on its own VLAN/subnet?** Allow it through the firewall to the HAOS
 > host on TCP **80** and **5222**, and give it a **DHCP reservation** (so its IP —
 > and the firewall rule — stay valid; a changed IP silently breaks everything). On
@@ -510,7 +515,9 @@ or `POST` the audio bytes directly and the add-on serves them.
   official API, the **Metal** language grammar, and the Télécom SudParis report
   that reverse-engineered the v2 boot + XMPP protocol (the SASL success-bypass).
 - [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) — reference PHP/C++ Violet
-  reimplementation (and the bundled `bootcode.violet`).
+  reimplementation, and where the stock `bootcode.violet` / `bootcode.ojn` are
+  fetched from at add-on build time (they are Violet's proprietary firmware and
+  are not committed here — see `nabaztag-violet/DOCS.md`, *Bytecodes*).
 - [RedoXyde](https://github.com/RedoXyde) (`mtl_linux`, `nabgcc`) and
   [Pixel166](https://github.com/Pixel166) (`nabAsm`/`nabDasm`) — the open Metal
   firmware toolchain that makes Phase 2 possible.
