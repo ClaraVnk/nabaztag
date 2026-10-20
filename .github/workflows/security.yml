@@ -11,7 +11,6 @@ on:
   pull_request:
     paths:
       - "nabaztag-violet/**"
-      - "nabaztag-server/**"
       - "firmware-arm/**"
       - ".github/**"
 

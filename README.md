@@ -155,8 +155,10 @@ apply unless the reminder is marked urgent).
 │   ├── Dockerfile           #    installs python3, fetches the bytecode at build
 │   ├── build.yaml
 │   └── DOCS.md              #    install / pairing / API / status
-├── nabaztag-server/         # OpenJabNab add-on (superseded — kept for reference)
-│   └── …                    #    its HTTP listener is non-functional in the upstream image
+├── legacy/
+│   └── nabaztag-server/     # the first OpenJabNab-based add-on — superseded by
+│                            #    nabaztag-violet, no longer offered in the store,
+│                            #    kept for reference only
 │                            # (Le Terrier — the public warren at
 │                            #  terrier.cyberloutre.fr — lives in a separate
 │                            #  private repo; the live site is the showcase.)
