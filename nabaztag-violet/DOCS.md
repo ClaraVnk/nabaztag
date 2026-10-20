@@ -19,15 +19,20 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 
 ## Bytecodes — and running the server outside the add-on
 
-The server serves whatever `BOOTCODE_FILE` points at; it defaults to
-`/data/bootcode.hybrid`, which the add-on puts there. Run `server.py` by hand
-without that file and `/vl/bc.jsp` answers 500 with
-`bootcode file not found` — the rabbit then boots and does nothing, silently.
+The server picks the first bytecode that exists, in this order:
 
-**You do not need anything proprietary to get past this.** The hybrid runtime
-bytecode is committed in this repo:
+1. `$BOOTCODE_FILE`, if you set it — always wins;
+2. `/data/bootcode.hybrid` — a bytecode you built yourself and dropped in the
+   add-on's persistent storage;
+3. the copy bundled in the add-on image;
+4. `firmware/bootcode_hybrid.bin` from this repo.
+
+So running it outside Home Assistant takes nothing special, and nothing
+proprietary — the hybrid bytecode is committed here:
 
 ```sh
+python3 nabaztag-violet/server.py          # from a checkout, just works
+# or, from anywhere:
 BOOTCODE_FILE=/path/to/repo/firmware/bootcode_hybrid.bin python3 server.py
 # sha256 072496206b2319c920d56fd9d5a07c3057ec81707ba0f40117d91768f2970d4a
 ```
@@ -37,6 +42,10 @@ volume command, Ed25519-gated OTA, and the mDNS announcer *and resolver*. Every
 option has an environment-variable override (`SERVER_ADDRESS`, `HTTP_PORT`,
 `XMPP_PORT`, `API_PORT`…), so no Home Assistant and no `options.json` are
 required.
+
+> Before 0.15.6 nothing ever created `/data/bootcode.hybrid`, so a fresh install
+> logged `bootcode file not found` and answered `/vl/bc.jsp` with a 500 — the
+> rabbit booted and sat there silently. If you see that, update the add-on.
 
 **The stock Violet / OpenJabNab bytecodes** are a different matter: they are
 Violet's proprietary firmware, so they are **not** committed here. The add-on
