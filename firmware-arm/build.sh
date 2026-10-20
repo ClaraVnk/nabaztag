@@ -7,15 +7,16 @@
 # leaves the Mac: it lives at ~/.nabaztag/signing_key.bin and is used locally
 # by signing/sign_sim.py to wrap the unsigned .sim after build.
 #
-# Usage:
-#   ./build.sh                          # full build, default remote (HAOS)
-#   ./build.sh --mode minimal           # rescue / parachute build
-#   ./build.sh --mode signed-stock      # bisect: bootloader patch only
-#   ./build.sh --mode pages-only        # bisect: page rewrite only
-#   ./build.sh --remote rocky@vps:10022 --runtime podman   # build on the VPS
+# Usage (--remote is REQUIRED — there is deliberately no default):
+#   ./build.sh --mode lean    --remote user@dev-vm --runtime podman   # the shipped stable
+#   ./build.sh --mode minimal --remote user@dev-vm --runtime podman   # rescue / parachute
+#   ./build.sh --mode signed-stock … / --mode pages-only …           # bisection builds
+#
+# NEVER point --remote at the Home Assistant host: a firmware build there starves
+# the add-on and drops the rabbit mid-session. Use a dev VM or the VPS.
 
 set -euo pipefail
-REMOTE="root@192.0.2.15"
+REMOTE=""
 MODE="full"
 RUNTIME="docker"
 while [ $# -gt 0 ]; do
@@ -26,6 +27,10 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+if [ -z "$REMOTE" ]; then
+  echo "!! --remote <user@dev-vm> is required (never build on the Home Assistant host)" >&2
+  exit 2
+fi
 
 # Split host[:port] form into ssh/scp friendly args (`-p PORT` for ssh,
 # `-P PORT` for scp). When no `:port`, ssh/scp use their defaults.

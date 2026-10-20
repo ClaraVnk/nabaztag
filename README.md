@@ -188,8 +188,8 @@ apply unless the reminder is marked urgent).
    add `https://github.com/ClaraVnk/nabaztag`.
 2. Install **Nabaztag Violet Server**. In **Configuration**, set `server_address`
    to a **hostname** such as `nabaztag.lan` — **not a raw IP**: the bytecode
-   resolves the XMPP server by **DNS**, so an IP literal fails. (`bootcode` option:
-   `ojn` is the default and works.) **Start** the add-on.
+   resolves the XMPP server by **DNS**, so an IP literal fails. **Start** the
+   add-on.
 3. **Add a DNS record** so the rabbit resolves that hostname to the HAOS host:
    `nabaztag.lan → <haos-ip>` (UniFi "Local DNS Records", AdGuard/Pi-hole rewrite…).
    Verify from any device: `nslookup nabaztag.lan` → `<haos-ip>`.
@@ -200,9 +200,9 @@ apply unless the reminder is marked urgent).
 5. Watch the add-on log: `serving bootcode → … → bound and idle — ready for
    commands`. Optionally drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
 
-> Running the server **outside** Home Assistant (a Pi, a VPS)? The bytecode it
-> serves is not bundled in the image you build yourself — point `BOOTCODE_FILE`
-> at the committed `firmware/bootcode_hybrid.bin`. See `nabaztag-violet/DOCS.md`,
+> Running the server **outside** Home Assistant (a Pi, a VPS)? `python3
+> nabaztag-violet/server.py` from a checkout serves the committed
+> `nabaztag-violet/bootcode.hybrid` on its own. See `nabaztag-violet/DOCS.md`,
 > *Bytecodes — and running the server outside the add-on*.
 
 > **Rabbit on its own VLAN/subnet?** Allow it through the firewall to the HAOS
@@ -236,8 +236,19 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 4. **Adopt it.** The rabbit dials Le Terrier and **says its adoption code out
    loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type that code on the
    **`/pair`** page — the rabbit is yours, and any update reaches it
-   automatically. *Missed the code? Unplug/replug — it repeats it on every
-   connect until it's claimed.*
+   automatically. *Missed the code? It is spoken again on the next connect,
+   but at most once every ~10 minutes per rabbit — so wait that long before
+   power-cycling, or you'll get a silent boot.*
+
+> **Nothing happens after step 3 — no code, no voice?** Then the rabbit never
+> reached the Terrier, and the firmware is not the first suspect. Check, in
+> order: the belly LEDs (**blue** = still in config mode; **orange** = looking
+> for Wi-Fi/server — see *Troubleshooting* below); that your 2.4 GHz network
+> lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only"); and that
+> the rabbit can resolve `terrier.cyberloutre.fr` (it needs working DNS). Want
+> to go back to the stock bootloader meanwhile? Flash
+> **[`firmware-arm/releases/naboot-minimal.signed.sim`](firmware-arm/releases/)**
+> the same way — it is the rescue build (`RECOVERY.md`).
 
 > The custom firmware is **optional**: a stock rabbit works fine on the Home
 > Assistant add-on above (nothing flashed). Naboot is what unlocks **signed OTA**
@@ -514,9 +525,13 @@ or `POST` the audio bytes directly and the add-on serves them.
 
 ## Credits
 
-- The Violet documentation at [nabaztag.com/doc](https://nabaztag.com/doc) —
-  official API, the **Metal** language grammar, and the Télécom SudParis report
-  that reverse-engineered the v2 boot + XMPP protocol (the SASL success-bypass).
+- The Violet documentation, mirrored at nabaztag.ovh — the official
+  [API v2](https://nabaztag.ovh/doc/v2/APIV2.pdf), the
+  [**Metal** language grammar](https://nabaztag.ovh/doc/v2/DT_metal_03_01_13_grammaire.pdf),
+  and the Télécom SudParis report that reverse-engineered the v2 boot + XMPP
+  protocol ([part 1](https://nabaztag.ovh/doc/v2/InteractionServeurs.pdf),
+  [part 2](https://nabaztag.ovh/doc/v2/InteractionServeurs2.pdf)). The old
+  `nabaztag.com/doc` index is gone.
 - [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) — reference PHP/C++ Violet
   reimplementation, and where the stock `bootcode.violet` / `bootcode.ojn` are
   fetched from at add-on build time (they are Violet's proprietary firmware and

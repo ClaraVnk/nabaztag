@@ -13,8 +13,8 @@
   found` and answered `/vl/bc.jsp` with a 500. The rabbit then booted and sat
   there silently. The hybrid bytecode is now **bundled in the image** (checksum
   verified at build), and the server picks the first bytecode that exists:
-  `BOOTCODE_FILE` → `/data/bootcode.hybrid` → the bundled copy → the repo's
-  `firmware/bootcode_hybrid.bin`. A hand-built bytecode in `/data` still wins,
+  `BOOTCODE_FILE` → `/data/bootcode.hybrid` → the bundled copy → a local
+  `firmware/bootcode_hybrid.bin` (not committed). A hand-built bytecode in `/data` still wins,
   and `python3 server.py` now works straight from a checkout.
 
 ## 0.15.5
