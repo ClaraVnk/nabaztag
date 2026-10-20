@@ -43,6 +43,8 @@ echo "==> patch_main.py  (micstream/fwota/mdns includes + RS/RT/SV/FW + announce
 python3 "$HERE/patch_main.py" "$BC/sources/main.mtl"
 echo "==> patch_dns.py   (mDNS resolver for .local)"
 python3 "$HERE/patch_dns.py" "$BC/sources/dns.mtl"
+echo "==> patch_reconnect.py  (reconnect instead of rebooting on a closed socket)"
+python3 "$HERE/patch_reconnect.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
