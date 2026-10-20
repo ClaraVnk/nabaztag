@@ -5,6 +5,9 @@ description: "Our own clean server for the original Nabaztag/tag (Violet protoco
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
 arch:
   - amd64
+  # aarch64 is provisional: the image builds from source (whisper.cpp) and has
+  # not been built or run on real arm64 hardware yet — see issue #7.
+  - aarch64
 init: false
 startup: services
 boot: auto

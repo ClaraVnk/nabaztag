@@ -447,7 +447,10 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   **stock** rabbit with no hardware mod and **no flashing required** — but the
   optional **Naboot** custom firmware (Phase 4) *is* flashed (over the air or
   the config-mode upload page) for signed OTA + a modern config UI.
-- Host architecture: **amd64**.
+- Host architecture: **amd64**. **arm64/aarch64** (Raspberry Pi 4/5) is
+  provisional — the add-on declares it, but nobody has built or run it on
+  real arm hardware yet. Reports welcome in
+  [#7](https://github.com/ClaraVnk/nabaztag/issues/7).
 
 ## Troubleshooting
 
