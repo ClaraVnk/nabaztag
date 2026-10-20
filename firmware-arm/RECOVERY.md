@@ -10,17 +10,19 @@ differ only in how invasive they are on the bootloader:
 | **full** (recommended) | 117 KB | +1.7 KB | Everything in minimal, **plus**: `httpflash` rejects unsigned/tampered .sim, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 108 KB | -6.6 KB | Everything in `full` + `--gc-sections` **plus** the Phase 8 stack of 8 source-level slices: (1) 4 portal HTML pages live in C-side flash ROM rendered via a new `OPpageRender` opcode; (2) `pagefill`/`listreplacestr` + 4 stillborn helpers (`wifiConnected`, `listnth`, `itoanil`, `unregudp`) pruned as orphans after rom_pages obsoleted their callers (each verified to have zero external refs before deletion); (3) `mkwav 8000 1 16` precomputed and inlined as a 46-byte literal; (4) `dump`/`dumpscan` reduced to identity (UART unwired so the prints go to a sink nobody reads), then callsites inlined and defs dropped; (5) all 86 `Secho{ln} "literal"` calls replaced with `nil`; (6) user echo helpers `MACecho`/`SEQecho`/`IPecho` collapsed to identity (passthrough preserved for callers using their return); (7) every dynamic-arg `Secho`/`Secholn`/`Iecho`/`Iecholn` opcode keyword deleted — they're confirmed stack passthroughs in vinterp.c. **Smallest .sim of all modes (220 330 B)**, -18 376 B vs minimal/rescue, -6 328 B vs lean. Frees ~10 KB of vmem RAM at runtime. Every slice is idempotent and composable in the mode's step list. Untested on hardware as of 2026-06-01 — flash `full` first, treat `phase8-rom` as the experimental headroom slice. |
 
-Both files live under `bin/<mode>/`:
+Every build lands under `bin/<mode>/` (ignored by git), but the signed `.sim`
+files we actually **ship** live in `releases/`:
 
 ```
-firmware-arm/bin/
-├── minimal/
-│   ├── firmware0.0.0.13.sim         ← unsigned (just for inspection)
-│   └── firmware0.0.0.13.signed.sim  ← upload this one (rescue)
-└── full/
-    ├── firmware0.0.0.13.sim
-    └── firmware0.0.0.13.signed.sim  ← upload this one (normal)
+firmware-arm/releases/
+├── naboot-stable.signed.sim   ← upload this one (normal — mode `lean`, hardware-verified)
+└── naboot-minimal.signed.sim  ← upload this one (rescue / rollback — mode `minimal`)
 ```
+
+`full` is **not shipped**: no `releases/naboot-full.signed.sim` exists. If you
+want it, build and sign it yourself with
+`./build.sh --mode full --remote <user@dev-vm> --runtime podman`, which leaves
+it at `bin/full/firmware0.0.0.13.signed.sim` on your own machine.
 
 ## Risk model
 
@@ -79,7 +81,8 @@ directly (bit-bang) with **F/F Dupont wires**.
    *modernized* setup page (`page_a`), unless this is the first flash — in
    which case you still see the 2006 UI.
 5. Click **firmware upgrade** → `page_u` → upload
-   `bin/full/firmware0.0.0.13.signed.sim`.
+   `releases/naboot-stable.signed.sim`. (`full` is not shipped — see above; the
+   shipped stable build is mode `lean`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
    reboots and rejoins your normal network.
 
@@ -87,7 +90,7 @@ directly (bit-bang) with **F/F Dupont wires**.
 
 If the rabbit boots into `full` but the modernized config-mode UI misbehaves
 (broken form, can't re-upload), enter config mode again (head button + power)
-and upload `bin/minimal/firmware0.0.0.13.signed.sim`. Minimal restores the
+and upload `releases/naboot-minimal.signed.sim`. Minimal restores the
 2006-style stock UI exactly as it shipped, with the verifySig opcode kept
 in place so OTAs still work.
 
