@@ -154,7 +154,7 @@ scanning). +1.1 KB on disk, +552 B on the ARM7's flash. UNTESTED on
 hardware as of writing — flash `mdns-only` first as a smoke test if
 you want to be conservative.
 
-Sanity-check vs the previous full build: the new `full/Nab.bin` is 2.7 KB
+Sanity-check vs the previous full build: the new `bin/full/Nab.bin` is 2.7 KB
 SMALLER than the previously-bricked `bin/Nab.bin` (114,448 vs 117,204).
 That's likely a minor GCC patch update between yesterday's HAOS-Docker
 build and tonight's VPS build (same Debian bookworm major, possibly
@@ -194,7 +194,7 @@ openocd \
 ```
 
 `minimal` has `boot.mtl` **byte-identical** to vanilla `wpa2` HEAD —
-exactly the firmware Kevin's sysadmin already flashed successfully. If
+exactly the firmware the original wpa2 flash already proved on this rabbit. If
 config mode comes back here, we've confirmed the regression is in
 `boot.mtl` (rules out Hypothesis B etc).
 
@@ -204,7 +204,7 @@ config mode comes back here, we've confirmed the regression is in
 to a signed `.sim` from any future build. From the config portal:
 
 ```sh
-# Re-build the bisection variants on the HAOS host. The new modes
+# Re-build the bisection variants on the build VM (never on the HA host). The new modes
 # isolate ONE risky patch at a time on top of minimal.
 cd firmware-arm
 ./build.sh --mode signed-stock   # = minimal + httpflash sig gate (no page changes)

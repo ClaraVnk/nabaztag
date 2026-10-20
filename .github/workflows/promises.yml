@@ -1,0 +1,23 @@
+name: Promises
+
+# "What we say we ship, we ship." Every documented path exists, every quoted
+# sha256 matches a real file, every shipped firmware verifies and is described,
+# the add-on's bytecode pin matches the committed file, and the add-on version
+# matches its changelog. See .github/scripts/check_promises.py for the story.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promises:
+    name: Documented things exist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 .github/scripts/check_promises.py

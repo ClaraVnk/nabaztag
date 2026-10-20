@@ -1,3 +1,5 @@
-# Built bytecode is derived from reverse-engineered proprietary firmware —
-# build/serve it locally, do not commit it (like the stock bootcodes).
+# Build output of build-bytecode.sh. The copy the add-on ships — and the one
+# that is versioned — is nabaztag-violet/bootcode.hybrid, checksum-verified by
+# its Dockerfile. After a rebuild: copy the new .bin there and update that
+# checksum in the same commit. Never commit the output from this directory.
 *.bin

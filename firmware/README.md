@@ -57,9 +57,12 @@ resolver in particular). Hardware-verified: the full hybrid (104 827 B — resol
 + announcer + RS/RT/SV + OTA) boots, resolves over mDNS, binds XMPP, broadcasts
 `naboot.local`, and speaks. The FW/OTA path only *runs* on Naboot firmware.
 
-The compiled `*.bin` is **not committed** (it's derived from reverse-engineered
-proprietary firmware — like the stock bootcodes, it's built/served locally, not
-redistributed).
+The compiled `*.bin` in this directory is **not committed**. The copy the
+add-on actually ships *is*: `nabaztag-violet/bootcode.hybrid`, checksum-verified
+by `nabaztag-violet/Dockerfile`. After a rebuild, copy the new output there and
+update that checksum in the same commit — the Docker build and the CI
+consistency job both fail otherwise. (The stock Violet/OpenJabNab bytecodes
+stay out of the repo; see `nabaztag-violet/DOCS.md`, *Bytecodes*.)
 
 ## Status / next
 
