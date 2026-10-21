@@ -235,12 +235,14 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    button while plugging in → belly **blue** again) and reopen
    `http://192.168.0.1` — it now shows *Naboot's* setup page. Enter your home
    Wi-Fi, then under **Advanced → Server** set **Boot URL host** to
-   **`terrier.cyberloutre.fr/vl`** and tap *Connect rabbit*. The field is
-   labelled *"leave the path"* for a reason: it holds `host/vl`, and the rabbit
-   requests `http://<that>/bc.jsp`. Drop the `/vl` and it asks for `/bc.jsp` at
-   the root, gets a redirect it cannot follow, and sits there orange — no
-   `https://` either, the 2006 firmware speaks plain HTTP only. (Running your
-   own warren? Put `your-host/vl` here instead.)
+   **`terrier.cyberloutre.fr/vl`** and tap *Connect rabbit*. The field holds
+   `host/vl`, and the rabbit then requests `http://<that>/bc.jsp`.
+   Le Terrier and this add-on both answer whether or not the `/vl` is there,
+   so dropping it is survivable here — but keep it anyway: it is the path a
+   stock Violet or OpenJabNab server expects, and the one every other document
+   about this hardware assumes. No `https://` either, in any case: the 2006
+   firmware speaks plain HTTP only. (Running your own warren? Put
+   `your-host/vl` here instead.)
 4. **Adopt it.** The rabbit dials Le Terrier and **says its adoption code out
    loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type that code on the
    **`/pair`** page — the rabbit is yours, and any update reaches it
@@ -250,8 +252,9 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 
 > **Nothing happens after step 3 — no code, no voice?** Then the rabbit never
 > reached the Terrier, and the firmware is not the first suspect. Check, in
-> order: that **Boot URL host** still ends in **`/vl`** (the most common slip,
-> and it fails silently); the belly LEDs (**blue** = still in config mode; **orange** = looking
+> order: that **Boot URL host** has no `https://` and no typo (a wrong host
+> fails silently — though a missing `/vl` is fine here, both forms answer);
+> the belly LEDs (**blue** = still in config mode; **orange** = looking
 > for Wi-Fi/server — see *Troubleshooting* below); that your 2.4 GHz network
 > lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only"); and that
 > the rabbit can resolve `terrier.cyberloutre.fr` (it needs working DNS). Want
