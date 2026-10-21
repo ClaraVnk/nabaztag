@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import itertools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -205,6 +206,11 @@ BUNNIES: dict[str, "XmppSession"] = {}
 BUNNIES_LOCK = threading.Lock()
 # mac -> epoch of last disconnect; powers "offline for X" in /api/status + logs.
 LAST_SEEN: dict[str, float] = {}
+# The rabbit writes a " " every 8 s when idle (XmppTcpIdleTime, main.mtl:191/604).
+# A bound session silent for longer than this is dead (Wi-Fi lost, unplugged, no
+# FIN). 0 = never (old behaviour).
+XMPP_IDLE_S = float(os.environ.get("XMPP_IDLE_S") or _OPTS.get("xmpp_idle_s") or 90)
+_SID = itertools.count(1)
 
 
 def _ago(seconds: float) -> str:
@@ -1011,6 +1017,10 @@ class XmppSession(threading.Thread):
         self.resource = "Boot"
         self.msg_nb = 0
         self._alive = True
+        self.sid = next(_SID)
+        self.tcp_at = time.time()
+        self.last_rx = self.tcp_at
+        self.resource_at = None
 
     # -- low level --------------------------------------------------------- #
     def send(self, data: str):
@@ -1265,12 +1275,33 @@ class XmppSession(threading.Thread):
             return
         # Anything else (other packets/events) -> logged above.
 
+    def close(self):
+        self._alive = False
+        try:
+            self.conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
     def _register(self):
         if self.mac:
-            self.connected_at = time.time()
+            self.resource_at = time.time()
             with BUNNIES_LOCK:
-                BUNNIES[self.mac] = self
-                gone = LAST_SEEN.pop(self.mac, None)
+                prev = BUNNIES.get(self.mac)
+                if prev is not None and prev is not self and prev.sid > self.sid:
+                    stale = True            # an older socket of a rabbit that has already reconnected
+                else:
+                    stale = False
+                    BUNNIES[self.mac] = self
+                gone = LAST_SEEN.pop(self.mac, None) if not stale else None
+            if stale:
+                log.warning("mac=%s: bind on stale session #%d (current #%d) - closing it", self.mac, self.sid, prev.sid)
+                self.close()
+                return
+            if prev is not None and prev is not self:
+                log.info("mac=%s: new session #%d replaces #%d - closing the old socket", self.mac, self.sid, prev.sid)
+                prev.close()
+            if self.connected_at is None:
+                self.connected_at = self.tcp_at
             if gone:
                 log.info("registered bunny mac=%s from %s — back online after %s offline",
                          self.mac, self.addr[0], _ago(time.time() - gone))
@@ -1279,24 +1310,29 @@ class XmppSession(threading.Thread):
 
     def run(self):
         log.info("XMPP connection from %s", self.addr[0])
-        self.conn.settimeout(900)
+        self.conn.settimeout(min(900, XMPP_IDLE_S / 3) if XMPP_IDLE_S else 900)
         try:
             while self._alive:
                 try:
                     chunk = self.conn.recv(4096)
                 except socket.timeout:
+                    if XMPP_IDLE_S and self.bound and time.time() - self.last_rx > XMPP_IDLE_S:
+                        log.warning("rabbit %s (mac=%s): nothing received for %.0f s - session dropped",
+                                    self.addr[0], self.mac, time.time() - self.last_rx)
+                        break
                     continue
                 except OSError:
                     break
                 if not chunk:
                     break
+                self.last_rx = time.time()
                 self._feed(chunk.decode("utf-8", "replace"))
         finally:
             if self.mac:
                 with BUNNIES_LOCK:
                     if BUNNIES.get(self.mac) is self:
                         BUNNIES.pop(self.mac, None)
-                    LAST_SEEN[self.mac] = time.time()
+                        LAST_SEEN[self.mac] = time.time()
             try:
                 self.conn.close()
             except OSError:
@@ -1363,8 +1399,12 @@ def xmpp_server():
     srv.listen(8)
     log.info("XMPP listening on 0.0.0.0:%d (domain advertised: %s)", XMPP_PORT, SERVER_ADDRESS)
     while True:
-        conn, addr = srv.accept()
-        XmppSession(conn, addr).start()
+        try:
+            conn, addr = srv.accept()
+            XmppSession(conn, addr).start()
+        except Exception as exc:  # noqa  (EMFILE, thread limit...) must not kill the listener
+            log.error("XMPP accept failed: %s", exc)
+            time.sleep(1)
 
 
 # --------------------------------------------------------------------------- #
@@ -1550,6 +1590,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             now = time.time()
             with BUNNIES_LOCK:
                 conn = {m: {"addr": s.addr[0], "bound": s.bound, "resource": s.resource,
+                            "session": s.sid, "alive": s._alive,
+                            "last_rx_ago": round(now - s.last_rx, 1),
+                            "resource_since": s.resource_at,
                             "connected_since": s.connected_at,
                             "uptime": _ago(now - s.connected_at) if s.connected_at else None}
                         for m, s in BUNNIES.items()}
