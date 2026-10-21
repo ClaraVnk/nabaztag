@@ -262,7 +262,6 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 > the belly LEDs (**blue** = still in config mode; **orange** = looking for
 > Wi-Fi — and **right after any flash or OTA, orange is normal until you
 > unplug and replug the rabbit**; do that first); that your 2.4 GHz network
-> for Wi-Fi/server — see *Troubleshooting* below); that your 2.4 GHz network
 > lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only"); and that
 > the rabbit can resolve `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash
