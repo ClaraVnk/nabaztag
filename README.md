@@ -229,8 +229,13 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
-   upgrade* and upload the file. **Don't unplug** during the ~30 s flash. This is
-   the only manual flash — from here on, updates are **signed OTA**, over the air.
+   upgrade* and upload the file. **Don't unplug** during the ~30 s flash. When
+   it reboots, the first belly light blinks **orange**: that is expected —
+   **unplug it, wait ten seconds, plug it back in**, and it rejoins your
+   network. (A flash ends in a software reset, which leaves the 2006 radio
+   asleep; only a power cycle wakes it. The same applies after every OTA.)
+   This is the only manual flash — from here on, updates are **signed OTA**,
+   over the air.
 3. **Point it at Le Terrier.** After it reboots, re-enter config mode (head
    button while plugging in → belly **blue** again) and reopen
    `http://192.168.0.1` — it now shows *Naboot's* setup page. Enter your home
@@ -254,8 +259,9 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 > reached the Terrier, and the firmware is not the first suspect. Check, in
 > order: that **Boot URL host** has no `https://` and no typo (a wrong host
 > fails silently — though a missing `/vl` is fine here, both forms answer);
-> the belly LEDs (**blue** = still in config mode; **orange** = looking
-> for Wi-Fi/server — see *Troubleshooting* below); that your 2.4 GHz network
+> the belly LEDs (**blue** = still in config mode; **orange** = looking for
+> Wi-Fi — and **right after any flash or OTA, orange is normal until you
+> unplug and replug the rabbit**; do that first); that your 2.4 GHz network
 > lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only"); and that
 > the rabbit can resolve `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash

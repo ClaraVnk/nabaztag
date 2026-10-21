@@ -34,6 +34,11 @@ COPY upstream/tweetnacl/tweetnacl.c /build/nabgcc/src/crypto/tweetnacl.c
 COPY crypto/nab_sig.c               /build/nabgcc/src/crypto/nab_sig.c
 COPY upstream/tweetnacl/tweetnacl.h /build/nabgcc/inc/tweetnacl.h
 COPY crypto/nab_sig.h               /build/nabgcc/inc/nab_sig.h
+# Replaces nabgcc's stub aes128.c, whose every function was empty while
+# eapol.c called it to recover a WPA2 group key. Vendored from uplg/nabgcc
+# (MIT) — see the note in the file and upstream/UPLG-LICENSE.
+COPY crypto/aes128.c                /build/nabgcc/src/net/aes128.c
+COPY crypto/aes128.h                /build/nabgcc/inc/net/aes128.h
 COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 
 # Apply our source modifications (idempotent, prints what landed).
