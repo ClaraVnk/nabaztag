@@ -90,7 +90,13 @@ directly (bit-bang) with **F/F Dupont wires**.
    `releases/naboot-stable.signed.sim`. (`full` is not shipped — see above; the
    shipped stable build is mode `lean`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
-   reboots and rejoins your normal network.
+   reboots on its own.
+7. **Then unplug it, wait ten seconds, and plug it back in.** After the
+   reboot the first belly light blinks **orange** and stays there — that is
+   normal, not a failed flash. A flash ends in a *software* reset, and on this
+   hardware a software reset leaves the 2006 radio asleep; only a power cycle
+   wakes it. (Three "failed" flashes in a row on 2026-10-21 were exactly this,
+   including a known-good image. One unplug and it was back in 75 s.)
 
 ## If something goes wrong with `full`
 

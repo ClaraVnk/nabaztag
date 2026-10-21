@@ -556,109 +556,114 @@ def patch_wpa2_group_key(root: Path) -> None:
     Actually do something". Nothing fails: the pairwise key is derived
     correctly, the MIC verifies, the rabbit associates and unicast works. But
     the group key installed into the radio is whatever was in memory, so the
-    rabbit cannot decrypt a broadcast or multicast frame.
+    rabbit is deaf to every broadcast and multicast frame for the whole life
+    of the association — and peers age it out of their ARP caches and re-ARP
+    by broadcast into the void.
 
-    Worse, eapol_input_msg3() ignores the incoming key data entirely, and WPA2
-    delivers the GTK *in message 3*. On an access point that sends it only
-    there and rekeys rarely, the rabbit never has a group key at all.
+    On top of that, eapol_input_msg3() ignored the incoming key data, and WPA2
+    delivers the GTK *in message 3*.
 
-    Three changes, all of whose crypto is tested on a build machine by
-    tests/Makefile:
-
-      1. crypto/aes128.c replaces the stub (COPY'd by the Dockerfile).
-      2. that file is uplg/nabgcc's (MIT), which already carries the RFC
-         3394 unwrap and the GTK KDE parser. See the note in its header.
-      3. here: call it from message 3 and from the group rekey, bounded by
-         the frame length the driver actually received, and install nothing
-         when the integrity check fails.
-
-    The eapol_frame struct is NOT enlarged. `sizeof(struct eapol_frame)` is
-    used to compute the MIC of frames we SEND and to size them, so growing
-    key_data[] would change every transmitted frame and break the handshake.
-    The received bytes are there regardless — fr_in is a cast over the
-    driver's buffer — so the real length is read from the header and clamped
-    to what the driver says arrived.
+    Both the crypto (crypto/aes128.c, COPY'd by the Dockerfile) and the logic
+    inserted here are uplg/nabgcc's, from its wpa23-gtk-r2 branch (MIT; text
+    in upstream/UPLG-LICENSE). Taken rather than paraphrased, deliberately:
+    the first attempt at this patch rewrote their logic from their header
+    comment and put the msg3 install BEFORE the state transitions instead of
+    after. That build did not associate.
     """
     p = root / "src/net/eapol.c"
     src = p.read_text(encoding="utf-8", errors="surrogateescape")
-    if "naboot_install_gtk" in src:
+    if "eapol_install_msg3_gtk" in src:
         print("  eapol.c: already patched")
         return
-
     if '#include "net/aes128.h"' not in src:
         raise SystemExit("eapol.c no longer includes net/aes128.h — "
                          "aes_key_unwrap and rsn_find_gtk would not resolve")
 
-    helper = """
-/* --- WPA2 group key, added by apply-mods.py ------------------------------
- * Pull the GTK out of a key-data field and install it. `frame`/`length` are
- * the driver's buffer and what it says arrived; the struct under-declares
- * key_data[] (see patch_wpa2_group_key) so the length is taken from the
- * header and clamped to the bytes that are really there. Returns 1 when a
- * key was installed.
+    helper = '''
+#define EAPOL_KEYDATA_MAX 128
+
+/**
+ * @brief Unwrap and install the GTK from message 3/4 Key Data (CCMP)
+ *
+ * From uplg/nabgcc (MIT), branch wpa23-gtk-r2. Key Data is AES-Key-Wrapped
+ * (RFC 3394) under the KEK and holds an RSN KDE list from which the GTK KDE
+ * is picked. Any failure leaves the group slot untouched and returns 0: a
+ * wrong key installed silently is the failure this whole patch exists to end.
  */
-static int naboot_install_gtk(struct eapol_frame *fr_in, uint8_t *frame,
-                              uint32_t length)
+static int32_t eapol_install_msg3_gtk(struct eapol_frame *fr_in,
+                                      uint32_t length)
 {
-  uint8_t plain[128];
-  uint8_t key[32];
-  uint32_t klen = 0;
-  uint16_t kdlen, avail;
-  uint8_t kid = 0;
-  uint32_t off;
+  uint8_t plain[EAPOL_KEYDATA_MAX];
+  uint32_t wlen = (uint32_t)((fr_in->key_frame.key_data_length[0] << 8)
+                             | fr_in->key_frame.key_data_length[1]);
+  uint32_t glen = 0;
+  uint8_t key_id = 0;
 
-  kdlen = (uint16_t)((fr_in->key_frame.key_data_length[0] << 8)
-                     | fr_in->key_frame.key_data_length[1]);
-  off = (uint32_t)((uint8_t *)fr_in->key_frame.key_data - frame);
-  if(length <= off)
-    return 0;
-  avail = (uint16_t)(length - off);
-  if(kdlen > avail)
-    kdlen = avail;
-
-  /* Key Data has to be whole 8-byte blocks, at least two of them, or there
-     is nothing a wrap could be hiding in. */
-  if(kdlen < 16 || (kdlen % 8) != 0 || (uint32_t)(kdlen - 8) > sizeof(plain))
-  {
+  /* key_data_length is attacker-controlled until checked against the frame
+   * the radio actually delivered. */
+  if((wlen < 24) || (wlen % 8) || (wlen > sizeof(plain)+8) ||
+     (sizeof(struct eapol_frame) - EAPOL_RSN_LENGTH + wlen > length)) {
     DBG_WIFI("GTK: implausible key data length"EOL);
     return 0;
   }
-  if(!aes_key_unwrap(ptk.s.kek, fr_in->key_frame.key_data, kdlen, plain))
-  {
-    /* Wrong KEK, or the frame was touched on the way. Either way the only
-       safe thing is to install nothing: a wrong group key is indistinguishable
-       from a right one until broadcast traffic silently stops working. */
-    DBG_WIFI("GTK: key unwrap failed"EOL);
+  if(!aes_key_unwrap(ptk.s.kek, fr_in->key_frame.key_data, wlen, plain)) {
+    DBG_WIFI("GTK: key unwrap integrity check failed"EOL);
     return 0;
   }
-  if(!rsn_find_gtk(plain, (uint32_t)(kdlen - 8), key, sizeof(key), &klen, &kid))
-  {
+  if(!rsn_find_gtk(plain, wlen-8, gtk.s.ek, sizeof(gtk.s.ek),
+                   &glen, &key_id)) {
     DBG_WIFI("GTK: no GTK KDE in key data"EOL);
-    memset(plain, 0, sizeof(plain));
     return 0;
   }
-  memset(plain, 0, sizeof(plain));
-  /* Key id 0 is the pairwise slot. A group key there would overwrite the
-     PTK, so an access point claiming it is one we decline to believe. */
-  if(kid == 0)
-  {
-    DBG_WIFI("GTK: refused key index 0"EOL);
+  if(key_id == 0) {
+    /* Slot 0 carries the pairwise key; overwriting it would break unicast,
+     * which is the one thing that currently works. */
+    DBG_WIFI("GTK: refusing key id 0"EOL);
     return 0;
   }
-  memcpy(gtk.s.ek, key, (klen > 16) ? 16 : klen);
-  rt2501_set_key(kid, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,
+  /* CCMP uses no MIC keys; pass the union\'s own fields. */
+  rt2501_set_key(key_id, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,
                  RT2501_CIPHER_AES);
-  memset(key, 0, sizeof(key));
   DBG_WIFI("GTK installed"EOL);
   return 1;
 }
-"""
-    anchor = "static void eapol_input_msg1(uint8_t *frame, uint32_t length)"
+'''
+    anchor = "static void eapol_input_msg3(uint8_t *frame, uint32_t length)"
     if anchor not in src:
-        raise SystemExit("eapol.c: eapol_input_msg1 not found — upstream moved")
+        raise SystemExit("eapol.c: eapol_input_msg3 not found — upstream moved")
     src = src.replace(anchor, helper + "\n" + anchor, 1)
 
-    # --- 1. the group rekey: replace the stub call -------------------------
+    # --- message 3 carries the GTK, and upstream dropped it ---------------
+    # AFTER the state transitions, not before: the install does several
+    # synchronous USB register writes, and doing them with the state machine
+    # half-transitioned is what broke association on the first attempt.
+    old3 = """  // FIXME Check length before cast ?
+  (void)length;
+  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
+  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];"""
+    if old3 not in src:
+        raise SystemExit("eapol.c: eapol_input_msg3\'s preamble moved")
+    src = src.replace(old3, """  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
+  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];""", 1)
+
+    marker = """  eapol_state = EAPOL_S_GROUP;
+  ieee80211_state = IEEE80211_S_RUN;
+  ieee80211_timeout = IEEE80211_RUN_TIMEOUT;
+}"""
+    if marker not in src:
+        raise SystemExit("eapol.c: the end of eapol_input_msg3 moved")
+    src = src.replace(marker, """  eapol_state = EAPOL_S_GROUP;
+  ieee80211_state = IEEE80211_S_RUN;
+  ieee80211_timeout = IEEE80211_RUN_TIMEOUT;
+
+  /* WPA2 sends the GTK here, inside AES-Key-Wrapped Key Data, not in a
+     separate group-key message. A supplicant that ignores it never installs
+     one at all. */
+  if((ieee80211_encryption&0x0F) == IEEE80211_CIPHER_CCMP)
+    eapol_install_msg3_gtk(fr_in, length);
+}""", 1)
+
+    # --- the group rekey: replace the stub call ---------------------------
     old_ccmp = """    case IEEE80211_CIPHER_CCMP: // Decrypt CCMP/AES
       {
         // FIXME Actually do something...
@@ -667,45 +672,33 @@ static int naboot_install_gtk(struct eapol_frame *fr_in, uint8_t *frame,
     if old_ccmp not in src:
         raise SystemExit("eapol.c: the CCMP stub call is not where it was")
     start = src.index(old_ccmp)
-    end = src.index("      break;", start) + len("      break;")
+    stop = src.index("      break;", start) + len("      break;")
     src = src[:start] + """    case IEEE80211_CIPHER_CCMP:
-      /* RFC 3394 unwrap, then the GTK KDE. Was an empty stub. */
-      naboot_install_gtk(fr_in, frame, length);
-      break;""" + src[end:]
+      /* Same wrapped-and-KDE-encoded layout as message 3/4, so the same code
+         handles a rotation. A failure here must NOT be swallowed: announcing
+         RUN with a stale group key is what made the radio go silently deaf
+         between rekeys. */
+      if(!eapol_install_msg3_gtk(fr_in, length)) {
+        DBG_WIFI("GTK rotation failed, dropping the link"EOL);
+        eapol_state = EAPOL_S_MSG1;
+        ieee80211_state = IEEE80211_S_IDLE;
+        return;
+      }
+      break;""" + src[stop:]
 
-    # The group-rekey function declared a context for the stub it no longer
-    # calls, and that struct no longer exists.
+    # the group handler declared a context for the stub it no longer calls
     src = src.replace("  struct aes128_context aes;\n", "", 1)
-    # It also discarded `length`, which the helper needs to bound its reads.
+    # and discarded `length`, which the install needs to bound its reads
     src = src.replace("""static void eapol_input_group_msg1(uint8_t *frame, uint32_t length)
 {
+  // FIXME Check length before cast ?
   (void)length;
 """, """static void eapol_input_group_msg1(uint8_t *frame, uint32_t length)
 {
 """, 1)
 
-    # --- 2. message 3 carries the GTK too, and was ignoring it -------------
-    old3 = """  // FIXME Check length before cast ?
-  (void)length;
-  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
-  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];"""
-    if old3 not in src:
-        raise SystemExit("eapol.c: eapol_input_msg3's preamble moved")
-    src = src.replace(old3, """  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
-  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];""", 1)
-
-    # install right before msg3 hands over to the RUN state
-    marker = "  eapol_state = EAPOL_S_GROUP;"
-    if marker in src:
-        src = src.replace(marker,
-                          "  /* WPA2 delivers the GTK in message 3; upstream dropped it. */\n"
-                          "  if((ieee80211_encryption & 0x0F) == IEEE80211_CIPHER_CCMP)\n"
-                          "    naboot_install_gtk(fr_in, frame, length);\n" + marker, 1)
-    else:
-        print("  eapol.c: WARNING no EAPOL_S_GROUP marker; msg3 not wired")
-
     p.write_text(src, encoding="utf-8", errors="surrogateescape")
-    print("  eapol.c: WPA2 group key wired (msg3 + rekey)")
+    print("  eapol.c: WPA2 group key wired (msg3 + rekey), uplg's logic")
 
 
 def patch_mdns(root: Path) -> None:

@@ -18,7 +18,10 @@ experimental builds stay out of git (see `../.gitignore`).
 **Verified live (2026-06-21):** boots, loads its bytecode, resolves its server
 over multicast mDNS, completes the XMPP handshake, speaks — and a full
 **signed OTA was flashed over the air and recovered cleanly** (the rabbit
-re-flashed itself with this exact `.sim` and came back operational).
+re-flashed itself with this exact `.sim` and came back operational — **after
+a power cycle**: the post-flash reboot leaves the radio asleep and the belly
+blinking orange until the rabbit is unplugged and plugged back in. That is
+normal and it is the last step of every flash, OTA included).
 
 ## `naboot-minimal.signed.sim`
 
