@@ -4,6 +4,16 @@ A clean, dependency-free server (Python stdlib) that revives an **original
 Nabaztag / Nabaztag:tag** by speaking the **Violet protocol** directly — no
 OpenJabNab, no openab. It replaces the dead Violet servers.
 
+> **Looking for the integration?** This add-on gives you a warren and a control
+> API. If you want the rabbit as a **device with entities** — the belly as a
+> light, sleep as a switch, the nose and the voice as selects, the mood and the
+> diagnostics as sensors — install
+> **[Le Terrier integration](https://github.com/ClaraVnk/terrier-ha)** through
+> HACS (custom repository, category *Integration*). It points at
+> **[Le Terrier](https://terrier.cyberloutre.fr/)**, the hosted warren, by
+> default, or at this add-on if you would rather host it yourself: give it
+> `http://<your-home-assistant>:8080`.
+
 ## What it does
 
 - **HTTP boot (`:80`)** — `/vl/bc.jsp` serves the runtime bytecode (the
