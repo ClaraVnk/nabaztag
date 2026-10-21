@@ -29,7 +29,7 @@ normal and it is the last step of every flash, OTA included).
 |---|---|
 | **Size** | 231 106 bytes |
 | **sha256** | `c8148bf9c5560e590310aa84e852c286dfc94fde4362212a9be125ed2e48c236` |
-| **Build mode** | `lean` + `wpa2_gtk` (`apply-mods.py`) + `patches/wpa2-scanned-ciphers.patch` |
+| **Build mode** | `lean` + `wpa2_gtk` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
 **What it fixes.** Upstream's `aes128.c` is an empty stub, so on a WPA2/CCMP
@@ -48,7 +48,7 @@ work, which was dormant: the bytecode hands the driver the raw config byte
 (`IEEE80211_CRYPT_WPA2 = 0x40`) with **no cipher bits**, so the
 `switch(encryption & 0x0F)` selecting the CCMP path hit `default` — and worse,
 message 2 installed the pairwise key as **TKIP** on a CCMP network, which
-works only because access points tolerate it. `patches/wpa2-scanned-ciphers.patch`
+works only because access points tolerate it. `firmware-arm/patches/wpa2-scanned-ciphers.patch`
 (uplg's `ieee80211.c` change, verbatim) remembers the cipher suites each AP
 advertises in its beacon and fills them in at association time. This image
 therefore associates with a correct RSN IE, installs the pairwise key as AES,
