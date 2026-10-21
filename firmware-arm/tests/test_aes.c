@@ -1,0 +1,129 @@
+/* AES-128 and RFC 3394, against the published vectors.
+ *
+ * Only the decrypt direction exists: that is all an RFC 3394 unwrap needs,
+ * the CCMP data path is done by the radio, and flash is the scarce resource
+ * on this hardware. So the FIPS-197 checks below run the inverse cipher.
+ *
+ * Nothing ships unless every one of these passes — this is key material, and
+ * the failure it replaced was silent. */
+#include <stdio.h>
+#include <string.h>
+#include "net/aes128.h"
+
+static int fails = 0;
+
+static void check(const char *what, const uint8_t *got, const uint8_t *want,
+                  unsigned int n)
+{
+    unsigned int i;
+    if(memcmp(got, want, n) == 0) { printf("  ok   %s\n", what); return; }
+    fails++;
+    printf("  FAIL %s\n       got  ", what);
+    for(i = 0; i < n; i++) printf("%02x", got[i]);
+    printf("\n       want ");
+    for(i = 0; i < n; i++) printf("%02x", want[i]);
+    printf("\n");
+}
+
+static void ok_(int cond, const char *what)
+{ printf("  %s %s\n", cond ? "ok  " : "FAIL", what); if(!cond) fails++; }
+
+int main(void)
+{
+    struct aes128_dec ctx;
+    uint8_t out[64];
+
+    /* FIPS-197 C.1 — the canonical AES-128 vector, inverse direction. */
+    {
+        const uint8_t key[16] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                                 0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+        const uint8_t pt[16]  = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+                                 0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff};
+        const uint8_t ct[16]  = {0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,
+                                 0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a};
+        printf("FIPS-197 C.1 (AES-128, inverse cipher):\n");
+        aes128_dec_init(&ctx, key);
+        aes128_dec_block(&ctx, out, ct);
+        check("decrypt", out, pt, 16);
+    }
+
+    /* FIPS-197 appendix B, a second key and block. */
+    {
+        const uint8_t key[16] = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
+                                 0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c};
+        const uint8_t pt[16]  = {0x32,0x43,0xf6,0xa8,0x88,0x5a,0x30,0x8d,
+                                 0x31,0x31,0x98,0xa2,0xe0,0x37,0x07,0x34};
+        const uint8_t ct[16]  = {0x39,0x25,0x84,0x1d,0x02,0xdc,0x09,0xfb,
+                                 0xdc,0x11,0x85,0x97,0x19,0x6a,0x0b,0x32};
+        printf("FIPS-197 appendix B:\n");
+        aes128_dec_init(&ctx, key);
+        aes128_dec_block(&ctx, out, ct);
+        check("decrypt", out, pt, 16);
+    }
+
+    /* RFC 3394 §4.1 — 128-bit key data under a 128-bit KEK. This is the
+       shape WPA2 uses for a GTK, and the reason this code exists. */
+    {
+        const uint8_t kek[16] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                                 0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+        const uint8_t wrapped[24] = {
+            0x1f,0xa6,0x8b,0x0a,0x81,0x12,0xb4,0x47,
+            0xae,0xf3,0x4b,0xd8,0xfb,0x5a,0x7b,0x82,
+            0x9d,0x3e,0x86,0x23,0x71,0xd2,0xcf,0xe5};
+        const uint8_t plain[16] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+                                   0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff};
+        printf("RFC 3394 4.1 (key unwrap, 128-bit KEK):\n");
+        ok_(aes_key_unwrap(kek, wrapped, 24, out) == 1, "integrity check");
+        check("unwrapped key", out, plain, 16);
+    }
+
+    /* Four blocks under a 128-bit KEK — the size a real WPA2 Key Data field
+       reaches once the GTK KDE and padding are in it. RFC 3394 has no vector
+       for this combination (its multi-block cases use longer KEKs), so the
+       expected value comes from python-cryptography. */
+    {
+        const uint8_t kek[16] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                                 0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+        const uint8_t wrapped[40] = {
+            0x0e,0x78,0x08,0xf5,0x06,0xf2,0xc3,0xe7,
+            0xaa,0x6e,0xda,0xd7,0x93,0xac,0x44,0x95,
+            0xb0,0x93,0xeb,0x48,0x2e,0x5c,0x7c,0xa9,
+            0xc1,0x70,0xc9,0xfa,0xa0,0x7d,0xc0,0xcb,
+            0xbb,0x87,0x51,0x2e,0x19,0xfd,0x40,0x92};
+        const uint8_t plain[32] = {
+            0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+            0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
+            0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+            0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f};
+        printf("256 bits of key data (vs python-cryptography):\n");
+        ok_(aes_key_unwrap(kek, wrapped, 40, out) == 1, "integrity check");
+        check("unwrapped key", out, plain, 32);
+    }
+
+    /* A wrap that has been touched must be refused. Silently returning
+       rubbish is how a wrong group key gets installed and looks like
+       success — which is exactly what this replaced. */
+    {
+        const uint8_t kek[16] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                                 0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+        uint8_t wrapped[24] = {
+            0x1f,0xa6,0x8b,0x0a,0x81,0x12,0xb4,0x47,
+            0xae,0xf3,0x4b,0xd8,0xfb,0x5a,0x7b,0x82,
+            0x9d,0x3e,0x86,0x23,0x71,0xd2,0xcf,0xe5};
+        uint8_t bad[16];
+
+        printf("refusals:\n");
+        wrapped[9] ^= 0x01;
+        ok_(aes_key_unwrap(kek, wrapped, 24, out) == 0, "a tampered wrap");
+        wrapped[9] ^= 0x01;
+
+        memcpy(bad, kek, 16); bad[0] ^= 0xff;
+        ok_(aes_key_unwrap(bad, wrapped, 24, out) == 0, "the wrong KEK");
+
+        ok_(aes_key_unwrap(kek, wrapped, 20, out) == 0, "a length not a multiple of 8");
+        ok_(aes_key_unwrap(kek, wrapped, 8, out) == 0, "too short to hold a key");
+    }
+
+    printf("\n%s\n", fails ? "ECHEC" : "tous les vecteurs passent");
+    return fails != 0;
+}
