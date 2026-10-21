@@ -27,9 +27,9 @@ normal and it is the last step of every flash, OTA included).
 
 | | |
 |---|---|
-| **Size** | 230 418 bytes |
-| **sha256** | `446e2728680adde201d356fc95d8cb755c9c4495084aa909418c6b80d94f7c60` |
-| **Build mode** | `lean` + `wpa2_gtk` (see `apply-mods.py`) |
+| **Size** | 231 106 bytes |
+| **sha256** | `c8148bf9c5560e590310aa84e852c286dfc94fde4362212a9be125ed2e48c236` |
+| **Build mode** | `lean` + `wpa2_gtk` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
 **What it fixes.** Upstream's `aes128.c` is an empty stub, so on a WPA2/CCMP
@@ -40,16 +40,19 @@ its integrity check, and the GTK KDE parser, wired into message 3 and the
 group rekey. PR #20 has the full story and the test suite.
 
 **Hardware-validated on 2026-10-21** on a Nabaztag:tag v2 by OTA: sent
-12:09:30, `bc.jsp` 12:11:31, operational 12:11:46. It boots, associates and
-reaches the server.
+13:22:38, downloaded the same second, and after the power cycle `bc.jsp`
+13:25:07, `locate.jsp` 13:25:15, operational 13:25:21.
 
-**One honest caveat.** On this firmware the bytecode hands the driver the raw
-config byte (`IEEE80211_CRYPT_WPA2 = 0x40`) with **no cipher bits**, so the
-`switch(encryption & 0x0F)` that selects the CCMP path hits `default` — the
-fix is **installed but dormant** until the driver also learns the cipher
-suites from the beacon (uplg's `ieee80211.c` change; next step, not this
-release). What this release *does* prove is that the code is safe to run and
-that the signed OTA path works end to end.
+**And the fix actually runs.** An earlier build carried only the group-key
+work, which was dormant: the bytecode hands the driver the raw config byte
+(`IEEE80211_CRYPT_WPA2 = 0x40`) with **no cipher bits**, so the
+`switch(encryption & 0x0F)` selecting the CCMP path hit `default` — and worse,
+message 2 installed the pairwise key as **TKIP** on a CCMP network, which
+works only because access points tolerate it. `firmware-arm/patches/wpa2-scanned-ciphers.patch`
+(uplg's `ieee80211.c` change, verbatim) remembers the cipher suites each AP
+advertises in its beacon and fills them in at association time. This image
+therefore associates with a correct RSN IE, installs the pairwise key as AES,
+and exercises the RFC 3394 group-key unwrap.
 
 **Flashing it — read step 3.**
 
