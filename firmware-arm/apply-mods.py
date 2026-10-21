@@ -547,6 +547,167 @@ def patch_bootloader(root: Path) -> None:
     print(f"[ok]   {p}: httpflash now requires a valid Ed25519 signature")
 
 
+def patch_wpa2_group_key(root: Path) -> None:
+    """Make WPA2's group key actually work.
+
+    Upstream nabgcc ships src/net/aes128.c as a stub — every function is
+    `(void)` casts and nothing else — while eapol.c calls aes128_decrypt() to
+    recover the group key of a CCMP network, under a comment reading "FIXME
+    Actually do something". Nothing fails: the pairwise key is derived
+    correctly, the MIC verifies, the rabbit associates and unicast works. But
+    the group key installed into the radio is whatever was in memory, so the
+    rabbit cannot decrypt a broadcast or multicast frame.
+
+    Worse, eapol_input_msg3() ignores the incoming key data entirely, and WPA2
+    delivers the GTK *in message 3*. On an access point that sends it only
+    there and rekeys rarely, the rabbit never has a group key at all.
+
+    Three changes, all of whose crypto is tested on a build machine by
+    tests/Makefile:
+
+      1. crypto/aes128.c replaces the stub (COPY'd by the Dockerfile).
+      2. that file is uplg/nabgcc's (MIT), which already carries the RFC
+         3394 unwrap and the GTK KDE parser. See the note in its header.
+      3. here: call it from message 3 and from the group rekey, bounded by
+         the frame length the driver actually received, and install nothing
+         when the integrity check fails.
+
+    The eapol_frame struct is NOT enlarged. `sizeof(struct eapol_frame)` is
+    used to compute the MIC of frames we SEND and to size them, so growing
+    key_data[] would change every transmitted frame and break the handshake.
+    The received bytes are there regardless — fr_in is a cast over the
+    driver's buffer — so the real length is read from the header and clamped
+    to what the driver says arrived.
+    """
+    p = root / "src/net/eapol.c"
+    src = p.read_text(encoding="utf-8", errors="surrogateescape")
+    if "naboot_install_gtk" in src:
+        print("  eapol.c: already patched")
+        return
+
+    if '#include "net/aes128.h"' not in src:
+        raise SystemExit("eapol.c no longer includes net/aes128.h — "
+                         "aes_key_unwrap and rsn_find_gtk would not resolve")
+
+    helper = """
+/* --- WPA2 group key, added by apply-mods.py ------------------------------
+ * Pull the GTK out of a key-data field and install it. `frame`/`length` are
+ * the driver's buffer and what it says arrived; the struct under-declares
+ * key_data[] (see patch_wpa2_group_key) so the length is taken from the
+ * header and clamped to the bytes that are really there. Returns 1 when a
+ * key was installed.
+ */
+static int naboot_install_gtk(struct eapol_frame *fr_in, uint8_t *frame,
+                              uint32_t length)
+{
+  uint8_t plain[128];
+  uint8_t key[32];
+  uint32_t klen = 0;
+  uint16_t kdlen, avail;
+  uint8_t kid = 0;
+  uint32_t off;
+
+  kdlen = (uint16_t)((fr_in->key_frame.key_data_length[0] << 8)
+                     | fr_in->key_frame.key_data_length[1]);
+  off = (uint32_t)((uint8_t *)fr_in->key_frame.key_data - frame);
+  if(length <= off)
+    return 0;
+  avail = (uint16_t)(length - off);
+  if(kdlen > avail)
+    kdlen = avail;
+
+  /* Key Data has to be whole 8-byte blocks, at least two of them, or there
+     is nothing a wrap could be hiding in. */
+  if(kdlen < 16 || (kdlen % 8) != 0 || (uint32_t)(kdlen - 8) > sizeof(plain))
+  {
+    DBG_WIFI("GTK: implausible key data length"EOL);
+    return 0;
+  }
+  if(!aes_key_unwrap(ptk.s.kek, fr_in->key_frame.key_data, kdlen, plain))
+  {
+    /* Wrong KEK, or the frame was touched on the way. Either way the only
+       safe thing is to install nothing: a wrong group key is indistinguishable
+       from a right one until broadcast traffic silently stops working. */
+    DBG_WIFI("GTK: key unwrap failed"EOL);
+    return 0;
+  }
+  if(!rsn_find_gtk(plain, (uint32_t)(kdlen - 8), key, sizeof(key), &klen, &kid))
+  {
+    DBG_WIFI("GTK: no GTK KDE in key data"EOL);
+    memset(plain, 0, sizeof(plain));
+    return 0;
+  }
+  memset(plain, 0, sizeof(plain));
+  /* Key id 0 is the pairwise slot. A group key there would overwrite the
+     PTK, so an access point claiming it is one we decline to believe. */
+  if(kid == 0)
+  {
+    DBG_WIFI("GTK: refused key index 0"EOL);
+    return 0;
+  }
+  memcpy(gtk.s.ek, key, (klen > 16) ? 16 : klen);
+  rt2501_set_key(kid, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,
+                 RT2501_CIPHER_AES);
+  memset(key, 0, sizeof(key));
+  DBG_WIFI("GTK installed"EOL);
+  return 1;
+}
+"""
+    anchor = "static void eapol_input_msg1(uint8_t *frame, uint32_t length)"
+    if anchor not in src:
+        raise SystemExit("eapol.c: eapol_input_msg1 not found — upstream moved")
+    src = src.replace(anchor, helper + "\n" + anchor, 1)
+
+    # --- 1. the group rekey: replace the stub call -------------------------
+    old_ccmp = """    case IEEE80211_CIPHER_CCMP: // Decrypt CCMP/AES
+      {
+        // FIXME Actually do something...
+        memcpy(&key[0], ptk.s.kek, 16);
+        aes128_init(&aes, key, 16); // 16 or 128 ?"""
+    if old_ccmp not in src:
+        raise SystemExit("eapol.c: the CCMP stub call is not where it was")
+    start = src.index(old_ccmp)
+    end = src.index("      break;", start) + len("      break;")
+    src = src[:start] + """    case IEEE80211_CIPHER_CCMP:
+      /* RFC 3394 unwrap, then the GTK KDE. Was an empty stub. */
+      naboot_install_gtk(fr_in, frame, length);
+      break;""" + src[end:]
+
+    # The group-rekey function declared a context for the stub it no longer
+    # calls, and that struct no longer exists.
+    src = src.replace("  struct aes128_context aes;\n", "", 1)
+    # It also discarded `length`, which the helper needs to bound its reads.
+    src = src.replace("""static void eapol_input_group_msg1(uint8_t *frame, uint32_t length)
+{
+  (void)length;
+""", """static void eapol_input_group_msg1(uint8_t *frame, uint32_t length)
+{
+""", 1)
+
+    # --- 2. message 3 carries the GTK too, and was ignoring it -------------
+    old3 = """  // FIXME Check length before cast ?
+  (void)length;
+  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
+  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];"""
+    if old3 not in src:
+        raise SystemExit("eapol.c: eapol_input_msg3's preamble moved")
+    src = src.replace(old3, """  struct eapol_frame *fr_in = (struct eapol_frame *)frame;
+  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];""", 1)
+
+    # install right before msg3 hands over to the RUN state
+    marker = "  eapol_state = EAPOL_S_GROUP;"
+    if marker in src:
+        src = src.replace(marker,
+                          "  /* WPA2 delivers the GTK in message 3; upstream dropped it. */\n"
+                          "  if((ieee80211_encryption & 0x0F) == IEEE80211_CIPHER_CCMP)\n"
+                          "    naboot_install_gtk(fr_in, frame, length);\n" + marker, 1)
+    else:
+        print("  eapol.c: WARNING no EAPOL_S_GROUP marker; msg3 not wired")
+
+    p.write_text(src, encoding="utf-8", errors="surrogateescape")
+    print("  eapol.c: WPA2 group key wired (msg3 + rekey)")
+
+
 def patch_mdns(root: Path) -> None:
     """Inject the boot-mods/mdns.mtl announcer into boot.0.0.0.13.mtl and
     wire mdns_boot_tick into the boot loop's !master branch.
@@ -1501,40 +1662,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1548,6 +1709,7 @@ def main() -> int:
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
         "mdns": patch_mdns,
+        "wpa2_gtk": patch_wpa2_group_key,
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,

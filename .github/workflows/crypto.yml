@@ -1,0 +1,46 @@
+name: Firmware crypto
+
+# The WPA2 group-key path, tested on a build machine.
+#
+# eapol.c cannot be compiled off the rabbit — it reaches into the RT2501
+# driver, the 802.11 state machine and the debug UART — so this part of the
+# firmware was historically only testable by flashing a rabbit and watching.
+# The crypto underneath touches nothing but bytes, so it runs here, under the
+# sanitizers, on every change. It is key material: it does not ship red.
+on:
+  push:
+    branches: [main]
+    paths: ["firmware-arm/crypto/**", "firmware-arm/tests/**", ".github/workflows/crypto.yml"]
+  pull_request:
+    paths: ["firmware-arm/crypto/**", "firmware-arm/tests/**", ".github/workflows/crypto.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vectors:
+    name: FIPS-197, RFC 3394, and a real WPA2 message 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate the vectors from the specifications
+        run: |
+          python -m pip install --quiet cryptography
+          cd firmware-arm/tests
+          python vectors.py > vectors.generated.h
+          # The committed vectors must be the ones the specs produce. If this
+          # differs, either the generator changed or somebody edited the
+          # vectors by hand — and hand-edited crypto vectors are worthless.
+          diff -u vectors.h vectors.generated.h
+      - name: Run every suite under ASan and UBSan
+        run: make -C firmware-arm/tests
+      - name: Cross-compile for the ARM7TDMI
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-arm-none-eabi
+          make -C firmware-arm/tests arm

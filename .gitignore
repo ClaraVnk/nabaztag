@@ -4,3 +4,7 @@
 nabaztag-violet/bootcode.violet
 __pycache__/
 *.pyc
+
+# Copied from ../crypto by the tests Makefile so the sources can include
+# <net/aes128.h> the way the firmware tree lays them out.
+firmware-arm/tests/net/
