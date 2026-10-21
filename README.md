@@ -14,6 +14,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="Home Assistant add-on">
+  <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <img src="https://img.shields.io/badge/100%25-local-44cc11?style=flat-square" alt="100% local, no cloud">
   <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
   <img src="https://img.shields.io/badge/firmware-Naboot-8957e5?style=flat-square" alt="Naboot custom firmware">
@@ -60,6 +61,11 @@ through a simple control API.
   seconds, base LED violet, with nobody touching the plug.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server.
+- 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
+  rabbit as proper Home Assistant **devices and entities** (a light, a switch,
+  selects, sensors, buttons) rather than REST calls. It works against Le
+  Terrier or against a warren you run yourself, and it is where this project's
+  Home Assistant work happens now.
 
 > ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** A
 > stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on every boot
@@ -86,6 +92,27 @@ Our server completes the handshake using the documented **SASL success-bypass**
 (no Violet password needed), keeps the rabbit idle, pushes `violet:packet`
 commands, and **logs everything** the rabbit sends. No OpenJabNab, no reverse
 proxy — one clean process.
+
+## Home Assistant: the integration, or this add-on
+
+There are two ways to drive a rabbit from Home Assistant, and they are not
+equal any more.
+
+**[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** is the one to
+install today. The rabbit arrives as a **device with entities** — the belly as a
+light, sleep as a switch, the nose and the voice as selects, the mood and the
+diagnostics as sensors — so it works with the dashboard, with automations and
+with voice assistants without a single REST call. It talks to **[Le
+Terrier](https://terrier.cyberloutre.fr/)**, the hosted warren, or to one you run
+yourself; the address is the only thing to type, and it is pre-filled.
+
+Add it as a HACS custom repository: `https://github.com/ClaraVnk/terrier-ha`,
+category *Integration*.
+
+**This add-on** runs a warren inside Home Assistant itself, with the control API
+described below. It still works and it is still here, in `legacy/` — but the
+server it embeds is the ancestor of Le Terrier, and new work goes to the
+integration and to the warren rather than here.
 
 ## What you can do from Home Assistant
 
