@@ -40,7 +40,7 @@ vectors:
 
 arm:
 	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/aes128.c -o /tmp/aes128.o
-	$(ARM_CC) $(ARM_FLAGS) $(INC) -c 
+	@arm-none-eabi-size /tmp/aes128.o
 
 clean:
 	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz
