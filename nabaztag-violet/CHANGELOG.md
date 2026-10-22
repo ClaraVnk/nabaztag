@@ -17,11 +17,21 @@
   it (459 functions instead of 468), so a rabbit whose gateway drops its DNS
   queries could not resolve a `.local` server name. It can again.
 - **One power cycle to pick this up**, since the rabbit only downloads its
-  bytecode at boot. It should be the last one.
+  bytecode at boot.
+
+  *Correction, 2026-10-22:* this said "it should be the last one". It is not,
+  and the code never supported the claim. Three `reboot`s remain on the
+  `locate.jsp` and code-9 paths (#23, finding 4), and a software reset leaves
+  seven "already initialised" flags holding their previous values, four of
+  which produce the same amber-until-unplugged on their own (#25). The flags
+  are fixed in #30; the `reboot`s are not.
 
 ## 0.15.6
 
-- **arm64/aarch64 declared (provisional, #7).** The add-on no longer refuses
+- **arm64/aarch64 declared (#7).** *Tested on real hardware 2026-10-22:*
+  the image builds on a Pi, whisper.cpp compiles from source, and the server
+  imports. The bundled `small` model takes ~51 s for 2 s of audio there, so a
+  wake word on arm wants `tiny` (~6 s) or `base` (~12 s). The add-on no longer refuses
   to install on a Raspberry Pi. It builds whisper.cpp from source on the same
   musl base, so it *should* work — but it has not been built or run on real
   arm hardware, so treat it as untested until someone confirms.
