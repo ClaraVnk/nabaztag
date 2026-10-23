@@ -9,7 +9,8 @@ plug. Testing a Wi-Fi fix on the hardware therefore costs one unplugging per
 attempt, and what you get back is a rabbit with its ears down and no way to
 ask it why. This runs the same code — `ieee80211.c`, `eapol.c`, the crypto
 beside them, with `firmware-arm`'s modifications applied — and prints the
-state machine's every move.
+state machine's every move. Open, WEP, WPA and WPA2 networks run end to end,
+four-way handshake and group key included.
 
 ```
 $ ./run.sh scenarios/open-deauth.txt
@@ -104,14 +105,20 @@ the AKM search finds PSK, and the rabbit treats it as an ordinary WPA2 network
 emulator prints both numbers on every attempt, and for a CCMP network they
 agree: `0x40 == 0x40`. Whatever stops a rabbit rejoining, it is not that line.
 
-## What it does not do yet
+**A half-dead handshake costs a minute, then nothing happens.** Lose message
+2 and the rabbit stays in `IEEE80211_S_EAPOL` until `IEEE80211_EAPOL_TIMEOUT`
+expires — 64.85 s from association — then falls to `IDLE` and the driver
+never tries again. Whatever retries has to live above it, and on a rabbit
+that is the boot bytecode. `scenarios/wpa2-lost-msg2.txt`, and
+`--no-reconnect` to watch it stop there.
 
-**The four-way handshake.** The virtual AP does not send EAPOL message 1, so a
-WPA or WPA2 scenario gets the rabbit as far as `IEEE80211_S_EAPOL` and stops
-there. `wpa2-ccmp.txt` and `wpa3-transition.txt` assert exactly that, so the
-gap is visible rather than silent. Closing it means teaching `vap.c` to derive
-the PTK, build messages 1 and 3 with a valid MIC, and wrap a GTK — all of
-which the firmware's own `hash.c` and `aes128.c` can do.
+**The WPA2 group key arrives and is installed.** The AP wraps a GTK with the
+KEK into message 3 and the rabbit logs `GTK installed`. That is the path
+`crypto/aes128.c` and the `wpa2_gtk` modification exist for, and until now it
+could only be checked by flashing a rabbit and watching whether broadcast
+traffic ever arrived.
+
+## What it does not do yet
 
 **The bytecode.** This harness drives the 802.11 layer directly, the way the
 boot bytecode's `netScan` and `netAuth` pair does, rather than interpreting the
@@ -128,6 +135,8 @@ A frame that is not EAPOL is counted and dropped.
 ```
 src/wifi_main.c   the harness: scan, choose, authenticate, watch, assert
 src/vap.c         the virtual access point, in place of the USB radio
+src/vapcrypto.c   AES-128 encryption and RFC 3394 key wrap, which an AP needs
+                  and the rabbit does not; self-tested against the standards
 src/sim.c         the virtual clock and the scenario parser
 stubs/            hardware that has to exist but does nothing interesting
 patches/          the simulated register window, for inc/common.h
@@ -137,6 +146,12 @@ scenarios/        the questions
 The seam is `rt2501_tx()` and `ieee80211_input()`. Above it, everything is the
 rabbit's real code. Below it, `vap.c` parses the frames the firmware transmits
 and answers as an access point would.
+
+One thing is deliberately not reimplemented: the PTK derivation calls the
+firmware's own `prf()` and copies the concatenation order from `compute_ptk()`
+in `eapol.c`. A handshake that only works when both ends share a mistake
+proves nothing, so the key schedule is tested by vectors in `../tests` and the
+emulator tests the protocol around it.
 
 ## Credit
 

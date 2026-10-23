@@ -31,6 +31,7 @@
 
 #include "sim.h"
 #include "vap.h"
+#include "vapcrypto.h"
 
 /* The firmware's millisecond clock, which sysTimems() reads. sim_advance()
  * is the only thing that moves it. */
@@ -38,6 +39,17 @@ uint32_t counter_timer, counter_timer_s;
 
 /* The simulated register window; see the _NAB_SIM block in inc/common.h. */
 volatile uint8_t sim_mmio[1u << 20];
+
+/* eapol.c exports this but declares it in no header. */
+extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
+                              uint16_t ssidlength, uint8_t *pmk);
+
+/* What rt2501_auth() is handed as the key. For WPA and WPA2 the rabbit is
+ * configured with a 32-byte PMK, not a passphrase: eapol_init() copies
+ * ieee80211_key straight into pmk without running PBKDF2. rt2501_auth()
+ * then memcpy's IEEE80211_MAX_KEYLEN — 64 — bytes out of this buffer, so it
+ * is that long whatever is actually in it. */
+static uint8_t configured_key[IEEE80211_MAX_KEYLEN];
 
 /* --- what the scan found ---------------------------------------------- */
 
@@ -99,6 +111,7 @@ static int connect_attempts;
  */
 static int try_connect(const char *ssid, const char *psk, int configured_encrypt)
 {
+  (void)psk;
   struct rt2501_scan_result *r;
 
   connect_attempts++;
@@ -126,7 +139,7 @@ static int try_connect(const char *ssid, const char *psk, int configured_encrypt
   }
 
   rt2501_auth((const uint8_t *)ssid, r->mac, r->bssid, r->channel, r->rateset,
-              IEEE80211_AUTH_OPEN, r->encryption, (const uint8_t *)psk);
+              IEEE80211_AUTH_OPEN, r->encryption, configured_key);
   return 1;
 }
 
@@ -180,6 +193,7 @@ int main(int argc, char **argv)
   int reconnect = 1;
   int last_state = -1;
   uint32_t next_timer_ms = 0;
+  uint32_t next_retry_ms = 0;
   int was_connected = 0;
   int reconnections = 0;
 
@@ -210,12 +224,39 @@ int main(int argc, char **argv)
           scenario ? scenario : "(default)", target_ssid, sim.tick_ms,
           sim.stop_ms);
 
+  if(vap_crypto_selftest() != 0) {
+    fprintf(stderr, "the emulator's own crypto is wrong; not running\n");
+    return 2;
+  }
+
+  /* Derive the PMK once, with the firmware's own PBKDF2, and give it to both
+   * ends: the rabbit through rt2501_auth(), the AP through vap_set_pmk(). */
+  if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
+    uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
+    mypassword_to_pmk((const uint8_t *)sim.psk, (uint8_t *)target_ssid,
+                      (uint16_t)strlen(target_ssid), pmk);
+    memcpy(configured_key, pmk, sizeof(pmk));
+    vap_set_pmk(pmk);
+    sim_log("PMK for \"%s\" / \"%s\": %02x%02x%02x%02x...", target_ssid,
+            sim.psk, pmk[0], pmk[1], pmk[2], pmk[3]);
+  } else {
+    snprintf((char *)configured_key, sizeof(configured_key), "%s", sim.psk);
+  }
+
   vap_init();
   ieee80211_init();
   rt2501_driver_install();
   rt2501_setmode(IEEE80211_M_MANAGED, NULL, 0);
 
   int configured = configured_encrypt_for(sim.aps[0].security);
+
+  /* Events dated 0 have to be in effect before the first attempt. The scan
+   * is a blocking call that advances the virtual clock by nearly five
+   * seconds and runs the whole handshake inside it, so an event only looked
+   * at by the main loop would arrive after everything it was meant to
+   * disturb. The first version of the lost-message-2 scenario swallowed
+   * message 4 instead and looked like a pass. */
+  sim_run_events();
   try_connect(target_ssid, sim.psk, configured);
 
   while(sim_now() < sim.stop_ms) {
@@ -251,11 +292,19 @@ int main(int argc, char **argv)
       rt2501_timer();
     }
 
-    /* The policy under test: after a link loss, does anything try again? On
-     * the rabbit this is the boot bytecode's job, not the driver's, which is
-     * the whole of issue #24. */
-    if(reconnect && was_connected && ieee80211_state == IEEE80211_S_IDLE) {
-      sim_log("link lost, retrying");
+    /* The policy under test: when the driver gives up and returns to IDLE,
+     * does anything try again? On the rabbit that is the boot bytecode's
+     * job and not the driver's, which is the whole of issue #24 — so it is
+     * modelled here, where it can be switched off with --no-reconnect to see
+     * exactly where a rabbit that does not retry comes to rest.
+     *
+     * IDLE is reached two ways and both matter: a deauthentication while
+     * connected, and a handshake that died halfway and timed out sixty
+     * seconds later. */
+    if(reconnect && ieee80211_state == IEEE80211_S_IDLE
+       && sim_now() >= next_retry_ms) {
+      next_retry_ms = sim_now() + 1000;
+      sim_log("idle%s, retrying", was_connected ? " after a link loss" : "");
       try_connect(target_ssid, sim.psk, configured);
     }
 
@@ -277,12 +326,15 @@ int main(int argc, char **argv)
   printf("auth / assoc resp   %u / %u\n", vap_stats.auth_responses,
          vap_stats.assoc_responses);
   printf("deauths sent        %u\n", vap_stats.deauths_sent);
-  printf("EAPOL from rabbit   %u\n", vap_stats.eapol_from_sta);
+  printf("EAPOL rabbit / AP   %u / %u\n", vap_stats.eapol_from_sta,
+         vap_stats.eapol_to_sta);
+  if(vap_stats.mics_verified || vap_stats.mics_failed)
+    printf("  MIC ok / bad      %u / %u\n", vap_stats.mics_verified,
+           vap_stats.mics_failed);
+  if(vap_stats.handshakes_completed)
+    printf("handshakes done     %u\n", vap_stats.handshakes_completed);
   printf("keys installed      %u\n", vap_stats.keys_installed);
   printf("channel switches    %u\n", vap_stats.channel_switches);
-  if(vap_stats.handshakes_skipped)
-    printf("handshakes skipped  %u  (the AP cannot run a four-way yet)\n",
-           vap_stats.handshakes_skipped);
   if(vap_stats.rx_overruns)
     printf("rx overruns         %u\n", vap_stats.rx_overruns);
   printf("failures            %d\n", sim_failures());

@@ -19,14 +19,18 @@ struct vap_stats {
   uint32_t deauths_sent;
   uint32_t data_from_sta;
   uint32_t eapol_from_sta;
+  uint32_t eapol_to_sta;
+  uint32_t mics_verified;
+  uint32_t mics_failed;
+  uint32_t handshakes_completed;
   uint32_t keys_installed;
   uint32_t channel_switches;
-  uint32_t handshakes_skipped;
 };
 
 extern struct vap_stats vap_stats;
 
 void vap_init(void);
+void vap_set_pmk(const uint8_t *pmk);
 void vap_poll(void);
 void vap_deauth(int ap, int disassoc, uint16_t reason);
 void vap_set_up(int ap, int up);

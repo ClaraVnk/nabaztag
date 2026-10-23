@@ -1,0 +1,19 @@
+# The AP never hears message 2, so it stops talking. A real AP retransmits
+# message 1; this one does not, which makes the scenario a test of what the
+# rabbit does when a handshake simply dies halfway.
+#
+# Measured: it sits in IEEE80211_S_EAPOL until 64.85 s — that is
+# IEEE80211_EAPOL_TIMEOUT, 600 ticks of 100 ms, counted from the moment it
+# associated — and then drops to IDLE. The driver itself never tries again;
+# something above it has to, and on a rabbit that something is the boot
+# bytecode. Run with --no-reconnect to watch it stop at IDLE and stay there,
+# which is what a rabbit with its ears down on a shelf is actually doing.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 180000
+
+at 0      drop-eapol 1
+at 40000  expect EAPOL      # still waiting for a message 3 that never comes
+at 150000 expect RUN        # the timeout fired, the retry got back in

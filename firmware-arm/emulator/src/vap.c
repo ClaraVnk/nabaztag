@@ -14,9 +14,10 @@
  * SSID, a beacon advertising ciphers the firmware has never met — each is a
  * line in a scenario file instead of a trip to the wall socket.
  *
- * What it does NOT do yet: the four-way handshake. An AP that advertises WPA
- * or WPA2 gets the rabbit as far as IEEE80211_S_EAPOL and no further, and
- * says so. Open and WEP networks run end to end. See README.md.
+ * Open, WEP, WPA and WPA2 networks run end to end, four-way handshake
+ * included: the AP derives the same PTK the rabbit does, signs message 3 with
+ * the KCK and wraps a group key with the KEK, so the group-key path that used
+ * to be reachable only by flashing a rabbit is now a scenario file.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,9 +34,11 @@
 #include "usb/rt2501usb.h"
 #include "net/ieee80211.h"
 #include "net/eapol.h"
+#include "net/hash.h"
 
 #include "sim.h"
 #include "vap.h"
+#include "vapcrypto.h"
 
 uint8_t rt2501_mac[IEEE80211_ADDR_LEN] = {0x00,0x19,0xdb,0x00,0xbe,0xef};
 PDEVINFO rt2501_dev;
@@ -330,6 +333,320 @@ static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
   return (uint32_t)(p - out);
 }
 
+/* --- the four-way handshake, from the access point's side -------------- */
+
+/* The pairwise master key, which both ends must already share: the rabbit
+ * gets it through netAuth (eapol_init() copies ieee80211_key straight into
+ * pmk, so the rabbit is configured with a PMK and not a passphrase), and the
+ * harness derives it from the scenario's passphrase with the firmware's own
+ * mypassword_to_pmk(). */
+static uint8_t vap_pmk[EAPOL_MASTER_KEY_LENGTH];
+static int vap_pmk_set;
+
+enum {
+  HS_IDLE,        /* nothing started                       */
+  HS_SENT_MSG1,   /* waiting for message 2                 */
+  HS_SENT_MSG3,   /* waiting for message 4                 */
+  HS_DONE,
+};
+
+struct vap_handshake {
+  int      stage;
+  uint8_t  anonce[EAPOL_NONCE_LENGTH];
+  uint8_t  snonce[EAPOL_NONCE_LENGTH];
+  uint8_t  ptk[64];          /* kck[16] | kek[16] | tk[16] | mic[16] */
+  uint64_t replay;
+};
+
+static struct vap_handshake vap_hs[SIM_MAX_APS];
+
+/* A group key the AP hands out. Fixed rather than random so a transcript can
+ * be compared byte for byte between runs. */
+static const uint8_t vap_gtk[16] = {
+  0x47,0x54,0x4b,0x00,0x11,0x22,0x33,0x44,
+  0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc
+};
+
+void vap_set_pmk(const uint8_t *pmk)
+{
+  memcpy(vap_pmk, pmk, EAPOL_MASTER_KEY_LENGTH);
+  vap_pmk_set = 1;
+}
+
+/* The EAPOL-Key body is 95 bytes before the key data. The firmware's
+ * `struct eapol_key_frame` declares a 24-byte key_data member inside itself,
+ * so sizeof() is 24 too many for this purpose. */
+#define EAPOL_KEY_BODY_LENGTH (sizeof(struct eapol_key_frame) - EAPOL_RSN_LENGTH)
+
+static int vap_desc_ver(const struct sim_ap *a)
+{
+  /* 2 when the pairwise cipher is CCMP, so the MIC is HMAC-SHA1; 1 for TKIP,
+   * where it is HMAC-MD5. eapol_input_msg1() reads this field to decide which
+   * cipher the AP is actually using, so it has to be right. */
+  switch(a->security) {
+    case SIM_SEC_WPA_TKIP:
+    case SIM_SEC_WPA2_TKIP:
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+static int vap_is_wpa2(const struct sim_ap *a)
+{
+  return a->security >= SIM_SEC_WPA2_TKIP;
+}
+
+static void vap_put_replay(uint8_t *dst, uint64_t counter)
+{
+  for(int i = 0; i < EAPOL_RPC_LENGTH; i++)
+    dst[EAPOL_RPC_LENGTH - 1 - i] = (uint8_t)(counter >> (8 * i));
+}
+
+/**
+ * @brief Sign an EAPOL-Key frame the way the rabbit will check it.
+ *
+ * Over the EAPOL header and body — everything from the version byte — for
+ * body_length + 4 bytes, with the MIC field zeroed. eapol_input_msg3() checks
+ * it over exactly that span, so getting the length wrong here looks from the
+ * rabbit's side like a wrong password.
+ */
+static void vap_sign(struct eapol_frame *fr, uint32_t body_length,
+                     const uint8_t *kck, int desc_ver)
+{
+  uint8_t *eapol = (uint8_t *)fr + LLC_LENGTH;
+
+  memset(fr->key_frame.key_mic, 0, EAPOL_KEYMIC_LENGTH);
+  if(desc_ver == 2) {
+    uint8_t full[20];
+    hmac_sha1(kck, EAPOL_MICK_LENGTH, eapol, body_length + 4, full);
+    memcpy(fr->key_frame.key_mic, full, EAPOL_KEYMIC_LENGTH);
+  } else {
+    hmac_md5(kck, EAPOL_MICK_LENGTH, eapol, body_length + 4,
+             fr->key_frame.key_mic);
+  }
+}
+
+/** @brief Wrap an EAPOL body in an 802.11 data frame from the AP. */
+static uint32_t vap_wrap_data(uint8_t *out, const struct sim_ap *a,
+                              const uint8_t *body, uint32_t body_length)
+{
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
+  /* From DS: addr1 is us, addr2 the BSSID, addr3 the original sender.
+   * ieee80211_input_data() refuses anything else in managed mode. */
+  memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, a->bssid, IEEE80211_ADDR_LEN);
+  memcpy(out + sizeof(*fr), body, body_length);
+  return (uint32_t)sizeof(*fr) + body_length;
+}
+
+static void vap_send_msg1(int ap)
+{
+  struct sim_ap *a = &sim.aps[ap];
+  struct vap_handshake *hs = &vap_hs[ap];
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint32_t body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH;
+  uint32_t n;
+
+  if(!vap_pmk_set) {
+    sim_log("AP %s: no PMK, cannot start a handshake", macstr(a->bssid));
+    sim_note_failure("the harness never handed the virtual AP a PMK");
+    return;
+  }
+
+  memset(body, 0, sizeof(body));
+  /* An ANonce that is distinguishable in a dump and stable across runs. */
+  for(uint32_t i = 0; i < EAPOL_NONCE_LENGTH; i++)
+    hs->anonce[i] = (uint8_t)(0xa0 + i);
+  hs->replay = 1;
+
+  memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+  fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+  fr->packet_type = EAPOL_TYPE_KEY;
+  fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+  fr->body_length[1] = (uint8_t)(body_length & 0xff);
+
+  fr->key_frame.descriptor_type =
+      vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+  fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+  fr->key_frame.key_info.key_type = 1;      /* pairwise */
+  fr->key_frame.key_info.key_ack  = 1;
+  fr->key_frame.key_length[0] = 0;
+  fr->key_frame.key_length[1] = 16;
+  vap_put_replay(fr->key_frame.replay_counter, hs->replay);
+  memcpy(fr->key_frame.key_nonce, hs->anonce, EAPOL_NONCE_LENGTH);
+  /* No MIC on message 1: the station has no PTK yet. */
+
+  n = vap_wrap_data(out, a, body, LLC_LENGTH + 4 + body_length);
+  sim_log("AP %s: EAPOL 1/4, ANonce a0..bf, key_desc_ver %d",
+          macstr(a->bssid), vap_desc_ver(a));
+  queue_frame(out, n, a->rssi, a->channel);
+  vap_stats.eapol_to_sta++;
+  hs->stage = HS_SENT_MSG1;
+}
+
+static void vap_send_msg3(int ap)
+{
+  struct sim_ap *a = &sim.aps[ap];
+  struct vap_handshake *hs = &vap_hs[ap];
+  uint8_t body[sizeof(struct eapol_frame) + 128];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint8_t *key_data = (uint8_t *)&fr->key_frame + EAPOL_KEY_BODY_LENGTH;
+  uint32_t key_data_length = 0;
+  uint32_t body_length;
+  uint32_t n;
+
+  memset(body, 0, sizeof(body));
+  hs->replay = 2;
+
+  if(vap_is_wpa2(a)) {
+    /* WPA2 delivers the group key in message 3, as a KDE inside the key
+     * data, wrapped with the KEK. This is the path crypto/aes128.c and the
+     * wpa2_gtk modification exist for, and it was previously only reachable
+     * by flashing a rabbit and watching whether broadcast traffic arrived. */
+    uint8_t kde[24];
+    uint8_t *p = kde;
+    *p++ = 0xdd;
+    *p++ = 0x16;                                  /* 4 OUI + 2 + 16 */
+    *p++ = 0x00; *p++ = 0x0f; *p++ = 0xac;        /* RSN OUI */
+    *p++ = 0x01;                                  /* data type 1: GTK */
+    *p++ = 0x01;                                  /* key id 1 */
+    *p++ = 0x00;                                  /* reserved */
+    memcpy(p, vap_gtk, sizeof(vap_gtk));
+
+    if(!vap_aes_key_wrap(hs->ptk + 16, kde, sizeof(kde), key_data)) {
+      sim_note_failure("the AP could not wrap the group key");
+      return;
+    }
+    key_data_length = sizeof(kde) + 8;
+  }
+
+  body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH + key_data_length;
+
+  memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+  fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+  fr->packet_type = EAPOL_TYPE_KEY;
+  fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+  fr->body_length[1] = (uint8_t)(body_length & 0xff);
+
+  fr->key_frame.descriptor_type =
+      vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+  fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+  fr->key_frame.key_info.key_type = 1;
+  fr->key_frame.key_info.install  = 1;
+  fr->key_frame.key_info.key_ack  = 1;
+  fr->key_frame.key_info.key_mic  = 1;
+  fr->key_frame.key_info.secure   = 1;
+  fr->key_frame.key_info.ekd      = vap_is_wpa2(a) ? 1 : 0;
+  fr->key_frame.key_length[0] = 0;
+  fr->key_frame.key_length[1] = 16;
+  vap_put_replay(fr->key_frame.replay_counter, hs->replay);
+  memcpy(fr->key_frame.key_nonce, hs->anonce, EAPOL_NONCE_LENGTH);
+  key_data[-2] = (uint8_t)((key_data_length >> 8) & 0xff);
+  key_data[-1] = (uint8_t)(key_data_length & 0xff);
+
+  vap_sign(fr, body_length, hs->ptk, vap_desc_ver(a));
+
+  n = vap_wrap_data(out, a, body, LLC_LENGTH + 4 + body_length);
+  sim_log("AP %s: EAPOL 3/4, %u bytes of key data%s", macstr(a->bssid),
+          key_data_length, key_data_length ? " (wrapped GTK)" : "");
+  queue_frame(out, n, a->rssi, a->channel);
+  vap_stats.eapol_to_sta++;
+  hs->stage = HS_SENT_MSG3;
+}
+
+/**
+ * @brief An EAPOL-Key frame arriving from the rabbit.
+ *
+ * Message 2 carries the SNonce, which is the last thing the AP needs to
+ * derive the PTK; from there the MIC on the rabbit's own frame can be
+ * verified, and a mismatch is reported rather than ignored, because that is
+ * the difference between "the password is wrong" and "the derivation is".
+ */
+static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
+{
+  struct sim_ap *a = &sim.aps[ap];
+  struct vap_handshake *hs = &vap_hs[ap];
+  const struct eapol_frame *fr = (const struct eapol_frame *)payload;
+  uint32_t body_length;
+
+  if(length < LLC_LENGTH + 4 + EAPOL_KEY_BODY_LENGTH) {
+    sim_log("AP %s: a %u-byte EAPOL frame, too short to be a key message",
+            macstr(a->bssid), length);
+    return;
+  }
+  body_length = ((uint32_t)fr->body_length[0] << 8) | fr->body_length[1];
+
+  if(hs->stage == HS_SENT_MSG1) {
+    uint8_t mine[20];
+    uint8_t received[EAPOL_KEYMIC_LENGTH];
+    uint8_t copy[512];
+    struct eapol_frame *scratch;
+
+    memcpy(hs->snonce, fr->key_frame.key_nonce, EAPOL_NONCE_LENGTH);
+    vap_compute_ptk(vap_pmk, hs->anonce, a->bssid, hs->snonce, rt2501_mac,
+                    hs->ptk, EAPOL_PTK_LENGTH);
+    sim_log("AP %s: EAPOL 2/4 received, PTK derived (KCK %02x%02x%02x%02x...)",
+            macstr(a->bssid), hs->ptk[0], hs->ptk[1], hs->ptk[2], hs->ptk[3]);
+
+    /* Verify the rabbit's MIC over its own frame, with the MIC zeroed. The
+     * span is body_length + 4, which the firmware computes from the length
+     * IT declared — and that length counts the key_data member twice. Using
+     * the rabbit's own arithmetic is the point: we are checking that it
+     * agrees with itself, not that it agrees with the standard. */
+    if(length > sizeof(copy)) {
+      sim_log("AP %s: EAPOL 2/4 is %u bytes, too long to verify", macstr(a->bssid), length);
+    } else {
+      memcpy(copy, payload, length);
+      scratch = (struct eapol_frame *)copy;
+      memcpy(received, scratch->key_frame.key_mic, EAPOL_KEYMIC_LENGTH);
+      memset(scratch->key_frame.key_mic, 0, EAPOL_KEYMIC_LENGTH);
+      if(LLC_LENGTH + body_length + 4 > length) {
+        sim_log("AP %s: EAPOL 2/4 declares %u body bytes but carries %u — "
+                "not verifying", macstr(a->bssid), body_length,
+                length - LLC_LENGTH - 4);
+      } else {
+        if(vap_desc_ver(a) == 2) {
+          hmac_sha1(hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
+                    body_length + 4, mine);
+        } else {
+          hmac_md5(hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
+                   body_length + 4, mine);
+        }
+        if(memcmp(mine, received, EAPOL_KEYMIC_LENGTH) == 0) {
+          sim_log("AP %s: the rabbit's MIC on 2/4 is correct", macstr(a->bssid));
+          vap_stats.mics_verified++;
+        } else {
+          sim_log("AP %s: the rabbit's MIC on 2/4 does not match", macstr(a->bssid));
+          vap_stats.mics_failed++;
+        }
+      }
+    }
+
+    vap_send_msg3(ap);
+    return;
+  }
+
+  if(hs->stage == HS_SENT_MSG3) {
+    hs->stage = HS_DONE;
+    sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
+            macstr(a->bssid));
+    vap_stats.handshakes_completed++;
+    return;
+  }
+
+  sim_log("AP %s: an EAPOL frame with no handshake in progress",
+          macstr(a->bssid));
+}
+
 /* --- the station's frames, arriving at the AP -------------------------- */
 
 static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
@@ -399,12 +716,9 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       vap_stats.assoc_responses++;
 
       if(a->security >= SIM_SEC_WPA_TKIP) {
-        /* The AP would now send EAPOL message 1. It does not yet — see the
-         * file header. Saying so beats a run that stalls without a word. */
-        sim_log("AP %s: %s wants a four-way handshake, which this AP cannot "
-                "run yet — the rabbit will sit in EAPOL and time out",
-                macstr(a->bssid), sim_security_name(a->security));
-        vap_stats.handshakes_skipped++;
+        /* An AP sends message 1 as soon as the station is associated. */
+        vap_hs[ap].stage = HS_IDLE;
+        vap_send_msg1(ap);
       }
       break;
     }
@@ -448,8 +762,7 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
               macstr(a->bssid), vap_eapol_drops);
       return;
     }
-    sim_log("AP %s: EAPOL frame from the rabbit, %u bytes — no handshake to "
-            "continue it with", macstr(a->bssid), payload_length);
+    vap_eapol_from_sta(ap, payload, payload_length);
     return;
   }
 
@@ -608,6 +921,7 @@ void vap_init(void)
   vap_next_beacon_ms = 0;
   vap_eapol_drops = 0;
   memset(&vap_stats, 0, sizeof(vap_stats));
+  memset(vap_hs, 0, sizeof(vap_hs));
 
   sim_log("radio: MAC %s, %d AP%s declared", macstr(rt2501_mac), sim.nb_aps,
           sim.nb_aps == 1 ? "" : "s");
@@ -642,6 +956,7 @@ void vap_deauth(int ap, int disassoc, uint16_t reason)
     queue_frame(out, n, a->rssi, a->channel);
     a->associated = 0;
     a->authenticated = 0;
+    memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
     vap_stats.deauths_sent++;
   }
 }
@@ -651,7 +966,11 @@ void vap_set_up(int ap, int up)
   for(int i=0;i<sim.nb_aps;i++) {
     if(ap >= 0 && i != ap) continue;
     sim.aps[i].up = up;
-    if(!up) { sim.aps[i].associated = 0; sim.aps[i].authenticated = 0; }
+    if(!up) {
+      sim.aps[i].associated = 0;
+      sim.aps[i].authenticated = 0;
+      memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
+    }
     sim_log("AP %s: %s", macstr(sim.aps[i].bssid), up ? "powered on" : "powered off");
   }
 }

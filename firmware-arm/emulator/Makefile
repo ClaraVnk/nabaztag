@@ -36,7 +36,7 @@ FW += $(NABGCC)/testvm/stubs/usb/rt2501usb_io.c
 FW += $(NABGCC)/testvm/stubs/usb/usbhcore.c
 
 # The emulator itself.
-SIM  = src/wifi_main.c src/sim.c src/vap.c
+SIM  = src/wifi_main.c src/sim.c src/vap.c src/vapcrypto.c
 SIM += stubs/console.c stubs/delay.c stubs/hcdmem.c
 
 SRC = $(FW) $(SIM)

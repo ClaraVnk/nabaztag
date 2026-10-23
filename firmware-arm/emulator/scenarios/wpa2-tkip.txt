@@ -1,0 +1,11 @@
+# WPA2 with TKIP, where the key descriptor version is 1 and the MIC is
+# HMAC-MD5 rather than HMAC-SHA1. Worth its own scenario: eapol.c chooses
+# between the two from a field in message 1, and nothing else tests the
+# MD5 branch.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-tkip -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN

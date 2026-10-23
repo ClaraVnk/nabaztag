@@ -1,0 +1,16 @@
+# Issue #24 as it actually happens: a WPA2 network, and the AP
+# deauthenticates the rabbit. Does it come back?
+#
+# Unlike open-deauth.txt this exercises the whole of eapol.c on the way back
+# in — a fresh ANonce, a fresh PTK, a fresh group key — which is where a
+# reconnection is most likely to come apart. Compare with --no-reconnect to
+# see where it stops when nothing retries.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 120000
+
+at 10000 expect RUN
+at 20000 deauth reason 7
+at 60000 expect RUN
