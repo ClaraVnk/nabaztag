@@ -18,7 +18,7 @@ ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
 # measure one in isolation -- that is the whole point of naming them, and
 # dropping these four is how wpa2-mixed-gtk, wpa2-rekey and wpa2-ptk-rekey
 # fail, which is what they were written to show.
-ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey
+ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,audio_halfduplex
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git python3 ca-certificates \
