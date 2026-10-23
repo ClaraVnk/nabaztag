@@ -1,0 +1,14 @@
+# WPA2/WPA3 transition mode: the RSN element offers both PSK and SAE, which
+# is what a controller does when you tick "WPA2/WPA3". The firmware's AKM
+# search finds PSK, so the network IS a candidate and the handshake runs as
+# ordinary WPA2.
+#
+# This is the access-point setting to recommend to anyone keeping a 2006
+# rabbit on a modern network — see wpa3-sae.txt for what happens without it.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN

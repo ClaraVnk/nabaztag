@@ -1,0 +1,43 @@
+diff --git a/inc/common.h b/inc/common.h
+index c7e2aa1..91433d7 100644
+--- a/inc/common.h
++++ b/inc/common.h
+@@ -17,6 +17,30 @@ extern void __enable_interrupt(void);
+ /*****************************************************/
+ /*    internal I/O input/output macro                */
+ /*****************************************************/
++#ifdef _NAB_SIM
++/* A host has no memory-mapped I/O. Every peripheral register this firmware
++ * touches is aliased into one array instead, so a driver that pokes a
++ * control register - hcd.h's disable_ohci_irq() is the one that matters,
++ * since src/usb/rt2501usb_buffer.c is compiled unmodified in the emulator -
++ * runs rather than taking a segmentation fault at 0xB8000000. The window is
++ * a megabyte and the address is masked into it: two registers a megabyte
++ * apart share a byte here, which nothing in the emulator reads back and
++ * which is still better than not running at all. */
++extern volatile uint8_t sim_mmio[1u << 20];
++#define SIM_MMIO(n) (&sim_mmio[((uintptr_t)(n)) & ((1u << 20) - 1)])
++#define get_value(n)    (*((volatile uint8_t  *)SIM_MMIO(n)))
++#define put_value(n,c)  (*((volatile uint8_t  *)SIM_MMIO(n)) = (c))
++#define get_hvalue(n)   (*((volatile uint16_t *)SIM_MMIO(n)))
++#define put_hvalue(n,c) (*((volatile uint16_t *)SIM_MMIO(n)) = (c))
++#define get_wvalue(n)   (*((volatile uint32_t *)SIM_MMIO(n)))
++#define put_wvalue(n,c) (*((volatile uint32_t *)SIM_MMIO(n)) = (c))
++#define set_bit(n,c)    (*((volatile uint8_t  *)SIM_MMIO(n))|= (c))
++#define clr_bit(n,c)    (*((volatile uint8_t  *)SIM_MMIO(n))&=~(c))
++#define set_hbit(n,c)   (*((volatile uint16_t *)SIM_MMIO(n))|= (c))
++#define clr_hbit(n,c)   (*((volatile uint16_t *)SIM_MMIO(n))&=~(c))
++#define set_wbit(n,c)   (*((volatile uint32_t *)SIM_MMIO(n))|= (c))
++#define clr_wbit(n,c)   (*((volatile uint32_t *)SIM_MMIO(n))&=~(c))
++#else
+ #define get_value(n)    (*((volatile uint8_t *)(n)))          /* byte input */
+ #define put_value(n,c)  (*((volatile uint8_t *)(n)) = (c))    /* byte output */
+ #define get_hvalue(n)   (*((volatile uint16_t *)(n)))         /* half word input */
+@@ -29,6 +53,7 @@ extern void __enable_interrupt(void);
+ #define clr_hbit(n,c)   (*((volatile uint16_t *)(n))&=~(c))   /* half word bit clear */
+ #define set_wbit(n,c)   (*((volatile uint32_t *)(n))|= (c))    /* word bit set */
+ #define clr_wbit(n,c)   (*((volatile uint32_t *)(n))&=~(c))    /* word bit clear */
++#endif /* _NAB_SIM */
+ 
+ #define MAX_ADDR	  0x20000
+ #define UART_BUFFER_SIZE 135

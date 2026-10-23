@@ -1,0 +1,17 @@
+# The real house: several access points on one SSID, on different channels.
+# "on a plein d'AP donc il va juste se connecter a une autre" — so when the
+# one it is on deauthenticates it, where does it land?
+
+ap 02:00:5e:10:00:01 Terrier 1  open -48
+ap 02:00:5e:10:00:02 Terrier 6  open -61
+ap 02:00:5e:10:00:03 Terrier 11 open -70
+psk unused
+tick 50
+stop 120000
+
+at 10000  expect RUN
+at 15000  deauth 02:00:5e:10:00:01 reason 7
+at 40000  expect RUN
+# now take the strongest one off the air entirely and see if it moves house
+at 50000  down 02:00:5e:10:00:01
+at 90000  expect RUN

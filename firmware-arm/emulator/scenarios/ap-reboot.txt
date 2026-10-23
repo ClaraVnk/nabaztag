@@ -1,0 +1,12 @@
+# The AP reboots: silent for twenty seconds, then back. The rabbit's own
+# IEEE80211_RUN_TIMEOUT (600 ticks of 100 ms) is what has to notice.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+psk unused
+tick 50
+stop 180000
+
+at 10000  expect RUN
+at 20000  down 02:00:5e:10:00:01
+at 40000  up 02:00:5e:10:00:01
+at 150000 expect RUN

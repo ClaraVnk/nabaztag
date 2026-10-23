@@ -1,0 +1,16 @@
+# Issue #24, on an open network: the AP deauthenticates the rabbit. Does
+# anything try again?
+#
+# This is the run that costs a power cycle on the hardware and tells you
+# nothing but "it did not come back". Here it says which state the machine
+# stopped in. Compare with --no-reconnect, which is the rabbit whose boot
+# bytecode does not retry.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+psk unused
+tick 50
+stop 90000
+
+at 10000 expect RUN
+at 20000 deauth reason 7
+at 40000 expect RUN          # it got back in, or this fails

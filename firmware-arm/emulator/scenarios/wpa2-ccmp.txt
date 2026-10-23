@@ -1,0 +1,15 @@
+# WPA2 with CCMP, which is what every modern access point does.
+#
+# The whole chain: the beacon's cipher suites are read, the comparison in
+# OPnetAuth (vinterp.c:921) lets netAuth run, the four-way handshake
+# completes, and the group key the AP wrapped with the KEK is unwrapped and
+# installed. That last step is what crypto/aes128.c and the wpa2_gtk
+# modification exist for, and before this emulator it could only be checked
+# by flashing a rabbit and watching whether broadcast traffic ever arrived.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
