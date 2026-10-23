@@ -1127,6 +1127,52 @@ class XmppSession(threading.Thread):
             return
         log.info("<- rabbit %s: %s", self.addr[0], f[:400])
 
+        if "violet:iq:register" in f and "<iq" in f:
+            # A rabbit with no stored credentials registers before it
+            # authenticates, and this server advertises
+            # <register xmlns='http://violet.net/features/violet-register'/>
+            # in its stream features — so it was *offering* a flow it did not
+            # serve. A rabbit that took the offer sent its query, got nothing
+            # back and hung up, which is every rabbit whose configuration page
+            # has been reset and every rabbit that was never adopted by Violet.
+            #
+            # Three exchanges, taken from OpenJabNab's plugin_auth.cpp (steps 1
+            # and 100) rather than guessed:
+            #
+            #   rabbit  <iq type='get' id='1'><query xmlns='violet:iq:register'/></iq>
+            #   us      ...<query><instructions>…</instructions><username/><password/></query>
+            #   rabbit  <iq type='set' id='2'><query ...><username>MAC</username>
+            #                                  <password>…</password></query></iq>
+            #   us      the same content back, as a result
+            #
+            # The password is logged and not stored, deliberately: the DIGEST
+            # handler below accepts any response, so keeping it would imply a
+            # check that does not happen. If that handler ever starts checking,
+            # this is where the credential has to be kept.
+            iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
+            iq_id = iq_id.group(1) if iq_id else "1"
+            creds = re.search(
+                r"<username>([0-9a-fA-F]*)</username>\s*<password>([0-9a-fA-F]*)</password>", f)
+            if creds:
+                self.mac = creds.group(1).lower() or self.mac
+                log.info("rabbit %s: registered as %s (password %d hex chars, "
+                         "not stored — the SASL handler accepts any response)",
+                         self.addr[0], self.mac, len(creds.group(2)))
+                inner = re.search(r"(<query xmlns=[\"']violet:iq:register[\"'].*</query>)", f)
+                inner = inner.group(1) if inner else "<query xmlns='violet:iq:register'/>"
+                self.send(f"<iq type='result' id='{iq_id}' from='{self.domain}'>{inner}</iq>")
+            else:
+                log.info("rabbit %s: asked to register — sending the form",
+                         self.addr[0])
+                self.send(
+                    f"<iq type='result' id='{iq_id}' from='{self.domain}'>"
+                    "<query xmlns='violet:iq:register'>"
+                    "<instructions>Choose a username and password to register "
+                    "with this server</instructions>"
+                    "<username/><password/></query></iq>"
+                )
+            return
+
         if f.startswith("<auth"):
             # DIGEST-MD5: send one challenge, then we'll accept any response.
             challenge = base64.b64encode(
