@@ -2153,19 +2153,19 @@ def main() -> int:
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
@@ -2181,11 +2181,32 @@ def main() -> int:
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
     print(f"=== apply-mods.py mode={args.mode} steps={steps_str} ===")
+
+    # linker_keep deliberately leaves *(.bss.*) out of the zero-loop, because
+    # bracketing it costs the whole VM heap on 16 KB of SRAM (see the note of
+    # 2026-06-21). The price is that every -fdata-sections global starts as
+    # garbage, and two of them -- play_w and play_r -- are read before they
+    # are written. That is the 2026-06-20 brick: an out-of-bounds load, a Data
+    # Abort, and a dead-loop in the vector, triggered by the connection
+    # jingle. audio_fifo_data is the fix and the two steps belong together.
+    #
+    # They came apart in practice: `minimal` -- the image RECOVERY.md calls
+    # the parachute -- shipped on 2026-10-20 with linker_keep and gc_sections
+    # and without audio_fifo_data, and so did signed-stock, pages-only, max,
+    # mdns-only and phase8-rom. pacifox caught it with preflight.py before
+    # anyone flashed one (#45). A comment would not have caught it; this does.
+    if "linker_keep" in steps and "audio_fifo_data" not in steps:
+        sys.exit(
+            "FAIL step list: linker_keep without audio_fifo_data leaves play_w "
+            "and play_r uninitialised in a .bss.* section the zero-loop does "
+            "not reach. Reading one of them is the 2026-06-20 brick. Add "
+            "audio_fifo_data, or drop linker_keep."
+        )
     fns = {
         "eapol_replay": patch_eapol_replay,
         "cold_state": patch_cold_state,
