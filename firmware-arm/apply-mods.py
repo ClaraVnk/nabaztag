@@ -701,6 +701,57 @@ static int32_t eapol_install_msg3_gtk(struct eapol_frame *fr_in,
     print("  eapol.c: WPA2 group key wired (msg3 + rekey), uplg's logic")
 
 
+def patch_eapol_group_ack(root: Path) -> None:
+    """Accept a group rekey that follows the standard.
+
+    eapol_input()'s dispatch sends a frame to eapol_input_group_msg1() only
+    when Key Type is 0, Key MIC is 1, Secure is 1 **and Key Ack is 1**. That
+    last one is wrong: IEEE 802.11-2016 table 12-8 gives Key Ack = 0 for group
+    key message 1. The bit exists to say "I expect a reply in this pairwise
+    exchange", and a group rekey is not one.
+
+    So an access point that follows the standard has every rekey silently
+    dropped — the frame matches none of the three branches and lands in
+    `DBG_WIFI("Drop EAPOL frame...")`. The rabbit stays associated and keeps
+    the group key it was given at association, which means it goes deaf to
+    broadcast and multicast traffic from the first rotation onwards. Most
+    access points rotate hourly. Peers then age it out of their ARP caches and
+    re-ARP by broadcast into the void, which is the same symptom the GTK work
+    was about and which survived it.
+
+    Measured in firmware-arm/emulator, not guessed: `./rabbit
+    scenarios/wpa2-rekey.txt` logs "Drop EAPOL frame..." twice and zero rekeys
+    acknowledged, and the same run with --rekey-ack (the non-standard bit set)
+    installs both keys. Reported by pacifox in issue #26.
+    """
+    p = root / "src/net/eapol.c"
+    src = p.read_text(encoding="utf-8", errors="surrogateescape")
+    if "group key message 1 carries Key Ack 0" in src:
+        print("  eapol.c: group rekey already accepts Key Ack 0")
+        return
+
+    needle = (
+        "  else if((fr->key_frame.key_info.key_type == 0) &&\n"
+        "      //(fr->key_frame.key_info.key_index != 0) &&\n"
+        "      (fr->key_frame.key_info.key_ack == 1) &&\n"
+    )
+    if needle not in src:
+        sys.exit("apply-mods: eapol.c group-key dispatch is not what we expected")
+
+    replacement = (
+        "  else if((fr->key_frame.key_info.key_type == 0) &&\n"
+        "      //(fr->key_frame.key_info.key_index != 0) &&\n"
+        "      /* No Key Ack test: group key message 1 carries Key Ack 0.\n"
+        "       * IEEE 802.11-2016 table 12-8. Requiring 1 here dropped every\n"
+        "       * rekey from a standards-following AP, and the rabbit kept the\n"
+        "       * group key it was handed at association -- deaf to broadcast\n"
+        "       * and multicast from the first rotation onwards. */\n"
+    )
+    src = src.replace(needle, replacement, 1)
+    p.write_text(src, encoding="utf-8", errors="surrogateescape")
+    print("  eapol.c: group rekey now accepts the standard's Key Ack 0")
+
+
 def patch_mdns(root: Path) -> None:
     """Inject the boot-mods/mdns.mtl announcer into boot.0.0.0.13.mtl and
     wire mdns_boot_tick into the boot loop's !master branch.
@@ -1655,40 +1706,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1703,6 +1754,7 @@ def main() -> int:
         "bootloader": patch_bootloader,
         "mdns": patch_mdns,
         "wpa2_gtk": patch_wpa2_group_key,
+        "eapol_group_ack": patch_eapol_group_ack,
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,

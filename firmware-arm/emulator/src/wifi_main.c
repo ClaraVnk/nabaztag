@@ -157,6 +157,8 @@ void sim_run_events(void)
       case SIM_EV_DISASSOC:    vap_deauth(e->ap, 1, (uint16_t)e->arg); break;
       case SIM_EV_AP_DOWN:     vap_set_up(e->ap, 0); break;
       case SIM_EV_AP_UP:       vap_set_up(e->ap, 1); break;
+      case SIM_EV_REKEY:      vap_rekey(e->ap); break;
+      case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
       case SIM_EV_EXPECT_STATE:
         if(ieee80211_state == e->arg)
@@ -200,6 +202,7 @@ int main(int argc, char **argv)
 
   for(int i=1;i<argc;i++) {
     if(!strcmp(argv[i], "--no-reconnect")) reconnect = 0;
+    else if(!strcmp(argv[i], "--rekey-ack")) vap_rekey_ack(1);
     else if(!strcmp(argv[i], "--ssid") && i+1 < argc) target_ssid = argv[++i];
     else if(argv[i][0] == '-') {
       fprintf(stderr,
@@ -207,7 +210,9 @@ int main(int argc, char **argv)
         "\n"
         "  scenario        a scenario file; without one, one open AP on channel 6\n"
         "  --ssid          which network to join; default is the first AP's\n"
-        "  --no-reconnect  do not retry after a link loss, to see where it stops\n",
+        "  --no-reconnect  do not retry after a link loss, to see where it stops\n"
+        "  --rekey-ack     set Key Ack on a group rekey, which the standard forbids\n"
+        "                  and which this firmware requires\n",
         argv[0]);
       return 2;
     }
@@ -332,12 +337,28 @@ int main(int argc, char **argv)
   if(vap_stats.mics_verified || vap_stats.mics_failed)
     printf("  MIC ok / bad      %u / %u\n", vap_stats.mics_verified,
            vap_stats.mics_failed);
+  if(vap_stats.rekeys_sent)
+    printf("group rekeys        %u sent, %u acknowledged\n",
+           vap_stats.rekeys_sent, vap_stats.rekeys_acked);
   if(vap_stats.handshakes_completed)
     printf("handshakes done     %u\n", vap_stats.handshakes_completed);
   printf("keys installed      %u\n", vap_stats.keys_installed);
   printf("channel switches    %u\n", vap_stats.channel_switches);
   if(vap_stats.rx_overruns)
     printf("rx overruns         %u\n", vap_stats.rx_overruns);
+  /* A rekey the rabbit never answered is a failure even though it stayed
+   * associated, because the symptom is silent: it keeps the group key it was
+   * handed at association and goes deaf to broadcast traffic. Nothing about
+   * its state says so. */
+  if(vap_stats.rekeys_sent > vap_stats.rekeys_acked) {
+    char why[128];
+    snprintf(why, sizeof(why),
+             "%u group rekey(s) went unanswered — the rabbit is still on the "
+             "key it was given at association",
+             vap_stats.rekeys_sent - vap_stats.rekeys_acked);
+    sim_note_failure(why);
+  }
+
   printf("failures            %d\n", sim_failures());
 
   return sim_failures() == 0 ? 0 : 1;
