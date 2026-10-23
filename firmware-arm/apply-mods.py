@@ -1121,6 +1121,79 @@ def patch_eapol_ptk_rekey(root: Path) -> None:
     print("  eapol.c: message 1 is accepted while running, so a rekey completes")
 
 
+def patch_vm_bounds(root: Path) -> None:
+    """Make the interpreter's store bounds-check actually check.
+
+    Three stores guard themselves with
+
+        if ((i>=0)||(i<VSIZE(p))) VSTORE(p,i,v);
+
+    which is true for every i. OPfetch two dozen lines above gets the same
+    test right -- `if ((i<0)||(i>=VSIZE(p))) VSTACKSET(0,NIL);` -- so this is
+    a transcription slip rather than a difference of opinion, and it has been
+    there since 2006. An out-of-range index writes into whatever heap object
+    sits next door: a string's bytes, another table's header, or the GC's own
+    bookkeeping. The bytecode a warren serves decides the index, so a bad
+    bytecode corrupts the VM silently instead of being refused.
+
+    Also: vmemAllocTab() computes `wsize = HEADER_LENGTH + size` with no lower
+    bound, and OPtabnew takes its size from the stack. A negative size moves
+    _vmem_heapindex *backwards* over live objects. Clamped here, at the
+    opcode, rather than in vmem.c, because every other caller passes a
+    constant from the bytecode stream and has nothing to clamp.
+
+    Reported by pacifox in issue #27, finding 6. Only reachable through
+    bytecode that gets an index wrong -- which is every bytecode under
+    development, including the ones in this repository.
+    """
+    p = root / "src/vm/vinterp.c"
+    src = read_src(p)
+
+    if "/* (i>=0)||(i<VSIZE(p)) was true for every i" in src:
+        print("  vinterp.c: the store bounds-check is already a conjunction")
+        return
+
+    bad = "if ((i>=0)||(i<VSIZE(p))) VSTORE(p,i,v);"
+    n = src.count(bad)
+    if n != 3:
+        sys.exit(f"FAIL {p}: expected 3 inverted store guards, found {n}")
+    # These sources are CRLF, so a multi-line anchor written with "\n" matches
+    # nothing. Build them from the file's own line ending instead -- the third
+    # time this has cost a confusing failure in this file.
+    nl = "\r\n" if "\r\n" in src else "\n"
+
+    good = nl.join([
+        "/* (i>=0)||(i<VSIZE(p)) was true for every i, so this stored out",
+        "               * of range into the next heap object. OPfetch has the test",
+        "               * the right way round. See issue #27 finding 6. */",
+        "              if ((i>=0)&&(i<VSIZE(p))) VSTORE(p,i,v);",
+    ])
+    src = src.replace(bad, good)
+
+    # OPtabnew: a negative size walks the heap index backwards.
+    needle = nl.join([
+        "            int32_t p,i,v0;",
+        "            v=VALTOINT(v);",
+        "            p=VMALLOC(v);",
+    ])
+    if needle not in src:
+        sys.exit(f"FAIL {p}: OPtabnew's allocation is not where we left it")
+    src = src.replace(
+        needle,
+        nl.join([
+            "            int32_t p,i,v0;",
+            "            v=VALTOINT(v);",
+            "            /* vmemAllocTab has no lower bound on size, and a negative",
+            "             * one moves _vmem_heapindex backwards over live objects. */",
+            "            if (v<0) v=0;",
+            "            p=VMALLOC(v);",
+        ]),
+        1,
+    )
+    write_src(p, src)
+    print("  vinterp.c: 3 store guards fixed, and a negative table size clamped")
+
+
 def patch_mdns(root: Path) -> None:
     """Inject the boot-mods/mdns.mtl announcer into boot.0.0.0.13.mtl and
     wire mdns_boot_tick into the boot loop's !master branch.
@@ -2075,40 +2148,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -2128,6 +2201,7 @@ def main() -> int:
         "eapol_group_ack": patch_eapol_group_ack,
         "group_cipher": patch_group_cipher,
         "eapol_ptk_rekey": patch_eapol_ptk_rekey,
+        "vm_bounds": patch_vm_bounds,
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,
