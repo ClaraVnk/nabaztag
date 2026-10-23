@@ -13,6 +13,7 @@ OpenJabNab source. Packet framing: 0x7F | type | len(3, big-endian) | data | 0xF
 sent base64-encoded inside <message><packet xmlns='violet:packet'>…</packet>.
 """
 import base64
+import contextlib
 import hmac
 import json
 import logging
@@ -964,6 +965,16 @@ def _fade(data: bytes) -> bytes:
                     pass
 
 
+def _plays_a_sound(program: str) -> bool:
+    """Does this program make the rabbit play audio?
+
+    ST streams, MU and MC download a short sound. CH is a choreography and
+    SV only sets the volume: neither touches the decoder's input.
+    """
+    return any(line.strip()[:3] in ("ST ", "MU ", "MC ")
+               for line in program.splitlines())
+
+
 def _speak(b, text: str) -> float:
     """Speak text on the rabbit, turning [pause] / [pause N] markers into REAL
     silences (N ms, default 600) for theatrical delivery. A single program with
@@ -986,17 +997,20 @@ def _speak(b, text: str) -> float:
         else:
             steps.append(("pause", max(100, min(int(piece) if piece else 600, 5000)) / 1000.0))
     total = 0.0
-    for i, st in enumerate(steps):
-        if st[0] == "say":
-            wav = _fade(st[1]) if has_pause else st[1]
-            b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
-            # don't wait after the very last segment (caller's cooldown covers it)
-            if i < len(steps) - 1:
-                _t.sleep(st[2] + 0.3)
-            total += st[2] + 0.3
-        else:
-            _t.sleep(st[1])
-            total += st[1]
+    # One hold for the whole phrase: the mic comes back after the last
+    # segment, not between each of them.
+    with b._hold_speaker():
+        for i, st in enumerate(steps):
+            if st[0] == "say":
+                wav = _fade(st[1]) if has_pause else st[1]
+                b.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
+                # don't wait after the very last segment (caller's cooldown covers it)
+                if i < len(steps) - 1:
+                    _t.sleep(st[2] + 0.3)
+                total += st[2] + 0.3
+            else:
+                _t.sleep(st[1])
+                total += st[1]
     return total
 
 
@@ -1090,8 +1104,58 @@ class XmppSession(threading.Thread):
         self.send(stanza)
 
     def send_program(self, program: str):
-        """Push a code-0x0A program (newline-separated 'KEY value' commands)."""
+        """Push a code-0x0A program (newline-separated 'KEY value' commands).
+
+        A program that plays something gets the speaker to itself first: the
+        rabbit is half-duplex and says nothing about it, so a sound pushed
+        while the microphone streams is fetched over HTTP, answered 200 and
+        never heard (#23 finding 5, #27 finding 4). The wake path has always
+        done this by hand; here it happens for every sound.
+        """
+        if _plays_a_sound(program):
+            self._free_the_speaker()
         self.send_violet_packet(message_packet(program))
+
+    def _free_the_speaker(self):
+        """Stop a capture of ours so a sound can be heard, and owe it back."""
+        if not WAKE.get("streaming"):
+            return
+        # Not send_program: RT plays nothing, and this must not recurse.
+        self.send_violet_packet(message_packet("RT"))
+        WAKE["streaming"] = False
+        WAKE["rearm"] = True
+        log.info("rabbit %s: mic stopped so the speaker is free", self.addr[0])
+
+    @contextlib.contextmanager
+    def _hold_speaker(self):
+        """Keep the mic off across several sounds, not between each of them.
+
+        Without it, a phrase split into segments re-arms the mic after the
+        first one and the rest are refused -- the same silence, one step
+        further along.
+        """
+        WAKE["hold"] = WAKE.get("hold", 0) + 1
+        try:
+            yield
+        finally:
+            WAKE["hold"] = max(0, WAKE.get("hold", 1) - 1)
+            if WAKE["hold"] == 0:
+                self._rearm_mic_if_owed()
+
+    def _rearm_mic_if_owed(self):
+        """Put the microphone back, if we took it for a sound.
+
+        Called when the rabbit rebinds `idle`, which is the rabbit saying the
+        sound is over -- a better signal than any duration we could guess,
+        and the one pacifox measured as reliable across 125 sounds (#23).
+        """
+        if WAKE.get("hold"):
+            return
+        if not WAKE.get("rearm"):
+            return
+        WAKE["rearm"] = False
+        if WAKE.get("on"):
+            self._start_listen()
 
     def send_audio(self, url: str):
         """Stream + play audio from a URL (ST). The rabbit fetches it over HTTP,
@@ -1103,28 +1167,31 @@ class XmppSession(threading.Thread):
         token = store_resource(build_choreography(tempo_ms, actions))
         self.send_program(f"CH {resource_url(token)}")
 
-    def _play_connect_jingle(self, then_listen: bool = False):
+    def _play_connect_jingle(self, then_listen: bool = False,
+                             release_hold: bool = False):
         """Play the configured greeting jingle once the rabbit is operational.
 
-        `then_listen` arms the mic afterwards rather than on a timer of its
-        own, because the rabbit is half-duplex and silent about it:
-        hal/audio.c's play_start() returns without a word while a capture is
-        running, so an `RS` that lands between the `ST` and the moment the
-        download finishes playing makes the jingle vanish. Measured in the
-        emulator with a fixed 4 s re-arm: 64 KB fetched, HTTP 200, nothing
-        heard. Wait for the clip, then listen.
+        `then_listen` does not start a timer. The rabbit is half-duplex and
+        silent about it -- play_start() returns without a word while a
+        capture is running -- so an `RS` that lands between the `ST` and the
+        end of the sound makes the jingle vanish. A duration is a guess; the
+        rabbit rebinding `idle` is the rabbit saying it has finished, so the
+        mic is owed back from there (_rearm_mic_if_owed).
         """
-        wait = 2.0
+        if then_listen:
+            WAKE["rearm"] = True
         try:
             wav = render_jingle(CONNECT_JINGLE)
             if wav:
                 self.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
                 log.info("rabbit %s: played connect jingle %r", self.addr[0], CONNECT_JINGLE)
-                wait = max(wait, _audio_duration_s(wav) + 1.5)
         except Exception as exc:  # noqa
             log.warning("connect jingle failed: %s", exc)
-        if then_listen:
-            threading.Timer(wait, self._start_listen).start()
+        finally:
+            # Always, including when the render or the send failed: a hold
+            # that leaks is a rabbit whose microphone never comes back.
+            if release_hold:
+                WAKE["hold"] = max(0, WAKE.get("hold", 1) - 1)
 
     def send_state_query(self):
         """Ask the rabbit to report its internal state via the bytecode's
@@ -1139,8 +1206,22 @@ class XmppSession(threading.Thread):
         )
 
     def _start_listen(self):
-        """Begin streaming the mic for the wake word (auto_listen)."""
+        """Begin streaming the mic for the wake word (auto_listen).
+
+        Deferred while a sound is playing, because that is the other half of
+        the half-duplex problem: hal/audio.c's rec_start() refuses while
+        play_state is set, and says nothing, so an `RS` sent mid-sound leaves
+        us believing the mic is on when it is not. The rabbit's resource says
+        when it is playing -- it rebinds `streaming` for the sound and `idle`
+        when it is done -- so the wait is a fact rather than a delay.
+        """
         WAKE["on"] = True
+        if self.resource and self.resource != "idle":
+            WAKE["rearm"] = True
+            log.info("auto-listen: %s is playing something, mic deferred to "
+                     "its next idle", self.mac)
+            _save_state()
+            return
         WAKE["streaming"] = True
         WAKE["cooldown"] = 0.0
         log.info("auto-listen: starting mic stream on %s", self.mac)
@@ -1190,6 +1271,10 @@ class XmppSession(threading.Thread):
         already off."""
         try:
             self.send_program("RT")
+            # We have just told the rabbit to stop, so stop believing it is
+            # streaming. Without this the next sound sends a second, pointless
+            # RT on its way past _free_the_speaker.
+            WAKE["streaming"] = False
         except Exception:
             pass
 
@@ -1320,6 +1405,10 @@ class XmppSession(threading.Thread):
             self.send(f"<iq type='result' id='{iq_id}'/>")
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
+                # The rabbit is back on `idle`, which means whatever it was
+                # playing is over. If we stopped its capture to let that
+                # sound through, this is the moment to give it back.
+                self._rearm_mic_if_owed()
                 threading.Timer(2.5, self.send_state_query).start()
                 # The rabbit toggles between resources ('idle' / 'streaming') on
                 # the same XMPP stream, so this branch fires every ~10s. Gate the
@@ -1341,11 +1430,16 @@ class XmppSession(threading.Thread):
                     # turned it off (the Larsen loop from 2026-05-29).
                     want_listen = WAKE["on"] if _STATE_LOADED["has_listen"] else AUTO_LISTEN
                     if CONNECT_JINGLE:
-                        # The jingle arms the mic itself, once it has been
-                        # heard: the two cannot overlap.
+                        # Nothing may arm the mic between the clearing RT at
+                        # 1.5 s and this jingle at 3.5 s, or the jingle has to
+                        # take the speaker back off it. The hold is released
+                        # once the jingle has been pushed, and the mic comes
+                        # back when the rabbit says the sound is over.
+                        WAKE["hold"] = WAKE.get("hold", 0) + 1
                         threading.Timer(
                             3.5,
-                            lambda: self._play_connect_jingle(then_listen=want_listen),
+                            lambda: self._play_connect_jingle(
+                                then_listen=want_listen, release_hold=True),
                         ).start()
                     elif want_listen:
                         threading.Timer(4.0, self._start_listen).start()
@@ -1991,15 +2085,16 @@ class ApiHandler(BaseHTTPRequestHandler):
                     with MIC_LOCK:
                         MIC_STREAM["adpcm"] = bytearray()
                         MIC_STREAM["packets"] = 0
-                    WAKE["on"] = True
-                    WAKE["streaming"] = True
-                    WAKE["cooldown"] = 0.0
-                    b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+                    # Through _start_listen, not its own RS: that is where the
+                    # mic waits for a sound to finish instead of being refused
+                    # by it in silence.
+                    b._start_listen()
                 else:
                     WAKE["on"] = False
                     WAKE["streaming"] = False
+                    WAKE["rearm"] = False
                     b.send_program("RT")
-                _save_state()
+                    _save_state()
             elif path == "/api/personality":
                 # Trigger one personality action now (test / manual). Threaded so
                 # the call returns immediately.
@@ -2110,7 +2205,10 @@ def udp_mic_server():
 # Phase 3B — wake word on the mic stream: transcribe rolling windows; when the
 # wake word ("nabi") is heard, send the rest to the conversation agent.
 # --------------------------------------------------------------------------- #
-WAKE = {"on": False, "cooldown": 0.0, "streaming": False}
+# "rearm": we stopped the capture to let a sound through and owe it back once
+# the rabbit is idle again. "hold": a caller is playing several sounds in a row
+# and does not want the mic back between them.
+WAKE = {"on": False, "cooldown": 0.0, "streaming": False, "rearm": False, "hold": 0}
 # Last volume (raw VS1003 attenuation, 0=loud..higher=quiet) — re-applied on
 # reconnect since the rabbit resets it on reboot. None = never set (leave default).
 VOLUME = {"hw": None}
@@ -2185,13 +2283,18 @@ def wake_loop():
         time.sleep(WAKE_WINDOW_S)
         now = time.time()
         b = _bunny_any()
-        # Re-arm the mic once the reply cooldown has elapsed.
-        if WAKE["on"] and not WAKE["streaming"] and now >= WAKE["cooldown"] and b is not None:
+        # Re-arm the mic once the reply cooldown has elapsed. Through
+        # _start_listen, and not while a sound is being set up (`hold`) or one
+        # is owed back (`rearm`): this loop used to send its own RS, which is
+        # how a re-arm could land between the clearing RT and the connect
+        # jingle and cost four mic programs where one does -- the duplicate RS
+        # pacifox measured in #28.
+        if (WAKE["on"] and not WAKE["streaming"] and now >= WAKE["cooldown"]
+                and b is not None
+                and not WAKE.get("hold") and not WAKE.get("rearm")):
             with MIC_LOCK:
                 MIC_STREAM["adpcm"] = bytearray()
-            b.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
-            WAKE["streaming"] = True
-            log.info("wake: mic re-armed")
+            b._start_listen()
         if not WAKE["on"] or not WAKE["streaming"] or now < WAKE["cooldown"]:
             with MIC_LOCK:
                 MIC_STREAM["adpcm"] = bytearray()

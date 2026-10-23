@@ -48,6 +48,21 @@ static int32_t play_state;
 static int32_t valtrytofeed;
 static int32_t rec_state;
 
+/* The audio_halfduplex step changes play_start() and rec_start() to return a
+ * status, and makes a sound stop a capture instead of being refused by it. It
+ * defines NAB_AUDIO_STATUS in hal/audio.h so this file can follow either
+ * shape -- which is the point: both behaviours have to be runnable here, or
+ * the fix cannot be measured against the thing it fixes. */
+#ifdef NAB_AUDIO_STATUS
+#define AUDIO_STATUS   int32_t
+#define AUDIO_OK       return 0
+#define AUDIO_REFUSED  return 1
+#else
+#define AUDIO_STATUS   void
+#define AUDIO_OK       return
+#define AUDIO_REFUSED  return
+#endif
+
 /* Set by the harness from --audio-dir; one file per clip the rabbit plays. */
 static char audio_dir[384];
 
@@ -130,14 +145,20 @@ void set_vlsi_volume(uint8_t v)
   sim_log("audio: volume 0x%02x", v);
 }
 
-void play_start(int32_t trytofeed)
+AUDIO_STATUS play_start(int32_t trytofeed)
 {
-  /* hal/audio.c returns here without a word when the microphone has the
-   * decoder. The bytecode is told nothing, so a sound asked for while the
-   * rabbit is recording is simply never played. */
   if(rec_state) {
+#ifdef NAB_AUDIO_STATUS
+    /* The speaker wins: the capture stops and the sound plays. */
+    sim_log("audio: stopping the capture, the speaker wins");
+    rec_stop();
+#else
+    /* Stock hal/audio.c returns here without a word when the microphone has
+     * the decoder. The bytecode is told nothing, so a sound asked for while
+     * the rabbit is recording is simply never played. */
     sim_log("audio: play_start refused, the microphone has the decoder");
-    return;
+    AUDIO_REFUSED;
+#endif
   }
   clear_vlsi_fifo();
   patchwma();
@@ -147,6 +168,7 @@ void play_start(int32_t trytofeed)
   play_state = 1;
   capture_open();
   sim_log("audio: the rabbit started playing something");
+  AUDIO_OK;
 }
 
 void play_stop(void)
@@ -227,10 +249,18 @@ void init_adpcm_encode(uint16_t sampling_frequency, uint16_t gain)
 
 void stop_adpcm_encode(void) {}
 
-void rec_start(uint16_t sampling_frequency, uint16_t gain)
+AUDIO_STATUS rec_start(uint16_t sampling_frequency, uint16_t gain)
 {
+  /* hal/audio.c refuses here while a sound plays, and upstream says nothing
+   * about that either. Refusing is right -- a sound is what the server asked
+   * for; what was missing was saying so. */
+  if(play_state) {
+    sim_log("microphone: rec_start refused, a sound has the decoder");
+    AUDIO_REFUSED;
+  }
   rec_state = 1;
   sim_log("microphone: recording at %u Hz, gain %u", sampling_frequency, gain);
+  AUDIO_OK;
 }
 
 void rec_stop(void)

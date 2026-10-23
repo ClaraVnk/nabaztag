@@ -404,6 +404,165 @@ def patch_linker_keep(root: Path) -> None:
     print(f"[ok]   {p}: wrapped {n} sections in KEEP() (vec/startup/bytecode/ramfunc)")
 
 
+def patch_audio_halfduplex(root: Path) -> None:
+    """Stop a capture to play a sound, and tell the bytecode when one is refused.
+
+    The rabbit is half-duplex and says nothing about it. hal/audio.c's
+    play_start() returns at once when rec_state is set, and rec_start() returns
+    at once when play_state is set; both return void, and vinterp.c's
+    OPplayStart and OPrecStart push a literal 0 whatever happened. So a sound
+    pushed while the microphone is streaming is fetched over HTTP in full,
+    answered 200, and never heard -- and the bytecode goes on waiting for a
+    play callback that will not come. Reported by pacifox as #27 finding 4,
+    measured in the emulator as #23 finding 5, where it leaves the rabbit mute
+    until something stops the capture or it is unplugged.
+
+    Two changes, and the first is the one that fixes it:
+
+    - play_start() stops the capture instead of refusing. A sound is something
+      the server asked for; a capture is a background state. It is also the
+      policy the add-on already assumes -- its wake path stops the mic by hand
+      before it speaks, with the comment "Half-duplex: stop the mic so the
+      speaker is free". The firmware now agrees with it.
+    - both return a status, and the two opcodes push it instead of 0. Nothing
+      reads it yet, so on its own this fixes nothing; it is what a bytecode
+      would need in order to stop waiting on a sound that never started.
+      Success stays 0, so bytecode that does look at the value sees exactly
+      what it saw before.
+
+    rec_start keeps its guard the other way round: refusing to start a capture
+    while a sound plays is the right call, and it is the direction a server can
+    recover from, since it knows it asked.
+
+    NAB_AUDIO_STATUS is defined so a host build -- the emulator's stubs -- can
+    follow either shape and still measure the before and after.
+    """
+    def edit(rel, pairs, note):
+        """Apply line-ending-safe edits to one file.
+
+        read_src/write_src, and every multi-line anchor built from the
+        file's own newline: all five of these sources are CRLF, and a
+        plain read_text/write_text rewrites the whole file as LF. That
+        turns a six-line change into a 2000-line diff nobody can review,
+        and it is how `patches/wpa2-scanned-ciphers.patch` stopped
+        applying once (#46).
+        """
+        f = root / rel
+        src = read_src(f)
+        nl = "\r\n" if "\r\n" in src else "\n"
+        for old_lines, new_lines in pairs:
+            old = nl.join(old_lines)
+            if old not in src:
+                sys.exit(f"FAIL {f}: anchor not found (upstream changed?)"
+                         f"{nl}  {old_lines[0]!r}")
+            src = src.replace(old, nl.join(new_lines), 1)
+        write_src(f, src)
+        print(f"[ok]   {f}: {note}")
+
+    probe = read_src(root / "inc/hal/audio.h")
+    if "NAB_AUDIO_STATUS" in probe:
+        print("[skip] audio_halfduplex: already applied")
+        return
+
+    edit("inc/hal/audio.h", [
+        (["void play_start(int32_t trytofeed);"],
+         ["/* 0 if the sound started, non-zero if it could not. */",
+          "int32_t play_start(int32_t trytofeed);"]),
+        (["void rec_start(uint16_t sampling_frequency,uint16_t gain);"],
+         ["/* 0 if the capture started, non-zero if a sound is playing. */",
+          "int32_t rec_start(uint16_t sampling_frequency,uint16_t gain);"]),
+        (["void play_check(int32_t nocb);"],
+         ["/* Defined so a host build can follow either shape of the two",
+          "   starts above and still measure the before and the after. */",
+          "#define NAB_AUDIO_STATUS 1",
+          "void play_check(int32_t nocb);"]),
+    ], "play_start/rec_start return a status")
+
+    edit("src/hal/audio.c", [
+        (["void play_start(int32_t trytofeed)",
+          "{",
+          "  // Recording something, exit",
+          "  if (rec_state)",
+          "    return;",
+          '  DBG_AUD("play_start"EOL);'],
+         ["int32_t play_start(int32_t trytofeed)",
+          "{",
+          "  /* The speaker wins. This used to return here in silence, which",
+          "     left a rabbit that had been asked to record mute for good:",
+          "     every later sound was fetched, answered 200 and never played,",
+          "     with nothing anywhere saying so. */",
+          "  if (rec_state)",
+          "  {",
+          '    DBG_AUD("play_start: stopping the capture, the speaker wins"EOL);',
+          "    rec_stop();",
+          "  }",
+          '  DBG_AUD("play_start"EOL);']),
+        (["  vlsi_ampli(1); // Turn ampli ON",
+          "  play_state=1;",
+          "}"],
+         ["  vlsi_ampli(1); // Turn ampli ON",
+          "  play_state=1;",
+          "  return 0;",
+          "}"]),
+        (["void rec_start(uint16_t sampling_frequency,uint16_t gain)",
+          "{",
+          "  // Playing something, exit",
+          "  if (play_state)",
+          "    return;"],
+         ["int32_t rec_start(uint16_t sampling_frequency,uint16_t gain)",
+          "{",
+          "  /* A sound keeps the decoder: refusing here is right, and it is",
+          "     the direction a server can recover from, since it knows it",
+          "     asked. What was missing was saying so. */",
+          "  if (play_state)",
+          "    return 1;"]),
+        (["  init_adpcm_encode(sampling_frequency,gain);",
+          "  rec_state=1;  // Update state",
+          "}"],
+         ["  init_adpcm_encode(sampling_frequency,gain);",
+          "  rec_state=1;  // Update state",
+          "  return 0;",
+          "}"]),
+    ], "play_start stops a capture, both report what happened")
+
+    edit("inc/vm/vaudio.h", [
+        (["void audioPlayStart(int32_t freq,int32_t bps,int32_t stereo,int32_t trytofeed);"],
+         ["int32_t audioPlayStart(int32_t freq,int32_t bps,int32_t stereo,int32_t trytofeed);"]),
+    ], "audioPlayStart returns a status")
+
+    edit("src/vm/vaudio.c", [
+        (["void audioPlayStart(int32_t freq,int32_t bps,int32_t stereo,int32_t trytofeed)"],
+         ["int32_t audioPlayStart(int32_t freq,int32_t bps,int32_t stereo,int32_t trytofeed)"]),
+        (["  play_w=play_r=0;",
+          "  play_start(trytofeed);",
+          "}"],
+         ["  play_w=play_r=0;",
+          "  return play_start(trytofeed);",
+          "}"]),
+        (["  rec_start(freq,gain);",
+          "  return 0;",
+          "}"],
+         ["  return rec_start((uint16_t)freq,(uint16_t)gain);",
+          "}"]),
+    ], "both starts hand their status up")
+
+    edit("src/vm/vinterp.c", [
+        (["          k=VALTOINT(VPULL());",
+          "          VPUSH(INTTOVAL(0));",
+          "          audioPlayStart(44100,16,2,k);"],
+         ["          k=VALTOINT(VPULL());",
+          "          /* The real status, not a literal 0: a sound refused",
+          "             because the microphone has the decoder used to look",
+          "             exactly like one that started. */",
+          "          VPUSH(INTTOVAL(audioPlayStart(44100,16,2,k)));"]),
+        (["          freq=VALTOINT(VPULL());",
+          "          VPUSH(INTTOVAL(0));",
+          "          audioRecStart(freq,gain);"],
+         ["          freq=VALTOINT(VPULL());",
+          "          VPUSH(INTTOVAL(audioRecStart(freq,gain)));"]),
+    ], "OPplayStart/OPrecStart push what actually happened")
+
+
 def patch_audio_fifo_data(root: Path) -> None:
     """Force the play-FIFO indices play_w/play_r into .data (init 0).
 
@@ -2148,40 +2307,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -2226,6 +2385,7 @@ def main() -> int:
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,
+        "audio_halfduplex": patch_audio_halfduplex,
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
         "strip_dump": patch_strip_dump,

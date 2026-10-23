@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.16.0
+
+- **Every pushed sound gets the speaker to itself.** The rabbit is half-duplex
+  and says nothing about it: the firmware refuses to play anything while the
+  microphone is capturing, and refuses it silently. The wake-word path had
+  always stopped the mic by hand before speaking; nothing else did. So a sound
+  pushed while passive listening was on — a reply, a jingle, anything from
+  `/api/say` — was fetched over HTTP, answered `200`, and never heard. Now any
+  program carrying `ST`, `MU` or `MC` stops the capture first, and the mic
+  comes back when the rabbit rebinds its `idle` resource, which is the rabbit
+  saying the sound is over. That signal replaces the duration guess added in
+  0.15.9: a duration is an estimate, a rebind is a fact. Reported by
+  **pacifox** (#23 finding 5, #27 finding 4); measured in the emulator
+  (`firmware-arm/emulator/scenarios/vm/i23-lost-rt.txt`), where the sound
+  pushed after a reconnect went from refused to played in full with the
+  firmware unchanged.
+- **The microphone waits for a sound to finish instead of being refused by
+  it.** `rec_start()` in the firmware refuses while something is playing, also
+  in silence, so an `RS` sent mid-sound left the server believing the mic was
+  on when it was not. `/api/mic?on=1` and the wake loop now go through one
+  place that defers until the rabbit is idle again.
+- **Four microphone programs on each reconnect, down to one.** The wake loop
+  sent its own `RS`, which could land between the clearing `RT` at 1.5 s and
+  the connect jingle at 3.5 s — so the jingle had to take the speaker back off
+  it. This is the duplicate `RS` **pacifox** measured in #28. The jingle now
+  holds the speaker until it has been pushed.
+
 ## 0.15.9
 
 - **A rabbit that lost its `RT` stayed mute for good.** The rabbit is

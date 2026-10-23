@@ -301,6 +301,18 @@ gateway existed, and it then unicast its DHCP discovery with a destination
 address of `0.0.0.0` for ever. Nobody owns `0.0.0.0`, and a gateway that is
 polite about it does real damage.
 
+**A sound and a capture no longer cancel each other in silence.** With the
+`audio_halfduplex` step the speaker wins: a sound stops the capture and plays,
+and both starts report what happened instead of pushing a literal 0. Drop the
+step and the old behaviour comes back, which is how the before and the after
+were measured:
+
+```
+without   [  58700 ms] audio: play_start refused, the microphone has the decoder
+with      [  58700 ms] audio: stopping the capture, the speaker wins
+          [  58700 ms] audio: end of clip 2, 61665 bytes
+```
+
 **The microphone records silence.** `rec_check()` hands the firmware nothing,
 so a capture produces an empty stream. What the capture *costs* is modelled,
 and that turned out to be the part that matters: `play_start()` refuses to
