@@ -496,6 +496,100 @@ def patch_eapol_replay(root: Path) -> None:
 
     p.write_text(s)
     print(f"[ok]   {p}: replay counter committed after the MIC, not before")
+def patch_cold_state(root: Path) -> None:
+    """Make the seven "have I already done this" guards survive a soft reset.
+
+    `patch_linker_keep` leaves `.bss.*` orphans outside the range the startup
+    loop zeroes — deliberately, to keep the VM heap out of it. A watchdog
+    reset (`sysReboot()`) does not clear SRAM, so every one of those orphans
+    carries its value from the previous lifetime into the next boot.
+
+    That is fine for a buffer. It is not fine for a flag whose whole job is
+    to say "this subsystem is already up", because on the boot after a soft
+    reset the subsystem is NOT up and the flag says it is.
+
+    pacifox found the first one in ClaraVnk/nabaztag#25:
+    `usbhost_init_status` makes `usbhost_init()` return before `hcd_init()`,
+    so the OHCI side is never programmed and the RT2501 is never enumerated —
+    the orange belly that `releases/README.md` documents as normal and that
+    only a power cycle clears.
+
+    Reading the symbol table of a `lean` build shows it is one of seven. Only
+    12 bytes are zeroed at startup (`__bss_start__` 0x10000330 →
+    `__bss_end__` 0x1000033c); 90 symbols land outside, and these seven are
+    read as guards before anything writes them:
+
+        usbhost_init_status  0x10000fb4  usbhcore.c:60    hcd_init() skipped
+        usbctrl_state        0x10000fb0  usbctrl.c:240    controller "active"
+        rec_state            0x10000348  audio.c:323      play_start() returns
+        play_state           0x10000349  audio.c:263      rec_start() returns
+        eapol_state          0x1000054c  eapol.c:348      msg 1/4 rejected
+        replay_active        0x10000528  eapol.c:905      every EAPOL frame
+        ieee80211_state      0x10000688  ieee80211.c:1042 stale link state
+
+    Four of them produce the power cycle independently. `eapol_state` stuck
+    at EAPOL_S_RUN rejects the first message 1/4 of the next handshake, so
+    the rabbit cannot rejoin WPA2. `rec_state` makes a rabbit that associates
+    perfectly and never speaks again — which fits the reports that never fit
+    the USB story.
+
+    The initialisers are the values a cold boot gets today, so nothing
+    changes for a rabbit that was unplugged: the enum starts at
+    `EAPOL_S_MSG1` and `IEEE80211_S_IDLE`, both zero, which is what the
+    zeroed `.bss` used to hand them. This only changes what a *soft* reset
+    hands them.
+
+    The fix is the one this file already uses for `play_w`/`play_r`
+    (`patch_audio_fifo_data`): force them into `.data`, which cstartup DOES
+    copy from flash on every boot. No code in `main()`, no ordering to get
+    right, and it works for the `static` one too. Costs 16 bytes of flash.
+    """
+    data = '__attribute__((section(".data")))'
+    edits = [
+        ("src/usb/usbhcore.c",
+         "uint8_t usbhost_init_status = 0;",
+         f"uint8_t usbhost_init_status {data} = 0;"),
+        ("src/usb/usbctrl.c",
+         "uint32_t usbctrl_state = 0;",
+         f"uint32_t usbctrl_state {data} = 0;"),
+        ("src/hal/audio.c",
+         "uint8_t play_state=0,\n        rec_state=0;",
+         f"uint8_t play_state {data} =0;\n"
+         f"uint8_t rec_state {data} =0;"),
+        ("src/net/eapol.c",
+         "eapol_state_t eapol_state;",
+         f"eapol_state_t eapol_state {data} = EAPOL_S_MSG1;"),
+        ("src/net/eapol.c",
+         "static uint8_t replay_active;",
+         f"static uint8_t replay_active {data} = 0;"),
+        # The section goes on the *declaration* in the header, not on the
+        # definition in the .c: `patches/wpa2-scanned-ciphers.patch` has
+        # context a few lines below that definition, and editing it there
+        # makes the patch stop applying. A section attribute on a prior
+        # declaration carries to the tentative definition that follows.
+        ("inc/net/ieee80211.h",
+         "extern int32_t ieee80211_state;",
+         f"extern int32_t ieee80211_state {data};"),
+    ]
+    done, skipped = 0, 0
+    for rel, old, new in edits:
+        p = root / rel
+        s = p.read_text()
+        if new in s:
+            skipped += 1
+            continue
+        if old not in s:
+            sys.exit(f"FAIL {p}: declaration not found (upstream changed?)\n  {old!r}")
+        p.write_text(s.replace(old, new, 1))
+        done += 1
+    # Six edits for seven guards: play_state and rec_state share one
+    # declaration upstream and the same replacement splits them in two.
+    # Counting edits and calling them guards printed "6" for a patch whose
+    # own docstring says seven, which is the kind of small lie that makes
+    # someone re-read a working patch looking for the missing one.
+    print(f"[ok]   cold state: {done} of {len(edits)} edit(s) applied, "
+          f"covering seven guards"
+          + (f" ({skipped} already there)" if skipped else ""))
 
 
 def patch_gc_sections(root: Path) -> None:
@@ -1797,46 +1891,47 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
     print(f"=== apply-mods.py mode={args.mode} steps={steps_str} ===")
     fns = {
         "eapol_replay": patch_eapol_replay,
+        "cold_state": patch_cold_state,
         "vbc": patch_vbc_h,
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
