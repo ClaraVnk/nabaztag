@@ -140,9 +140,19 @@ void vlsi_ampli(uint8_t on)
 
 void set_vlsi_volume(uint8_t v)
 {
-  if(volume == v) return;
-  volume = v;
-  sim_log("audio: volume 0x%02x", v);
+  if(volume != v) {
+    volume = v;
+    sim_log("audio: volume 0x%02x", v);
+  }
+#ifndef NAB_AUDIO_AMPLI_PLAY_ONLY
+  /* Stock hal/audio.c ends set_vlsi_volume with vlsi_ampli(volume<0x7f), so
+   * setting the volume powers the amplifier with nothing playing -- at boot,
+   * and again on every SV the server sends -- and a volume at or above 0x7f
+   * switches it off, so asking a rabbit to be quiet silences it. The
+   * audio_ampli step removes that line; this models the version without it so
+   * the two can be compared. */
+  vlsi_ampli(v < 0x7f);
+#endif
 }
 
 AUDIO_STATUS play_start(int32_t trytofeed)
