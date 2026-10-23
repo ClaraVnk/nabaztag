@@ -77,10 +77,11 @@ your bytecode.
 | | |
 |---|---|
 | **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
-| **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep` + `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
+| **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep`, `audio_fifo_data`, `cold_state`, the EAPOL and interpreter fixes, and `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
 | **Firmware version** | `0.0.0.13` |
 | **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
-| **sha256** | `449974dd9b42d3fffb80562d9682a26985bf26bc2cc74594568d3316545f3fe6` |
+| **sha256** | `337c27d0011c8d4b256d327c34b65c5690761719976a4284c9973b8cf94ce25b` |
+| **Built** | 2026-10-23, and it passes `preflight.py` — see below |
 
 **When to use it:** flash this when a build (`lean`/`full`) left the rabbit in a
 state where config mode still answers but the modernized UI misbehaves, or when
@@ -88,6 +89,25 @@ you simply want back to stock bootloader behavior. It keeps the `verifySig`
 opcode in place, so signed OTAs stay possible afterwards. It is **not**
 hardware-verified the way `naboot-stable.signed.sim` is — it's the parachute,
 built from the same pinned sources. See `../RECOVERY.md`.
+
+**Replaced on 2026-10-23, and why it matters.** The file shipped here until
+that date was built on 2026-10-20 from a step list that read
+
+```
+vbc,vinterp,stdlib,strip_tweetnacl,makefile,linker_keep,gc_sections
+```
+
+`linker_keep` without `audio_fifo_data`, which is the combination that leaves
+`play_w` and `play_r` uninitialised in a `.bss.*` section the zero-loop does
+not reach. One of them read as garbage is an out-of-bounds load into the audio
+FIFO, a Data Abort, and a dead-loop in the vector — the 2026-06-20 brick,
+whose trigger was the connection jingle. So the parachute carried the fault it
+exists to rescue from. pacifox found it by running `preflight.py` before
+flashing anything (#45); nobody flashed one.
+
+The file here now passes every `preflight.py` check. Being a parachute, it is
+still a build nobody has put on hardware — but between two unflashed images,
+this is the one that is not known to be faulty.
 
 ## Flashing it
 

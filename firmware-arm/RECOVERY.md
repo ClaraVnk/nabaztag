@@ -8,11 +8,14 @@ bootloader. The ones that matter for flashing and recovery:
 | Build | `Nab.bin` | Shipped? | What's modified |
 |---|---|---|---|
 | **lean** (stable) | 113 256 B | **yes** — `releases/naboot-stable.signed.sim`, hardware-verified | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, and the surgical `.bss`/audio-FIFO fix. The build the community runs. |
-| **minimal** (rescue) | 117 520 B | **yes** — `releases/naboot-minimal.signed.sim` | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
+| **minimal** (rescue) | 119 800 B | **yes** — `releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
 | **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Smallest image of all; untested on hardware as of 2026-06-01. |
 
-Sizes are those of the 2026-10-20 builds; `./build.sh` prints the current ones.
+Sizes are those of the 2026-10-20 builds, except `minimal`, which was rebuilt
+on 2026-10-23: the shipped one was missing the `audio_fifo_data` step and so
+carried the 2026-06-20 brick itself. `./build.sh` prints the current ones and
+refuses to hand you an image that fails `preflight.py`.
 Bisection modes (`signed-stock`, `pages-only`, `mdns-only`, `lean-nomdns`) are
 described in `apply-mods.py --help` and [BRICK_FORENSICS.md](./BRICK_FORENSICS.md).
 
