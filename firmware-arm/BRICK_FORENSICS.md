@@ -116,6 +116,21 @@ done !` cleanly.
 
 ## Builds ready to flash (built on the VPS, 2026-05-31)
 
+> **These are the images that bricked, and they are still in `bin/` on
+> whichever machine built them.** `bin/` is gitignored, so they are local
+> files, not something the repository hands anybody — but they are sitting
+> under a heading that says "ready to flash", and they are not.
+>
+> `preflight.py` fails all nine of them on its first check: `play_w`,
+> `play_r`, `usbhost_init_status`, `usbctrl_state`, `play_state`, `rec_state`,
+> `eapol_state`, `replay_active` and `ieee80211_state` all live in `.bss.*`
+> sections, which cstartup does not clear. One of those read as garbage is
+> this brick.
+>
+> Rebuild before flashing anything. `build.sh` now runs `preflight.py` and
+> fails rather than handing you an image: a freshly built `lean` passes every
+> check, and none of the 2026-05-31 artefacts does.
+
 Six variants signed and waiting under `firmware-arm/bin/`:
 
 ```
