@@ -45,6 +45,7 @@ void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);
 void gw_poll(void);
 
 void gw_server_drop(void);
+void gw_server_close(int graceful);
 void gw_close(void);
 
 #endif /* _GW_H_ */

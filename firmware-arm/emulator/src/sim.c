@@ -150,6 +150,8 @@ void sim_default(void)
  *   at <ms> up <bssid>
  *   at <ms> arp on|off            the gateway answers ARP, or stops
  *   at <ms> server-drop           the warren's TCP connections close
+ *   at <ms> server-close          …after announcing </stream:stream>, which
+ *                                 is what a server shutting down does
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
  *   at <ms> ptk-rekey [<bssid>]   the AP restarts the four-way handshake
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
@@ -240,6 +242,8 @@ int sim_load(const char *path)
       } else if(!strcmp(tok[2], "arp") && n >= 4) {
         e->kind = SIM_EV_ARP;
         e->arg = !strcmp(tok[3], "on");
+      } else if(!strcmp(tok[2], "server-close")) {
+        e->kind = SIM_EV_SERVER_CLOSE;
       } else if(!strcmp(tok[2], "server-drop")) {
         e->kind = SIM_EV_SERVER_DROP;
       } else if(!strcmp(tok[2], "ptk-rekey")) {

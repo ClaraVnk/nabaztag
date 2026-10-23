@@ -53,6 +53,7 @@ enum {
   SIM_EV_REKEY,         /* AP rotates the group key             */
   SIM_EV_PTK_REKEY,     /* AP restarts the four-way handshake   */
   SIM_EV_SERVER_DROP,   /* the warren's sockets close           */
+  SIM_EV_SERVER_CLOSE,  /* …after announcing </stream:stream>   */
   SIM_EV_ARP,           /* the gateway answers ARP, or stops    */
   SIM_EV_STOP,          /* end the run                          */
   SIM_EV_EXPECT_STATE,  /* assert ieee80211_state at this tick   */
