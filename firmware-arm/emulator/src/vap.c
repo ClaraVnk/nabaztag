@@ -334,6 +334,62 @@ static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
   return (uint32_t)(p - out);
 }
 
+static const char *cipher_name(uint8_t suite)
+{
+  switch(suite) {
+    case 0x00: return "none(0)";
+    case 0x01: return "WEP-40";
+    case 0x02: return "TKIP";
+    case 0x04: return "CCMP";
+    case 0x05: return "WEP-104";
+    default:   return "?";
+  }
+}
+
+/**
+ * @brief Report the cipher suites a station asks for.
+ *
+ * Worth printing on every association and not only the first. The RSN
+ * element is built in ieee80211_associate() out of ieee80211_encryption, and
+ * that function *modifies* the variable it reads — its own comment calls the
+ * arithmetic a hack. If a second association ever advertises something
+ * different from the first, this is where it shows, and the difference
+ * between a rabbit that rejoins and one that goes amber until it is unplugged
+ * is exactly one association too many.
+ */
+static void vap_report_rsn(const struct sim_ap *a, const uint8_t *frame,
+                           uint32_t length)
+{
+  const uint8_t *ie = frame + sizeof(struct ieee80211_frame) + 4;
+  const uint8_t *end = frame + length;
+
+  while(ie + 2 <= end && ie + 2 + ie[1] <= end) {
+    if(ie[0] == IEEE80211_ELEMID_RSN && ie[1] >= 16) {
+      const uint8_t *p = &ie[2];
+      uint16_t version = (uint16_t)(p[0] | (p[1] << 8));
+      uint8_t group = p[5];
+      uint16_t nb_pairwise = (uint16_t)(p[6] | (p[7] << 8));
+      uint8_t pairwise = (nb_pairwise > 0) ? p[11] : 0;
+      sim_log("AP %s: the rabbit asks for RSN version %u, group %s, "
+              "%u pairwise, first %s", macstr(a->bssid), version,
+              cipher_name(group), nb_pairwise, cipher_name(pairwise));
+      vap_stats.assoc_requests++;
+      if(group == 0 || pairwise == 0)
+        sim_note_failure("an association request advertising cipher suite 0, "
+                         "which is not a cipher");
+      return;
+    }
+    if(ie[0] == IEEE80211_ELEMID_VENDOR && ie[1] >= 22) {
+      sim_log("AP %s: the rabbit asks for WPA1, group %s, first pairwise %s",
+              macstr(a->bssid), cipher_name(ie[2 + 7]), cipher_name(ie[2 + 13]));
+      vap_stats.assoc_requests++;
+      return;
+    }
+    ie += 2 + ie[1];
+  }
+  vap_stats.assoc_requests++;
+}
+
 /* --- the four-way handshake, from the access point's side -------------- */
 
 /* The pairwise master key, which both ends must already share: the rabbit
@@ -353,6 +409,8 @@ enum {
 
 struct vap_handshake {
   int      stage;
+  uint8_t  gtk_index;
+  int      rekey_pending;
   uint8_t  anonce[EAPOL_NONCE_LENGTH];
   uint8_t  snonce[EAPOL_NONCE_LENGTH];
   uint8_t  ptk[64];          /* kck[16] | kek[16] | tk[16] | mic[16] */
@@ -363,6 +421,15 @@ static struct vap_handshake vap_hs[SIM_MAX_APS];
 
 /* A group key the AP hands out. Fixed rather than random so a transcript can
  * be compared byte for byte between runs. */
+/* Whether the group rekey sets the Key Ack bit. The standard says it must
+ * not — IEEE 802.11-2016 table 12-8 gives Key Ack 0 for group key message 1 —
+ * but eapol_input()'s group branch tests for 1, so an AP that follows the
+ * standard has its rekeys dropped. Settable so the emulator can demonstrate
+ * both. */
+static int vap_rekey_set_ack;
+
+void vap_rekey_ack(int on) { vap_rekey_set_ack = on; }
+
 static const uint8_t vap_gtk[16] = {
   0x47,0x54,0x4b,0x00,0x11,0x22,0x33,0x44,
   0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc
@@ -668,6 +735,14 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
     return;
   }
 
+  if(hs->rekey_pending) {
+    hs->rekey_pending = 0;
+    sim_log("AP %s: the rabbit acknowledged the group rekey",
+            macstr(a->bssid));
+    vap_stats.rekeys_acked++;
+    return;
+  }
+
   if(hs->stage == HS_SENT_MSG3) {
     hs->stage = HS_DONE;
     sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
@@ -735,6 +810,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
 
     case IEEE80211_FC0_SUBTYPE_ASSOC_REQ:
     case IEEE80211_FC0_SUBTYPE_REASSOC_REQ: {
+      vap_report_rsn(a, frame, length);
       if(!a->authenticated) {
         sim_log("AP %s: assoc without auth, refused", macstr(a->bssid));
         n = build_deauth(out, a, 0, IEEE80211_REASON_ASSOC_NOT_AUTHED);
@@ -992,6 +1068,137 @@ void vap_deauth(int ap, int disassoc, uint16_t reason)
     a->authenticated = 0;
     memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
     vap_stats.deauths_sent++;
+  }
+}
+
+/**
+ * @brief Rekey the group, as an access point does every hour or so.
+ *
+ * EAPOL group message 1: key_type 0 rather than 1, a fresh GTK wrapped with
+ * the KEK, a MIC under the KCK, and a replay counter past the one the
+ * four-way handshake ended on. The station answers with group message 2 and
+ * installs the new key.
+ *
+ * This is the path pacifox reports as broken in issue #26 — "group cipher
+ * lost after association" — and the reason it is worth its own entry point is
+ * that ieee80211_associate() modifies ieee80211_encryption on its way
+ * through. 0x4a goes in; 0x44 comes out, and the bit that said the *group*
+ * cipher was CCMP is gone. eapol_input_group_msg1() reads that same variable
+ * to decide which cipher to install the new key under.
+ */
+void vap_rekey(int ap)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 128];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint8_t *key_data;
+  uint32_t key_data_length = 0;
+  uint32_t body_length;
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    struct vap_handshake *hs = &vap_hs[i];
+
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(hs->stage != HS_DONE && hs->stage != HS_SENT_MSG3) {
+      sim_log("AP %s: no finished handshake to rekey on top of",
+              macstr(a->bssid));
+      continue;
+    }
+
+    memset(body, 0, sizeof(body));
+    key_data = (uint8_t *)&fr->key_frame + EAPOL_KEY_BODY_LENGTH;
+    hs->replay++;
+    hs->gtk_index = (uint8_t)(hs->gtk_index == 1 ? 2 : 1);
+
+    if(vap_is_wpa2(a)) {
+      uint8_t kde[24];
+      uint8_t *p = kde;
+      *p++ = 0xdd;
+      *p++ = 0x16;
+      *p++ = 0x00; *p++ = 0x0f; *p++ = 0xac;
+      *p++ = 0x01;                            /* data type 1: GTK */
+      *p++ = hs->gtk_index;
+      *p++ = 0x00;
+      memcpy(p, vap_gtk, sizeof(vap_gtk));
+      /* A different key from the one message 3 handed over, so an install
+       * that silently keeps the old one is visible. */
+      p[0] = (uint8_t)(vap_gtk[0] ^ hs->gtk_index);
+
+      if(!vap_aes_key_wrap(hs->ptk + 16, kde, sizeof(kde), key_data)) {
+        sim_note_failure("the AP could not wrap the new group key");
+        continue;
+      }
+      key_data_length = sizeof(kde) + 8;
+    } else {
+      /* WPA1 encrypts the key data with RC4 under the KEK and an IV; not
+       * built here, so a TKIP rekey is reported rather than attempted. */
+      sim_log("AP %s: a WPA1 group rekey needs RC4 key data, which this AP "
+              "does not build — not sending it", macstr(a->bssid));
+      continue;
+    }
+
+    body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH + key_data_length;
+
+    memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+    fr->protocol_version = EAPOL_VERSION2;
+    fr->packet_type = EAPOL_TYPE_KEY;
+    fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+    fr->body_length[1] = (uint8_t)(body_length & 0xff);
+
+    fr->key_frame.descriptor_type = EAPOL_DTYPE_WPA2KEY;
+    fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+    fr->key_frame.key_info.key_type = 0;      /* group, not pairwise */
+    fr->key_frame.key_info.key_index = hs->gtk_index & 0x03;
+    fr->key_frame.key_info.key_ack = vap_rekey_set_ack;
+    fr->key_frame.key_info.key_mic = 1;
+    fr->key_frame.key_info.secure = 1;
+    fr->key_frame.key_info.ekd = 1;
+    fr->key_frame.key_length[0] = 0;
+    fr->key_frame.key_length[1] = 16;
+    vap_put_replay(fr->key_frame.replay_counter, hs->replay);
+    memcpy(fr->key_frame.key_nonce, hs->anonce, EAPOL_NONCE_LENGTH);
+    key_data[-2] = (uint8_t)((key_data_length >> 8) & 0xff);
+    key_data[-1] = (uint8_t)(key_data_length & 0xff);
+
+    vap_sign(fr, body_length, hs->ptk, vap_desc_ver(a));
+
+    n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
+    sim_log("AP %s: group rekey, key id %u, %u bytes of wrapped key data",
+            macstr(a->bssid), hs->gtk_index, key_data_length);
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.eapol_to_sta++;
+    vap_stats.rekeys_sent++;
+    hs->rekey_pending = 1;
+  }
+}
+
+/**
+ * @brief Repeat an authentication reply the station did not ask for.
+ *
+ * A real access point retransmits. It matters here because
+ * ieee80211_input_mgt() calls ieee80211_associate() on every successful
+ * authentication reply, and ieee80211_associate() modifies the
+ * ieee80211_encryption it reads. A second association therefore builds its
+ * RSN element out of an already-chewed value, and nothing in between resets
+ * it: only rt2501_auth() does that, and it is not called again.
+ */
+void vap_reauth(int ap)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    if(ap >= 0 && i != ap) continue;
+    if(!sim.aps[i].up) continue;
+    sim_log("AP %s: repeating the authentication reply, unasked",
+            macstr(sim.aps[i].bssid));
+    sim.aps[i].authenticated = 1;
+    n = build_auth_resp(out, &sim.aps[i], IEEE80211_STATUS_SUCCESS);
+    queue_frame(out, n, sim.aps[i].rssi, sim.aps[i].channel);
+    vap_stats.auth_responses++;
   }
 }
 

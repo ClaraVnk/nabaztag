@@ -1,0 +1,17 @@
+# Does a second association advertise the same ciphers as the first?
+#
+# ieee80211_associate() builds its RSN element out of ieee80211_encryption and
+# modifies that variable as it goes — its own comment calls the arithmetic a
+# hack and warns it is fragile. Only rt2501_auth() ever resets it. So the
+# question is what happens when ieee80211_associate() runs twice without
+# rt2501_auth() in between, which an access point causes simply by
+# retransmitting an authentication reply.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 15000 reauth
+at 40000 expect RUN

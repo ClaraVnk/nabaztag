@@ -148,6 +148,8 @@ void sim_default(void)
  *   at <ms> disassoc [<bssid>] [reason <n>]
  *   at <ms> down <bssid>
  *   at <ms> up <bssid>
+ *   at <ms> rekey [<bssid>]       the AP rotates the group key
+ *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
  */
@@ -232,6 +234,12 @@ int sim_load(const char *path)
           fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
+      } else if(!strcmp(tok[2], "rekey")) {
+        e->kind = SIM_EV_REKEY;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+      } else if(!strcmp(tok[2], "reauth")) {
+        e->kind = SIM_EV_REAUTH;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
       } else if(!strcmp(tok[2], "drop-eapol")) {
         e->kind = SIM_EV_DROP_EAPOL;
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;

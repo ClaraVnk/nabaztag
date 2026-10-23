@@ -1,0 +1,21 @@
+# The group key rotation every access point does, every hour or so.
+#
+# Issue #26 reports this path as broken: "group cipher lost after
+# association". There is a reason to believe it — ieee80211_associate()
+# modifies the ieee80211_encryption it reads, 0x4a goes in and 0x44 comes out,
+# and the bit that said the *group* cipher was CCMP is gone by the time
+# eapol_input_group_msg1() reads the same variable to choose a cipher.
+#
+# The AP sends a key that differs from the one message 3 handed over, so an
+# install that silently keeps the old one shows up rather than passing.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 90000
+
+at 10000 expect RUN
+at 20000 rekey
+at 30000 expect RUN          # a refused rekey can cost the association
+at 40000 rekey               # and again, since the key index alternates
+at 80000 expect RUN
