@@ -252,6 +252,14 @@ never tries again. Whatever retries has to live above it, and on a rabbit
 that is the boot bytecode. `scenarios/wpa2-lost-msg2.txt`, and
 `--no-reconnect` to watch it stop there.
 
+**A whole rabbit fetches a sound and plays it.** The warren pushes an `ST`,
+the rabbit resolves the resource, downloads it, rebinds to its `streaming`
+resource and feeds the decoder; `--audio-dir` keeps the clip, and it is the
+file the warren served, bit for bit. That is `hal/audio.c`'s own
+`play_check()` running in the emulator, FIFO and `SYS_CBPLAY` callback
+included, so "did it actually say anything?" is a question with an answer you
+can play.
+
 **The WPA2 group key arrives and is installed.** The AP wraps a GTK with the
 KEK into message 3 and the rabbit logs `GTK installed`. That is the path
 `../crypto/aes128.c` and the `wpa2_gtk` modification exist for, and until now it
@@ -260,11 +268,32 @@ traffic ever arrived.
 
 ## What it does not do yet
 
-**DHCP under `./rabbit-vm`.** The bytecode prints `[dhcp] startdhcp`, ARPs for
-`0.0.0.0` and never transmits a BOOTP message, so it never gets a lease. The
-gateway's DHCP server is written and answers a well-formed discovery; nothing
-asks it. Use `mkconf.py --ip` for now, which is the more deterministic thing
-for a test anyway.
+**DHCP under `./rabbit-vm`.** The rabbit ARPs for `0.0.0.0` for ever and never
+gets a lease. The gateway's DHCP server is written and answers a well-formed
+discovery; nothing asks it. Use `mkconf.py --ip` for now, which is the more
+deterministic thing for a test anyway.
+
+The cause is now known, and it is in the emulator rather than the firmware.
+The bytecode calls `startdhcp` twice: once while it is reading its
+configuration, before `gostation`, and again from `gostationW` once the radio
+reports `RT2501_S_CONNECTED`. The first call hands a DISCOVER to
+`rt2501_send`, which refuses it -- correctly, since `ieee80211_state` is
+neither `EAPOL` nor `RUN` yet -- and the hybrid's guarded `startdhcp` then
+declines every later call, so the one that would have worked never transmits:
+
+```
+[dhcp] startdhcp
+[dhcp] really do startdhcp          <- before the scan, refused by rt2501_send
+...
+-------------dhcp                   <- associated, and now it is too late
+[dhcp] startdhcp                    <- no "really do"
+##timeout on configwait
+```
+
+On the hardware that first call happens while the USB radio is still being
+enumerated, which takes real seconds; here the bytecode's `main()` returns at
+virtual time 0, so both calls land inside the same instant. Making time pass
+while the interpreter works is the fix, and it is not written yet.
 
 One trap worth recording, since it cost an hour: the gateway used to answer
 ARP for `0.0.0.0`. That told a rabbit whose gateway was still unset that the
@@ -272,10 +301,17 @@ gateway existed, and it then unicast its DHCP discovery with a destination
 address of `0.0.0.0` for ever. Nobody owns `0.0.0.0`, and a gateway that is
 polite about it does real damage.
 
-**Everything that is not the radio or the network.** The microphone returns
-silence, the RFID reader has a scenario-driven tag list and no protocol, and
-nothing presses a button yet. The hooks are there (`hw_press`,
-`hw_present_tag`); the scenario directives are not.
+**The microphone records silence.** `rec_check()` hands the firmware nothing,
+so a capture produces an empty stream. What the capture *costs* is modelled,
+and that turned out to be the part that matters: `play_start()` refuses to
+play anything while a capture is running, and says so in the transcript
+(`audio: play_start refused, the microphone has the decoder`), which is how
+issue #23's finding 5 was measured. Feeding a real file in is a small change
+and would let the wake word be tested end to end.
+
+**The rest of the body.** The RFID reader has a scenario-driven tag list and
+no protocol, and nothing presses a button yet. The hooks are there
+(`hw_press`, `hw_present_tag`); the scenario directives are not.
 
 ## Layout
 
