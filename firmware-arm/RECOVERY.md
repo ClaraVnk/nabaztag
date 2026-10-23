@@ -7,7 +7,7 @@ bootloader. The ones that matter for flashing and recovery:
 
 | Build | `Nab.bin` | Shipped? | What's modified |
 |---|---|---|---|
-| **lean** (stable) | 113 256 B | **yes** — `releases/naboot-stable.signed.sim`, hardware-verified | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, and the surgical `.bss`/audio-FIFO fix. The build the community runs. |
+| **lean** (stable) | 115 584 B | **yes** — `releases/naboot-lean-wpa2.signed.sim`, hardware-verified 2026-10-23 (including a sound played and heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the surgical `.bss`/audio-FIFO fix, the WPA2 group key, the cold-state guards and the audio half-duplex fix. The build the community runs. `releases/naboot-stable.signed.sim` (113 256 B, June) is kept as the older verified fallback. |
 | **minimal** (rescue) | 119 800 B | **yes** — `releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
 | **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Smallest image of all; untested on hardware as of 2026-06-01. |

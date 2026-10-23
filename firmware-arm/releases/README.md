@@ -27,9 +27,9 @@ normal and it is the last step of every flash, OTA included).
 
 | | |
 |---|---|
-| **Size** | 231 106 bytes |
-| **sha256** | `c8148bf9c5560e590310aa84e852c286dfc94fde4362212a9be125ed2e48c236` |
-| **Build mode** | `lean` + `wpa2_gtk` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
+| **Size** | 231 330 bytes (`Nab.bin` 115 584) |
+| **sha256** | `4f400a581ff897d23bb794bfb2fe7b618a7031267cbea9bb1083f3611c3c1bea` |
+| **Build mode** | `lean` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
 **What it fixes.** Upstream's `aes128.c` is an empty stub, so on a WPA2/CCMP
@@ -39,9 +39,24 @@ multicast frame. This build carries a real AES-128, the RFC 3394 unwrap with
 its integrity check, and the GTK KDE parser, wired into message 3 and the
 group rekey. PR #20 has the full story and the test suite.
 
-**Hardware-validated on 2026-10-21** on a Nabaztag:tag v2 by OTA: sent
-13:22:38, downloaded the same second, and after the power cycle `bc.jsp`
-13:25:07, `locate.jsp` 13:25:15, operational 13:25:21.
+**Replaced on 2026-10-23.** The image here now also carries the cold-state
+guards (#30), the EAPOL group-key acknowledgement (#37), the group cipher and
+the pairwise rekey (#44), the interpreter's store bounds-check (#47) and the
+audio half-duplex fix (#52). It passes all fifteen `preflight.py` checks.
+
+**Hardware-validated on 2026-10-23** on a Nabaztag:tag v2 by OTA: sent
+23:10:38, downloaded 384 ms later, and after the power cycle `bc.jsp`
+23:12:48, `locate.jsp` 23:13:04, operational 23:13:08 — then a sound pushed
+from the warren, fetched, and **heard**.
+
+That last clause is there because the build before it was not. An earlier
+attempt included an amplifier change that plays a sound perfectly on the wire
+and produces silence in the room; it took a flash to find out, and it is why
+"operational" is no longer the bar for calling one of these validated. See
+`audio_ampli` in `apply-mods.py`.
+
+The 2026-10-21 image it replaces was `c8148bf9c5560e59…`, validated the same
+way minus the sound: sent 13:22:38, operational 13:25:21.
 
 **And the fix actually runs.** An earlier build carried only the group-key
 work, which was dormant: the bytecode hands the driver the raw config byte
