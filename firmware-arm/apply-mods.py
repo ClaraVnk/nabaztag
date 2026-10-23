@@ -481,6 +481,155 @@ def patch_audio_ampli(root: Path) -> None:
     print(f"[ok]   {c}: set_vlsi_volume no longer powers the amplifier")
 
 
+def patch_bounded_waits(root: Path) -> None:
+    """Stop three waits from feeding the watchdog for ever.
+
+    pacifox's #27 finding 3 and #25's second half, same shape in both: a loop
+    that waits for hardware and pets the watchdog while it waits. The watchdog
+    is armed at about 2.09 s and exists precisely to recover a wedged rabbit;
+    a wait that keeps clearing it turns every one of these into a permanent
+    freeze instead of a reset. The defect is not the wait. It is the CLR_WDT
+    inside it.
+
+      - hal/audio.c's vlsi_read_sci and vlsi_write_sci:
+        `while( !(INT_AUDIO_READ & INT_AUDIO_BIT) ) CLR_WDT;`
+        If the VS1003 never raises DREQ -- a wedged codec, a corrupt stream --
+        the rabbit stops here for good.
+      - usb/rt2501usb.c's rt2501_setup: `while(1)` for BbpRfStatus with
+        DelayMs(1000), and `while(1)` for BBP_R0 with DelayMs(500). DelayMs
+        clears the watchdog in its own loop, so a radio that never reports
+        ready hangs the boot.
+
+    The two are fixed differently, because what is available differs.
+
+    The RT2501 loops get a bound and `return 0`, which is what the function
+    already does elsewhere and what its caller is written for: usbh_rt2501
+    deletes the pipes and returns NULL, and the enumeration starts again. Ten
+    attempts is ten seconds on the first loop and five on the second.
+
+    The DREQ waits stop petting instead. A count of iterations, not a budget
+    in milliseconds: vlsi_read_sci runs with interrupts masked in places --
+    play_check wraps its drain in disable_ohci_irq -- and a deadline read from
+    a clock that is not advancing would pet the watchdog for ever, which is
+    the bug. So it pets a bounded number of times and then spins without
+    petting, and the watchdog does its job about two seconds later. At a few
+    tens of nanoseconds an iteration, 200,000 of them is several milliseconds
+    of patience, which is far longer than any DREQ this chip raises in good
+    health and far shorter than the watchdog's own patience.
+
+    Not covered here, deliberately: ieee80211.c's transmit loop on hcd_malloc
+    (#25). That one has no CLR_WDT, so the watchdog already catches it -- it
+    only looked unrecoverable while #25's first half left the radio asleep
+    after a reset, and cold_state fixed that.
+    """
+    c = root / "src/hal/audio.c"
+    src = read_src(c)
+    if "VLSI_DREQ_PETS" in src:
+        print("[skip] bounded_waits: already applied")
+        return
+    nl = "\r\n" if "\r\n" in src else "\n"
+
+    wait = "  while( !(INT_AUDIO_READ & INT_AUDIO_BIT) ) CLR_WDT;"
+    bounded = nl.join([
+        "  /* Pet the watchdog for a bounded while, then let it have us: a",
+        "     codec that never raises DREQ used to freeze the rabbit for good",
+        "     precisely because this loop kept the watchdog quiet. */",
+        "  {",
+        "    uint32_t dreq_pets = VLSI_DREQ_PETS;",
+        "    while( !(INT_AUDIO_READ & INT_AUDIO_BIT) )",
+        "      if(dreq_pets) { dreq_pets--; CLR_WDT; }",
+        "  }",
+    ])
+    if src.count(wait) != 2:
+        sys.exit(f"FAIL {c}: expected 2 DREQ waits, found {src.count(wait)}")
+    src = src.replace(wait, bounded)
+
+    # Above the doxygen block, not between it and the function: inserted
+    # after the comment, doxygen attaches it to the macro instead.
+    marker = nl.join(["/**",
+                      " * @brief Read a register from the VLSI chip, using SPI"])
+    if marker not in src:
+        sys.exit(f"FAIL {c}: vlsi_read_sci's comment not found (upstream changed?)")
+    src = src.replace(marker, nl.join([
+        "/* How many times a DREQ wait may clear the watchdog before it stops.",
+        "   Iterations rather than milliseconds, on purpose: see apply-mods.py. */",
+        "#define VLSI_DREQ_PETS 200000u",
+        "",
+        marker,
+    ]), 1)
+    write_src(c, src)
+    print(f"[ok]   {c}: the two DREQ waits stop feeding the watchdog")
+
+    c = root / "src/usb/rt2501usb.c"
+    src = read_src(c)
+    nl = "\r\n" if "\r\n" in src else "\n"
+    for name, old_lines, new_lines in (
+        ("BbpRfStatus",
+         ['  while(1) {',
+          '    DBG_WIFI(".");',
+          '    csr12.word = rt2501_read(rt2501_dev, RT2501_MAC_CSR12);',
+          '    if(csr12.field.BbpRfStatus) break;',
+          '    /* Force wake-up */',
+          '    if(!rt2501_write(rt2501_dev, RT2501_MAC_CSR12, 0x4)) return 0;',
+          '    DelayMs(1000);',
+          '  }'],
+         ['  {',
+          '    /* Bounded: DelayMs clears the watchdog, so a radio that never',
+          '       reports ready used to hang the boot with nothing to recover',
+          '       it. Returning 0 makes the caller delete the pipes and start',
+          '       the enumeration again. */',
+          '    int32_t tries = RT2501_READY_TRIES;',
+          '    while(1) {',
+          '      DBG_WIFI(".");',
+          '      csr12.word = rt2501_read(rt2501_dev, RT2501_MAC_CSR12);',
+          '      if(csr12.field.BbpRfStatus) break;',
+          '      if(--tries <= 0) {',
+          '        DBG_WIFI("the radio never reported ready"EOL);',
+          '        return 0;',
+          '      }',
+          '      /* Force wake-up */',
+          '      if(!rt2501_write(rt2501_dev, RT2501_MAC_CSR12, 0x4)) return 0;',
+          '      DelayMs(1000);',
+          '    }',
+          '  }']),
+        ("BBP_R0",
+         ['  while(1) {',
+          '    if(rt2501_read_bbp(rt2501_dev, RT2501_BBP_R0) != 0) break;',
+          '    DelayMs(500);',
+          '    DBG_WIFI(".");',
+          '  }'],
+         ['  {',
+          '    int32_t tries = RT2501_READY_TRIES;',
+          '    while(1) {',
+          '      if(rt2501_read_bbp(rt2501_dev, RT2501_BBP_R0) != 0) break;',
+          '      if(--tries <= 0) {',
+          '        DBG_WIFI("the BBP never came up"EOL);',
+          '        return 0;',
+          '      }',
+          '      DelayMs(500);',
+          '      DBG_WIFI(".");',
+          '    }',
+          '  }']),
+    ):
+        old = nl.join(old_lines)
+        if old not in src:
+            sys.exit(f"FAIL {c}: the {name} loop was not found (upstream changed?)")
+        src = src.replace(old, nl.join(new_lines), 1)
+
+    marker = "static int32_t rt2501_setup(void)"
+    if marker not in src:
+        sys.exit(f"FAIL {c}: rt2501_setup not found (upstream changed?)")
+    src = src.replace(marker, nl.join([
+        "/* Attempts before rt2501_setup gives up and lets the enumeration",
+        "   start again: ten seconds on the first wait, five on the second. */",
+        "#define RT2501_READY_TRIES 10",
+        "",
+        marker,
+    ]), 1)
+    write_src(c, src)
+    print(f"[ok]   {c}: the two bring-up waits give up instead of hanging")
+
+
 def patch_audio_halfduplex(root: Path) -> None:
     """Stop a capture to play a sound, and tell the bytecode when one is refused.
 
@@ -2384,40 +2533,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -2463,6 +2612,7 @@ def main() -> int:
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,
         "audio_halfduplex": patch_audio_halfduplex,
+        "bounded_waits": patch_bounded_waits,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
