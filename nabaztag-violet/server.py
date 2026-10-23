@@ -212,6 +212,9 @@ LAST_SEEN: dict[str, float] = {}
 # A bound session silent for longer than this is dead (Wi-Fi lost, unplugged, no
 # FIN). 0 = never (old behaviour).
 XMPP_IDLE_S = float(os.environ.get("XMPP_IDLE_S") or _OPTS.get("xmpp_idle_s") or 90)
+# A resource bind is followed by its session within milliseconds; past this,
+# the rabbit is stuck half-way and ignores pushed packets (_check_rebind).
+REBIND_TIMEOUT_S = 15
 _SID = itertools.count(1)
 
 
@@ -1078,11 +1081,19 @@ class XmppSession(threading.Thread):
         self.tcp_at = time.time()
         self.last_rx = self.tcp_at
         self.resource_at = None
+        # One writer at a time: the session thread, the control API threads
+        # and the timers all push on this socket, and two sendall() calls on
+        # the same socket may interleave their bytes.
+        self._send_lock = threading.Lock()
+        # Set by a resource bind, cleared by the session that must follow it
+        # (see _check_rebind).
+        self._rebind_at = None
 
     # -- low level --------------------------------------------------------- #
     def send(self, data: str):
         try:
-            self.conn.sendall(data.encode("utf-8"))
+            with self._send_lock:
+                self.conn.sendall(data.encode("utf-8"))
             log.debug("-> rabbit %s: %s", self.addr[0], data[:300])
         except OSError:
             self._alive = False
@@ -1093,11 +1104,13 @@ class XmppSession(threading.Thread):
 
     # -- command push ------------------------------------------------------ #
     def send_violet_packet(self, raw: bytes):
-        self.msg_nb += 1
+        with self._send_lock:
+            self.msg_nb += 1
+            nb = self.msg_nb
         b64 = base64.b64encode(raw).decode("ascii")
         stanza = (
             f"<message from='net.openjabnab.platform@{self.domain}/services' "
-            f"to='{self.mac}@{self.domain}/{self.resource}' id='ojn-{self.msg_nb}'>"
+            f"to='{self.mac}@{self.domain}/{self.resource}' id='ojn-{nb}'>"
             f"<packet xmlns='violet:packet' format='1.0' ttl='604800'>{b64}</packet>"
             f"</message>"
         )
@@ -1396,12 +1409,15 @@ class XmppSession(threading.Thread):
                 f"<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>{self.jid}</jid></bind></iq>"
             )
             self._register()
+            at = self._rebind_at = time.time()
+            threading.Timer(REBIND_TIMEOUT_S, self._check_rebind, args=(at,)).start()
             return
 
         if "urn:ietf:params:xml:ns:xmpp-session" in f and "<iq" in f:
             iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
             iq_id = iq_id.group(1) if iq_id else "1"
             self.bound = True
+            self._rebind_at = None
             self.send(f"<iq type='result' id='{iq_id}'/>")
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
@@ -1510,6 +1526,24 @@ class XmppSession(threading.Thread):
                           {"mac": self.mac, "type": "ears", "left": left, "right": right})
             return
         # Anything else (other packets/events) -> logged above.
+
+    def _check_rebind(self, at: float):
+        """A resource bind the rabbit never followed with its session.
+
+        Every bind (boot, idle, streaming, asleep) is followed by a session
+        within a few tens of milliseconds. Seen once on a real rabbit
+        (2026-10-23): a sound ended, the rabbit bound `idle` and then sent
+        nothing but keepalives and iq replies. It still answered the state
+        query, so it looked online and every `/api/sleep` returned `ok`, but
+        it applied none of them for 32 minutes, until the add-on restarted.
+        Dropping the stream makes it reconnect, which is what recovered it.
+        """
+        if not self._alive or self._rebind_at != at:
+            return
+        log.warning("rabbit %s (mac=%s): bound %r but no session after %.0f s - "
+                    "dropping the stream so it reconnects",
+                    self.addr[0], self.mac, self.resource, REBIND_TIMEOUT_S)
+        self.close()
 
     def close(self):
         self._alive = False
