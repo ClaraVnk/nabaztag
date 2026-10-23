@@ -1,0 +1,18 @@
+# Issue #23 findings 1 and 2: the warren's socket closes three times over, and
+# we count what the rabbit does about it.
+#
+# Finding 2 says the re-entry guard in stopEverythingAndResetToIdle can never
+# match, because `run` has just been set to idleRun — so every extra
+# XmppSessionIsDisconnected replays the whole stop, moving the ears again and
+# drawing a fresh 5-35 s delay. The ears are the visible half, and this
+# emulator logs every one of their movements.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 400000
+
+at 40000  expect RUN
+at 60000  server-drop
+at 160000 server-drop
+at 260000 server-drop
+at 390000 expect RUN

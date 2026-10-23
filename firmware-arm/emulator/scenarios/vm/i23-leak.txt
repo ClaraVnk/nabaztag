@@ -1,0 +1,12 @@
+# Issue #23 finding 3, isolated: the server's host is absent, and the only
+# follow-up fix applied is `softreboot` — so the reboot that used to pre-empt
+# the leak is gone and the leak itself is on show.
+#
+# Four hours of virtual time, about five thousand TCP attempts.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 14400000
+
+at 0     arp off
+at 40000 expect RUN

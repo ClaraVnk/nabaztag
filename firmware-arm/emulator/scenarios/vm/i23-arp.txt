@@ -1,0 +1,18 @@
+# Issue #23 finding 3, the real shape of it: the server's host is down from
+# the start -- the HA VM off or rebooting -- so nothing ever answers ARP.
+#
+# The bytecode adds a socket to `ltcp` before ARP resolves; arptime() drops
+# the request after 10 s without calling back; closetcp() ignores anything
+# that is not STEST and tcptime() skips a socket whose SYN never left. So the
+# socket stays in `ltcp` for ever, a TCP attempt is made every ~3 s with no
+# back-off, and VM memory is never returned. The end of that road is
+# vmem.c:255's ?OM Error -> sysReboot().
+#
+# An hour of virtual time is about twelve hundred attempts.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 3600000
+
+at 0     arp off
+at 40000 expect RUN

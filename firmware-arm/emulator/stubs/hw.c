@@ -161,16 +161,38 @@ const char *hw_led_name(int led)
 
 /* --- the ears --------------------------------------------------------- */
 
-/* One revolution is 17 encoder counts: boot.mtl decides an ear has been all
- * the way round when the count has advanced by exactly 17. A real ear takes
- * roughly a second to turn, so a count is about 60 ms. */
+/* One revolution is 17 encoder holes: boot.mtl decides an ear has been all the
+ * way round when the count has advanced by exactly 17. A real ear takes
+ * roughly a second to turn, so a hole is about 60 ms.
+ *
+ * And one of the seventeen gaps is wider than the others, which is the whole
+ * of how an ear knows where it is. ears.mtl's earResetRun() watches
+ * motorget() and times the interval between changes; when one interval is
+ * longer than the rest -- `if (d<10000) && (d>600) && (nil!=e.ldelayE)` -- it
+ * declares that position zero and stops the motor.
+ *
+ * A uniform encoder therefore never finishes a reset. That is not a thought
+ * experiment: this model used to emit a hole every 60 ms for ever, the
+ * condition never held, and the emulated ears turned for the whole run --
+ * 6255 counts, 368 revolutions, motor never stopped. Everything waiting on
+ * the ears waited with them. */
 #define HW_EAR_COUNTS_PER_TURN 17
 #define HW_MS_PER_COUNT        60
+/* The wide gap, entering position zero. Comfortably inside the 600-10000 ms
+ * window the firmware looks for, and short enough that a reset takes about
+ * the second and a half a real one does. */
+#define HW_MS_PER_ZERO_GAP     700
 
 struct hw_ear {
   int      running;      /* 0 stopped, +1 or -1 for the direction */
   uint16_t position;     /* the encoder count, which only ever goes up */
   uint32_t last_tick_ms;
+  /* How many times the firmware asked this ear to turn, which is not the same
+   * as how many times it changed direction. The log line only fires on a
+   * change, so counting log lines undercounts badly: an ear calibration run
+   * again with the same direction is invisible there. Issue #23's finding 2 is
+   * about exactly that repetition, so it needs a counter and not a grep. */
+  uint32_t commands;
 };
 
 static struct hw_ear ears[HW_NB_EARS];
@@ -184,6 +206,7 @@ void run_motor(uint8_t number, uint8_t speed, uint8_t rotation)
 
   if(number < 1 || number > HW_NB_EARS) return;
   e = &ears[number - 1];
+  e->commands++;
   dir = (rotation == REVERSE) ? -1 : 1;
   if(e->running == dir) return;
   e->running = dir;
@@ -224,8 +247,13 @@ void hw_tick(void)
   for(int i = 0; i < HW_NB_EARS; i++) {
     struct hw_ear *e = &ears[i];
     if(!e->running) continue;
-    while(now - e->last_tick_ms >= HW_MS_PER_COUNT) {
-      e->last_tick_ms += HW_MS_PER_COUNT;
+    for(;;) {
+      /* The gap we are in now is the wide one when the hole we are about to
+       * reach is position zero. */
+      uint32_t gap = ((e->position + 1) % HW_EAR_COUNTS_PER_TURN == 0)
+                   ? HW_MS_PER_ZERO_GAP : HW_MS_PER_COUNT;
+      if(now - e->last_tick_ms < gap) break;
+      e->last_tick_ms += gap;
       e->position++;
     }
   }
@@ -234,6 +262,11 @@ void hw_tick(void)
 uint16_t hw_ear_position(int ear)
 {
   return (ear >= 0 && ear < HW_NB_EARS) ? ears[ear].position : 0;
+}
+
+uint32_t hw_ear_commands(int ear)
+{
+  return (ear >= 0 && ear < HW_NB_EARS) ? ears[ear].commands : 0;
 }
 
 /* --- the buttons ------------------------------------------------------ */
