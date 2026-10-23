@@ -1,0 +1,17 @@
+# Issue #26 finding 1: a fresh four-way handshake on a live association, which
+# is what hostapd's wpa_ptk_rekey does periodically.
+#
+# eapol_input_msg1() returns early unless eapol_state is EAPOL_S_MSG1 or
+# EAPOL_S_MSG3, and after a completed handshake it is EAPOL_S_GROUP and then
+# EAPOL_S_RUN. So message 1 is dropped with "Inappropriate message", the AP
+# gives up and deauthenticates, and the rabbit reconnects from scratch —
+# every rekey interval, for ever.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 90000
+
+at 10000 expect RUN
+at 20000 ptk-rekey
+at 80000 expect RUN

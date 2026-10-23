@@ -93,7 +93,7 @@ obj/include/net/aes128.h: ../crypto/aes128.h
 	cp $< $@
 
 define emulator_compile
-obj/$(notdir $(basename $(1))).o: $(1) obj/include/net/aes128.h
+obj/$(notdir $(basename $(1))).o: $(1) obj/include/net/aes128.h obj/.tree-stamp
 	@mkdir -p obj
 	$$(CC) -c $$(CFLAGS) $$(SAN) $$< -o $$@
 endef
@@ -117,6 +117,16 @@ $(VM_TARGET): $(VM_OBJ)
 obj/.bytecode-stamp: FORCE
 	@mkdir -p obj
 	@printf '%s\n' "$(abspath $(BYTECODE))" > $@.new
+	@cmp -s $@.new $@ 2>/dev/null || mv $@.new $@
+	@rm -f $@.new
+
+# The same trap one level up, and it bit twice: changing NABGCC does not make
+# any object out of date, so `make NABGCC=patched` after `make NABGCC=stock`
+# relinks the *patched* objects and the comparison agrees with itself. Every
+# object depends on this stamp.
+obj/.tree-stamp: FORCE
+	@mkdir -p obj
+	@printf '%s\n' "$(abspath $(NABGCC))" > $@.new
 	@cmp -s $@.new $@ 2>/dev/null || mv $@.new $@
 	@rm -f $@.new
 

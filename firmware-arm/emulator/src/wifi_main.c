@@ -159,6 +159,7 @@ void sim_run_events(void)
       case SIM_EV_AP_UP:       vap_set_up(e->ap, 1); break;
       case SIM_EV_SERVER_DROP:
       case SIM_EV_ARP:        break;   /* no network in this binary */
+      case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
@@ -339,6 +340,18 @@ int main(int argc, char **argv)
   if(vap_stats.mics_verified || vap_stats.mics_failed)
     printf("  MIC ok / bad      %u / %u\n", vap_stats.mics_verified,
            vap_stats.mics_failed);
+  if(vap_stats.ptk_rekeys_sent) {
+    printf("ptk rekeys          %u sent, %u answered\n",
+           vap_stats.ptk_rekeys_sent, vap_stats.ptk_rekeys_answered);
+    if(vap_stats.ptk_rekeys_answered < vap_stats.ptk_rekeys_sent) {
+      char why[128];
+      snprintf(why, sizeof(why),
+               "%u pairwise rekey(s) ignored — an AP that rekeys periodically "
+               "gives up and deauthenticates",
+               vap_stats.ptk_rekeys_sent - vap_stats.ptk_rekeys_answered);
+      sim_note_failure(why);
+    }
+  }
   if(vap_stats.rekeys_sent)
     printf("group rekeys        %u sent, %u acknowledged\n",
            vap_stats.rekeys_sent, vap_stats.rekeys_acked);

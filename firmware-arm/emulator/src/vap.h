@@ -27,6 +27,8 @@ struct vap_stats {
   uint32_t handshakes_completed;
   uint32_t rekeys_sent;
   uint32_t rekeys_acked;
+  uint32_t ptk_rekeys_sent;
+  uint32_t ptk_rekeys_answered;
   uint32_t keys_installed;
   uint32_t channel_switches;
 };
@@ -41,6 +43,7 @@ void vap_to_station(const uint8_t *source_mac, const uint8_t *body,
 void vap_deauth(int ap, int disassoc, uint16_t reason);
 void vap_reauth(int ap);
 void vap_rekey(int ap);
+void vap_ptk_rekey(int ap);
 void vap_rekey_ack(int on);
 void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
