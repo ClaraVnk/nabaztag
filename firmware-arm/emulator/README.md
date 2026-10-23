@@ -313,6 +313,19 @@ with      [  58700 ms] audio: stopping the capture, the speaker wins
           [  58700 ms] audio: end of clip 2, 61665 bytes
 ```
 
+**The amplifier is the player's business.** With the `audio_ampli` step,
+setting the volume no longer powers the speaker amplifier. Drop the step and a
+rabbit that has played nothing has it on from the first millisecond, for as
+long as it is plugged in:
+
+```
+without   [      0 ms] audio: volume 0x00
+          [      0 ms] audio: amplifier on        (and never off, 120 s, nothing played)
+with      [      0 ms] audio: volume 0x00
+          [  15000 ms] audio: amplifier on        (a sound arrives)
+          [  15000 ms] audio: amplifier off
+```
+
 **The microphone records silence.** `rec_check()` hands the firmware nothing,
 so a capture produces an empty stream. What the capture *costs* is modelled,
 and that turned out to be the part that matters: `play_start()` refuses to

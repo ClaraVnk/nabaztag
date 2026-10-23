@@ -404,6 +404,68 @@ def patch_linker_keep(root: Path) -> None:
     print(f"[ok]   {p}: wrapped {n} sections in KEEP() (vec/startup/bytecode/ramfunc)")
 
 
+def patch_audio_ampli(root: Path) -> None:
+    """Drive the amplifier from the player, not from the volume knob.
+
+    pacifox's #27 finding 5: set_vlsi_volume() ends with
+    `vlsi_ampli(volume<0x7f)`, so OPsndVol -> audioVol() -> set_vlsi_volume()
+    switches the amplifier on with nothing playing. It is not a corner case.
+    The boot sequence sets the volume once, early -- the emulator logs
+    `audio: volume 0x00` at 0 ms -- and 0x00 is louder than 0x7f, so the
+    amplifier comes on at power-up and stays on. The add-on then re-sends
+    `SV <hw>` 3 s into every reconnect, which does it again. A rabbit sitting
+    idle has its speaker amplifier powered, which is hiss and current for no
+    sound.
+
+    The same line has a second edge, pointing the other way: a volume at or
+    above 0x7f turns the amplifier *off*, so asking a rabbit to be quiet
+    silences it completely rather than quietly.
+
+    Both go away by letting the player own the amplifier, which it already
+    does: play_start() turns it on, play_stop() and the end of a clip turn it
+    off, and rec_start() turns it off to record. Volume is a volume.
+
+    NAB_AUDIO_AMPLI_PLAY_ONLY lets a host build model either behaviour.
+    """
+    h = root / "inc/hal/audio.h"
+    src = read_src(h)
+    if "NAB_AUDIO_AMPLI_PLAY_ONLY" in src:
+        print("[skip] audio_ampli: already applied")
+        return
+    nl = "\r\n" if "\r\n" in src else "\n"
+    old = "void set_vlsi_volume(uint8_t volume);"
+    if old not in src:
+        sys.exit(f"FAIL {h}: set_vlsi_volume declaration not found (upstream changed?)")
+    write_src(h, src.replace(
+        old,
+        nl.join(["/* Volume only. The amplifier belongs to play_start/play_stop. */",
+                 "#define NAB_AUDIO_AMPLI_PLAY_ONLY 1",
+                 old]), 1))
+    print(f"[ok]   {h}: the amplifier is the player's business")
+
+    c = root / "src/hal/audio.c"
+    src = read_src(c)
+    nl = "\r\n" if "\r\n" in src else "\n"
+    old = nl.join([
+        "  //Config VOLUME",
+        "  vlsi_write_sci(VS1003_VOLUME,(volume<<8)|volume);",
+        "  vlsi_ampli(volume<0x7f);",
+    ])
+    new = nl.join([
+        "  //Config VOLUME",
+        "  vlsi_write_sci(VS1003_VOLUME,(volume<<8)|volume);",
+        "  /* No vlsi_ampli() here. Setting the volume used to power the",
+        "     amplifier -- at boot, and again on every SV the server sends --",
+        "     so an idle rabbit sat there amplifying nothing; and a volume at",
+        "     or above 0x7f switched it off, so asking for quiet gave",
+        "     silence. play_start/play_stop own it. */",
+    ])
+    if old not in src:
+        sys.exit(f"FAIL {c}: set_vlsi_volume's amplifier line not found (upstream changed?)")
+    write_src(c, src.replace(old, new, 1))
+    print(f"[ok]   {c}: set_vlsi_volume no longer powers the amplifier")
+
+
 def patch_audio_halfduplex(root: Path) -> None:
     """Stop a capture to play a sound, and tell the bytecode when one is refused.
 
@@ -2307,40 +2369,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,audio_ampli,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -2386,6 +2448,7 @@ def main() -> int:
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,
         "audio_halfduplex": patch_audio_halfduplex,
+        "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
         "strip_dump": patch_strip_dump,
