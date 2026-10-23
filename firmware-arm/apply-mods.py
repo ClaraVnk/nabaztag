@@ -937,6 +937,105 @@ def patch_eapol_group_ack(root: Path) -> None:
     print("  eapol.c: group rekey now accepts the standard's Key Ack 0")
 
 
+def patch_group_cipher(root: Path) -> None:
+    """Install the group key under the group cipher, not the pairwise one.
+
+    `ieee80211_associate()` carries both ciphers in the low nibble of
+    `ieee80211_encryption` while it builds the RSN element, and then throws the
+    group one away:
+
+        ieee80211_encryption = (ieee80211_encryption&0xF0)
+                             | ((ieee80211_encryption&0x03)<<1);
+
+    From then on nothing knows what the group cipher was, and
+    `eapol_install_msg3_gtk()` installs the GTK as AES unconditionally. On a
+    network whose group cipher is TKIP and whose pairwise cipher is CCMP --
+    which is what a mixed-mode access point offers -- the radio is handed the
+    group key with the wrong algorithm and decrypts every broadcast and
+    multicast frame to rubbish. The rabbit is deaf to them for the whole life
+    of the association, which looks exactly like the group-rekey bug and is a
+    different cause.
+
+    Measured, not reasoned about. firmware-arm/emulator,
+    scenarios/wpa2-mixed-gtk.txt, against an AP advertising group TKIP and
+    pairwise CCMP:
+
+        the rabbit asks for RSN version 1, group TKIP, 1 pairwise, first CCMP
+        radio: key 0 installed, cipher 4      <- pairwise, CCMP, right
+        radio: key 1 installed, cipher 4      <- group, should be 3 (TKIP)
+
+    The fix keeps the group cipher in a variable of its own rather than trying
+    to make one nibble carry two things, and the install site reads it.
+    Reported by pacifox in issue #26, finding 3.
+    """
+    hdr = root / "inc/net/ieee80211.h"
+    src = hdr.read_text(encoding="utf-8", errors="surrogateescape")
+    if "ieee80211_group_cipher" not in src:
+        needle = "extern uint8_t ieee80211_encryption;"
+        if needle not in src:
+            sys.exit("apply-mods: ieee80211.h has no ieee80211_encryption declaration")
+        src = src.replace(
+            needle,
+            needle + "\n/* The group cipher suite, kept because ieee80211_associate() discards it\n"
+            " * from ieee80211_encryption's low nibble. IEEE80211_CIPHER_TKIP or\n"
+            " * IEEE80211_CIPHER_CCMP; 0 when there is no group key. */\n"
+            "extern uint8_t ieee80211_group_cipher;",
+            1,
+        )
+        hdr.write_text(src, encoding="utf-8", errors="surrogateescape")
+        print("  ieee80211.h: declared ieee80211_group_cipher")
+
+    p = root / "src/net/ieee80211.c"
+    src = p.read_text(encoding="utf-8", errors="surrogateescape")
+    if "ieee80211_group_cipher = " not in src:
+        needle = "uint8_t ieee80211_encryption;"
+        if needle not in src:
+            sys.exit("apply-mods: ieee80211.c has no ieee80211_encryption definition")
+        src = src.replace(needle, needle + "\nuint8_t ieee80211_group_cipher;", 1)
+
+        # Capture it where the RSN element is built, which is the last moment
+        # the information still exists.
+        anchor = ("      /* Final line for this hack, reset \"normal\" cipher using "
+                  "pairwise cipher 0x03 = 0b0011 */")
+        if anchor not in src:
+            sys.exit("apply-mods: ieee80211.c's RSN-element hack is not where we left it")
+        src = src.replace(
+            anchor,
+            "      /* Keep the group cipher before the line below destroys it: it is\n"
+            "       * the same value this function just wrote into the RSN element,\n"
+            "       * and eapol.c needs it to install the GTK. */\n"
+            "      ieee80211_group_cipher = (ieee80211_encryption & 0x0C) >> 1;\n"
+            + anchor,
+            1,
+        )
+        p.write_text(src, encoding="utf-8", errors="surrogateescape")
+        print("  ieee80211.c: the group cipher is kept at association")
+
+    p = root / "src/net/eapol.c"
+    src = p.read_text(encoding="utf-8", errors="surrogateescape")
+    if "ieee80211_group_cipher == IEEE80211_CIPHER_TKIP" in src:
+        print("  eapol.c: the GTK already follows the group cipher")
+        return
+    needle = ("  rt2501_set_key(key_id, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,\n"
+              "                 RT2501_CIPHER_AES);")
+    if needle not in src:
+        sys.exit("apply-mods: eapol.c's GTK install is not where we left it "
+                 "(run wpa2_gtk first)")
+    src = src.replace(
+        needle,
+        "  /* The GROUP cipher, which is not always the pairwise one: a mixed-mode\n"
+        "   * AP offers group TKIP with pairwise CCMP, and installing the group key\n"
+        "   * as AES there makes the radio decrypt every broadcast frame to\n"
+        "   * rubbish. See issue #26 finding 3. */\n"
+        "  rt2501_set_key(key_id, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,\n"
+        "                 (ieee80211_group_cipher == IEEE80211_CIPHER_TKIP)\n"
+        "                   ? RT2501_CIPHER_TKIP : RT2501_CIPHER_AES);",
+        1,
+    )
+    p.write_text(src, encoding="utf-8", errors="surrogateescape")
+    print("  eapol.c: the GTK is installed under the group cipher")
+
+
 def patch_mdns(root: Path) -> None:
     """Inject the boot-mods/mdns.mtl announcer into boot.0.0.0.13.mtl and
     wire mdns_boot_tick into the boot loop's !master branch.
@@ -1891,40 +1990,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_replay,cold_state,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -1942,6 +2041,7 @@ def main() -> int:
         "mdns": patch_mdns,
         "wpa2_gtk": patch_wpa2_group_key,
         "eapol_group_ack": patch_eapol_group_ack,
+        "group_cipher": patch_group_cipher,
         "linker_keep": patch_linker_keep,
         "gc_sections": patch_gc_sections,
         "audio_fifo_data": patch_audio_fifo_data,

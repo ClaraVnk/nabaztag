@@ -1009,12 +1009,52 @@ uint8_t rt2501_beacon(void *buffer, uint32_t length)
   return 1;     /* master mode: the rabbit's own beacon goes nowhere useful */
 }
 
+/* What the radio's own header calls these. Key slot 0 is the pairwise key;
+ * anything else is a group key. */
+#define RT2501_CIPHER_NONE_ 0
+#define RT2501_CIPHER_TKIP_ 3
+#define RT2501_CIPHER_AES_  4
+
 int32_t rt2501_set_key(uint8_t index, uint8_t *key, uint8_t *txmic,
                        uint8_t *rxmic, uint8_t cipher)
 {
   (void)key; (void)txmic; (void)rxmic;
-  sim_log("radio: key %u installed, cipher %u", index, cipher);
+  sim_log("radio: key %u installed, cipher %u (%s)", index, cipher,
+          index == 0 ? "pairwise" : "group");
   vap_stats.keys_installed++;
+
+  /* A group key installed under the wrong algorithm is the quietest failure
+   * in this stack: the association succeeds, unicast works, and every
+   * broadcast and multicast frame decrypts to rubbish for the life of the
+   * link. Nothing in the rabbit's state says so. So the AP checks, because it
+   * is the only party that knows which cipher it asked for.
+   *
+   * Issue #26 finding 3: ieee80211_associate() discarded the group cipher and
+   * eapol.c installed the GTK as AES whatever the AP advertised. */
+  if(index != 0 && cipher != RT2501_CIPHER_NONE_) {
+    for(int i = 0; i < sim.nb_aps; i++) {
+      uint8_t want;
+      if(!sim.aps[i].associated) continue;
+      switch(sim.aps[i].security) {
+        case SIM_SEC_WPA_TKIP:
+        case SIM_SEC_WPA2_TKIP:
+        case SIM_SEC_WPA2_MIXED:  want = RT2501_CIPHER_TKIP_; break;
+        case SIM_SEC_WPA2_CCMP:
+        case SIM_SEC_WPA3_SAE:
+        case SIM_SEC_WPA2_WPA3:   want = RT2501_CIPHER_AES_;  break;
+        default:                  want = 0; break;
+      }
+      if(want && cipher != want) {
+        char why[160];
+        snprintf(why, sizeof(why),
+                 "the group key went in under cipher %u, but this AP's group "
+                 "cipher is %s (%u) — the rabbit will be deaf to broadcast",
+                 cipher, want == RT2501_CIPHER_TKIP_ ? "TKIP" : "CCMP", want);
+        sim_note_failure(why);
+      }
+      break;
+    }
+  }
   return OK;
 }
 

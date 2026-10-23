@@ -1,0 +1,21 @@
+# Issue #26 finding 3: the group cipher is discarded at association, so the
+# GTK is installed under the *pairwise* cipher.
+#
+# This AP advertises group TKIP and pairwise CCMP, which is what a mixed-mode
+# network looks like. The pairwise key should be installed as CCMP (4) and the
+# group key as TKIP (2). The emulator logs the cipher of every
+# rt2501_set_key, so the two are side by side.
+#
+# ieee80211_associate() ends with
+#   ieee80211_encryption = (ieee80211_encryption&0xF0)|((ieee80211_encryption&0x03)<<1);
+# which keeps only the pairwise cipher, and eapol.c then chooses the GTK's
+# cipher from that same variable.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-mixed -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 20000 rekey
+at 50000 expect RUN
