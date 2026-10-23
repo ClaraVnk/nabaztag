@@ -1103,15 +1103,28 @@ class XmppSession(threading.Thread):
         token = store_resource(build_choreography(tempo_ms, actions))
         self.send_program(f"CH {resource_url(token)}")
 
-    def _play_connect_jingle(self):
-        """Play the configured greeting jingle once the rabbit is operational."""
+    def _play_connect_jingle(self, then_listen: bool = False):
+        """Play the configured greeting jingle once the rabbit is operational.
+
+        `then_listen` arms the mic afterwards rather than on a timer of its
+        own, because the rabbit is half-duplex and silent about it:
+        hal/audio.c's play_start() returns without a word while a capture is
+        running, so an `RS` that lands between the `ST` and the moment the
+        download finishes playing makes the jingle vanish. Measured in the
+        emulator with a fixed 4 s re-arm: 64 KB fetched, HTTP 200, nothing
+        heard. Wait for the clip, then listen.
+        """
+        wait = 2.0
         try:
             wav = render_jingle(CONNECT_JINGLE)
             if wav:
                 self.send_program(f"ST {resource_url(store_resource(wav, _audio_ctype(wav)))}")
                 log.info("rabbit %s: played connect jingle %r", self.addr[0], CONNECT_JINGLE)
+                wait = max(wait, _audio_duration_s(wav) + 1.5)
         except Exception as exc:  # noqa
             log.warning("connect jingle failed: %s", exc)
+        if then_listen:
+            threading.Timer(wait, self._start_listen).start()
 
     def send_state_query(self):
         """Ask the rabbit to report its internal state via the bytecode's
@@ -1150,10 +1163,23 @@ class XmppSession(threading.Thread):
         running when the link died is still running when the rabbit comes
         back, and this `RT` is what rescues it.
 
-        So the question is not "have we done this" but "is this stream
-        ours": send it unless we are the ones who asked the mic to run.
+        "Is this stream ours" was the test, and it is not enough either: a
+        reconnect breaks the tie between what we believe and what the
+        bytecode is doing. Measured in the emulator, scenario
+        i23-lost-rt.txt: start the mic over the API, drop the session, and
+        the `RT` that would stop it is lost with the session. The rabbit
+        comes back still recording, and from there hal/audio.c's
+        play_start() returns without a word on every sound — because
+        rec_state is set. 64 KB of jingle downloaded, HTTP 200, nothing
+        heard, no error anywhere. It does not end until something sends an
+        `RT` or the rabbit is unplugged.
+
+        So: always clear, and let the re-arm below put the mic back where
+        the user asked for it. #28's complaint was that a deliberate mic was
+        silently stopped; it is the *silently* that was the bug, and the
+        re-arm is what fixes it.
         """
-        return not (WAKE.get("streaming") or WAKE.get("on"))
+        return True
 
     def _stop_listen_safely(self):
         """Idempotent safety net called on every fresh XMPP bind: tell the
@@ -1308,15 +1334,20 @@ class XmppSession(threading.Thread):
                         threading.Timer(1.5, self._stop_listen_safely).start()
                     if VOLUME["hw"] is not None:
                         threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
-                    if CONNECT_JINGLE:
-                        threading.Timer(3.5, self._play_connect_jingle).start()
                     # AUTO_LISTEN is the *default* on a fresh install; once
                     # state.json explicitly records the listen flag, runtime
                     # toggling (/api/mic?on=0|1) wins. This stops the rabbit
                     # from re-arming the mic on every reconnect after a user
                     # turned it off (the Larsen loop from 2026-05-29).
                     want_listen = WAKE["on"] if _STATE_LOADED["has_listen"] else AUTO_LISTEN
-                    if want_listen:
+                    if CONNECT_JINGLE:
+                        # The jingle arms the mic itself, once it has been
+                        # heard: the two cannot overlap.
+                        threading.Timer(
+                            3.5,
+                            lambda: self._play_connect_jingle(then_listen=want_listen),
+                        ).start()
+                    elif want_listen:
                         threading.Timer(4.0, self._start_listen).start()
             return
 
@@ -2095,6 +2126,13 @@ def _save_state():
             json.dump({"listen": bool(WAKE["on"]), "volume_hw": VOLUME["hw"]}, fh)
     except OSError as exc:
         log.warning("state save failed: %s", exc)
+    # The listen flag is now recorded, whatever the file on disk said when
+    # this process started. Without this, a mic turned on through
+    # /api/mic?on=1 is not re-armed after a reconnect, because the re-arm
+    # reads _STATE_LOADED["has_listen"] and that only became true by loading
+    # a file. Measured in the emulator: the rabbit comes back still
+    # recording, nothing re-arms it and nothing clears it.
+    _STATE_LOADED["has_listen"] = True
 
 
 _STATE_LOADED = {"yes": False, "has_listen": False}

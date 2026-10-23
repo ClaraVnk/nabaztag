@@ -423,6 +423,20 @@ struct gw_conn {
 
 static struct gw_conn conns[GW_MAX_CONNECTIONS];
 
+/**
+ * @brief How many connections to the XMPP port are open.
+ *
+ * Used to tell a resource download from the boot server's own fetches: the
+ * bytecode asks for bc.jsp and locate.jsp before it has a session at all.
+ */
+static int xmpp_conn_count(void)
+{
+  int n = 0;
+  for(int i = 0; i < GW_MAX_CONNECTIONS; i++)
+    if(conns[i].state == TCP_OPEN && conns[i].dest_port == 5222) n++;
+  return n;
+}
+
 static struct gw_conn *conn_find(uint32_t ip, uint16_t port)
 {
   for(int i = 0; i < GW_MAX_CONNECTIONS; i++)
@@ -563,6 +577,12 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     gw_stats.tcp_opened++;
     sim_log("gw: the rabbit opened %s:%u -> %s:%u", ipstr(src), sport,
             warren_host, dport);
+    /* A connection to anything but the XMPP port, while a session is up, is
+     * the bytecode fetching a resource: RequestResource, the ST and CH
+     * commands' download. That is the moment a "fetch <ms>" event counts
+     * from. The boot server's own bc.jsp and locate.jsp happen before there
+     * is a session, so they do not count. */
+    if(dport != 5222 && xmpp_conn_count() > 0) sim_note_fetch();
     tcp_send(c, 0x02 | 0x10, NULL, 0);     /* SYN-ACK */
     return;
   }

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 RUNTIME=podman
-STEPS=wpa2_gtk
+STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey
 BINARY=./rabbit
 ARGS=()
 

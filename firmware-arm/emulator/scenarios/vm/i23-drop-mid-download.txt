@@ -1,0 +1,27 @@
+# Issue #23 finding 1: the session goes away while a sound is still coming.
+#
+# pacifox's words: "the case I would model first is a drop while a sound is
+# still downloading, with the callback landing after the session closed
+# (main.mtl:3370)". The HTTP read completes — or fails — after
+# stopEverythingAndResetToIdle has already run, and the callback then works on
+# a session that no longer exists.
+#
+# The timing cannot be written as a wall-clock moment: the download starts
+# when the warren decides to push a sound, which is its business and not the
+# scenario's. So the drop is counted from the download itself. 300 ms in, the
+# resource connection is open and the body is still arriving.
+#
+# Real time, because the add-on schedules what it pushes with threading.Timer
+# in wall seconds while the rabbit otherwise lives several times faster.
+#
+#   ./rabbit-vm scenarios/vm/i23-drop-mid-download.txt --eeprom static.eeprom \
+#       --warren <host> --audio-dir audio/
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+realtime
+stop 90000
+
+at 30000     expect RUN
+fetch 300    server-drop
+at 85000     expect RUN

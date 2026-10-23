@@ -150,7 +150,7 @@ void sim_run_events(void)
 {
   for(int i=0;i<sim.nb_events;i++) {
     struct sim_event *e = &sim.events[i];
-    if(e->fired || sim_now() < e->at_ms) continue;
+    if(e->fired || e->rel_fetch || sim_now() < e->at_ms) continue;
     e->fired = 1;
     switch(e->kind) {
       case SIM_EV_DEAUTH:      vap_deauth(e->ap, 0, (uint16_t)e->arg); break;

@@ -183,6 +183,30 @@ void sim_default(void)
 }
 
 /**
+ * @brief The rabbit has started downloading a resource.
+ *
+ * Arms every "fetch <ms>" event against the clock, once. The gateway calls
+ * this when the rabbit opens a connection to something other than the XMPP
+ * port while a session is up, which is what RequestResource looks like from
+ * the outside.
+ */
+void sim_note_fetch(void)
+{
+  static int armed;
+
+  if(armed) return;
+  armed = 1;
+  for(int i = 0; i < sim.nb_events; i++) {
+    struct sim_event *e = &sim.events[i];
+    if(!e->rel_fetch) continue;
+    e->at_ms += sim_now();
+    e->rel_fetch = 0;
+    sim_log("scenario: an event is now due at %u ms, %u ms into the download",
+            e->at_ms, e->at_ms - sim_now());
+  }
+}
+
+/**
  * @brief Read a scenario file.
  *
  * Directives, one per line, '#' starts a comment:
@@ -205,6 +229,12 @@ void sim_default(void)
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
+ *
+ *   fetch <ms> <event>             the same events, but <ms> after the rabbit
+ *                                  starts downloading a sound or a
+ *                                  choreography, so "cut it mid-download" is
+ *                                  a thing a scenario can say without
+ *                                  knowing when the download begins
  */
 int sim_load(const char *path)
 {
@@ -264,7 +294,7 @@ int sim_load(const char *path)
       for(int i = 5; i < n; i++)
         if(!strcmp(tok[i], "pmf")) a->pmf = 1;
       sim.nb_aps++;
-    } else if(!strcmp(tok[0], "at") && n >= 3) {
+    } else if((!strcmp(tok[0], "at") || !strcmp(tok[0], "fetch")) && n >= 3) {
       struct sim_event *e;
       if(sim.nb_events >= SIM_MAX_EVENTS) {
         fprintf(stderr, "%s:%d: too many events (max %d)\n", path, lineno, SIM_MAX_EVENTS);
@@ -273,6 +303,7 @@ int sim_load(const char *path)
       e = &sim.events[sim.nb_events];
       memset(e, 0, sizeof(*e));
       e->at_ms = (uint32_t)strtoul(tok[1], NULL, 10);
+      e->rel_fetch = !strcmp(tok[0], "fetch");
       e->ap = -1;
       e->arg = 0;
       if(!strcmp(tok[2], "deauth") || !strcmp(tok[2], "disassoc")) {

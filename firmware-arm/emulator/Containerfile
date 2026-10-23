@@ -13,9 +13,12 @@
 FROM debian:bookworm-slim
 
 ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
-# Which apply-mods.py steps to apply. The default is the change that touches
-# the network stack; add or drop steps to measure one in isolation.
-ARG MOD_STEPS=wpa2_gtk
+# Which apply-mods.py steps to apply. The default is every network-stack fix
+# that is merged, so `./run.sh` is green on a fresh clone; drop steps to
+# measure one in isolation -- that is the whole point of naming them, and
+# dropping these four is how wpa2-mixed-gtk, wpa2-rekey and wpa2-ptk-rekey
+# fail, which is what they were written to show.
+ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git python3 ca-certificates \

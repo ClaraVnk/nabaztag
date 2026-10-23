@@ -65,6 +65,12 @@ struct sim_event {
   int      ap;          /* index into the AP table, -1 = all     */
   int      arg;         /* reason code, count, expected state... */
   int      fired;
+  /* Set by the "fetch <ms>" form: at_ms is a delay, counted from the moment
+   * the rabbit starts downloading a resource, and the event is not due until
+   * sim_note_fetch() has turned it into a time. Guessing a wall-clock moment
+   * for "while the sound is still coming" is how a scenario passes because
+   * the thing it meant to interrupt had already finished. */
+  int      rel_fetch;
 };
 
 /* The scenario, parsed once from a file. */
@@ -87,6 +93,7 @@ void sim_advance(uint32_t ms);
 void sim_pace(void);
 uint32_t sim_now(void);
 void sim_run_events(void);
+void sim_note_fetch(void);
 void sim_log(const char *fmt, ...);
 int  sim_failures(void);
 void sim_note_failure(const char *why);
