@@ -1268,12 +1268,28 @@ class XmppSession(threading.Thread):
         heard, no error anywhere. It does not end until something sends an
         `RT` or the rabbit is unplugged.
 
-        So: always clear, and let the re-arm below put the mic back where
-        the user asked for it. #28's complaint was that a deliberate mic was
-        silently stopped; it is the *silently* that was the bug, and the
-        re-arm is what fixes it.
+        So: clear, and let the re-arm below put the mic back where the user
+        asked for it. #28's complaint was that a deliberate mic was silently
+        stopped; it is the *silently* that was the bug, and the re-arm is what
+        fixes it.
+
+        The one exception is Le Terrier's test, which is the right one where
+        it applies: do not clear a capture that is *in flight*. There, every
+        capture is push-to-talk — bounded, with a known lifetime — so the
+        question can always be asked. Here most listening is a steady state
+        with no end in sight, and for that the re-arm is the answer. The
+        bounded case does exist, though: the seconds after the wake word,
+        while the command is being collected. Cancelling that from under its
+        owner is #28 all over again, so it is the one stream left alone.
+
+        What is *not* the test, and it is a tempting one: whether datagrams
+        are arriving. They arrive in both cases. A rabbit left streaming by a
+        dropped link keeps sending exactly like one that is streaming on
+        purpose — that is the whole of #23's finding 6 — so the receiver
+        cannot tell an orphan from a wanted stream. Only server-side intent
+        can, which is what `capturing` records.
         """
-        return True
+        return not WAKE.get("capturing")
 
     def _stop_listen_safely(self):
         """Idempotent safety net called on every fresh XMPP bind: tell the
@@ -2242,7 +2258,10 @@ def udp_mic_server():
 # "rearm": we stopped the capture to let a sound through and owe it back once
 # the rabbit is idle again. "hold": a caller is playing several sounds in a row
 # and does not want the mic back between them.
-WAKE = {"on": False, "cooldown": 0.0, "streaming": False, "rearm": False, "hold": 0}
+WAKE = {"on": False, "cooldown": 0.0, "streaming": False, "rearm": False, "hold": 0,
+        # True only while the wake path is collecting one command: a bounded
+        # operation, as opposed to "streaming", which is a steady state.
+        "capturing": False}
 # Last volume (raw VS1003 attenuation, 0=loud..higher=quiet) — re-applied on
 # reconnect since the rabbit resets it on reboot. None = never set (leave default).
 VOLUME = {"hw": None}
@@ -2357,6 +2376,7 @@ def wake_loop():
         # long ones. The buffer was just swapped, so it now collects only the
         # command continuation.
         quiet = 0
+        WAKE["capturing"] = True
         deadline = time.time() + WAKE_CAPTURE_MAX_S
         while time.time() < deadline:
             time.sleep(0.4)
@@ -2368,6 +2388,7 @@ def wake_loop():
                 quiet += 1
                 if quiet >= 2:
                     break
+        WAKE["capturing"] = False
         with MIC_LOCK:
             tail = bytes(MIC_STREAM["adpcm"])
             MIC_STREAM["adpcm"] = bytearray()

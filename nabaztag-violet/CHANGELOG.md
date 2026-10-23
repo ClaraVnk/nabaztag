@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.1
+
+- **A capture in flight is no longer cancelled from under its owner.** The
+  clearing `RT` sent on a fresh session rescues a rabbit left recording by a
+  dropped link, which is why 0.16.0 made it unconditional. But there is one
+  stream it must not touch: the seconds after the wake word, while the command
+  is being collected. That is Le Terrier's test — do not clear a capture that
+  is *in flight* — adopted here for the one case where this add-on has a
+  bounded capture to ask about. Everything else is a steady state, and for
+  that the re-arm is still the answer.
+  Worth recording what is *not* the test: whether datagrams are arriving. They
+  arrive either way. A rabbit left streaming by a dropped link sends exactly
+  like one streaming on purpose (**pacifox**, #23 finding 6), so the receiver
+  cannot tell an orphan from a wanted stream — only server-side intent can.
+
 ## 0.16.0
 
 - **Every pushed sound gets the speaker to itself.** The rabbit is half-duplex
