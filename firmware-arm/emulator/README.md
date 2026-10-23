@@ -146,11 +146,40 @@ produce the same transcript on any machine.
 
 ## What it already answers
 
-**WPA3 personal, SAE only: the rabbit will not even try.** Not a bug, and not
-fixable in the radio. `ieee80211_input_mgt()` walks the RSN element's AKM list
-looking for suite 2 (PSK) and a WPA3-only AP offers only suite 8 (SAE), so the
-scan result comes back `IEEE80211_CRYPT_UNSUPPORTED` and the network is never a
-candidate. SAE was standardised eleven years after this chip shipped.
+**WPA3 personal, SAE only: the rabbit does not try.** `ieee80211_input_mgt()`
+walks the RSN element's AKM list looking for suite 2 (PSK); a WPA3-only AP
+offers only suite 8 (SAE), so the scan result comes back
+`IEEE80211_CRYPT_UNSUPPORTED` and the network is never a candidate.
+
+Unimplemented, not impossible — the distinction matters and an earlier draft
+of this file blurred it. Nothing in the silicon forbids SAE: it needs no
+accelerator, only arithmetic, and this chip does arithmetic. What it would
+cost, in order of difficulty:
+
+- **P-256 field arithmetic.** WPA3 mandates SAE group 19, which is NIST
+  P-256, so a scalar multiplication over a 256-bit prime field in software.
+  Call it 6-12 KB of flash and a few hundred milliseconds per association on
+  a 48 MHz ARM7TDMI with no multiplier worth the name. SAE-H2E rather than
+  hunting-and-pecking avoids up to forty modular exponentiations to find the
+  password element, and is worth having for that reason alone.
+- **The watchdog.** A scalar multiplication that runs for 200 ms without
+  `CLR_WDT` reboots the rabbit. The arithmetic has to be interruptible or
+  the loop has to feed the dog, and this is the kind of detail that turns a
+  correct implementation into a boot loop.
+- **AES-CMAC, for 802.11w.** Management frame protection is mandatory with
+  WPA3, and the RT2501 does CCMP for data in hardware but nothing for
+  management frames. That is BIP in software, which needs an AES *encrypt*
+  side — `../crypto/aes128.c` is decrypt-only, and `src/vapcrypto.c` here
+  already has the other half.
+- **Flash.** The tight one. `--gc-sections` freed 6-10 KB and the ROM-pages
+  work exists precisely because this budget is nearly spent.
+
+Where SAE would live is settled by the same observation that makes this
+emulator work: the four-way handshake and the 802.11 management frames are C,
+in `eapol.c` and `ieee80211.c`, so SAE belongs beside them and not in the
+bytecode. Which means it can be written and measured here — cycle counts
+included — before anything is flashed. That is the argument for building the
+emulator first and the cryptography second.
 
 **WPA2/WPA3 transition mode works.** The RSN element offers both PSK and SAE,
 the AKM search finds PSK, and the rabbit treats it as an ordinary WPA2 network
