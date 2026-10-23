@@ -1,0 +1,17 @@
+# WPA2 with CCMP, which is what every modern AP does. Two things are under
+# test here and only the first one passes today:
+#
+#   1. the beacon's cipher suites are read correctly, and the comparison in
+#      OPnetAuth (vinterp.c:921) lets netAuth run at all
+#   2. the four-way handshake completes
+#
+# The virtual AP cannot run a four-way handshake yet, so the rabbit reaches
+# IEEE80211_S_EAPOL and stops there. That is what this asserts: the point is
+# to lock in step 1 and make step 2's absence visible.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect EAPOL

@@ -1,0 +1,13 @@
+# WPA2/WPA3 transition mode: the RSN element offers both PSK and SAE, which
+# is what a UniFi network does when you tick "WPA2/WPA3". The firmware's AKM
+# search finds PSK and the network IS a candidate, so this is the setting
+# that keeps a 2006 rabbit on a 2026 network.
+#
+# It stops in EAPOL for the same reason as wpa2-ccmp: no handshake yet.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect EAPOL

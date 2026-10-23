@@ -1,0 +1,16 @@
+# WPA3 personal, SAE only. The question she will ask next.
+#
+# Expected outcome: the rabbit does not even try. ieee80211_input_mgt() walks
+# the RSN element's AKM list looking for suite 2 (PSK) and finds only suite 8
+# (SAE), so the scan result comes back IEEE80211_CRYPT_UNSUPPORTED and the
+# network is never a candidate. Nothing in the firmware is broken — SAE was
+# standardised eleven years after this chip shipped.
+#
+# The transition mode next door is the one worth testing: see wpa3-transition.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+tick 50
+stop 30000
+
+at 20000 expect IDLE

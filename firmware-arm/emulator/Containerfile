@@ -1,0 +1,50 @@
+# The rabbit emulator, in a container, so it needs nothing but podman.
+#
+#   podman build -t nabaztag-emulator -f emulator/Containerfile .
+#   podman run --rm nabaztag-emulator
+#
+# Run it from firmware-arm/, not from here: the build context has to include
+# ../crypto (the AES implementation nabgcc lacks) and ../apply-mods.py.
+#
+# The nabgcc commit is pinned to the same one the firmware Dockerfile builds,
+# so the emulator and the thing that gets flashed are the same code.
+FROM debian:bookworm-slim
+
+ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
+# Which apply-mods.py steps to apply. The default is every change that touches
+# the network stack; add or drop steps to measure one in isolation.
+ARG MOD_STEPS=wpa2_gtk
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential git python3 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN git clone https://github.com/RedoXyde/nabgcc.git \
+ && cd nabgcc \
+ && git checkout "$NABGCC_COMMIT"
+
+# nabgcc's src/net/aes128.c is a stub: every function is empty, while
+# eapol.c calls it to unwrap the WPA2 group key. The emulator must use the
+# real one or it would be testing nothing.
+COPY crypto/aes128.c /build/nabgcc/src/net/aes128.c
+COPY crypto/aes128.h /build/nabgcc/inc/net/aes128.h
+
+# Run the same modifications the flashed firmware gets, so a fix can be tried
+# here before it costs a power cycle.
+COPY apply-mods.py /build/apply-mods.py
+RUN python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
+
+# The emulator needs the simulated register window; see the patch's own
+# comment for why a host cannot write to 0xB8000000.
+COPY emulator/patches/sim-mmio.patch /build/sim-mmio.patch
+RUN cd /build/nabgcc && git apply /build/sim-mmio.patch
+
+COPY crypto   /build/crypto
+COPY emulator /build/emulator
+
+WORKDIR /build/emulator
+RUN make NABGCC=/build/nabgcc
+
+# Every scenario, with the exit status that says whether they all held.
+CMD ["make", "NABGCC=/build/nabgcc", "check"]

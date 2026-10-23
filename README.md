@@ -196,6 +196,10 @@ apply unless the reminder is marked urgent).
 │   ├── boot-mods/mdns.mtl   #    modernized config UI + boot-side mDNS announcer.
 │   ├── crypto/              #    Build via ./build.sh --remote HOST --runtime
 │   ├── pages/               #    {docker,podman} --mode {minimal|full|max|lean|…}.
+│   ├── emulator/            #    A rabbit that is not a rabbit: the Wi-Fi stack
+│   │                        #    run on a build machine against a virtual AP,
+│   │                        #    so a fix costs a second instead of unplugging
+│   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
 │   ├── BRICK_FORENSICS.md   #    Recovery plan + bisection ladder.
 │   └── RECOVERY.md
 ├── firmware/                # Runtime-side bytecode add-ons (mic stream, mDNS,
