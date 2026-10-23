@@ -22,6 +22,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+from collections import OrderedDict
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -390,8 +391,25 @@ def parse_choreography_spec(spec: str):
 # Resource store — the rabbit downloads audio / choreography resources over HTTP
 # from this server (referenced by full URL in ST/MU/CH program commands).
 # --------------------------------------------------------------------------- #
-RESOURCES: dict[str, tuple[str, bytes]] = {}
+# Bounded, and it forgets. It used to be an unbounded dict that nothing ever
+# removed from, so every choreography, jingle and spoken sentence stayed in
+# memory until the add-on restarted. pacifox measured it in #28: ~310 bytes
+# per /api/led call, ~9 MB after twenty jingles, tens of MB a day from a
+# client that animates the belly once a second.
+#
+# Three bounds, because any one of them has a bad day. Age is the normal
+# case: the rabbit fetches a resource within seconds of the program that
+# names it, so two minutes is already generous. Count covers a burst too
+# fast for the clock to matter. Bytes covers a few large ones — a podcast
+# episode is not a jingle, and a count alone would hold gigabytes of them.
+RES_MAX_AGE = 120.0
+RES_MAX_ITEMS = 256
+RES_MAX_BYTES = 48 << 20
+
+RESOURCES: "OrderedDict[str, tuple[str, bytes, float]]" = OrderedDict()
 RES_LOCK = threading.Lock()
+RES_BYTES = 0
+RES_DROPPED = 0
 
 # Last microphone recording the rabbit uploaded (button push-to-talk → POST
 # /vl/record.jsp). The bytecode records at 8 kHz and POSTs a RIFF WAV in
@@ -467,11 +485,36 @@ def ima_adpcm_to_pcm_wav(wav_adpcm: bytes) -> bytes:
         return wav_adpcm
 
 
+def _res_evict_locked(now: float) -> None:
+    """Oldest first, until every bound is satisfied. Caller holds RES_LOCK."""
+    global RES_BYTES, RES_DROPPED
+    while RESOURCES:
+        _, (_, content, stored_at) = next(iter(RESOURCES.items()))
+        if not (now - stored_at > RES_MAX_AGE
+                or len(RESOURCES) > RES_MAX_ITEMS
+                or RES_BYTES > RES_MAX_BYTES):
+            return
+        RESOURCES.popitem(last=False)
+        RES_BYTES -= len(content)
+        RES_DROPPED += 1
+
+
 def store_resource(content: bytes, content_type: str = "application/octet-stream") -> str:
+    global RES_BYTES
     token = os.urandom(8).hex()
+    now = time.time()
     with RES_LOCK:
-        RESOURCES[token] = (content_type, content)
+        RESOURCES[token] = (content_type, content, now)
+        RES_BYTES += len(content)
+        _res_evict_locked(now)
     return token
+
+
+def resource_stats() -> dict:
+    """What the store is holding, so the number is visible rather than
+    inferred from RSS."""
+    with RES_LOCK:
+        return {"items": len(RESOURCES), "bytes": RES_BYTES, "dropped": RES_DROPPED}
 
 
 def resource_url(token: str) -> str:
@@ -1081,6 +1124,27 @@ class XmppSession(threading.Thread):
         self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
         _save_state()
 
+    def _should_clear_mic(self) -> bool:
+        """Whether to send the `RT` that clears a stale mic stream.
+
+        This used to run on every session. It was written for a stream left
+        by a previous *server* lifetime, which is right after a restart — but
+        since 0.15.7 the rabbit reconnects instead of rebooting, so "every
+        session" became "every reconnect", and anything that had started the
+        mic on purpose was silently stopped. pacifox reported it in #28 and
+        measured the duplicate `RS` it causes.
+
+        Once per MAC per process is what that issue suggests, and #23
+        finding 6 is why that is not enough on its own:
+        `stopEverythingAndResetToIdle` leaves `g_stream_on` set, so a stream
+        running when the link died is still running when the rabbit comes
+        back, and this `RT` is what rescues it.
+
+        So the question is not "have we done this" but "is this stream
+        ours": send it unless we are the ones who asked the mic to run.
+        """
+        return not (WAKE.get("streaming") or WAKE.get("on"))
+
     def _stop_listen_safely(self):
         """Idempotent safety net called on every fresh XMPP bind: tell the
         rabbit to stop any orphan mic stream left over from a previous
@@ -1184,7 +1248,8 @@ class XmppSession(threading.Thread):
                     # Belt-and-suspenders: clear any stale mic stream from a
                     # previous server lifetime before we decide what state to
                     # restore. The rabbit ignores RT if it isn't streaming.
-                    threading.Timer(1.5, self._stop_listen_safely).start()
+                    if self._should_clear_mic():
+                        threading.Timer(1.5, self._stop_listen_safely).start()
                     if VOLUME["hw"] is not None:
                         threading.Timer(3.0, lambda: self.send_program(f"SV {VOLUME['hw']}")).start()
                     if CONNECT_JINGLE:
@@ -1400,7 +1465,7 @@ class BootHandler(BaseHTTPRequestHandler):
             if entry is None:
                 self.send_error(404, "no such resource")
                 return
-            ctype, data = entry
+            ctype, data = entry[0], entry[1]
             log.info("serving resource %s (%d bytes, %s) to %s", token, len(data), ctype, self.address_string())
             self.send_response(200)
             self.send_header("Content-Type", ctype)
@@ -1759,7 +1824,20 @@ class ApiHandler(BaseHTTPRequestHandler):
                 # Full RGB on one of the 5 LEDs via a choreography.
                 # ?led=bottom|left|middle|right|top &r=&g=&b=
                 led = _one("led", "bottom").lower()
-                lid = LED_NAMES.get(led, int(led) if led.isdigit() else 0)
+                # A name the hardware does not have is a mistake, not a
+                # request for LED 0. `led=center` and `led=nose` are natural
+                # guesses — the names are bottom|left|middle|right|top — and
+                # silently lighting the belly instead taught at least one
+                # person that the API was broken. Reported in #28.
+                if led in LED_NAMES:
+                    lid = LED_NAMES[led]
+                elif led.isdigit() and 0 <= int(led) <= 4:
+                    lid = int(led)
+                else:
+                    self.send_error(
+                        400, "unknown led %r — use %s, or 0-4"
+                        % (led, "|".join(sorted(LED_NAMES))))
+                    return
                 r = int(_one("r", "0")); g = int(_one("g", "0")); bl = int(_one("b", "0"))
                 b.send_choreography(200, [(0, "led", (lid, r, g, bl))])
             elif path == "/api/choreography":
