@@ -51,7 +51,11 @@ MD_FILES = sorted(f for f in TRACKED if f.endswith(".md"))
 # Paths that live inside the firmware build container (the nabgcc checkout),
 # not in this repo — legitimately quoted by the firmware docs.
 CONTAINER_PREFIXES = ("nabgcc/", "mtl/", "mtl_linux/", "sys/", "src/", "inc/",
-                      "interface/", "utils/", "upstream/tweetnacl/")
+                      "interface/", "utils/", "upstream/tweetnacl/",
+                      # nabgcc's own layout, as the emulator's README quotes it:
+                      # it talks about hal/audio.c and vm/vaudio.c, which live
+                      # in the checkout the container clones, not in this repo.
+                      "hal/", "vm/", "net/", "usb/", "testvm/")
 ABSENT_MARKERS = ("not committed", "not versioned", "ignored by git", "gitignored",
                   "local output", "(local)", "does not exist", "is not shipped")
 
