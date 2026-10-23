@@ -67,6 +67,7 @@ void sim_run_events(void)
       case SIM_EV_AP_UP:      vap_set_up(e->ap, 1); break;
       case SIM_EV_SERVER_DROP: gw_server_drop(); break;
       case SIM_EV_ARP:         gw_set_arp(e->arg); break;
+      case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL: vap_drop_eapol(e->arg); break;

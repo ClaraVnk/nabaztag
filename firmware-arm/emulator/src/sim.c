@@ -151,6 +151,7 @@ void sim_default(void)
  *   at <ms> arp on|off            the gateway answers ARP, or stops
  *   at <ms> server-drop           the warren's TCP connections close
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
+ *   at <ms> ptk-rekey [<bssid>]   the AP restarts the four-way handshake
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
@@ -241,6 +242,9 @@ int sim_load(const char *path)
         e->arg = !strcmp(tok[3], "on");
       } else if(!strcmp(tok[2], "server-drop")) {
         e->kind = SIM_EV_SERVER_DROP;
+      } else if(!strcmp(tok[2], "ptk-rekey")) {
+        e->kind = SIM_EV_PTK_REKEY;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
       } else if(!strcmp(tok[2], "rekey")) {
         e->kind = SIM_EV_REKEY;
         if(n >= 4) e->ap = ap_by_bssid(tok[3]);

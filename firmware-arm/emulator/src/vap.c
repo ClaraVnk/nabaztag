@@ -568,10 +568,19 @@ static void vap_send_msg1(int ap)
   }
 
   memset(body, 0, sizeof(body));
-  /* An ANonce that is distinguishable in a dump and stable across runs. */
+  /* A fresh ANonce and the next replay counter -- and the counter has to keep
+   * going up across handshakes, not restart. It used to be set to 1 here,
+   * which made a pairwise rekey on a live association arrive with a counter
+   * the rabbit had already seen: eapol_input() rejects it as a replay long
+   * before eapol_input_msg1() looks at the state. Two runs then agreed that
+   * the rekey was ignored, and the access point was the one at fault.
+   *
+   * The nonce is derived from the counter rather than random, so a transcript
+   * is comparable between runs and a reply computed from the *previous*
+   * handshake's nonce is visible. */
+  hs->replay++;
   for(uint32_t i = 0; i < EAPOL_NONCE_LENGTH; i++)
-    hs->anonce[i] = (uint8_t)(0xa0 + i);
-  hs->replay = 1;
+    hs->anonce[i] = (uint8_t)(0xa0 + i + 0x20 * (hs->replay & 3));
 
   memcpy(fr->llc, eapol_llc, LLC_LENGTH);
   fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
@@ -591,8 +600,9 @@ static void vap_send_msg1(int ap)
   /* No MIC on message 1: the station has no PTK yet. */
 
   n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
-  sim_log("AP %s: EAPOL 1/4, ANonce a0..bf, key_desc_ver %d",
-          macstr(a->bssid), vap_desc_ver(a));
+  sim_log("AP %s: EAPOL 1/4, ANonce %02x..%02x, key_desc_ver %d",
+          macstr(a->bssid), hs->anonce[0],
+          hs->anonce[EAPOL_NONCE_LENGTH - 1], vap_desc_ver(a));
   queue_frame(out, n, a->rssi, a->channel);
   vap_stats.eapol_to_sta++;
   hs->stage = HS_SENT_MSG1;
@@ -611,7 +621,7 @@ static void vap_send_msg3(int ap)
   uint32_t n;
 
   memset(body, 0, sizeof(body));
-  hs->replay = 2;
+  hs->replay++;
 
   if(vap_is_wpa2(a)) {
     /* WPA2 delivers the group key in message 3, as a KDE inside the key
@@ -737,6 +747,9 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
       }
     }
 
+    if(vap_stats.ptk_rekeys_sent > vap_stats.ptk_rekeys_answered
+       && vap_stats.handshakes_completed > 0)
+      vap_stats.ptk_rekeys_answered++;
     vap_send_msg3(ap);
     return;
   }
@@ -1218,6 +1231,37 @@ void vap_rekey(int ap)
     vap_stats.eapol_to_sta++;
     vap_stats.rekeys_sent++;
     hs->rekey_pending = 1;
+  }
+}
+
+/**
+ * @brief Start a fresh four-way handshake on a live association.
+ *
+ * What hostapd's `wpa_ptk_rekey` does periodically. The access point sends
+ * message 1 again, with a new ANonce and the next replay counter, and expects
+ * message 2 back.
+ *
+ * Issue #26 finding 1 says the rabbit ignores it: eapol_input_msg1() returns
+ * early unless eapol_state is EAPOL_S_MSG1 or EAPOL_S_MSG3, and after a
+ * completed handshake it is EAPOL_S_GROUP or EAPOL_S_RUN. The AP then gives
+ * up and deauthenticates, and the rabbit reconnects from scratch.
+ */
+void vap_ptk_rekey(int ap)
+{
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct vap_handshake *hs = &vap_hs[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!sim.aps[i].associated || !ap_audible(&sim.aps[i])) continue;
+    if(hs->stage != HS_DONE && hs->stage != HS_SENT_MSG3) {
+      sim_log("AP %s: no finished handshake to rekey the pairwise key on top of",
+              macstr(sim.aps[i].bssid));
+      continue;
+    }
+    sim_log("AP %s: starting a fresh four-way handshake on a live association",
+            macstr(sim.aps[i].bssid));
+    hs->stage = HS_IDLE;
+    vap_stats.ptk_rekeys_sent++;
+    vap_send_msg1(i);
   }
 }
 
