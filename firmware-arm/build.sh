@@ -99,3 +99,18 @@ else
 fi
 
 ls -la "$OUTDIR/" "$HERE/bin/"naboot-*.signed.sim 2>/dev/null
+
+# Static checks on the image, before anybody flashes it. A Nabaztag has no
+# bootloader to fall back on: an image that faults early dead-loops in the
+# Data Abort vector and the only way back is a probe on the JTAG pads. See
+# BRICK_FORENSICS.md, which exists because that happened, and preflight.py,
+# whose first check is the global that caused it.
+#
+# This fails the build rather than warning. A warning at the end of a long
+# build is a warning nobody reads.
+echo ">> preflight checks on bin/$MODE"
+if ! python3 "$HERE/preflight.py" "$OUTDIR"; then
+  echo ">> NOT FLASHABLE: see the failures above. Nothing has been written to" >&2
+  echo "   a rabbit; fix the build and run this again." >&2
+  exit 1
+fi

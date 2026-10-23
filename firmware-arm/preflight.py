@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""Refuse to flash an image that is going to brick the rabbit.
+
+A Nabaztag has no bootloader you can fall back on and no reset worth the name.
+When an image faults early the CPU dead-loops in the Data Abort vector and the
+only way back is a J-Link on the JTAG pads, or a Raspberry Pi bit-banging
+them — see BRICK_FORENSICS.md and RECOVERY.md, which exist because that
+already happened.
+
+So this reads the built image before anyone flashes it and says no. Every
+check below is a static property of the artefacts: no rabbit is involved, it
+runs in a second, and it belongs in the build.
+
+The first check is the one that bricked a rabbit on 2026-06-20. The brick was
+an uninitialised global read before anything wrote it: `-fdata-sections`
+splits uninitialised globals into per-variable `.bss.*` sections, those land
+outside `__bss_start__..__bss_end__`, and cstartup's zero-loop only clears
+that range. The audio ring-buffer index was read as garbage, gave an
+out-of-bounds load in audioPlayFetchByte, a Data Abort, and the dead loop.
+
+What this does NOT check is that all of `.bss` is zeroed, and the reason
+matters. apply-mods.py's note of 2026-06-21 says bracketing `*(.bss.*)`
+correctly leaves ZERO VM heap on the 16 KB SRAM, so the bytecode loader cannot
+allocate and the rabbit stalls right after bc.jsp. The unzeroed region doubles
+as the heap, deliberately, and the fix was to force the handful of globals
+that are read before they are written into `.data` instead -- see
+patch_audio_fifo_data and patch_cold_state.
+
+So the check is "is every read-before-write global initialised", and its list
+is read out of apply-mods.py so the two cannot drift apart. An earlier draft
+of this file checked the whole of `.bss` and condemned nine good images and a
+freshly built one.
+
+  usage: preflight.py bin/lean [--key keys/signing_pubkey.h]
+
+Exit status is the number of failed checks, so it drops into a build script.
+Pure stdlib: no pyelftools, because a tool that refuses to flash has no
+business having dependencies that might not be installed on the day.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+# From sys/ml67q4051.ld. The last flash sector holds configuration data and is
+# deliberately outside the usable region.
+INTROM_ORIGIN, INTROM_LENGTH = 0x08000000, 124 * 1024
+INTRAM_ORIGIN, INTRAM_LENGTH = 0x10000000, 16 * 1024
+EXTRAM_ORIGIN, EXTRAM_LENGTH = 0xD0000000, 1024 * 1024
+
+# The linker reserves 0x1680 bytes of stack at the top of IntRAM and another
+# 0x100 below it, and puts the heap under that.
+STACK_BYTES = 0x1680
+HEAP_GAP = 0x100
+
+# Sections the KEEP() protections exist for: --gc-sections would otherwise
+# drop them, and a vector table dropped is an image that never starts.
+MUST_EXIST = (".intvec",)
+MUST_EXIST_PREFIX = (".startup", ".ramfunc", ".bytecode")
+
+SHT_NOBITS = 8
+SHF_ALLOC = 0x2
+
+
+class Elf:
+    """Just enough ELF32 little-endian to answer the questions above."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        d = path.read_bytes()
+        if d[:4] != b"\x7fELF":
+            raise ValueError(f"{path}: not an ELF file")
+        if d[4] != 1 or d[5] != 1:
+            raise ValueError(f"{path}: not 32-bit little-endian")
+        (e_shoff,) = struct.unpack_from("<I", d, 0x20)
+        e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHH", d, 0x2E)
+
+        raw = []
+        for i in range(e_shnum):
+            off = e_shoff + i * e_shentsize
+            (name, stype, flags, addr, offset, size, link, info,
+             align, entsize) = struct.unpack_from("<10I", d, off)
+            raw.append(dict(name=name, type=stype, flags=flags, addr=addr,
+                            offset=offset, size=size, link=link, info=info,
+                            entsize=entsize))
+
+        strtab_off = raw[e_shstrndx]["offset"]
+
+        def name_at(idx: int) -> str:
+            end = d.index(b"\0", strtab_off + idx)
+            return d[strtab_off + idx:end].decode("ascii", "replace")
+
+        self.sections = []
+        for s in raw:
+            s["sname"] = name_at(s["name"])
+            self.sections.append(s)
+
+        self.symbols: dict[str, int] = {}
+        for s in self.sections:
+            if s["sname"] not in (".symtab",):
+                continue
+            strs = self.sections[s["link"]]["offset"]
+            n = s["size"] // (s["entsize"] or 16)
+            for i in range(n):
+                off = s["offset"] + i * s["entsize"]
+                st_name, st_value = struct.unpack_from("<II", d, off)
+                if st_name == 0:
+                    continue
+                end = d.index(b"\0", strs + st_name)
+                self.symbols[d[strs + st_name:end].decode("ascii", "replace")] = st_value
+
+    def allocated(self):
+        return [s for s in self.sections
+                if (s["flags"] & SHF_ALLOC) and s["size"] > 0]
+
+    def by_prefix(self, prefix: str):
+        return [s for s in self.sections if s["sname"].startswith(prefix)]
+
+
+class Report:
+    def __init__(self):
+        self.failures = 0
+
+    def ok(self, what: str, detail: str = "") -> None:
+        print(f"  ok    {what}" + (f" — {detail}" if detail else ""))
+
+    def fail(self, what: str, detail: str) -> None:
+        self.failures += 1
+        print(f"  FAIL  {what}\n        {detail}")
+
+    def note(self, what: str, detail: str = "") -> None:
+        print(f"  note  {what}" + (f" — {detail}" if detail else ""))
+
+
+def guard_names(repo: Path) -> tuple[list[str], str]:
+    """The globals that are read before anything writes them.
+
+    Parsed out of apply-mods.py's own edits rather than copied, because a list
+    that lives in two places is a list that disagrees with itself. Falls back
+    to what those steps hold today if the parse fails, and says so.
+    """
+    fallback = ["usbhost_init_status", "usbctrl_state", "rec_state",
+                "play_state", "eapol_state", "replay_active",
+                "ieee80211_state", "play_w", "play_r"]
+    mods = repo / "apply-mods.py"
+    if not mods.is_file():
+        return fallback, "apply-mods.py not found, using the built-in list"
+    text = mods.read_text(encoding="utf-8", errors="replace")
+    found = []
+    # Both steps write `<type> <name> __attribute__((section(".data")))`,
+    # or an extern of the same, into a replacement string.
+    for m in re.finditer(r'(\w+)\s*\{data\}', text):
+        if m.group(1) not in found:
+            found.append(m.group(1))
+    for m in re.finditer(r'(\w+)\s+__attribute__\(\(section\(["\\]*\.data', text):
+        if m.group(1) not in found:
+            found.append(m.group(1))
+    if len(found) < 3:
+        return fallback, "could not parse apply-mods.py, using the built-in list"
+    return found, f"{len(found)} name(s) read out of apply-mods.py"
+
+
+def check_guards_initialised(elf: Elf, r: Report, repo: Path) -> None:
+    names, how = guard_names(repo)
+    r.note("read-before-write globals", how)
+
+    in_bss = []
+    for n in names:
+        if any(s["sname"] == f".bss.{n}" and s["size"] > 0 for s in elf.sections):
+            in_bss.append(n)
+
+    if in_bss:
+        r.fail("every read-before-write global is initialised",
+               f"{', '.join(in_bss)} still live in a .bss.* section, which "
+               f"cstartup does not clear. One of these read as garbage is the "
+               f"2026-06-20 brick: an out-of-bounds load, a Data Abort, and "
+               f"the CPU dead-loops in the vector. Run apply-mods.py with the "
+               f"audio_fifo_data and cold_state steps")
+    else:
+        r.ok("every read-before-write global is initialised",
+             f"all {len(names)} are out of .bss.*")
+
+
+def note_bss_region(elf: Elf, r: Report) -> None:
+    """How much .bss is left unzeroed, which here is by design."""
+    start = elf.symbols.get("__bss_start__")
+    end = elf.symbols.get("__bss_end__")
+    orphans = [s for s in elf.by_prefix(".bss")
+               if s["size"] > 0 and not (start is not None and end is not None
+                                         and s["addr"] >= start
+                                         and s["addr"] + s["size"] <= end)]
+    total = sum(s["size"] for s in orphans)
+    if start is None or end is None:
+        r.fail("the zero-loop's bounds exist",
+               "__bss_start__ or __bss_end__ is missing, so nothing can say "
+               "what cstartup clears")
+        return
+    r.note("the zero-loop clears", f"{end - start} bytes "
+           f"(0x{start:08x}..0x{end:08x})")
+    if orphans:
+        r.note(f"{len(orphans)} .bss.* section(s) are left as they were",
+               f"{total} bytes — deliberate, the VM heap sits over them; see "
+               f"apply-mods.py's note of 2026-06-21")
+
+
+def check_no_overlap(elf: Elf, r: Report) -> None:
+    secs = sorted(elf.allocated(), key=lambda s: s["addr"])
+    clash = []
+    for a, b in zip(secs, secs[1:]):
+        if a["addr"] + a["size"] > b["addr"]:
+            clash.append((a["sname"], a["addr"], a["size"], b["sname"], b["addr"]))
+    if clash:
+        n, aa, sz, m, ba = clash[0]
+        r.fail("no two sections share an address",
+               f"{n} (0x{aa:08x}+{sz}) runs into {m} (0x{ba:08x})"
+               + (f", and {len(clash)-1} more" if len(clash) > 1 else ""))
+    else:
+        r.ok("no two sections share an address", f"{len(secs)} allocated")
+
+
+def check_regions(elf: Elf, r: Report) -> None:
+    regions = (("IntROM", INTROM_ORIGIN, INTROM_LENGTH),
+               ("IntRAM", INTRAM_ORIGIN, INTRAM_LENGTH),
+               ("ExtRAM", EXTRAM_ORIGIN, EXTRAM_LENGTH))
+    stray = []
+    for s in elf.allocated():
+        lo, hi = s["addr"], s["addr"] + s["size"]
+        if not any(o <= lo and hi <= o + l for _, o, l in regions):
+            stray.append((s["sname"], lo, s["size"]))
+    if stray:
+        n, a, sz = stray[0]
+        r.fail("every section is inside a declared memory region",
+               f"{n} at 0x{a:08x} ({sz} B) is in none of IntROM, IntRAM or "
+               f"ExtRAM" + (f", and {len(stray)-1} more" if len(stray) > 1 else ""))
+    else:
+        r.ok("every section is inside a declared memory region")
+
+    for name, origin, length in regions:
+        used = [s for s in elf.allocated()
+                if origin <= s["addr"] < origin + length]
+        if not used:
+            continue
+        top = max(s["addr"] + s["size"] for s in used)
+        r.note(f"{name} used to 0x{top:08x}",
+               f"{top - origin} of {length} bytes")
+
+
+def check_stack_margin(elf: Elf, r: Report, floor: int) -> None:
+    """Room between the *zeroed* data and the stack.
+
+    Only `.data` and the bracketed `.bss` are measured. The orphan `.bss.*`
+    sections deliberately overlap the heap and stack region -- measuring those
+    reports every correct image as broken, which an earlier draft of this file
+    did. Issue #27 is about this margin; what it asks for is the number, and
+    the number is printed whether or not it fails.
+    """
+    stack_end = elf.symbols.get("__stack_end__")
+    if stack_end is None:
+        stack_end = INTRAM_ORIGIN + INTRAM_LENGTH - STACK_BYTES
+        r.note("__stack_end__ is absent, using the linker's arithmetic",
+               f"0x{stack_end:08x}")
+    bss_end = elf.symbols.get("__bss_end__")
+    zeroed = [s for s in elf.allocated()
+              if INTRAM_ORIGIN <= s["addr"] < INTRAM_ORIGIN + INTRAM_LENGTH
+              and (s["sname"] == ".data" or s["sname"] == ".bss")]
+    if not zeroed:
+        r.note("nothing initialised in internal RAM")
+        return
+    top = max(s["addr"] + s["size"] for s in zeroed)
+    if bss_end is not None:
+        top = max(top, bss_end)
+    margin = stack_end - top
+    r.note("between the initialised data and __stack_end__",
+           f"{margin} bytes (0x{top:08x}..0x{stack_end:08x})")
+    if margin < 0:
+        r.fail("the stack and the initialised data stay apart",
+               f"the initialised data reaches 0x{top:08x}, {-margin} bytes "
+               f"PAST __stack_end__ (0x{stack_end:08x}) — the stack will "
+               f"overwrite it, and a corrupted global is not a crash anyone "
+               f"can trace")
+    elif margin < floor:
+        r.fail("the stack has room to grow",
+               f"{margin} bytes, and the floor is {floor}. Raise it with "
+               f"--stack-floor if that is deliberate")
+    else:
+        r.ok("the stack has room to grow", f"{margin} bytes free")
+
+
+def check_kept_sections(elf: Elf, r: Report) -> None:
+    """The sections KEEP() exists for, when the build has them as sections.
+
+    Not every build does, and that is not a fault: with the stock linker
+    script the vector table and the startup code are simply part of .text.
+    What matters is that *something* is mapped at the reset address, so that
+    is what fails; a missing named section is a note.
+    """
+    at_reset = [s for s in elf.allocated() if s["addr"] == INTROM_ORIGIN]
+    if not at_reset:
+        r.fail("something is mapped at the reset address",
+               f"no section starts at 0x{INTROM_ORIGIN:08x}, which is the "
+               f"first address the CPU fetches from")
+    else:
+        r.ok("something is mapped at the reset address",
+             f"{at_reset[0]['sname']}, {at_reset[0]['size']} bytes")
+
+    missing = [n for n in MUST_EXIST
+               if not any(s["sname"] == n and s["size"] > 0 for s in elf.sections)]
+    for prefix in MUST_EXIST_PREFIX:
+        if not any(s["sname"].startswith(prefix) and s["size"] > 0
+                   for s in elf.sections):
+            missing.append(prefix + "*")
+    if missing:
+        r.note("the KEEP()-protected sections are not separate here",
+               f"{', '.join(missing)} — folded into .text, which the stock "
+               f"linker script does. Only a concern once --gc-sections is on "
+               f"and the linker script names them")
+    else:
+        r.ok("the sections KEEP() protects are still here")
+
+
+def check_reset_vector(bin_path: Path, r: Report) -> None:
+    if not bin_path.is_file():
+        r.note(f"{bin_path.name} is absent, not checking the reset vector")
+        return
+    head = bin_path.read_bytes()[:4]
+    if len(head) < 4:
+        r.fail("the reset vector is an instruction", "the image is shorter than a word")
+        return
+    (word,) = struct.unpack("<I", head)
+    # Two idioms are correct at a vector, and only accepting one of them was
+    # my own bug: `B somewhere` (0xEA……) and `LDR PC, [PC, #offset]`
+    # (0xE59FF0……), which is what a table of 32-bit handler addresses needs
+    # and what this firmware actually uses.
+    if (word >> 24) == 0xEA:
+        target = INTROM_ORIGIN + 8 + ((word & 0x00FFFFFF) << 2)
+        r.ok("the reset vector is an instruction", f"B 0x{target:08x}")
+    elif (word & 0xFFFFF000) == 0xE59FF000:
+        r.ok("the reset vector is an instruction",
+             f"LDR PC, [PC, #{word & 0xFFF}]")
+    else:
+        r.fail("the reset vector is an instruction",
+               f"the first word is 0x{word:08x}, which is neither a branch "
+               f"(0xEA……) nor LDR PC (0xE59FF0……). The CPU fetches it as the "
+               f"reset vector whatever it is")
+
+
+def check_size(bin_path: Path, r: Report) -> None:
+    if not bin_path.is_file():
+        return
+    size = bin_path.stat().st_size
+    if size > INTROM_LENGTH:
+        r.fail("the image fits in flash",
+               f"{size} bytes against {INTROM_LENGTH} usable "
+               f"({size - INTROM_LENGTH} over)")
+    else:
+        r.ok("the image fits in flash",
+             f"{size} of {INTROM_LENGTH} bytes, {INTROM_LENGTH - size} spare")
+
+
+def check_signature(build: Path, r: Report, key: Path | None) -> None:
+    signed = sorted(build.glob("*.signed.sim"))
+    if not signed:
+        r.note("no signed .sim here, nothing to verify")
+        return
+    verify = Path(__file__).resolve().parent / "signing" / "verify_sim.py"
+    if not verify.is_file():
+        r.note("signing/verify_sim.py is absent, not verifying the signature")
+        return
+    cmd = [sys.executable, str(verify), str(signed[0])]
+    if key:
+        cmd += ["--pubkey", str(key)]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception as exc:  # noqa — a missing tool is not a bad signature
+        r.note(f"could not run verify_sim.py ({exc})")
+        return
+    if out.returncode == 0:
+        r.ok("the signature verifies", signed[0].name)
+    else:
+        r.fail("the signature verifies",
+               f"{signed[0].name}: {(out.stderr or out.stdout).strip()[:300]}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Static checks on a built firmware, before anyone flashes it.")
+    ap.add_argument("build", type=Path,
+                    help="a build directory, e.g. bin/lean")
+    ap.add_argument("--key", type=Path, default=None,
+                    help="public key for the signature check")
+    ap.add_argument("--stack-floor", type=int, default=512,
+                    help="bytes that must stay free below __stack_end__ (default 512)")
+    args = ap.parse_args()
+
+    build: Path = args.build
+    if not build.is_dir():
+        print(f"{build}: not a directory", file=sys.stderr)
+        return 2
+
+    elfs = sorted(build.glob("*.elf"))
+    if not elfs:
+        print(f"{build}: no .elf here, so there is nothing to check. Build "
+              f"with the elf kept, or point this at the right directory.",
+              file=sys.stderr)
+        return 2
+
+    print(f"== preflight {build}")
+    r = Report()
+    try:
+        elf = Elf(elfs[0])
+    except ValueError as exc:
+        print(f"  FAIL  {exc}")
+        return 1
+
+    repo = Path(__file__).resolve().parent
+    check_guards_initialised(elf, r, repo)
+    note_bss_region(elf, r)
+    check_no_overlap(elf, r)
+    check_regions(elf, r)
+    check_stack_margin(elf, r, args.stack_floor)
+    check_kept_sections(elf, r)
+    check_reset_vector(build / "Nab.bin", r)
+    check_size(build / "Nab.bin", r)
+    check_signature(build, r, args.key)
+
+    print()
+    if r.failures:
+        print(f"== {r.failures} check(s) failed — do not flash this")
+    else:
+        print("== every check passed")
+    return r.failures
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
