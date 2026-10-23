@@ -68,7 +68,7 @@ script:
   nabaztag_remember_task:
     alias: "Nabaztag - se souvenir : surveiller un état"
     description: >-
-      Mémorise un ordre permanent : surveille une entité et préviens Kevin à voix
+      Mémorise un ordre permanent : surveille une entité et annonce à voix
       haute (via Nabi) quand la condition devient vraie. À utiliser pour
       « préviens-moi quand … » sur un état (batterie pleine, lave-linge fini,
       porte ouverte, il pleut…). Se déclenche UNE fois puis s'oublie.

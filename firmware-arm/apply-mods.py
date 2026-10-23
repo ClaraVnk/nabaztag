@@ -316,7 +316,7 @@ def patch_makefile(root: Path) -> None:
     These wire DBG_VM(...) macros to sprintf+UART, which drags in
     _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
     glue. Production firmware doesn't need them; the serial console is
-    not wired up on Kevin's rabbit anyway.
+    not wired up on a production rabbit anyway.
     """
     p = root / "Makefile"
     s = p.read_text()
@@ -1623,7 +1623,7 @@ def main() -> int:
             "full         = everything (verify-enforced bootloader + modernized UI). "
             "minimal      = opcode + crypto only; boot.mtl stays byte-identical to "
             "vanilla wpa2. The minimal build is our rescue 'parachute' — "
-            "almost the same firmware Kevin's sysadmin already flashed safely, "
+            "almost the same firmware that was already flashed safely by hand, "
             "plus the verifySig opcode for future OTAs. "
             "signed-stock = minimal + httpflash signature gate, NO page changes. "
             "Use after minimal proves the C-side is sane, to verify the "
