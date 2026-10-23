@@ -53,9 +53,16 @@ INTROM_ORIGIN, INTROM_LENGTH = 0x08000000, 124 * 1024
 INTRAM_ORIGIN, INTRAM_LENGTH = 0x10000000, 16 * 1024
 EXTRAM_ORIGIN, EXTRAM_LENGTH = 0xD0000000, 1024 * 1024
 
-# The linker reserves 0x1680 bytes of stack at the top of IntRAM and another
-# 0x100 below it, and puts the heap under that.
+# sys/asm/init.s carves 0x1680 bytes off the top of IntRAM for the six mode
+# stacks, in this order downwards: UND 0x80, SVC 0x80, ABT 0x80, FIQ 0x100,
+# IRQ 0x400, and the user stack 0x1000 at the bottom of the block. So the user
+# stack pointer starts just under the five privileged ones and grows down
+# through its 4 KB.
 STACK_BYTES = 0x1680
+USR_STACK_SIZE = 0x1000
+# What the user stack pointer starts at: the top of IntRAM less the five
+# stacks above it (0x1680 - 0x1000).
+USR_STACK_TOP = 0x10000000 + 16 * 1024 - (STACK_BYTES - USR_STACK_SIZE)
 HEAP_GAP = 0x100
 
 # Sections the KEEP() protections exist for: --gc-sections would otherwise
@@ -251,44 +258,61 @@ def check_regions(elf: Elf, r: Report) -> None:
 
 
 def check_stack_margin(elf: Elf, r: Report, floor: int) -> None:
-    """Room between the *zeroed* data and the stack.
+    """How far the user stack can grow before it hits a live global.
 
-    Only `.data` and the bracketed `.bss` are measured. The orphan `.bss.*`
-    sections deliberately overlap the heap and stack region -- measuring those
-    reports every correct image as broken, which an earlier draft of this file
-    did. Issue #27 is about this margin; what it asks for is the number, and
-    the number is printed whether or not it fails.
+    Two numbers, and the second is the one that matters. An earlier version of
+    this check measured only `.data` and the bracketed `.bss`, on the grounds
+    that the orphan `.bss.*` sections deliberately overlap the heap. That is
+    right for the zero-loop question and wrong for this one: those orphans are
+    live globals, and pacifox's issue #27 names them — IRQ_HANDLER_TABLE, the
+    _vmem_* pointers, and vlog.c's 4 KB buffer_temp. The stack does not care
+    that they are unzeroed; it will write over them.
+
+    So the margin is from the user stack pointer's starting value down to the
+    highest allocated object in internal RAM, whatever section it is in. On a
+    lean build that is about 1.9 KB, and the first thing a deeper call chain
+    overwrites is the interrupt dispatch table.
     """
-    stack_end = elf.symbols.get("__stack_end__")
-    if stack_end is None:
-        stack_end = INTRAM_ORIGIN + INTRAM_LENGTH - STACK_BYTES
-        r.note("__stack_end__ is absent, using the linker's arithmetic",
-               f"0x{stack_end:08x}")
     bss_end = elf.symbols.get("__bss_end__")
     zeroed = [s for s in elf.allocated()
               if INTRAM_ORIGIN <= s["addr"] < INTRAM_ORIGIN + INTRAM_LENGTH
-              and (s["sname"] == ".data" or s["sname"] == ".bss")]
-    if not zeroed:
-        r.note("nothing initialised in internal RAM")
+              and s["sname"] in (".data", ".bss")]
+    if zeroed:
+        top = max(s["addr"] + s["size"] for s in zeroed)
+        if bss_end is not None:
+            top = max(top, bss_end)
+        r.note("the initialised data ends at", f"0x{top:08x}")
+
+    ram = [s for s in elf.allocated()
+           if INTRAM_ORIGIN <= s["addr"] < INTRAM_ORIGIN + INTRAM_LENGTH]
+    if not ram:
+        r.note("nothing in internal RAM")
         return
-    top = max(s["addr"] + s["size"] for s in zeroed)
-    if bss_end is not None:
-        top = max(top, bss_end)
-    margin = stack_end - top
-    r.note("between the initialised data and __stack_end__",
-           f"{margin} bytes (0x{top:08x}..0x{stack_end:08x})")
+
+    highest = max(ram, key=lambda s: s["addr"] + s["size"])
+    top = highest["addr"] + highest["size"]
+    stack_top = elf.symbols.get("__stack_start__")
+    # __stack_start__ is the top of the whole 0x1680 block; the user stack
+    # begins below the five privileged ones.
+    usr_top = (stack_top - (STACK_BYTES - USR_STACK_SIZE)
+               if stack_top is not None else USR_STACK_TOP)
+    margin = usr_top - top
+
     if margin < 0:
-        r.fail("the stack and the initialised data stay apart",
-               f"the initialised data reaches 0x{top:08x}, {-margin} bytes "
-               f"PAST __stack_end__ (0x{stack_end:08x}) — the stack will "
-               f"overwrite it, and a corrupted global is not a crash anyone "
-               f"can trace")
+        r.fail("the user stack has room before it reaches a global",
+               f"{highest['sname']} ends at 0x{top:08x}, which is {-margin} "
+               f"bytes ABOVE where the user stack pointer starts "
+               f"(0x{usr_top:08x}) — they share memory from the first call")
     elif margin < floor:
-        r.fail("the stack has room to grow",
-               f"{margin} bytes, and the floor is {floor}. Raise it with "
-               f"--stack-floor if that is deliberate")
+        r.fail("the user stack has room before it reaches a global",
+               f"{margin} bytes between 0x{usr_top:08x} and {highest['sname']} "
+               f"at 0x{top:08x}, and the floor is {floor}. A deeper call chain "
+               f"overwrites that global; on a lean build the first one is the "
+               f"interrupt dispatch table. Raise it with --stack-floor if that "
+               f"is deliberate")
     else:
-        r.ok("the stack has room to grow", f"{margin} bytes free")
+        r.ok("the user stack has room before it reaches a global",
+             f"{margin} bytes down to {highest['sname']} at 0x{top:08x}")
 
 
 def check_kept_sections(elf: Elf, r: Report) -> None:
@@ -393,8 +417,9 @@ def main() -> int:
                     help="a build directory, e.g. bin/lean")
     ap.add_argument("--key", type=Path, default=None,
                     help="public key for the signature check")
-    ap.add_argument("--stack-floor", type=int, default=512,
-                    help="bytes that must stay free below __stack_end__ (default 512)")
+    ap.add_argument("--stack-floor", type=int, default=1024,
+                    help="bytes the user stack must have before it reaches the "
+                         "highest global in internal RAM (default 1024)")
     args = ap.parse_args()
 
     build: Path = args.build
