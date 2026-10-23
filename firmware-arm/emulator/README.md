@@ -134,7 +134,15 @@ at 90000 expect RUN
 | `at <ms> disassoc [<bssid>] [reason <n>]` | disassociate it |
 | `at <ms> down <bssid>` / `up <bssid>` | take an AP off the air, or back |
 | `at <ms> drop-eapol <n>` | swallow the next `n` EAPOL frames |
+| `at <ms> rekey [<bssid>]` | the AP rotates the group key |
+| `at <ms> ptk-rekey [<bssid>]` | the AP restarts the four-way handshake |
+| `at <ms> reauth [<bssid>]` | the AP repeats its authentication reply |
+| `at <ms> arp on` / `arp off` | the gateway answers ARP, or stops |
+| `at <ms> server-drop` | the warren's TCP connections close |
+| `at <ms> server-close` | …after announcing `</stream:stream>`, as a server shutting down does |
 | `at <ms> expect <state>` | assert `ieee80211_state`: IDLE, SCAN, AUTH, ASSOC, EAPOL, RUN |
+| `realtime` | pace the loop to the wall clock |
+| `fetch <ms> <event>` | any of the above, `<ms>` after the rabbit starts downloading a sound |
 
 `security` is one of `open`, `wep`, `wpa-tkip`, `wpa2-tkip`, `wpa2-ccmp`,
 `wpa2-mixed`, `wpa3-sae`, `wpa2+wpa3`.
@@ -143,6 +151,17 @@ Time is virtual, not wall-clock. The firmware's only clock is `counter_timer`,
 which the emulator writes itself, so `IEEE80211_RUN_TIMEOUT` — ten minutes on
 the hardware — passes in a few milliseconds, and two runs of the same scenario
 produce the same transcript on any machine.
+
+Two directives exist because of that. `realtime` paces the loop to the wall
+clock, which is needed whenever something outside the process has timers of
+its own: the add-on schedules what it pushes with `threading.Timer` in wall
+seconds — the connect jingle at +3.5 s — and without `realtime` a whole
+two-minute run is over in five seconds, so nothing it sends ever arrives. And
+`fetch <ms>` counts from the download rather than from power-on, because when
+the warren decides to push a sound is the warren's business: "cut the
+connection 300 ms into the download" is a thing a scenario can state, while
+"cut it at 13,050 ms" is a guess that passes for the wrong reason the day the
+timing moves.
 
 ## Testing a bytecode patch, not only a C one
 

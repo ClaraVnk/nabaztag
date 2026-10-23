@@ -36,6 +36,8 @@ extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
 #include "vm/vlog.h"
 #include "vm/vnet.h"
 
+#include "hal/audio.h"
+
 #include "sim.h"
 #include "vap.h"
 #include "hw.h"
@@ -58,7 +60,7 @@ void sim_run_events(void)
 {
   for(int i = 0; i < sim.nb_events; i++) {
     struct sim_event *e = &sim.events[i];
-    if(e->fired || sim_now() < e->at_ms) continue;
+    if(e->fired || e->rel_fetch || sim_now() < e->at_ms) continue;
     e->fired = 1;
     switch(e->kind) {
       case SIM_EV_DEAUTH:     vap_deauth(e->ap, 0, (uint16_t)e->arg); break;
@@ -187,9 +189,18 @@ int main(int argc, char **argv)
     gw_poll();
     hw_tick();
 
+    /* main.c calls these here and again after every frame it takes in, and
+     * they are not bookkeeping: play_check() is what moves a sound from the
+     * bytecode's FIFO to the decoder. Leave them out and the rabbit fetches
+     * its sound, fills the FIFO once and stays silent. */
+    play_check(0);
+    rec_check();
+
     while((r = rt2501_receive()) != NULL) {
       netCb(r->data, r->length, r->source_mac);
       hcd_free(r);
+      play_check(0);
+      rec_check();
     }
 
     if(ieee80211_state != last_state) {

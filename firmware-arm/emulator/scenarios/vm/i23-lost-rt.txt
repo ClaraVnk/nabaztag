@@ -1,0 +1,30 @@
+# Issue #23 finding 5: the RT never arrives, and the next sound meets a live
+# capture.
+#
+# pacifox's words: "Finding 5 is the one the wake word lives in … The gap left
+# is an RT that is lost, for example sent while the rabbit is reconnecting:
+# then the next sound meets a live capture."
+#
+# The sequence this plays: the rabbit is recording (the add-on has sent RS),
+# the session drops, so the RT that would have stopped the capture is never
+# delivered. The rabbit reconnects and the add-on pushes its connect jingle,
+# which is the next sound. Whether it is heard depends on something the
+# bytecode cannot see: hal/audio.c's play_start() returns without a word when
+# rec_state is set, so a refused sound looks exactly like a played one from
+# the warren's side.
+#
+# The capture is started from outside, over the control API, because that is
+# where it comes from in life. tools/i23-lost-rt.sh drives it.
+#
+#   tools/i23-lost-rt.sh <api-host>:8080 &
+#   ./rabbit-vm scenarios/vm/i23-lost-rt.txt --eeprom static.eeprom \
+#       --warren <host> --audio-dir audio/
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+realtime
+stop 130000
+
+at 25000  expect RUN
+at 30000  server-drop
+at 125000 expect RUN
