@@ -1,0 +1,12 @@
+# A container that can run mtl_compiler, which is a 32-bit binary.
+#
+# The Metal compiler shipped with nabgcc is an ELF 32-bit x86 executable, and
+# a current x86_64 distribution has no /lib/ld-linux.so.2 to load it. Building
+# it from source does not help: RedoXyde/mtl_linux does not compile with a
+# current gcc. So the loader comes from here instead.
+FROM debian:bookworm-slim
+RUN dpkg --add-architecture i386 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libc6:i386 libstdc++6:i386 perl python3 \
+ && rm -rf /var/lib/apt/lists/*
