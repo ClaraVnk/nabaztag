@@ -45,6 +45,8 @@ echo "==> patch_dns.py   (mDNS resolver for .local)"
 python3 "$HERE/patch_dns.py" "$BC/sources/dns.mtl"
 echo "==> patch_reconnect.py  (reconnect instead of rebooting on a closed socket)"
 python3 "$HERE/patch_reconnect.py" "$BC/sources/main.mtl"
+echo "==> patch_wifi_reconnect.py  (rejoin WPA/WPA2 after a link loss)"
+python3 "$HERE/patch_wifi_reconnect.py" "$BC/sources"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
