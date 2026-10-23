@@ -25,6 +25,11 @@
 #include "net/ieee80211.h"
 #include "net/eapol.h"
 
+/* eapol.c defines this with a uint16_t length; vnet.c declares it with an
+ * int32_t one. Matching the definition. */
+extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
+                              uint16_t ssidlength, uint8_t *pmk);
+
 #include "vm/vmem.h"
 #include "vm/vinterp.h"
 #include "vm/vloader.h"
@@ -125,6 +130,21 @@ int main(int argc, char **argv)
 
   sim_log("scenario %s, tick %u ms, stop at %u ms",
           scenario ? scenario : "(default)", sim.tick_ms, sim.stop_ms);
+
+  /* The virtual AP needs the PMK to run a four-way handshake. The rabbit gets
+   * its own from the configuration page, where mkconf.py put the PBKDF2 of the
+   * same passphrase — so both ends derive it from the scenario and neither is
+   * told the other's. Without this the AP reports "no PMK" and a WPA2 run
+   * stops in IEEE80211_S_EAPOL with the association already done, which looks
+   * like a firmware fault and is not one. */
+  if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
+    uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
+    mypassword_to_pmk((const uint8_t *)sim.psk, (uint8_t *)sim.aps[0].ssid,
+                      (uint16_t)strlen(sim.aps[0].ssid), pmk);
+    vap_set_pmk(pmk);
+    sim_log("PMK for \"%s\" / \"%s\": %02x%02x%02x%02x...", sim.aps[0].ssid,
+            sim.psk, pmk[0], pmk[1], pmk[2], pmk[3]);
+  }
 
   gw_set_subnet(gateway_ip, lease_ip);
   gw_set_trace(trace_net);

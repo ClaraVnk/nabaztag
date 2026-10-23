@@ -1,0 +1,20 @@
+# Issue #24, the case it is actually about: WPA2, the bytecode driving, a
+# deauthentication, and does the rabbit come back on its own.
+#
+# This needs a runtime image with PR #33 applied — tools/mkbytecode.sh builds
+# one. With the stock image netAuth is never called at all, because the Metal
+# `wificrypttype` maps the config's 0x40 to IEEE80211_CRYPT_NONE and
+# OPnetAuth then compares 0x40 against 0. The emulator prints both numbers.
+#
+# Measured with #33: deauthenticated at 60 s, back in RUN at 65.1 s, through a
+# fresh scan, a fresh netAuth, a fresh four-way handshake and a fresh group
+# key. That is the fix working, without a power cycle to find out.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 300000
+
+at 20000  expect RUN
+at 60000  deauth reason 7
+at 280000 expect RUN

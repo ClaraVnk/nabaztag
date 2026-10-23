@@ -144,6 +144,40 @@ which the emulator writes itself, so `IEEE80211_RUN_TIMEOUT` — ten minutes on
 the hardware — passes in a few milliseconds, and two runs of the same scenario
 produce the same transcript on any machine.
 
+## Testing a bytecode patch, not only a C one
+
+Half of this firmware is Metal, so half the fixes are patches to `.mtl` files
+and until `tools/mkbytecode.sh` existed there was no way to put one in front
+of the emulator. It applies a patch, preprocesses and compiles, in a container
+that can load `mtl_compiler` — which is a 32-bit x86 binary that a current
+x86_64 host has no loader for, and which does not build from source with a
+current gcc either.
+
+```sh
+./tools/mkbytecode.sh --sources <OpenJabNab>/bootcode   --compiler <nabgcc>/mtl/mtl_compiler   --patch ../../firmware/patch_wifi_reconnect.py --out with33.hybrid
+make NABGCC=<tree> BYTECODE=$PWD/with33.hybrid vm
+```
+
+The first thing it proved: **PR #33 fixes issue #24 on WPA2**, which had sat
+unverified for three weeks because verifying it meant a flash and a power
+cycle. Deauthenticated at 60 s, back in RUN at 65.1 s, through a fresh scan, a
+fresh `netAuth`, a fresh four-way handshake and a fresh group key.
+
+Without that patch the same scenario never calls `netAuth` at all, and the
+emulator says why in one line:
+
+```
+OPnetAuth: crypt=0x4a (&0xF0)=0x40 encrypt=0x00 key=NIL -> SKIPPED
+OPnetAuth: crypt=0x4a (&0xF0)=0x40 encrypt=0x40 key=set -> calling netAuth
+```
+
+The stock Metal constants are 0-4 (`IEEE80211_CRYPT_WPA=3`) while the C side
+compares against `crypt & 0xF0`, which is 0x00/0x10/0x20/0x40. No value of the
+configuration byte can match on an encrypted network; only `0 == 0` does, which
+is an open one. The check carries its author's own doubt —
+`/* FIXME: 20170822: Really necessary ? */` — eleven years after the bytecode
+it has to agree with.
+
 ## What it already answers
 
 **WPA3 personal, SAE only: the rabbit does not try.** `ieee80211_input_mgt()`
@@ -206,17 +240,6 @@ could only be checked by flashing a rabbit and watching whether broadcast
 traffic ever arrived.
 
 ## What it does not do yet
-
-**WPA2 under `./rabbit-vm`.** The Wi-Fi binary does WPA2 end to end; the
-whole-rabbit one does not, and the reason is measured rather than guessed. The
-bytecode's own `wifiAuth` hands `OPnetAuth` an `encrypt` of `0x00` whatever the
-configuration page says — filling every one of the 208 bytes with a distinct
-value changes `authmode`, which proves offset 90 is read, and leaves `encrypt`
-at zero. So the cipher it compares against does not come from the page the way
-nabgcc's own `mtl/boot/boot.0.0.0.13.mtl` reads it, and this bytecode is built
-from the stock Violet tree, whose `wifi.mtl` is not in this repository. With
-that source, or a dump of a configured rabbit's `conf.bin`, it is a one-line
-fix. Until then: open networks for the whole-rabbit runs, `./rabbit` for WPA2.
 
 **DHCP under `./rabbit-vm`.** The bytecode prints `[dhcp] startdhcp`, ARPs for
 `0.0.0.0` and never transmits a BOOTP message, so it never gets a lease. The
