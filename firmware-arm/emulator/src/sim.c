@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "sim.h"
 
@@ -28,6 +29,51 @@ void sim_advance(uint32_t ms)
   sim_clock_ms += ms;
   counter_timer = sim_clock_ms;
   counter_timer_s = sim_clock_ms / 1000;
+}
+
+/**
+ * @brief Hold the loop back so virtual time tracks the wall clock.
+ *
+ * Off by default, and that is the right default: a run that finishes in
+ * seconds is why ten minutes of IEEE80211_RUN_TIMEOUT costs nothing to test,
+ * and why two runs of a scenario agree.
+ *
+ * It is needed as soon as something outside the process has its own clock.
+ * The add-on schedules work with threading.Timer in real seconds -- the
+ * connect jingle at +3.5 s, the mic clear at +1.5 s -- while the rabbit lives
+ * in virtual time running several times faster. So the jingle lands at an
+ * unpredictable point in the rabbit's life, or after the run has ended, and a
+ * test that needs the server to act at a particular moment cannot be written.
+ * With this on, the two clocks are the same clock.
+ */
+void sim_pace(void)
+{
+  static struct timespec started;
+  static int running;
+  struct timespec now;
+  long long elapsed_us, target_us, wait_us;
+
+  if(!sim.realtime) return;
+  if(!running) {
+    clock_gettime(CLOCK_MONOTONIC, &started);
+    running = 1;
+    return;
+  }
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  elapsed_us = (long long)(now.tv_sec - started.tv_sec) * 1000000
+             + (now.tv_nsec - started.tv_nsec) / 1000;
+  target_us = (long long)sim_now() * 1000;
+  wait_us = target_us - elapsed_us;
+  if(wait_us > 0) {
+    struct timespec rq;
+    /* Never sleep more than one tick: a scenario that jumps the clock should
+     * not make the run hang. */
+    if(wait_us > (long long)sim.tick_ms * 1000)
+      wait_us = (long long)sim.tick_ms * 1000;
+    rq.tv_sec = (time_t)(wait_us / 1000000);
+    rq.tv_nsec = (long)((wait_us % 1000000) * 1000);
+    nanosleep(&rq, NULL);
+  }
 }
 
 void sim_log(const char *fmt, ...)
@@ -142,6 +188,8 @@ void sim_default(void)
  * Directives, one per line, '#' starts a comment:
  *   psk <passphrase>
  *   tick <ms>                      virtual time per main-loop pass
+ *   realtime                       pace the loop to the wall clock, for when
+ *                                  something outside has its own timers
  *   stop <ms>
  *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf]
  *   at <ms> deauth [<bssid>] [reason <n>]
@@ -185,6 +233,8 @@ int sim_load(const char *path)
 
     if(!strcmp(tok[0], "psk") && n >= 2) {
       snprintf(sim.psk, sizeof(sim.psk), "%s", tok[1]);
+    } else if(!strcmp(tok[0], "realtime")) {
+      sim.realtime = 1;
     } else if(!strcmp(tok[0], "tick") && n >= 2) {
       sim.tick_ms = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "stop") && n >= 2) {

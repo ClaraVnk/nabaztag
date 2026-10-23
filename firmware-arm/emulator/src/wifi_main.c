@@ -320,6 +320,7 @@ int main(int argc, char **argv)
 
     sim_run_events();
     sim_advance(sim.tick_ms);
+    sim_pace();
   }
 
   printf("\n==== run summary ====\n");
