@@ -45,6 +45,15 @@ echo "==> patch_dns.py   (mDNS resolver for .local)"
 python3 "$HERE/patch_dns.py" "$BC/sources/dns.mtl"
 echo "==> patch_reconnect.py  (reconnect instead of rebooting on a closed socket)"
 python3 "$HERE/patch_reconnect.py" "$BC/sources/main.mtl"
+
+# pacifox's follow-up (issue #23), the one fix of the five that is measured.
+# With the server's HOST absent -- nothing answering ARP, the HA VM off -- the
+# stock image soft-reboots every ten seconds for ever, 356 times in an hour of
+# the emulator, and each soft reboot leaves the radio asleep. The other four
+# fixes in that script are not wrong, they are not yet reached; its docstring
+# says which and why.
+echo "==> patch_reconnect_followup.py softreboot  (no reboot left on the locate.jsp path)"
+python3 "$HERE/patch_reconnect_followup.py" "$BC/sources" softreboot
 echo "==> patch_wifi_reconnect.py  (rejoin WPA/WPA2 after a link loss)"
 python3 "$HERE/patch_wifi_reconnect.py" "$BC/sources"
 
