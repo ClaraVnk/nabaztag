@@ -57,7 +57,13 @@ struct vap_stats vap_stats;
  * reply from inside rt2501_tx() would recurse through the whole handshake in
  * one stack. The radio has a queue too, so this is also the truer model. */
 #define VAP_QUEUE_DEPTH 32
-#define VAP_FRAME_MAX   512
+/* A full 802.11 frame, as the radio's own RT2501_MAX_FRAME_SIZE has it. It
+ * was 512 and that was wrong in a way that took a while to see: an XMPP
+ * stream header with its SASL mechanisms is over 400 bytes of XML, so the
+ * frame carrying it was silently dropped and the rabbit hung up on a server
+ * that had answered perfectly. Anything that talks to a real warren needs the
+ * whole MTU. */
+#define VAP_FRAME_MAX   2048
 
 struct vap_queued {
   uint8_t  data[VAP_FRAME_MAX];
