@@ -25,12 +25,6 @@
 #include "net/ieee80211.h"
 #include "net/eapol.h"
 
-/* eapol.c exports these but declares them in no header. */
-extern void prf(const uint8_t *key, uint16_t key_len,
-                const uint8_t *prefix, uint16_t prefix_len,
-                const uint8_t *data, uint16_t data_len,
-                uint8_t *output, uint16_t len);
-
 #include "vapcrypto.h"
 
 /* --- AES-128, encrypt direction (FIPS-197) ----------------------------- */

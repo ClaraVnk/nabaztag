@@ -1,0 +1,17 @@
+# A whole rabbit, from power-on to its warren, on an open network.
+#
+# For ./rabbit-vm: the Metal VM runs, so the bytecode does the driving. It
+# reads its configuration page, scans, associates, asks for an address by
+# DHCP, resolves its server and fetches /vl/bc.jsp — the same sequence a real
+# rabbit performs, against a gateway and a warren that are both in the process.
+#
+#   python3 mkconf.py --ssid Terrier --security open \
+#     --server warren.example:8080/vl -o open.eeprom
+#   ./rabbit-vm scenarios/boot-open.txt --eeprom open.eeprom --warren <host>
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 120000
+
+at 20000  expect RUN
+at 110000 expect RUN

@@ -1,7 +1,14 @@
 # A rabbit that is not a rabbit
 
-The Nabaztag:tag's own Wi-Fi stack, compiled for a build machine and run
-against a virtual access point. No hardware, no power cycles.
+The Nabaztag:tag's own firmware, compiled for a build machine and run against
+a virtual access point and a virtual network. No hardware, no power cycles.
+
+There are two of them:
+
+| | what it runs | what it is for |
+|---|---|---|
+| `./rabbit` | the 802.11 and WPA code, driven directly | Wi-Fi: association, ciphers, deauthentication, the four-way handshake |
+| `./rabbit-vm` | the Metal VM and a real bytecode image | the whole rabbit: config, LEDs, ears, DNS, HTTP, its warren |
 
 A Nabaztag downloads its bytecode at every boot and has no reset button worth
 the name: a soft reset leaves the radio asleep, so "reboot" means pulling the
@@ -23,6 +30,57 @@ $ ./run.sh scenarios/open-deauth.txt
 [  20050 ms] link lost, retrying
 [  25000 ms] state IDLE -> RUN
 ```
+
+## A whole rabbit
+
+`./rabbit-vm` starts where a real rabbit starts, at `main()`, and lets the
+bytecode drive. That is most of the rabbit: `vnet.c` is 153 lines and does
+nothing but pass Ethernet payloads up and down, so ARP, DHCP, DNS, HTTP, XMPP,
+the choreographies and the configuration pages are all Metal. The emulator
+supplies the hardware underneath — a radio that answers, LEDs and ears that
+report what they were told, a 4096-byte configuration page that remembers, a
+decoder that keeps what it was fed — and a small router behind the access
+point.
+
+```sh
+python3 mkconf.py --ssid Terrier --security open   --server warren.example:8080/vl --ip 10.0.0.42 --gateway 10.0.0.1 -o open.eeprom
+./run.sh --vm scenarios/vm/boot-open.txt --eeprom open.eeprom --warren <your-warren>
+```
+
+What the warren then sees, from a rabbit that does not exist:
+
+```
+GET /vl/locate.jsp?sn=0019db00beef&h=4&v=Git001
+User-Agent: MTL   Host: warren.example
+```
+
+and what the emulator saw it do to get there:
+
+```
+[   4950 ms] gw: DNS warren.example -> 10.0.0.1
+[   5000 ms] gw: the rabbit opened 10.0.0.42:6025 -> 127.0.0.1:8080
+[  14200 ms] gw: nothing answers on port 5222, refusing the rabbit
+```
+
+That last line is the rabbit reading `xmpp_domain` out of the reply and dialling
+XMPP. Point `--warren` at a real add-on or a real Terrier and the whole Violet
+protocol runs. It is as useful in the other direction: a warren can be tested
+against a rabbit's actual TCP stack, bugs and all, without owning a rabbit.
+
+The configuration page is not guessed either. `mkconf.py` writes the layout
+the boot code declares — a server URL, DHCP or a static address, the SSID, the
+cipher, the PMK, and `0x47` at offset 207 to say the page means something. The
+cipher byte matters more than it looks: it is what `OPnetAuth` compares the
+scan against before it will dial at all, and the emulator prints both numbers:
+
+```
+OPnetAuth: mac=yes bssid=yes crypt=0x00 (&0xF0)=0x00 encrypt=0x00 ... -> calling netAuth
+```
+
+Other switches: `--no-eeprom` boots a rabbit straight out of the box,
+`--audio-dir` keeps every clip it plays exactly as the warren served it, so an
+MP3 stays an MP3 and "what did it actually say?" has an answer you can play,
+and `--trace-net` logs every packet rather than only what became of it.
 
 ## Running it
 
@@ -120,27 +178,50 @@ traffic ever arrived.
 
 ## What it does not do yet
 
-**The bytecode.** This harness drives the 802.11 layer directly, the way the
-boot bytecode's `netScan` and `netAuth` pair does, rather than interpreting the
-Metal bytecode a warren serves. `mkbc.py` is the start of the other half: it
-turns a bytecode image into the C array the VM links against, and strips the
-13-byte `amber` header that a warren prepends — feed that header to
-`loaderSizeBC()` and the globals length reads as 1.7 billion.
+**WPA2 under `./rabbit-vm`.** The Wi-Fi binary does WPA2 end to end; the
+whole-rabbit one does not, and the reason is measured rather than guessed. The
+bytecode's own `wifiAuth` hands `OPnetAuth` an `encrypt` of `0x00` whatever the
+configuration page says — filling every one of the 208 bytes with a distinct
+value changes `authmode`, which proves offset 90 is read, and leaves `encrypt`
+at zero. So the cipher it compares against does not come from the page the way
+nabgcc's own `mtl/boot/boot.0.0.0.13.mtl` reads it, and this bytecode is built
+from the stock Violet tree, whose `wifi.mtl` is not in this repository. With
+that source, or a dump of a configured rabbit's `conf.bin`, it is a one-line
+fix. Until then: open networks for the whole-rabbit runs, `./rabbit` for WPA2.
 
-**Everything that is not the radio.** No audio, no motors, no RFID, no TCP/IP.
-A frame that is not EAPOL is counted and dropped.
+**DHCP under `./rabbit-vm`.** The bytecode prints `[dhcp] startdhcp`, ARPs for
+`0.0.0.0` and never transmits a BOOTP message, so it never gets a lease. The
+gateway's DHCP server is written and answers a well-formed discovery; nothing
+asks it. Use `mkconf.py --ip` for now, which is the more deterministic thing
+for a test anyway.
+
+One trap worth recording, since it cost an hour: the gateway used to answer
+ARP for `0.0.0.0`. That told a rabbit whose gateway was still unset that the
+gateway existed, and it then unicast its DHCP discovery with a destination
+address of `0.0.0.0` for ever. Nobody owns `0.0.0.0`, and a gateway that is
+polite about it does real damage.
+
+**Everything that is not the radio or the network.** The microphone returns
+silence, the RFID reader has a scenario-driven tag list and no protocol, and
+nothing presses a button yet. The hooks are there (`hw_press`,
+`hw_present_tag`); the scenario directives are not.
 
 ## Layout
 
 ```
-src/wifi_main.c   the harness: scan, choose, authenticate, watch, assert
+src/wifi_main.c   ./rabbit: scan, choose, authenticate, watch, assert
+src/vm_main.c     ./rabbit-vm: the VM, the bytecode, the main loop
 src/vap.c         the virtual access point, in place of the USB radio
 src/vapcrypto.c   AES-128 encryption and RFC 3394 key wrap, which an AP needs
                   and the rabbit does not; self-tested against the standards
+src/gw.c          the network behind the AP: ARP, DHCP, DNS, ICMP, TCP, UDP
 src/sim.c         the virtual clock and the scenario parser
-stubs/            hardware that has to exist but does nothing interesting
-patches/          the simulated register window, for inc/common.h
-scenarios/        the questions
+stubs/hw.c        the EEPROM, the LEDs, the ears, the buttons, the tags
+stubs/audio.c     the VLSI decoder, as a file you can listen to
+patches/          the simulated register window and one interpreter trace
+mkconf.py         writes the configuration page
+mkbc.py           turns a bytecode image into the array the VM links
+scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones
 ```
 
 The seam is `rt2501_tx()` and `ieee80211_input()`. Above it, everything is the

@@ -40,7 +40,8 @@ uint32_t counter_timer, counter_timer_s;
 /* The simulated register window; see the _NAB_SIM block in inc/common.h. */
 volatile uint8_t sim_mmio[1u << 20];
 
-/* eapol.c exports this but declares it in no header. */
+/* eapol.c defines this with a uint16_t length; vnet.c declares it with an
+ * int32_t one. Matching the definition. */
 extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
                               uint16_t ssidlength, uint8_t *pmk);
 

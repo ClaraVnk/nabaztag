@@ -18,6 +18,7 @@ struct vap_stats {
   uint32_t assoc_responses;
   uint32_t deauths_sent;
   uint32_t data_from_sta;
+  uint32_t data_to_sta;
   uint32_t eapol_from_sta;
   uint32_t eapol_to_sta;
   uint32_t mics_verified;
@@ -32,6 +33,8 @@ extern struct vap_stats vap_stats;
 void vap_init(void);
 void vap_set_pmk(const uint8_t *pmk);
 void vap_poll(void);
+void vap_to_station(const uint8_t *source_mac, const uint8_t *body,
+                    uint32_t body_length);
 void vap_deauth(int ap, int disassoc, uint16_t reason);
 void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
