@@ -313,18 +313,27 @@ with      [  58700 ms] audio: stopping the capture, the speaker wins
           [  58700 ms] audio: end of clip 2, 61665 bytes
 ```
 
-**The amplifier is the player's business.** With the `audio_ampli` step,
-setting the volume no longer powers the speaker amplifier. Drop the step and a
-rabbit that has played nothing has it on from the first millisecond, for as
-long as it is plugged in:
+**What this emulator could not tell me, and it cost a flash.** The
+`audio_ampli` step takes the amplifier out of `set_vlsi_volume()` and leaves it
+to `play_start`/`play_stop`. Here that looks right, and it is measurable:
 
 ```
-without   [      0 ms] audio: volume 0x00
-          [      0 ms] audio: amplifier on        (and never off, 120 s, nothing played)
-with      [      0 ms] audio: volume 0x00
-          [  15000 ms] audio: amplifier on        (a sound arrives)
+without   [      0 ms] audio: amplifier on        (and never off, nothing played)
+with      [  15000 ms] audio: amplifier on        (a sound arrives)
           [  15000 ms] audio: amplifier off
 ```
+
+On a real rabbit, 2026-10-23, that build plays a sound perfectly on the wire —
+streaming resource bound, clip fetched, 5.5 s spent on it, back to idle — and
+**nothing is heard**. The step is applied in no mode now; see its docstring in
+`apply-mods.py`.
+
+The emulator models `vlsi_ampli()` as a log line, so it cannot distinguish a
+sound that is heard from a sound played into a dead amplifier — which is
+exactly the failure that change caused. Worth stating plainly, because every
+other finding on this page is one the emulator *can* settle: anything whose
+only observable effect is sound pressure in a room needs a rabbit and a pair
+of ears, and a green run here means nothing about it.
 
 **The microphone records silence.** `rec_check()` hands the firmware nothing,
 so a capture produces an empty stream. What the capture *costs* is modelled,
