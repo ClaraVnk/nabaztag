@@ -15,6 +15,28 @@ import sys
 from pathlib import Path
 
 
+# Most of this firmware's sources are CRLF: src/net/ieee80211.c,
+# inc/net/ieee80211.h, src/usb/usbhcore.c, src/usb/usbctrl.c, src/hal/audio.c
+# and src/vm/vinterp.c all are, while src/net/eapol.c is not. Path.read_text()
+# and Path.write_text() use universal newlines, so reading turns CRLF into LF
+# and writing leaves it that way: a one-line edit rewrites every line in the
+# file.
+#
+# That is invisible until something else reads the same file expecting it
+# unchanged. patches/wpa2-scanned-ciphers.patch does, and the first step to
+# touch ieee80211.c -- group_cipher below -- broke the ARM build with
+# "patch failed: src/net/ieee80211.c:50" while the edit itself was fine and 15
+# lines BELOW that hunk. Use these for any source a patch might also read.
+def read_src(path: Path) -> str:
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+        return f.read()
+
+
+def write_src(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text)
+
+
 def patch_vbc_h(root: Path) -> None:
     """Add OPverifySig opcode to both nabgcc and mtl_linux vbc.h copies."""
     targets = [
@@ -969,7 +991,7 @@ def patch_group_cipher(root: Path) -> None:
     Reported by pacifox in issue #26, finding 3.
     """
     hdr = root / "inc/net/ieee80211.h"
-    src = hdr.read_text(encoding="utf-8", errors="surrogateescape")
+    src = read_src(hdr)
     if "ieee80211_group_cipher" not in src:
         needle = "extern uint8_t ieee80211_encryption;"
         if needle not in src:
@@ -982,11 +1004,11 @@ def patch_group_cipher(root: Path) -> None:
             "extern uint8_t ieee80211_group_cipher;",
             1,
         )
-        hdr.write_text(src, encoding="utf-8", errors="surrogateescape")
+        write_src(hdr, src)
         print("  ieee80211.h: declared ieee80211_group_cipher")
 
     p = root / "src/net/ieee80211.c"
-    src = p.read_text(encoding="utf-8", errors="surrogateescape")
+    src = read_src(p)
     if "ieee80211_group_cipher = " not in src:
         needle = "uint8_t ieee80211_encryption;"
         if needle not in src:
@@ -1008,7 +1030,7 @@ def patch_group_cipher(root: Path) -> None:
             + anchor,
             1,
         )
-        p.write_text(src, encoding="utf-8", errors="surrogateescape")
+        write_src(p, src)
         print("  ieee80211.c: the group cipher is kept at association")
 
     p = root / "src/net/eapol.c"
