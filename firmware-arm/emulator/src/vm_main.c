@@ -65,7 +65,8 @@ void sim_run_events(void)
       case SIM_EV_DISASSOC:   vap_deauth(e->ap, 1, (uint16_t)e->arg); break;
       case SIM_EV_AP_DOWN:    vap_set_up(e->ap, 0); break;
       case SIM_EV_AP_UP:      vap_set_up(e->ap, 1); break;
-      case SIM_EV_SERVER_DROP: gw_server_drop(); break;
+      case SIM_EV_SERVER_DROP:  gw_server_drop(); break;
+      case SIM_EV_SERVER_CLOSE: gw_server_close(1); break;
       case SIM_EV_ARP:         gw_set_arp(e->arg); break;
       case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
@@ -107,6 +108,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
+    else if(!strcmp(argv[i], "--realtime")) sim.realtime = 1;
     else if(argv[i][0] == '-') {
       fprintf(stderr,
         "usage: %s [scenario] [--eeprom <file>] [--no-eeprom] [--audio-dir <dir>]\n"
@@ -117,7 +119,9 @@ int main(int argc, char **argv)
         "  --warren      host to send every TCP connection to, port preserved\n"
         "  --gateway-ip  the gateway's address (default 10.0.0.1)\n"
         "  --lease-ip    the address DHCP offers the rabbit (default 10.0.0.42)\n"
-        "  --trace-net   log every packet, not just what happened to it\n",
+        "  --trace-net   log every packet, not just what happened to it\n"
+        "  --realtime    pace the run to the wall clock, so a server's own\n"
+        "                timers line up with the rabbit's life\n",
         argv[0]);
       return 2;
     }
@@ -203,6 +207,7 @@ int main(int argc, char **argv)
 
     sim_run_events();
     sim_advance(sim.tick_ms);
+    sim_pace();
   }
 
   printf("\n==== run summary ====\n");

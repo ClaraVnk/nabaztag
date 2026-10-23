@@ -53,6 +53,7 @@ enum {
   SIM_EV_REKEY,         /* AP rotates the group key             */
   SIM_EV_PTK_REKEY,     /* AP restarts the four-way handshake   */
   SIM_EV_SERVER_DROP,   /* the warren's sockets close           */
+  SIM_EV_SERVER_CLOSE,  /* …after announcing </stream:stream>   */
   SIM_EV_ARP,           /* the gateway answers ARP, or stops    */
   SIM_EV_STOP,          /* end the run                          */
   SIM_EV_EXPECT_STATE,  /* assert ieee80211_state at this tick   */
@@ -75,6 +76,7 @@ struct sim_scenario {
   char             psk[64];
   uint32_t         stop_ms;
   uint32_t         tick_ms;      /* how much virtual time one loop costs */
+  int              realtime;     /* pace the loop to the wall clock */
 };
 
 extern struct sim_scenario sim;
@@ -82,6 +84,7 @@ extern struct sim_scenario sim;
 int  sim_load(const char *path);
 void sim_default(void);
 void sim_advance(uint32_t ms);
+void sim_pace(void);
 uint32_t sim_now(void);
 void sim_run_events(void);
 void sim_log(const char *fmt, ...);

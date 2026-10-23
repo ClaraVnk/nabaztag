@@ -158,6 +158,7 @@ void sim_run_events(void)
       case SIM_EV_AP_DOWN:     vap_set_up(e->ap, 0); break;
       case SIM_EV_AP_UP:       vap_set_up(e->ap, 1); break;
       case SIM_EV_SERVER_DROP:
+      case SIM_EV_SERVER_CLOSE:
       case SIM_EV_ARP:        break;   /* no network in this binary */
       case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
@@ -319,6 +320,7 @@ int main(int argc, char **argv)
 
     sim_run_events();
     sim_advance(sim.tick_ms);
+    sim_pace();
   }
 
   printf("\n==== run summary ====\n");

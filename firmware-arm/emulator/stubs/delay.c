@@ -26,6 +26,12 @@ void DelayMs(uint16_t cmpt_ms)
     uint16_t step = left > 10 ? 10 : left;
     sim_advance(step);
     vap_poll();
+    /* Paced too, when the run is paced. Without this the scan's 4.9 s of
+     * virtual time elapse almost instantly and the clock only tracks the wall
+     * clock from the main loop onwards -- which is enough to line up a
+     * server's timers at bind time, and not enough to say the two clocks are
+     * the same clock. */
+    sim_pace();
     left -= step;
   }
 }

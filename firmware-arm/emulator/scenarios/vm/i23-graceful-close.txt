@@ -1,0 +1,19 @@
+# Issue #23 finding 2, with the sequence pacifox picked as the realistic one:
+# the server announces </stream:stream> and then closes the socket. That is
+# what an add-on restarting does, it needs nothing from the user, and it gives
+# the bytecode TWO XmppSessionIsDisconnected calls rather than one.
+#
+# The finding is that the second call replays the whole stop — another ear
+# reset and a freshly drawn 5-35 s delay — because the re-entry guard tests
+# `run`, which stopEverythingAndResetToIdle has just overwritten with
+# idleRun. The ear commands are the countable half.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 400000
+
+at 40000  expect RUN
+at 60000  server-close
+at 160000 server-close
+at 260000 server-close
+at 390000 expect RUN

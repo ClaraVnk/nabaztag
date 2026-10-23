@@ -777,11 +777,38 @@ void gw_set_subnet(const char *gateway, const char *rabbit)
  */
 void gw_server_drop(void)
 {
-  int dropped = 0;
+  gw_server_close(0);
+}
+
+/**
+ * @brief Close the way a server shutting down closes.
+ *
+ * @param graceful  1 to write "</stream:stream>" to the XMPP connection
+ *                  before the FIN, which is what an add-on announcing its
+ *                  own shutdown does.
+ *
+ * It matters because the two produce a different number of calls into the
+ * bytecode. A bare FIN gives one XmppSessionIsDisconnected; a stream close
+ * followed by a TCP close gives two, and issue #23's finding 2 is that the
+ * second one replays the whole stop -- another ear reset and a freshly drawn
+ * 5-35 s delay -- because the re-entry guard tests `run`, which
+ * stopEverythingAndResetToIdle has just overwritten. pacifox picked this
+ * sequence as the realistic one: it needs nothing from the user and happens
+ * on every server restart.
+ */
+void gw_server_close(int graceful)
+{
+  static const char stream_close[] = "</stream:stream>";
+  int dropped = 0, announced = 0;
 
   for(int i = 0; i < GW_MAX_CONNECTIONS; i++) {
     struct gw_conn *c = &conns[i];
     if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
+    if(graceful && c->dest_port == 5222 && !c->fin_sent) {
+      tcp_send(c, 0x10 | 0x08, (const uint8_t *)stream_close,
+               (uint32_t)(sizeof(stream_close) - 1));
+      announced++;
+    }
     if(!c->fin_sent) {
       c->fin_sent = 1;
       tcp_send(c, 0x01 | 0x10, NULL, 0);      /* FIN, as a close does */
@@ -791,8 +818,9 @@ void gw_server_drop(void)
     if(c->fd >= 0) { close(c->fd); c->fd = -1; }
     c->state = TCP_CLOSING;
   }
-  sim_log("gw: the server went away — %d connection%s closed", dropped,
-          dropped == 1 ? "" : "s");
+  sim_log("gw: the server went away — %d connection%s closed%s", dropped,
+          dropped == 1 ? "" : "s",
+          announced ? ", after announcing </stream:stream>" : "");
 }
 
 void gw_close(void)
