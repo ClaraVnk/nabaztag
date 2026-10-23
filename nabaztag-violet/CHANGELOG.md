@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.15.8
+
+- **A reconnecting rabbit is no longer shadowed by its own dead session.**
+  Since 0.15.7 the rabbit reconnects instead of rebooting, and the server kept
+  the previous session: a socket and a thread leaked per reconnect, a late
+  bind on the old socket could put it back over the new one, and a session
+  that died without a FIN stayed `online` in `/api/status` until a 900 s
+  timeout. Sessions are now numbered, a newer one closes the older socket, a
+  bind on an older one is refused, and a bound session that hears nothing for
+  `xmpp_idle_s` is dropped. `connected_since` is the TCP connect time rather
+  than the last resource change, so a reconnect can be told from a sound being
+  played. Reported, measured and fixed by **pacifox** (#22).
+- **New option `xmpp_idle_s`** (default 90, `0` disables). An idle rabbit
+  writes a space every 8 s; a bound session silent for longer than this is
+  gone. It existed only as an environment variable, which a Home Assistant
+  user cannot reach.
+- **A rabbit with no credentials can reach the warren at all.** The stream
+  features advertised `violet-register` and nothing answered the query it
+  invites, so a rabbit whose configuration had been reset — or that was never
+  adopted by Violet — asked to register, got silence and hung up. The three
+  exchanges are implemented, from OpenJabNab's `plugin_auth.cpp` (#39).
+- **The resource store forgets.** It grew by one entry per `/api/led` call and
+  never purged, tens of megabytes a day on an active warren. An `RT` is no
+  longer sent over a live mic capture, and an unknown LED name is refused
+  instead of lighting the belly. Reported by **pacifox** (#28, #31).
+
 ## 0.15.7
 
 - **Your rabbit comes back on its own when the server restarts.** Until now a
