@@ -407,6 +407,97 @@ def patch_audio_fifo_data(root: Path) -> None:
     print(f"[ok]   {p}: play_w/play_r forced into .data (audio FIFO safe without .bss zero)")
 
 
+def patch_eapol_replay(root: Path) -> None:
+    """Commit the EAPOL replay counter after the MIC is verified, not before.
+
+    `eapol_input()` compares the incoming counter with the local one and then
+    copies it over — before any handler has checked the frame's MIC. So one
+    malformed or stray EAPOL-Key frame carrying a high counter raises the
+    local counter permanently, and every genuine frame afterwards fails the
+    `<= 0` comparison. Group rekeys stop and the link is eventually lost.
+
+    Reported by pacifox in ClaraVnk/nabaztag#26, finding 2. The order is
+    wrong regardless of whether anyone has hit it: a value taken from an
+    unauthenticated frame should not outlive that frame.
+
+    The comparison stays where it is — rejecting a replay early is correct
+    and cheap. Only the commit moves:
+
+      * message 1/4 carries no MIC at all (the dispatcher routes to it only
+        when `key_mic == 0`), so there is nothing to wait for and it commits
+        on entry — exactly as safe as today;
+      * message 3/4 commits after `MIC OK`, before it sets EAPOL_S_MSG3;
+      * the group message commits after its own MIC check.
+
+    `replay_pending` is written by the dispatcher before any handler runs, so
+    it is never read stale.
+    """
+    p = root / "src/net/eapol.c"
+    s = p.read_text()
+    if "eapol_commit_replay" in s:
+        print(f"[skip] {p}: replay counter already committed after the MIC")
+        return
+
+    old_commit = (
+        '  /* Update local replay counter */\n'
+        '  memcpy(replay_counter, fr->key_frame.replay_counter, EAPOL_RPC_LENGTH);\n'
+        '  replay_active = 1;\n'
+        '  DBG_WIFI("Replay counter OK"EOL);'
+    )
+    new_commit = (
+        '  /* Remember it, but do NOT commit yet: nothing has verified this\n'
+        '     frame\'s MIC. One stray frame with a high counter would otherwise\n'
+        '     lock out every genuine one that follows. Each handler commits\n'
+        '     after its own check. */\n'
+        '  memcpy(replay_pending, fr->key_frame.replay_counter, EAPOL_RPC_LENGTH);\n'
+        '  DBG_WIFI("Replay counter OK"EOL);'
+    )
+    if old_commit not in s:
+        sys.exit(f"FAIL {p}: replay commit block not found (upstream changed?)")
+    s = s.replace(old_commit, new_commit, 1)
+
+    old_decl = "static uint8_t replay_counter[EAPOL_RPC_LENGTH];"
+    if old_decl not in s:
+        sys.exit(f"FAIL {p}: replay_counter declaration not found")
+    s = s.replace(old_decl,
+                  old_decl + "\nstatic uint8_t replay_pending[EAPOL_RPC_LENGTH];", 1)
+
+    anchor = "static void eapol_input_msg1(uint8_t *frame, uint32_t length)"
+    if anchor not in s:
+        sys.exit(f"FAIL {p}: eapol_input_msg1 not found")
+    helper = (
+        "/* Accept the replay counter of the frame being handled. Called only\n"
+        "   once a handler has verified that frame — see patch_eapol_replay. */\n"
+        "static void eapol_commit_replay(void)\n"
+        "{\n"
+        "  memcpy(replay_counter, replay_pending, EAPOL_RPC_LENGTH);\n"
+        "  replay_active = 1;\n"
+        "}\n\n"
+    )
+    s = s.replace(anchor, helper + anchor, 1)
+    s = s.replace(
+        anchor + "\n{",
+        anchor + "\n{\n  /* No MIC on message 1/4 — nothing to wait for. */\n"
+        "  eapol_commit_replay();",
+        1,
+    )
+
+    old_m3 = '  DBG_WIFI("MIC OK"EOL);\n\n  eapol_state = EAPOL_S_MSG3;'
+    if old_m3 not in s:
+        sys.exit(f"FAIL {p}: msg3 MIC-OK site not found")
+    s = s.replace(old_m3,
+                  '  DBG_WIFI("MIC OK"EOL);\n  eapol_commit_replay();\n\n'
+                  '  eapol_state = EAPOL_S_MSG3;', 1)
+
+    old_g = '  //DBG_WIFI("MIC OK"EOL);'
+    if old_g not in s:
+        sys.exit(f"FAIL {p}: group MIC-OK site not found")
+    s = s.replace(old_g, old_g + "\n  eapol_commit_replay();", 1)
+
+    p.write_text(s)
+    print(f"[ok]   {p}: replay counter committed after the MIC, not before")
+
+
 def patch_gc_sections(root: Path) -> None:
     """Enable --gc-sections in the linker so dead code (the ~6 KB of
     newlib printf glue made unreachable by patch_makefile's DEBUG_*
@@ -1706,45 +1797,46 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,eapol_replay,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
     print(f"=== apply-mods.py mode={args.mode} steps={steps_str} ===")
     fns = {
+        "eapol_replay": patch_eapol_replay,
         "vbc": patch_vbc_h,
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
