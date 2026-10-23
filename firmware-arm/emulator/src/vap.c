@@ -39,6 +39,7 @@
 #include "sim.h"
 #include "vap.h"
 #include "vapcrypto.h"
+#include "gw.h"
 
 uint8_t rt2501_mac[IEEE80211_ADDR_LEN] = {0x00,0x19,0xdb,0x00,0xbe,0xef};
 PDEVINFO rt2501_dev;
@@ -427,8 +428,16 @@ static void vap_sign(struct eapol_frame *fr, uint32_t body_length,
   }
 }
 
-/** @brief Wrap an EAPOL body in an 802.11 data frame from the AP. */
+/**
+ * @brief Wrap a payload in an 802.11 data frame from the AP to the rabbit.
+ *
+ * From DS: addr1 is the rabbit, addr2 the BSSID, addr3 whoever originally
+ * sent it. ieee80211_input_data() refuses any other combination in managed
+ * mode, and takes addr3 as the source MAC it reports upwards, which is how
+ * the gateway's own MAC reaches the bytecode's ARP table.
+ */
 static uint32_t vap_wrap_data(uint8_t *out, const struct sim_ap *a,
+                              const uint8_t *source_mac,
                               const uint8_t *body, uint32_t body_length)
 {
   struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
@@ -436,13 +445,37 @@ static uint32_t vap_wrap_data(uint8_t *out, const struct sim_ap *a,
   memset(fr, 0, sizeof(*fr));
   fr->i_fc[0] = IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
   fr->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
-  /* From DS: addr1 is us, addr2 the BSSID, addr3 the original sender.
-   * ieee80211_input_data() refuses anything else in managed mode. */
   memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
-  memcpy(fr->i_addr3, a->bssid, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, source_mac, IEEE80211_ADDR_LEN);
   memcpy(out + sizeof(*fr), body, body_length);
   return (uint32_t)sizeof(*fr) + body_length;
+}
+
+/**
+ * @brief Send an Ethernet payload to the rabbit, from the AP it is on.
+ *
+ * What the gateway in gw.c uses. Silently does nothing when the rabbit is not
+ * associated anywhere, which is correct rather than convenient: a packet sent
+ * to a station that is not on the air does not arrive.
+ */
+void vap_to_station(const uint8_t *source_mac, const uint8_t *body,
+                    uint32_t body_length)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    if(!sim.aps[i].associated || !ap_audible(&sim.aps[i])) continue;
+    if(sizeof(struct ieee80211_frame) + body_length > sizeof(out)) {
+      sim_log("vap: a %u-byte payload will not fit in a frame", body_length);
+      return;
+    }
+    n = vap_wrap_data(out, &sim.aps[i], source_mac, body, body_length);
+    queue_frame(out, n, sim.aps[i].rssi, sim.aps[i].channel);
+    vap_stats.data_to_sta++;
+    return;
+  }
 }
 
 static void vap_send_msg1(int ap)
@@ -484,7 +517,7 @@ static void vap_send_msg1(int ap)
   memcpy(fr->key_frame.key_nonce, hs->anonce, EAPOL_NONCE_LENGTH);
   /* No MIC on message 1: the station has no PTK yet. */
 
-  n = vap_wrap_data(out, a, body, LLC_LENGTH + 4 + body_length);
+  n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
   sim_log("AP %s: EAPOL 1/4, ANonce a0..bf, key_desc_ver %d",
           macstr(a->bssid), vap_desc_ver(a));
   queue_frame(out, n, a->rssi, a->channel);
@@ -555,7 +588,7 @@ static void vap_send_msg3(int ap)
 
   vap_sign(fr, body_length, hs->ptk, vap_desc_ver(a));
 
-  n = vap_wrap_data(out, a, body, LLC_LENGTH + 4 + body_length);
+  n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
   sim_log("AP %s: EAPOL 3/4, %u bytes of key data%s", macstr(a->bssid),
           key_data_length, key_data_length ? " (wrapped GTK)" : "");
   queue_frame(out, n, a->rssi, a->channel);
@@ -767,6 +800,7 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
   }
 
   vap_stats.data_from_sta++;
+  gw_from_rabbit(payload, payload_length);
 }
 
 /* --- the radio API the firmware calls --------------------------------- */

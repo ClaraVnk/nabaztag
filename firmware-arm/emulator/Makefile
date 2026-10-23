@@ -11,7 +11,11 @@
 # ./run.sh does all of that in a container and is the easier way in.
 
 TARGET  = rabbit
+VM_TARGET = rabbit-vm
 NABGCC ?=
+# The bytecode image the full-rabbit target links in. Any .hybrid or .bin a
+# warren serves will do; mkbc.py strips the header and checks the sections.
+BYTECODE ?= ../../nabaztag-violet/bootcode.hybrid
 
 ifeq ($(NABGCC),)
 $(error set NABGCC to a nabgcc checkout, or use ./run.sh which prepares one)
@@ -28,23 +32,37 @@ FW += ../crypto/aes128.c
 
 # The hardware stubs nabgcc already ships for its own host build of the VM.
 # Upstream's work, used as it stands — see README.md.
-FW += $(NABGCC)/testvm/stubs/hal/uart.c
-FW += $(NABGCC)/testvm/stubs/hal/led.c
-FW += $(NABGCC)/testvm/stubs/utils/mem.c
 FW += $(NABGCC)/testvm/stubs/utils/sys.c
 FW += $(NABGCC)/testvm/stubs/usb/rt2501usb_io.c
 FW += $(NABGCC)/testvm/stubs/usb/usbhcore.c
 
 # The emulator itself.
-SIM  = src/wifi_main.c src/sim.c src/vap.c src/vapcrypto.c
-SIM += stubs/console.c stubs/delay.c stubs/hcdmem.c
+SIM  = src/sim.c src/vap.c src/vapcrypto.c src/gw.c
+SIM += stubs/console.c stubs/delay.c stubs/hcdmem.c stubs/uart.c stubs/hw.c
 
-SRC = $(FW) $(SIM)
+# The Metal VM and the hardware it expects, for the full-rabbit target.
+VM  = $(NABGCC)/src/vm/vinterp.c
+VM += $(NABGCC)/src/vm/vmem.c
+VM += $(NABGCC)/src/vm/vloader.c
+VM += $(NABGCC)/src/vm/vlog.c
+VM += $(NABGCC)/src/vm/vnet.c
+VM += $(NABGCC)/src/vm/vaudio.c
+# The hardware the bytecode actually touches is ours, not upstream's stubs:
+# see the file headers for what the stubs get wrong for this purpose.
+VM += stubs/audio.c
+VM += $(NABGCC)/testvm/stubs/hal/i2c.c
+VM += $(NABGCC)/testvm/stubs/hal/spi.c
+VM += obj/dumpbc.c
+VM += src/vm_main.c
+
+SRC = $(FW) $(SIM) src/wifi_main.c $(VM)
 OBJ = $(addprefix obj/,$(notdir $(SRC:.c=.o)))
 
 CFLAGS  = -O1 -g -std=gnu99
 CFLAGS += -D_NAB_SIM -DDEBUG -DDEBUG_WIFI
-CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Iobj/include -I../crypto
+CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Istubs -Iobj/include -I../crypto
+# Declarations the firmware uses without declaring; see the header.
+CFLAGS += -include src/prelude.h
 # The 2006 sources predate most of these diagnostics and the emulator exists
 # to run them, not to tidy them. Nothing here hides a mistake that matters:
 # the pointer-to-int casts are ieee80211.c computing a frame length, and the
@@ -66,6 +84,8 @@ CC ?= cc
 
 all: $(TARGET)
 
+vm: $(VM_TARGET)
+
 # eapol.c includes <net/aes128.h>, so the AES header has to sit under a net/
 # directory. ../crypto keeps it flat, as the ARM build's Dockerfile does.
 obj/include/net/aes128.h: ../crypto/aes128.h
@@ -79,8 +99,19 @@ obj/$(notdir $(basename $(1))).o: $(1) obj/include/net/aes128.h
 endef
 $(foreach s,$(SRC),$(eval $(call emulator_compile,$(s))))
 
-$(TARGET): $(OBJ)
-	$(CC) $(SAN) -o $@ $(OBJ) -lm
+WIFI_OBJ = $(addprefix obj/,$(notdir $(FW:.c=.o) $(SIM:.c=.o))) obj/wifi_main.o
+VM_OBJ   = $(addprefix obj/,$(notdir $(FW:.c=.o) $(SIM:.c=.o) $(VM:.c=.o)))
+
+$(TARGET): $(WIFI_OBJ)
+	$(CC) $(SAN) -o $@ $(WIFI_OBJ) -lm
+
+$(VM_TARGET): $(VM_OBJ)
+	$(CC) $(SAN) -o $@ $(VM_OBJ) -lm
+
+# The bytecode as a C array. Regenerated whenever the image changes.
+obj/dumpbc.c: $(BYTECODE) mkbc.py
+	@mkdir -p obj
+	python3 mkbc.py $(BYTECODE) -o $@
 
 SCENARIOS = $(sort $(wildcard scenarios/*.txt))
 
@@ -104,6 +135,6 @@ asan:
 	$(MAKE) NABGCC=$(NABGCC) SAN="-fsanitize=address,undefined -fno-omit-frame-pointer" check
 
 clean:
-	rm -rf obj $(TARGET)
+	rm -rf obj $(TARGET) $(VM_TARGET)
 
-.PHONY: all check asan clean
+.PHONY: all vm check asan clean

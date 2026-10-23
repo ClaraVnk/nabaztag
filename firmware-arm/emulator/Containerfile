@@ -1,17 +1,19 @@
 # The rabbit emulator, in a container, so it needs nothing but podman.
 #
-#   podman build -t nabaztag-emulator -f emulator/Containerfile .
+#   podman build -t nabaztag-emulator -f firmware-arm/emulator/Containerfile .
 #   podman run --rm nabaztag-emulator
 #
-# Run it from firmware-arm/, not from here: the build context has to include
-# ../crypto (the AES implementation nabgcc lacks) and ../apply-mods.py.
+# Build it from the repository root: the context needs firmware-arm/crypto
+# (the AES nabgcc lacks), firmware-arm/apply-mods.py, and the bytecode image
+# under nabaztag-violet/ that the whole-rabbit target links in. ./run.sh does
+# all of that and is the easier way in.
 #
 # The nabgcc commit is pinned to the same one the firmware Dockerfile builds,
 # so the emulator and the thing that gets flashed are the same code.
 FROM debian:bookworm-slim
 
 ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
-# Which apply-mods.py steps to apply. The default is every change that touches
+# Which apply-mods.py steps to apply. The default is the change that touches
 # the network stack; add or drop steps to measure one in isolation.
 ARG MOD_STEPS=wpa2_gtk
 
@@ -27,24 +29,28 @@ RUN git clone https://github.com/RedoXyde/nabgcc.git \
 # nabgcc's src/net/aes128.c is a stub: every function is empty, while
 # eapol.c calls it to unwrap the WPA2 group key. The emulator must use the
 # real one or it would be testing nothing.
-COPY crypto/aes128.c /build/nabgcc/src/net/aes128.c
-COPY crypto/aes128.h /build/nabgcc/inc/net/aes128.h
+COPY firmware-arm/crypto/aes128.c /build/nabgcc/src/net/aes128.c
+COPY firmware-arm/crypto/aes128.h /build/nabgcc/inc/net/aes128.h
 
 # Run the same modifications the flashed firmware gets, so a fix can be tried
 # here before it costs a power cycle.
-COPY apply-mods.py /build/apply-mods.py
+COPY firmware-arm/apply-mods.py /build/apply-mods.py
 RUN python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
 
-# The emulator needs the simulated register window; see the patch's own
-# comment for why a host cannot write to 0xB8000000.
-COPY emulator/patches/sim-mmio.patch /build/sim-mmio.patch
-RUN cd /build/nabgcc && git apply /build/sim-mmio.patch
+# Two changes the emulator needs and the hardware does not: a simulated
+# register window, because a host cannot write to 0xB8000000, and one trace in
+# the interpreter. Both are compiled out when _NAB_SIM is absent.
+COPY firmware-arm/emulator/patches /build/patches
+RUN cd /build/nabgcc \
+ && git apply /build/patches/sim-mmio.patch \
+ && git apply /build/patches/opnetauth-trace.patch
 
-COPY crypto   /build/crypto
-COPY emulator /build/emulator
+COPY firmware-arm/crypto             /build/crypto
+COPY firmware-arm/emulator           /build/emulator
+COPY nabaztag-violet/bootcode.hybrid /build/bootcode.hybrid
 
 WORKDIR /build/emulator
-RUN make NABGCC=/build/nabgcc
+RUN make NABGCC=/build/nabgcc BYTECODE=/build/bootcode.hybrid all vm
 
-# Every scenario, with the exit status that says whether they all held.
+# Every Wi-Fi scenario, with the exit status that says whether they all held.
 CMD ["make", "NABGCC=/build/nabgcc", "check"]

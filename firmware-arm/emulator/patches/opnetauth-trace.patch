@@ -1,0 +1,31 @@
+diff --git a/src/vm/vinterp.c b/src/vm/vinterp.c
+index 6da07c3..d923c78 100644
+--- a/src/vm/vinterp.c
++++ b/src/vm/vinterp.c
+@@ -918,6 +918,26 @@ void interpGo()
+              * Check upper part of encrypt (config) and crypt (scan)
+              * before using crypt (which has the supported cipher infos
+             */
++#ifdef _NAB_SIM
++            /* The one line that decides whether a rabbit reconnects. It is
++             * printed in the emulator because from the outside a skipped
++             * netAuth and a dead radio look identical: the rabbit scans,
++             * finds its network, and then does nothing at all.
++             *
++             * Printed through putst_uart rather than DBG_VM on purpose:
++             * DBG_VM also turns on a trace of every opcode the interpreter
++             * executes, which buries this. Compiled out entirely on the
++             * hardware, which has no console to read it on. */
++            sprintf(dbg_buffer,
++              "OPnetAuth: mac=%s bssid=%s crypt=0x%02lx (&0xF0)=0x%02lx "
++              "encrypt=0x%02lx authmode=%ld chn=%ld rate=0x%04lx key=%s -> %s"EOL,
++              (mac!=NIL)?"yes":"NIL", (bssid!=NIL)?"yes":"NIL",
++              (long)crypt, (long)(crypt&0xF0), (long)encrypt, (long)authmode,
++              (long)chn, (long)rate, (key==NIL)?"NIL":"set",
++              ((mac!=NIL)&&(bssid!=NIL)&&((crypt&0xF0)==encrypt))
++                ? "calling netAuth" : "SKIPPED");
++            putst_uart((uint8_t *)dbg_buffer);
++#endif
+             if ((mac!=NIL)&&(bssid!=NIL)&&(crypt&0xF0)==encrypt)
+             {
+               netAuth((ssid==NIL)?NULL:VSTARTBIN(ssid),VSTARTBIN(mac),
