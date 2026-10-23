@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.15.9
+
+- **A rabbit that lost its `RT` stayed mute for good.** The rabbit is
+  half-duplex and says nothing about it: the firmware refuses to play anything
+  while the microphone is capturing, and refuses it silently. So a session
+  that dropped while the mic was running left the rabbit recording, and from
+  then on every sound was downloaded in full, answered `200`, and never heard
+  — until something sent an `RT` or it was unplugged. Three things kept it
+  there: the clearing `RT` was skipped whenever we believed the capture was
+  ours, the re-arm afterwards only fired when the listen flag had been read
+  from disk rather than set at runtime, and the re-arm itself was a fixed 4 s
+  timer that landed in the middle of the connect jingle it was meant not to
+  disturb. Now: always clear, record the flag when it is written, and let the
+  jingle arm the mic once its own clip has been heard. Reported by **pacifox**
+  (#23, finding 5); reproduced and measured in the emulator
+  (`firmware-arm/emulator/scenarios/vm/i23-lost-rt.txt`), where the sound
+  pushed after a reconnect went from refused to played in full.
+  One thing it does not fix: the rabbit plays a beep of its own about 1.2 s
+  after it comes back and no server-side timing can get an `RT` in before it,
+  so that beep is still lost.
+
 ## 0.15.8
 
 - **A reconnecting rabbit is no longer shadowed by its own dead session.**
