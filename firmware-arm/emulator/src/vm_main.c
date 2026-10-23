@@ -65,6 +65,8 @@ void sim_run_events(void)
       case SIM_EV_DISASSOC:   vap_deauth(e->ap, 1, (uint16_t)e->arg); break;
       case SIM_EV_AP_DOWN:    vap_set_up(e->ap, 0); break;
       case SIM_EV_AP_UP:      vap_set_up(e->ap, 1); break;
+      case SIM_EV_SERVER_DROP: gw_server_drop(); break;
+      case SIM_EV_ARP:         gw_set_arp(e->arg); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL: vap_drop_eapol(e->arg); break;
@@ -211,6 +213,8 @@ int main(int argc, char **argv)
          vap_stats.data_to_sta);
   printf("arp / dhcp / dns    %u / %u / %u\n", gw_stats.arp_requests,
          gw_stats.dhcp_offers, gw_stats.dns_queries);
+  if(gw_stats.arp_unanswered)
+    printf("  arp left unanswered %u\n", gw_stats.arp_unanswered);
   printf("pings answered      %u\n", gw_stats.pings);
   printf("tcp open/refused    %u / %u (closed %u)\n", gw_stats.tcp_opened,
          gw_stats.tcp_refused, gw_stats.tcp_closed);
@@ -218,6 +222,7 @@ int main(int argc, char **argv)
          gw_stats.bytes_to_rabbit);
   printf("audio clips played  %u (%u bytes)\n", hw_audio_clips(), hw_audio_bytes());
   printf("ears at count       %u / %u\n", hw_ear_position(0), hw_ear_position(1));
+  printf("ear commands        %u / %u\n", hw_ear_commands(0), hw_ear_commands(1));
   for(int i = 0; i < HW_NB_LEDS; i++)
     printf("led %-7s         #%06x\n", hw_led_name(i), hw_led(i));
   printf("failures            %d\n", sim_failures());

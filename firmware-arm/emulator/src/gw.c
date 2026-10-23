@@ -63,6 +63,22 @@ static int gw_trace;
 
 void gw_set_trace(int on) { gw_trace = on; }
 
+/* Whether the gateway answers ARP at all. Off models the server's host being
+ * down rather than the service: issue #23's finding 3 is that the bytecode
+ * adds a socket to `ltcp` before ARP resolves, arptime() drops the request
+ * after 10 s without calling back, and nothing ever frees the socket — so a
+ * TCP attempt every 3 s leaks until the VM heap is exhausted and vmem.c does
+ * ?OM Error -> sysReboot(), which is the orange-until-unplugged state the
+ * reconnect work exists to remove. */
+static int gw_arp_answers = 1;
+
+void gw_set_arp(int on)
+{
+  gw_arp_answers = on;
+  sim_log("gw: ARP %s", on ? "answered again" : "no longer answered — the "
+          "server's host is down, not just its service");
+}
+
 /* --- byte order ------------------------------------------------------- */
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)((p[0] << 8) | p[1]); }
@@ -184,6 +200,10 @@ static void handle_arp(const uint8_t *arp, uint32_t length)
   if(length < 28) return;
   if(rd16(arp) != 0x0001 || rd16(arp + 2) != ETHERTYPE_IP) return;
   if(rd16(arp + 6) != 1) return;          /* only requests */
+  if(!gw_arp_answers) {
+    gw_stats.arp_unanswered++;
+    return;
+  }
 
   sender = rd32(arp + 14);
   target = rd32(arp + 24);
@@ -744,6 +764,35 @@ void gw_set_subnet(const char *gateway, const char *rabbit)
     gw_ip = (a << 24) | (b << 16) | (c << 8) | d;
   if(rabbit && sscanf(rabbit, "%u.%u.%u.%u", &a, &b, &c, &d) == 4)
     rabbit_ip = (a << 24) | (b << 16) | (c << 8) | d;
+}
+
+/**
+ * @brief Drop every connection the rabbit has open, as a server going away
+ *        does: a FIN on each, which is what the add-on's socket closing looks
+ *        like from the rabbit's side.
+ *
+ * Deterministic, in virtual time, which racing a real process is not. It is
+ * how issue #23's findings 1 and 2 are reached: the bytecode's
+ * XmppSessionIsDisconnected runs, and what happens next is the question.
+ */
+void gw_server_drop(void)
+{
+  int dropped = 0;
+
+  for(int i = 0; i < GW_MAX_CONNECTIONS; i++) {
+    struct gw_conn *c = &conns[i];
+    if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
+    if(!c->fin_sent) {
+      c->fin_sent = 1;
+      tcp_send(c, 0x01 | 0x10, NULL, 0);      /* FIN, as a close does */
+      gw_stats.tcp_closed++;
+      dropped++;
+    }
+    if(c->fd >= 0) { close(c->fd); c->fd = -1; }
+    c->state = TCP_CLOSING;
+  }
+  sim_log("gw: the server went away — %d connection%s closed", dropped,
+          dropped == 1 ? "" : "s");
 }
 
 void gw_close(void)

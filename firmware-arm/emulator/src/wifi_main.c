@@ -157,6 +157,8 @@ void sim_run_events(void)
       case SIM_EV_DISASSOC:    vap_deauth(e->ap, 1, (uint16_t)e->arg); break;
       case SIM_EV_AP_DOWN:     vap_set_up(e->ap, 0); break;
       case SIM_EV_AP_UP:       vap_set_up(e->ap, 1); break;
+      case SIM_EV_SERVER_DROP:
+      case SIM_EV_ARP:        break;   /* no network in this binary */
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;

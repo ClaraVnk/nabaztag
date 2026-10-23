@@ -108,10 +108,23 @@ $(TARGET): $(WIFI_OBJ)
 $(VM_TARGET): $(VM_OBJ)
 	$(CC) $(SAN) -o $@ $(VM_OBJ) -lm
 
-# The bytecode as a C array. Regenerated whenever the image changes.
-obj/dumpbc.c: $(BYTECODE) mkbc.py
+# The bytecode as a C array. Regenerated whenever the image changes *or the
+# path does*: the stamp holds the last BYTECODE compiled in, because without
+# it `make BYTECODE=a vm` followed by `make BYTECODE=b vm` silently keeps a —
+# obj/dumpbc.c is newer than b, so make has nothing to do. Two runs then
+# compare one image against itself and agree, which is exactly how a test
+# comes out green for the wrong reason.
+obj/.bytecode-stamp: FORCE
+	@mkdir -p obj
+	@printf '%s\n' "$(abspath $(BYTECODE))" > $@.new
+	@cmp -s $@.new $@ 2>/dev/null || mv $@.new $@
+	@rm -f $@.new
+
+obj/dumpbc.c: $(BYTECODE) mkbc.py obj/.bytecode-stamp
 	@mkdir -p obj
 	python3 mkbc.py $(BYTECODE) -o $@
+
+FORCE:
 
 SCENARIOS = $(sort $(wildcard scenarios/*.txt))
 
@@ -137,4 +150,4 @@ asan:
 clean:
 	rm -rf obj $(TARGET) $(VM_TARGET)
 
-.PHONY: all vm check asan clean
+.PHONY: all vm check asan clean FORCE
