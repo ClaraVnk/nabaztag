@@ -114,7 +114,7 @@ that is the boot bytecode. `scenarios/wpa2-lost-msg2.txt`, and
 
 **The WPA2 group key arrives and is installed.** The AP wraps a GTK with the
 KEK into message 3 and the rabbit logs `GTK installed`. That is the path
-`crypto/aes128.c` and the `wpa2_gtk` modification exist for, and until now it
+`../crypto/aes128.c` and the `wpa2_gtk` modification exist for, and until now it
 could only be checked by flashing a rabbit and watching whether broadcast
 traffic ever arrived.
 
