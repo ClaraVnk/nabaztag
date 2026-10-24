@@ -212,9 +212,9 @@ LAST_SEEN: dict[str, float] = {}
 # A bound session silent for longer than this is dead (Wi-Fi lost, unplugged, no
 # FIN). 0 = never (old behaviour).
 XMPP_IDLE_S = float(os.environ.get("XMPP_IDLE_S") or _OPTS.get("xmpp_idle_s") or 90)
-# A resource bind is followed by its session within milliseconds; past this,
-# the rabbit is stuck half-way and ignores pushed packets (_check_rebind).
-REBIND_TIMEOUT_S = 15
+# A pushed sound makes the rabbit bind `streaming` within a second or two; past
+# this, it is ignoring what we push (_check_sound_ack).
+SOUND_ACK_S = 10
 _SID = itertools.count(1)
 
 
@@ -1085,9 +1085,9 @@ class XmppSession(threading.Thread):
         # and the timers all push on this socket, and two sendall() calls on
         # the same socket may interleave their bytes.
         self._send_lock = threading.Lock()
-        # Set by a resource bind, cleared by the session that must follow it
-        # (see _check_rebind).
-        self._rebind_at = None
+        # Set when a sound is pushed to an idle rabbit, cleared by the bind
+        # that answers it (see _check_sound_ack).
+        self._sound_at = None
 
     # -- low level --------------------------------------------------------- #
     def send(self, data: str):
@@ -1127,6 +1127,11 @@ class XmppSession(threading.Thread):
         """
         if _plays_a_sound(program):
             self._free_the_speaker()
+            # Only from `idle`: a rabbit already playing, or asleep, may
+            # legitimately answer with no bind at all.
+            if self.resource == "idle" and self._sound_at is None:
+                at = self._sound_at = time.time()
+                threading.Timer(SOUND_ACK_S, self._check_sound_ack, args=(at,)).start()
         self.send_violet_packet(message_packet(program))
 
     def _free_the_speaker(self):
@@ -1424,16 +1429,20 @@ class XmppSession(threading.Thread):
                 f"<iq type='result' id='{iq_id}'>"
                 f"<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>{self.jid}</jid></bind></iq>"
             )
+            was_bound = self.bound
             self._register()
-            at = self._rebind_at = time.time()
-            threading.Timer(REBIND_TIMEOUT_S, self._check_rebind, args=(at,)).start()
+            self._sound_at = None
+            if was_bound and self.resource == "idle":
+                # A rebind after a sound is not followed by a session (real
+                # rabbit, 2026-10-24, every sound), so the sound being over
+                # has to be read here and not in the session branch.
+                self._rearm_mic_if_owed()
             return
 
         if "urn:ietf:params:xml:ns:xmpp-session" in f and "<iq" in f:
             iq_id = (re.search(r"id='([^']*)'", f) or re.search(r'id="([^"]*)"', f))
             iq_id = iq_id.group(1) if iq_id else "1"
             self.bound = True
-            self._rebind_at = None
             self.send(f"<iq type='result' id='{iq_id}'/>")
             log.info("rabbit %s (%s) is now bound and idle — ready for commands", self.addr[0], self.mac)
             if self.resource == "idle":
@@ -1543,22 +1552,29 @@ class XmppSession(threading.Thread):
             return
         # Anything else (other packets/events) -> logged above.
 
-    def _check_rebind(self, at: float):
-        """A resource bind the rabbit never followed with its session.
+    def _check_sound_ack(self, at: float):
+        """A sound pushed to an idle rabbit that never made it bind.
 
-        Every bind (boot, idle, streaming, asleep) is followed by a session
-        within a few tens of milliseconds. Seen once on a real rabbit
-        (2026-10-23): a sound ended, the rabbit bound `idle` and then sent
-        nothing but keepalives and iq replies. It still answered the state
-        query, so it looked online and every `/api/sleep` returned `ok`, but
-        it applied none of them for 32 minutes, until the add-on restarted.
-        Dropping the stream makes it reconnect, which is what recovered it.
+        Playing anything makes the rabbit bind `streaming`, then `idle` when
+        it is done. Seen once on a real rabbit (2026-10-23): after a sound it
+        bound `idle` and then applied nothing it was sent for 32 minutes,
+        while still answering keepalives and the state query, until the
+        add-on restarted. Dropping the stream makes it reconnect, which is
+        what recovered it.
+
+        0.16.1 read that as a bind left without its session and dropped the
+        stream on that. But a rebind after a sound is never followed by a
+        session -- every sound on 2026-10-24 was, and the rabbit kept playing
+        the next ones -- so it dropped a healthy rabbit after each sound. The
+        test here is the one that matters: we asked for a sound, nothing
+        happened.
         """
-        if not self._alive or self._rebind_at != at:
+        if not self._alive or self._sound_at != at:
             return
-        log.warning("rabbit %s (mac=%s): bound %r but no session after %.0f s - "
+        self._sound_at = None
+        log.warning("rabbit %s (mac=%s): sound pushed but no bind after %.0f s - "
                     "dropping the stream so it reconnects",
-                    self.addr[0], self.mac, self.resource, REBIND_TIMEOUT_S)
+                    self.addr[0], self.mac, SOUND_ACK_S)
         self.close()
 
     def close(self):
