@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.2
+
+- **A healthy rabbit is no longer dropped after every sound.** 0.16.1 dropped
+  the stream when a resource bind was not followed by its session within 15 s.
+  On a real rabbit that is every sound: after playing, it binds `streaming`,
+  then `idle`, and sends no session for either. Every sound was followed by a
+  drop and a reconnect, so the rabbit was gone for about 22 s each time (8 times in
+  2 hours on 2026-10-24), and a sound sent in that window could not play.
+  It still plays the next sound without that session (two announcements 5 s
+  apart, same day), so the session was never the test. The test is now the
+  one that matters: a sound pushed to an `idle` rabbit that does not bind
+  `streaming` within 10 s drops the stream. That still covers the stuck rabbit
+  of 2026-10-23, which ignored everything it was sent. Reported by
+  **pacifox**.
+- The microphone owed back after a sound is now returned on the `idle` rebind
+  itself. It was returned in the session branch, which a rebind never
+  reaches.
 ## 0.16.1
 
 - **A capture in flight is no longer cancelled from under its owner.** The
