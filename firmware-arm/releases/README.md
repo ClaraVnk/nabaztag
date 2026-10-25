@@ -27,8 +27,8 @@ normal and it is the last step of every flash, OTA included).
 
 | | |
 |---|---|
-| **Size** | 231 330 bytes (`Nab.bin` 115 584) |
-| **sha256** | `4f400a581ff897d23bb794bfb2fe7b618a7031267cbea9bb1083f3611c3c1bea` |
+| **Size** | 231 378 bytes (`Nab.bin` 115 608) |
+| **sha256** | `2f35637bce320d23ef03e33bc602a1e63aa9459d2949e589eee457d7db3c3ab2` |
 | **Build mode** | `lean` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
@@ -39,7 +39,28 @@ multicast frame. This build carries a real AES-128, the RFC 3394 unwrap with
 its integrity check, and the GTK KDE parser, wired into message 3 and the
 group rekey. PR #20 has the full story and the test suite.
 
-**Replaced on 2026-10-23.** The image here now also carries the cold-state
+**Replaced on 2026-10-25.** It adds the three waits that used to feed the
+watchdog while they hung: the two VS1003 DREQ waits and the RT2501 bring-up
+loops (#25, #27). A wedged codec or a radio that never reports ready used to
+stop the rabbit with nothing left to rescue it, because the waits kept
+clearing the watchdog that exists for exactly that.
+
+**Hardware-validated on 2026-10-25** by OTA on a Nabaztag:tag v2: sent
+21:42:45, downloaded 384 ms later, and after the power cycle `bc.jsp`
+21:45:06, `locate.jsp` 21:45:20, operational — then a sound fetched and
+played at 21:49.
+
+Worth being exact about what that validates, since the fix itself cannot be
+staged: both failures it addresses need a wedged codec or a radio that will
+not come up. So the flash shows that nothing broke — which, given the DREQ
+waits sit on the audio path, is the thing most at risk. The fix is only
+visible the day one of those happens and the rabbit comes back instead of
+staying dark. It is one you hope never to see work.
+
+The image it replaces, `4f400a581ff897d2…`, is kept on the warren as the
+rollback.
+
+**Previously replaced on 2026-10-23.** That image carries the cold-state
 guards (#30), the EAPOL group-key acknowledgement (#37), the group cipher and
 the pairwise rekey (#44), the interpreter's store bounds-check (#47) and the
 audio half-duplex fix (#52). It passes all fifteen `preflight.py` checks.
