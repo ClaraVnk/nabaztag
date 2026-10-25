@@ -481,6 +481,193 @@ def patch_audio_ampli(root: Path) -> None:
     print(f"[ok]   {c}: set_vlsi_volume no longer powers the amplifier")
 
 
+def patch_no_libc_malloc(root: Path) -> None:
+    """Stop the network stack reaching libc's malloc, which lands on live globals.
+
+    pacifox's #27 finding 2. The chain: eapol.c's randbuffer() and two IV
+    fields in ieee80211.c call libc rand(); rand() calls malloc(24) on its
+    first call to hold its state; malloc goes to _sbrk, whose heap base is
+    `__heap_start__ = __bss_end__ = 0x1000033c`; and the orphaned .bss.*
+    sections that linker_keep deliberately leaves unzeroed start at exactly
+    that address. The first block therefore lands on counter_timer, rec_state
+    and play_state.
+
+    His first suggestion was to initialise _sbrk's cursor explicitly, and
+    taken alone it makes this worse rather than better: the cursor is a
+    .bss.* variable itself, so today the block lands wherever stale SRAM
+    points, which is sometimes harmless. Pin the cursor to NULL and the
+    corruption becomes reliable. So the fix has to be either moving the heap
+    base -- which the VM heap sits on top of, see the note of 2026-06-21 --
+    or removing the allocation. The second is much the smaller change.
+
+    Three steps, and only the first is the fix:
+
+    - nab_rand(), an xorshift32 that allocates nothing, replaces libc rand()
+      at its three call sites. They are the only callers: main.c's MALLOC is
+      usbh_malloc, and the bytecode's rand goes through sysRand.
+    - _sbrk returns (void *)-1 instead of 0 when the heap is full, so a
+      future allocator that does get there fails the way newlib expects
+      rather than being handed address zero.
+    - its cursor goes in .data, so if anything ever does allocate, where it
+      lands is at least repeatable. Belt and braces, not the fix.
+
+    A side effect worth having: libc rand() with no srand() returns the same
+    sequence on every boot, so every rabbit of this model produced the same
+    EAPOL SNonce sequence from cold. nab_rand seeds itself from the
+    millisecond timer, which is thousands of ticks in by the time the radio
+    associates.
+
+    NOT APPLIED -- it builds a brick, measured 2026-10-25. Left here the way
+    audio_ampli is left: the finding is right, this formulation of it is not.
+
+    Removing the libc rand() call sites removes the libc objects that pulled
+    malloc in, and that changes the set of input objects the linker sees. The
+    85 orphaned `.bss.*` sections then land *inside* the `.bss` output section
+    instead of after it, because nothing in the linker script says where they
+    go -- `linker_keep` brackets only `*(.bss)` and `*(COMMON)`. Against the
+    control build:
+
+                         control          with this step
+        __bss_end__      0x1000034c       0x10003208
+        __heap_start__   0x1000034c       0x10003208
+        __heap_end__     0x10002888       0x10002888   (heap inverted)
+        __stack_end__    0x10002988       0x10002988   (bss over the stack)
+        zero-loop        12 bytes         11 968 bytes (orphans swallowed)
+
+    The last line is the 2026-06-20 brick: the zero-loop clears the region the
+    VM heap lives in, and the rabbit fetches its bytecode then stalls before
+    locate.jsp. `preflight.py` passed this image. That is the part worth
+    remembering -- the gate was extended afterwards with
+    `check_memory_landmarks`, which now refuses it on all three symptoms, and
+    the only reason the bad layout was caught at all is that the control build
+    existed to compare against.
+
+    To ship the fix, the orphan placement has to stop being an accident
+    first: give `.bss.*` an explicit home after `__bss_end__` in the linker
+    script, prove the layout with preflight, and only then remove the rand()
+    calls. The order matters -- doing it the other way round is this entry.
+    """
+    h = root / "inc/common.h"
+    src = read_src(h)
+    if "nab_rand" in src:
+        print("[skip] no_libc_malloc: already applied")
+        return
+    nl = "\r\n" if "\r\n" in src else "\n"
+    # Before the include guard's own #endif, which is the last one in the
+    # file. NOT next to a GPIO macro: those live inside
+    # `#if PCB_RELEASE == ...` branches, and a declaration dropped into the
+    # wrong branch is invisible to the build that is running -- which is
+    # exactly what happened, and the compiler only warned about an implicit
+    # declaration before the link failed.
+    head, sep, tail = src.rpartition("#endif")
+    if not sep:
+        sys.exit(f"FAIL {h}: no include guard to insert before (upstream changed?)")
+    src = head + nl.join([
+        "/* A pseudo-random word that allocates nothing. libc's rand() mallocs",
+        "   its state on the first call, and this firmware's heap base is the",
+        "   address of live globals -- see apply-mods.py. */",
+        "uint32_t nab_rand(void);",
+        "",
+        sep,
+    ]) + tail
+    write_src(h, src)
+    print(f"[ok]   {h}: nab_rand declared")
+
+    c = root / "src/utils/sys.c"
+    src = read_src(c)
+    nl = "\r\n" if "\r\n" in src else "\n"
+    old = nl.join([
+        "    if ((heap + incr) >= (uint8_t *)&__heap_end__) {",
+        "        return 0;",
+        "    }",
+    ])
+    new = nl.join([
+        "    if ((heap + incr) >= (uint8_t *)&__heap_end__) {",
+        "        /* newlib reads 0 as a valid address. (void *)-1 is how a",
+        "           failed _sbrk is spelled, and the difference is whether a",
+        "           caller writes to address zero or gets NULL from malloc. */",
+        "        return (void *)-1;",
+        "    }",
+    ])
+    if old not in src:
+        sys.exit(f"FAIL {c}: _sbrk's exhaustion branch not found (upstream changed?)")
+    src = src.replace(old, new, 1)
+
+    old = "    static uint8_t *heap = NULL;"
+    new = nl.join([
+        "    /* In .data, so the cursor is a known value at boot: it is itself",
+        "       a .bss.* variable, which linker_keep leaves unzeroed. This is",
+        "       not the fix -- nothing should reach here at all -- it only",
+        "       makes the remaining path repeatable. */",
+        "    static uint8_t *heap __attribute__((section(\".data\"))) = NULL;",
+    ])
+    if old not in src:
+        sys.exit(f"FAIL {c}: _sbrk's cursor declaration not found (upstream changed?)")
+    src = src.replace(old, new, 1)
+
+    marker = "extern void *_sbrk(int32_t incr)"
+    if marker not in src:
+        sys.exit(f"FAIL {c}: _sbrk not found (upstream changed?)")
+    src = src.replace(marker, nl.join([
+        "/**",
+        " * @brief A pseudo-random word that allocates nothing.",
+        " *",
+        " * xorshift32, seeded from the millisecond timer on first use. libc's",
+        " * rand() mallocs its state, and _sbrk below hands out the address of",
+        " * live globals; this exists so the network stack never goes there.",
+        " *",
+        " * It also stops every rabbit of this model producing the same EAPOL",
+        " * SNonce sequence from cold, which rand() without srand() did.",
+        " */",
+        "uint32_t nab_rand(void)",
+        "{",
+        "    static uint32_t s __attribute__((section(\".data\"))) = 0;",
+        "",
+        "    if (s == 0)",
+        "        s = counter_timer | 1u;   /* xorshift must never hold zero */",
+        "    s ^= s << 13;",
+        "    s ^= s >> 17;",
+        "    s ^= s << 5;",
+        "    return s;",
+        "}",
+        "",
+        marker,
+    ]), 1)
+    # counter_timer is declared in utils/delay.h, and sys.c includes nothing
+    # of the project: it is newlib's hook file. One source of truth beats a
+    # second extern, so the header comes in rather than a copy of the line.
+    inc = "#include <stdint.h>"
+    if inc not in src:
+        sys.exit(f"FAIL {c}: cannot find where to add the include (upstream changed?)")
+    if "utils/delay.h" not in src:
+        src = src.replace(inc, nl.join([
+            inc,
+            "",
+            '#include "utils/delay.h"   /* counter_timer, which seeds nab_rand */',
+        ]), 1)
+    write_src(c, src)
+    print(f"[ok]   {c}: nab_rand added, _sbrk fails properly")
+
+    for rel, pairs in (
+        ("src/net/eapol.c", [(["    buffer[i] = rand() & 0xFF;"],
+                              ["    buffer[i] = nab_rand() & 0xFF;"])]),
+        ("src/net/ieee80211.c", [(["\tauth->txd.Iv = rand() & 0x00ffffff;"],
+                                  ["\tauth->txd.Iv = nab_rand() & 0x00ffffff;"]),
+                                 (["        fr->txd.Iv = rand() & 0x00ffffff;"],
+                                  ["        fr->txd.Iv = nab_rand() & 0x00ffffff;"])]),
+    ):
+        f = root / rel
+        src = read_src(f)
+        nl = "\r\n" if "\r\n" in src else "\n"
+        for old_lines, new_lines in pairs:
+            old = nl.join(old_lines)
+            if old not in src:
+                sys.exit(f"FAIL {f}: {old_lines[0].strip()!r} not found (upstream changed?)")
+            src = src.replace(old, nl.join(new_lines), 1)
+        write_src(f, src)
+        print(f"[ok]   {f}: uses nab_rand")
+
+
 def patch_bounded_waits(root: Path) -> None:
     """Stop three waits from feeding the watchdog for ever.
 
@@ -2592,6 +2779,19 @@ def main() -> int:
             "not reach. Reading one of them is the 2026-06-20 brick. Add "
             "audio_fifo_data, or drop linker_keep."
         )
+    # Same shape, same reason. no_libc_malloc builds an image that bricks and
+    # that preflight.py passed on 2026-10-25; see its docstring. It stays in
+    # the dispatch table so the work is not lost, but naming it has to be a
+    # deliberate act with the linker-script half done first, not something a
+    # mode list carries quietly.
+    if "no_libc_malloc" in steps:
+        sys.exit(
+            "FAIL step list: no_libc_malloc changes the linked object set, "
+            "which moves the 85 orphaned .bss.* sections inside .bss -- the "
+            "zero-loop then clears the VM heap and the rabbit stalls before "
+            "locate.jsp. Place .bss.* explicitly in the linker script first. "
+            "See patch_no_libc_malloc's docstring for the measured layout."
+        )
     fns = {
         "eapol_replay": patch_eapol_replay,
         "cold_state": patch_cold_state,
@@ -2613,6 +2813,7 @@ def main() -> int:
         "audio_fifo_data": patch_audio_fifo_data,
         "audio_halfduplex": patch_audio_halfduplex,
         "bounded_waits": patch_bounded_waits,
+        "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
         "inline_mkwav": patch_inline_mkwav,
