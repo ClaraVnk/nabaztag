@@ -315,6 +315,97 @@ def check_stack_margin(elf: Elf, r: Report, floor: int) -> None:
              f"{margin} bytes down to {highest['sname']} at 0x{top:08x}")
 
 
+def check_memory_landmarks(elf: Elf, r: Report) -> None:
+    """The linker's own symbols have to describe a RAM that can exist.
+
+    Added after this gate passed an image that would have bricked the rabbit,
+    2026-10-25. A step that removed libc's malloc also removed the objects
+    that pulled it in, the linker then placed the orphaned `.bss.*` sections
+    *inside* the `.bss` output section instead of after it, and three things
+    went wrong at once:
+
+        __bss_end__     0x10003208   the zero-loop now clears the orphans,
+                                     which is the 2026-06-20 brick: it leaves
+                                     no VM heap at all
+        __heap_start__  0x10003208
+        __heap_end__    0x10002888   below its own start: a negative heap
+        __stack_end__   0x10002988   below __bss_end__: .bss over the stack
+
+    Every other check passed. They look at sections, and none of these is a
+    section: a heap is two symbols and a stack is a region nothing declares.
+
+    The lesson worth keeping is why the good layout is good. Nothing in the
+    linker script arranges for the orphans to sit after `__bss_end__` — the
+    linker simply places them there, given this set of input objects. It is
+    an accident that the working firmware depends on, so any change to what
+    gets linked can flip it, and the only safe place to find out is here.
+    """
+    bss_end = elf.symbols.get("__bss_end__")
+    heap_start = elf.symbols.get("__heap_start__")
+    heap_end = elf.symbols.get("__heap_end__")
+    stack_end = elf.symbols.get("__stack_end__")
+
+    if heap_start is not None and heap_end is not None:
+        if heap_end <= heap_start:
+            r.fail("the newlib heap has a positive size",
+                   f"__heap_start__ 0x{heap_start:08x} is at or above "
+                   f"__heap_end__ 0x{heap_end:08x}, so the heap is empty or "
+                   f"inverted. Anything that allocates gets an address out of "
+                   f"the region, or _sbrk's bounds check misbehaves")
+        else:
+            r.ok("the newlib heap has a positive size",
+                 f"{heap_end - heap_start} bytes")
+
+    # Non-blocking, because the firmware we ship has this and runs: the libc
+    # heap is declared over the orphan globals. It is harmless only as long as
+    # nothing reaches libc's allocator -- main.c's MALLOC is usbh_malloc and
+    # the bytecode's rand is sysRand(), so the one door left is libc rand().
+    # Said plainly: the shipping firmware is one rand() call away from
+    # overwriting counter_timer. A note, not a failure, so this gate does not
+    # start rejecting the image on four rabbits -- but it is written down.
+    if heap_start is not None and heap_end is not None and heap_end > heap_start:
+        over = [t for t in elf.allocated()
+                if t["sname"].startswith(".bss.")
+                and heap_start <= t["addr"] < heap_end]
+        if over:
+            first = min(over, key=lambda t: t["addr"])
+            r.note("the libc heap is declared over globals",
+                   f"{len(over)} section(s), {sum(t['size'] for t in over)} "
+                   f"bytes, starting at {first['sname']} 0x{first['addr']:08x}. "
+                   f"Safe only while nothing calls libc malloc; libc rand() does")
+
+    if bss_end is not None and stack_end is not None:
+        if bss_end > stack_end:
+            r.fail("the zeroed region stops below the stack",
+                   f"__bss_end__ 0x{bss_end:08x} is above __stack_end__ "
+                   f"0x{stack_end:08x}: the zero-loop writes into the stack "
+                   f"region, and whatever the stack holds at that moment is "
+                   f"cleared under it")
+        else:
+            r.ok("the zeroed region stops below the stack",
+                 f"{stack_end - bss_end} bytes between them")
+
+    # The orphans are the VM's heap. If the zero-loop has grown to cover
+    # them, the loader has nowhere to allocate and the rabbit stalls right
+    # after bc.jsp -- downloads its bytecode, never reaches locate.
+    orphans = [t for t in elf.allocated()
+               if t["sname"].startswith(".bss.")
+               and INTRAM_ORIGIN <= t["addr"] < INTRAM_ORIGIN + INTRAM_LENGTH]
+    if orphans and bss_end is not None:
+        swallowed = [t for t in orphans if t["addr"] < bss_end]
+        if swallowed:
+            total = sum(t["size"] for t in swallowed)
+            r.fail("the VM heap survives the zero-loop",
+                   f"{len(swallowed)} .bss.* section(s), {total} bytes, now "
+                   f"sit below __bss_end__ 0x{bss_end:08x} and are cleared at "
+                   f"startup. That region IS the VM heap -- see apply-mods.py's "
+                   f"note of 2026-06-21. A rabbit on this image downloads its "
+                   f"bytecode and stalls before locate.jsp")
+        else:
+            r.ok("the VM heap survives the zero-loop",
+                 f"{len(orphans)} .bss.* section(s) above __bss_end__")
+
+
 def check_kept_sections(elf: Elf, r: Report) -> None:
     """The sections KEEP() exists for, when the build has them as sections.
 
@@ -448,6 +539,7 @@ def main() -> int:
     check_no_overlap(elf, r)
     check_regions(elf, r)
     check_stack_margin(elf, r, args.stack_floor)
+    check_memory_landmarks(elf, r)
     check_kept_sections(elf, r)
     check_reset_vector(build / "Nab.bin", r)
     check_size(build / "Nab.bin", r)

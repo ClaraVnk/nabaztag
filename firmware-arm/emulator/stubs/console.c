@@ -14,6 +14,10 @@
 #include "common.h"
 #include "utils/debug.h"
 
+/* The virtual clock, which seeds nab_rand below. sim.c writes it, exactly as
+   the hardware's timer interrupt does. */
+extern uint32_t counter_timer;
+
 char dbg_buffer[DBG_BUFFER_LENGTH];
 
 void consolestr(const void *s)
@@ -44,4 +48,35 @@ void dump(uint8_t *src, int32_t len)
     }
     putchar('\n');
   }
+}
+
+/**
+ * @brief The firmware's own non-allocating PRNG, for the host build.
+ *
+ * The no_libc_malloc step puts nab_rand() in src/utils/sys.c, which is
+ * newlib's hook file and is not part of this build -- the host has its own
+ * libc. Without this, eapol.c's SNonce and ieee80211.c's IV fields link
+ * against nothing.
+ *
+ * Unreferenced as things stand, because that step is parked: it builds a
+ * brick on target, for a reason that has nothing to do with rand() and
+ * everything to do with link order. See patch_no_libc_malloc's docstring in
+ * apply-mods.py. This stays because the day the step is revived, the
+ * emulator will need it again and the reason will be easy to lose.
+ *
+ * Deliberately the same arithmetic as the firmware's, not a call to the
+ * host's rand(): the point of running the real stack here is that the bytes
+ * on the wire are the bytes the rabbit would send, and a nonce is one of
+ * them. Seeded from the virtual clock, so a scenario replays identically.
+ */
+uint32_t nab_rand(void)
+{
+  static uint32_t s;
+
+  if (s == 0)
+    s = counter_timer | 1u;
+  s ^= s << 13;
+  s ^= s >> 17;
+  s ^= s << 5;
+  return s;
 }
