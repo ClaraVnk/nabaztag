@@ -383,15 +383,23 @@ def patch_linker_keep(root: Path) -> None:
         ("    *(.startup.*)\n", "    KEEP(*(.startup.*))\n"),
         ("    *(.bytecode.*)\n", "    KEEP(*(.bytecode.*))\n"),
         ("    *(.ramfunc)\n", "    KEEP(*(.ramfunc))\n"),
-        # NOTE (2026-06-21): we deliberately do NOT bracket *(.bss.*) here.
-        # Doing so zeroes the whole .bss correctly, but on the 16 KB SRAM it
-        # pushes __heap_start__ to the end of .bss, leaving ZERO VM heap -> the
-        # bytecode loader (VMALLOC) can't allocate and the rabbit stalls right
-        # after bc.jsp (downloads its bytecode, never reaches locate/XMPP).
-        # Upstream's *(.bss)-only bracket accidentally leaves a ~9 KB heap (the
-        # .bss.* sit, unzeroed, over the heap) -- which the working firmware
-        # relied on. So we keep that layout and instead fix the ONE
-        # uninitialized global that actually faulted: see patch_audio_fifo_data.
+        # This step does not touch the .bss block. Bracketing *(.bss.*)
+        # there is the right thing to do and `extbss` now does it -- but only
+        # together with moving 8 KB of scratch buffers out to external RAM,
+        # because on a 16 KB SRAM the collected .bss otherwise runs into the
+        # stacks that init.s reserves. See patch_extbss.
+        #
+        # CORRECTION (2026-10-25) to the note that stood here from 2026-06-21:
+        # it said bracketing *(.bss.*) "leaves ZERO VM heap -> the bytecode
+        # loader (VMALLOC) can't allocate". That explanation was wrong, and
+        # being wrong it argued against the real fix for four months. VMALLOC
+        # does not use the newlib heap at all: `_vmem_heap` is a fixed address
+        # in external RAM, `((int32_t*)(0xD0010000))` in inc/vm/vmem.h:16. The
+        # newlib heap in IntRAM is reached only by libc rand(). What actually
+        # bricked the rabbit on 2026-06-20 is that __bss_end__ climbed to
+        # 0x10003208, above the 0x1680-byte stack reserve at 0x10002980 --
+        # .bss landed on the stacks. preflight.py's check_memory_landmarks
+        # tests for exactly that now.
     ]
     n = 0
     for old, new in edits:
@@ -481,6 +489,400 @@ def patch_audio_ampli(root: Path) -> None:
     print(f"[ok]   {c}: set_vlsi_volume no longer powers the amplifier")
 
 
+def patch_usb_robustness(root: Path) -> None:
+    """Five ways the radio went deaf or leaked, from pacifox's #25.
+
+    Findings 3, 4 and 5. Each one is small; what they share is that a failure
+    is detected and then dropped on the floor, so the rabbit stays
+    "connected" with no radio and nothing ever retries.
+
+    1. The 8051 start request was unchecked (finding 3). rt2501_setup()
+       writes the firmware image, checking every rt2501_write, and then sends
+       the vendor "start firmware" request through usbh_control_transfer with
+       its return value discarded. If that one request fails the driver
+       reports success and the stick never runs the image. It now returns 0,
+       which usbh_rt2501 already handles by deleting the pipes and letting
+       enumeration start over.
+
+       Not done, deliberately: the VBUS off/on cycle pacifox suggests in the
+       same finding. VBUS_OFF exists in usbctrl.h and nothing calls it, but
+       whether VBUS to the stick is actually switched by the controller is a
+       board question, and a rabbit whose stick never comes back up is worse
+       than one that needs a power cycle. It needs a measurement, not a
+       patch.
+
+    2. A failed enumeration was reported as a success (finding 4).
+       usbh_connect() cleans up after usbh_enumeration() fails -- releases
+       the descriptors, deletes pipe 0 -- and then returns `dev` anyway. Its
+       caller stores that as hcd_info.rh_device and the stack carries on with
+       a device that was never enumerated. It now frees dev and returns NULL,
+       the same way it already does when the allocation fails.
+
+       Also in finding 4: main.c's three `while(1);` after a failed
+       usbctrl_init / usbhost_init / rt2501_driver_install, described as
+       silent hangs with no reset. They are not, and this is worth being
+       exact about because it changes what to do: wdt_start() runs at
+       main.c:183, before all three, so the watchdog is armed and those loops
+       reset the chip after about 2.09 s. They are reset loops. What made
+       them look like hangs is the next thing along -- the reset is a
+       software reset, and usbhost_init_status survived it, so the retry did
+       nothing. That is finding 1, and `extbss` is what fixes it. Left as
+       they are.
+
+    3. One failed allocation left the rabbit deaf for good (finding 5).
+       rt2501_submit_rx() returns silently when hcd_malloc gives it no URB,
+       and reception is re-armed only from the receive callback -- which will
+       now never run again. A flag records the miss and rt2501_timer(), which
+       main's loop already calls, retries. Reception resumes on the next
+       tick instead of never.
+
+    4. A USB error was reported as a short frame (finding 5). hcd.c sets
+       `urb->status = URB_XFERERR` in the error branch and then, four lines
+       later and unconditionally, overwrites it with `(int8_t)urb->result` --
+       the small positive OHCI condition code. Every caller that tests
+       `urb->status < 0` therefore sees a success. The overwrite now happens
+       only when no error was flagged.
+
+    5. ComRAM was leaked on every failed transmit (finding 5). On success
+       the frame is freed by usbh_free_urb_callback; when the submit fails
+       nobody frees it, and no caller of rt2501_tx does either -- not
+       ieee80211_send_auth, not ieee80211_associate, not rt2501_send. Freeing
+       it in rt2501_tx covers all of them, which is also where ownership
+       actually ends. ComRAM is 4 KB.
+
+       And the busy-loop that waits for it (`do { fr = hcd_malloc(...) }
+       while((fr == NULL) && mayblock)`) gets a bound. It has no CLR_WDT, so
+       today it is a 2-second watchdog reset whenever ComRAM is momentarily
+       full. Dropping one frame is a better answer than rebooting, and
+       rt2501_send already has `if(fr == NULL) return 0` one line below.
+    """
+    # These files are CRLF (the 2006 sources are, inconsistently), so every
+    # pattern below is written with \n and translated per file. Matching
+    # against the wrong newline is a silent no-match, which the sys.exit
+    # guards would otherwise report as "upstream changed".
+    def edit(rel, pairs, done_marker, label):
+        f = root / rel
+        src = read_src(f)
+        if done_marker in src:
+            print(f"[skip] usb_robustness: {rel} already done")
+            return
+        nl = "\r\n" if "\r\n" in src else "\n"
+        for old, new, what in pairs:
+            o, n = old.replace("\n", nl), new.replace("\n", nl)
+            if o not in src:
+                sys.exit(f"FAIL {f}: cannot find {what} (upstream changed?)")
+            src = src.replace(o, n, 1)
+        f.write_text(src)
+        print(f"[ok]   {f}: {label}")
+
+    edit("src/usb/rt2501usb.c", [
+        # 1. the 8051 start request
+        ("""  /* Start firmware */
+  usbh_control_transfer(rt2501_dev,""",
+         """  /* Start firmware. The result matters: if this one request fails the
+     stick never runs the image we just wrote, and reporting success here
+     leaves a driver bound to a radio that will never answer. */
+  if(usbh_control_transfer(rt2501_dev,""",
+         "the 8051 start request"),
+        ("""        0,        /* wLength */
+        NULL);
+  DBG_WIFI("OK!"EOL);""",
+         """        0,        /* wLength */
+        NULL) < 0) {
+    DBG_WIFI("8051 start request failed"EOL);
+    return 0;
+  }
+  DBG_WIFI("OK!"EOL);""",
+         "the end of the 8051 start request"),
+        # 3. re-arm reception after a failed allocation
+        ("static void rt2501_submit_rx(void);",
+         """static void rt2501_submit_rx(void);
+/* Set when rt2501_submit_rx could not get an URB; retried from
+   rt2501_timer(). */
+static uint8_t rt2501_rx_starved;
+/* Consecutive receive errors, reset by any good frame. Only the USB connect
+   hook sets rt2501_connected back to 1, so giving up has to be a decision
+   rather than a reflex. */
+static uint8_t rt2501_rx_errors;
+#define RT2501_RX_ERROR_LIMIT 10""",
+         "rt2501_submit_rx's declaration"),
+        ("""  disable_ohci_irq();
+  urb = hcd_malloc(sizeof(*urb), EXTRAM,17);
+  enable_ohci_irq();
+  if(urb == NULL) return;""",
+         """  disable_ohci_irq();
+  urb = hcd_malloc(sizeof(*urb), EXTRAM,17);
+  enable_ohci_irq();
+  if(urb == NULL) {
+    /* Reception is re-armed only from the receive callback, and without an
+       URB that callback will never run again -- one failed allocation used
+       to leave the rabbit connected and deaf for good. Remember it and let
+       rt2501_timer() try again on the next tick. */
+    rt2501_rx_starved = 1;
+    return;
+  }
+  rt2501_rx_starved = 0;""",
+         "rt2501_submit_rx's allocation"),
+        ("""void rt2501_timer(void)
+{
+  if(!rt2501_connected) return;""",
+         """void rt2501_timer(void)
+{
+  if(!rt2501_connected) return;
+  if(rt2501_rx_starved) rt2501_submit_rx();""",
+         "rt2501_timer"),
+        # 6. a transient receive error no longer kills the radio for good
+        ("""  if(urb->status < 0) {
+    sprintf(dbg_buffer, "USB BULK RX ERROR, status=%d, result=%ld"EOL,
+      urb->status, urb->result);
+    DBG_WIFI(dbg_buffer);
+    rt2501_connected = 0;
+    hcd_free(urb);
+    return;
+  }""",
+         """  if(urb->status < 0) {
+    sprintf(dbg_buffer, "USB BULK RX ERROR, status=%d, result=%ld"EOL,
+      urb->status, urb->result);
+    DBG_WIFI(dbg_buffer);
+    hcd_free(urb);
+    /* Clearing rt2501_connected here is a one-way door: it makes
+       rt2501_state() report RT2501_S_BROKEN for ever, because only the USB
+       connect hook ever sets it back, and a stick soldered to the board
+       never disconnects. So a single transient error used to cost the radio
+       until the next power cycle. Re-arm a bounded number of times first;
+       if they all fail, give up exactly as before. */
+    if(++rt2501_rx_errors <= RT2501_RX_ERROR_LIMIT) {
+      rt2501_frame_position = 0;
+      rt2501_submit_rx();
+      return;
+    }
+    DBG_WIFI("too many RX errors, radio down"EOL);
+    rt2501_connected = 0;
+    return;
+  }
+  rt2501_rx_errors = 0;""",
+         "rt2501_rx_callback's error branch"),
+        # 7. an overrun is a software condition, and recoverable
+        ("""      DBG_WIFI("RX Buffer overrun"EOL);
+      rt2501_connected = 0;
+      return;""",
+         """      /* An overrun is our own frame cursor running off the end, not a
+          dead radio. Reset it and keep receiving; killing the link here
+          meant RT2501_S_BROKEN until the next power cycle. */
+      DBG_WIFI("RX Buffer overrun"EOL);
+      rt2501_frame_position = 0;
+      hcd_free(urb);
+      rt2501_submit_rx();
+      return;""",
+         "the RX overrun branch"),
+        # 5a. free the frame when the submit fails
+        ("  ret = usbh_bulk_transfer_async(rt2501_dev, 1, buffer, length);",
+         """  ret = usbh_bulk_transfer_async(rt2501_dev, 1, buffer, length);
+  if(!((ret > 0) || (ret == URB_PENDING))) {
+    /* On success usbh_free_urb_callback frees the frame. On failure nobody
+       did -- not here, not in any caller -- and ComRAM is 4 KB. */
+    disable_ohci_irq();
+    hcd_free(buffer);
+    enable_ohci_irq();
+    return 0;
+  }""",
+         "rt2501_tx's submit"),
+    ], "rt2501_rx_starved", "8051 start checked, rx re-armed, TX frame freed")
+
+    # 2. a failed enumeration is a failure
+    edit("src/usb/usbhcore.c", [
+        ("""  if(usbh_enumeration(dev)<0){
+    DBG_USB(" USBH: Error!! failed enumeration"EOL);
+    usbh_release_descriptor_all(dev);
+    if(dev->pipe[0]){
+      usbh_delete_pipe(dev, 0);
+    }
+  }
+
+  return dev;""",
+         """  if(usbh_enumeration(dev)<0){
+    DBG_USB(" USBH: Error!! failed enumeration"EOL);
+    usbh_release_descriptor_all(dev);
+    if(dev->pipe[0]){
+      usbh_delete_pipe(dev, 0);
+    }
+    /* And say so. Returning dev here made the caller store a device that
+       was never enumerated as the live root-hub device. */
+    hcd_free(dev);
+    return NULL;
+  }
+
+  return dev;""",
+         "usbh_connect's enumeration branch"),
+    ], "was never enumerated as the live root-hub device",
+       "a failed enumeration returns NULL and frees the device")
+
+    # 4. do not overwrite a flagged error
+    f = root / "src/usb/hcd.c"
+    src = read_src(f)
+    if "turned every USB error into a short frame" in src:
+        print("[skip] usb_robustness: hcd.c already done")
+    else:
+        nl = "\r\n" if "\r\n" in src else "\n"
+        old = "  urb->status = (int8_t)urb->result;"
+        if src.count(old) != 1:
+            sys.exit(f"FAIL {f}: expected one status overwrite, "
+                     f"found {src.count(old)}")
+        new = ("""  /* Only when the error branch above did not already flag one: it sets
+     URB_XFERERR, and overwriting that with the OHCI condition code -- a
+     small positive number -- turned every USB error into a short frame for
+     callers that test `status < 0`. */
+  if(urb->status >= 0)
+    urb->status = (int8_t)urb->result;""").replace("\n", nl)
+        f.write_text(src.replace(old, new, 1))
+        print(f"[ok]   {f}: a flagged USB error survives to the caller")
+
+    # 5b. bound the ComRAM wait
+    edit("src/net/ieee80211.c", [
+        ("\tdo {\n\t\tdisable_ohci_irq();\n\t\tfr = hcd_malloc(",
+         "\t/* ComRAM is 4 KB. This loop has no CLR_WDT, so an exhausted pool\n"
+         "\t   used to mean a 2-second watchdog reset; dropping one frame is a\n"
+         "\t   better answer, and the `if(fr == NULL) return 0` below is\n"
+         "\t   already written for it. */\n"
+         "\tuint32_t comram_tries = 1000;\n"
+         "\tdo {\n\t\tdisable_ohci_irq();\n\t\tfr = hcd_malloc(",
+         "the ComRAM busy-loop"),
+        ("\t} while((fr == NULL) && mayblock);",
+         "\t} while((fr == NULL) && mayblock && --comram_tries);",
+         "the end of the ComRAM busy-loop"),
+    ], "comram_tries", "the ComRAM wait is bounded (1000 tries, then drop)")
+
+
+def patch_extbss(root: Path) -> None:
+    """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
+
+    RedoXyde/nabgcc `6303737` (Leonard, 2026-08-28), ported rather than
+    reinvented, and credited: sys/ml67q4051.ld, src/vm/vaudio.c and
+    src/vm/vlog.c are his change verbatim in substance. Proven on his
+    hardware 2026-07-31 -- both key slots valid after association, zero
+    cipher errors, and a broadcast ping answered.
+
+    pacifox's #27 finding 1 and the root of finding 2, and the general form
+    of #25 finding 1.
+
+    What is wrong without it. `-fdata-sections` gives every variable its own
+    `.bss.NAME` input section, and the linker script collects only `*(.bss)`
+    and `*(COMMON)`. So 85 sections land past `__bss_end__` and the startup
+    zero-loop never reaches them: the entire EAPOL state (pmk, ptk, gtk,
+    nonces, replay counter), the scan cipher cache, `usbhost_init_status`,
+    `rec_state`, `play_state` all boot holding whatever the SRAM held at
+    power-on. Association was a lottery and every replug re-rolled it.
+
+    Why it could not simply be bracketed. Collecting `.bss.*` lifts
+    `__bss_end__` to 0x10003208, and init.s reserves 0x1680 bytes of stacks
+    from the top of a 16 KB SRAM, so the stacks start at 0x10002980 -- below
+    it. .bss then sits on the stacks, which is the 2026-06-20 brick. The way
+    out is to stop storing 8 KB of pure scratch in a 16 KB SRAM: the audio
+    FIFO and vlog's `buffer_temp` go to a NOLOAD `.extbss` section in
+    external RAM, at 0xD0000000, below the USB pool that `inc/utils/mem.h`
+    puts at 0xD0008000 and well below the VM heap at 0xD0010000. That brings
+    `__bss_end__` down to about 0x10001464 and gives the user stack its full
+    4 KB back, which is finding 1.
+
+    The location counter is saved into `_intram_end` and restored after the
+    ExtRAM section. This is the subtle part and it is Leonard's: an output
+    section in another region drags the location counter into that region,
+    which would put `__heap_start__` in ExtRAM while `__heap_end__` stayed in
+    IntRAM -- a heap spanning two regions, and `_sbrk` handing out memory
+    forever without reaching its limit. preflight.py's check_memory_landmarks
+    fails on an inverted heap for this reason.
+
+    Not zeroed, deliberately: `.extbss` is NOLOAD and nothing clears it.
+    Both buffers are written before they are read -- the FIFO by
+    audioFifoPlay's producer, `buffer_temp` by sysSave -- and external RAM is
+    not even addressable until setup_ext_sram_rom() has run. Put anything in
+    there that is read before it is written and it is the 2026-06-20 class of
+    bug again, one region over.
+    """
+    ld = root / "sys/ml67q4051.ld"
+    s = ld.read_text()
+    if ".extbss" in s:
+        print(f"[skip] extbss: already applied")
+        return
+
+    # The region gains write permission (it holds .bss now) and shrinks to
+    # the 32 KB that is genuinely free: the USB pool starts at 0xD0008000
+    # (EXTRAM_ADDR) and the VM heap at 0xD0010000 (SRAM_BASE). A 1024 KB
+    # region would let a future section be placed straight through both.
+    old_region = "  ExtRAM  (rx) : ORIGIN = 0xD0000000, LENGTH = 1024k\n"
+    new_region = (
+        "  /* 0xD0000000-0xD0007FFF free, used by .extbss below;\n"
+        "     0xD0008000 USB/hcd pool (EXTRAM_ADDR, 32k);\n"
+        "     0xD0010000 VM heap (SRAM_BASE / _vmem_heap). */\n"
+        "  ExtRAM  (rwx) : ORIGIN = 0xD0000000, LENGTH = 32k\n"
+    )
+
+    old_bss = "    *(.bss)\n    *(COMMON)\n"
+    new_bss = (
+        "    *(.bss)\n"
+        "    *(.bss.*)   /* -fdata-sections puts every variable in its own\n"
+        "                   .bss.NAME section; without this pattern they are\n"
+        "                   orphans PAST __bss_end__ that the startup\n"
+        "                   zero-loop never reaches -- the EAPOL state,\n"
+        "                   usbhost_init_status, rec_state, play_state. */\n"
+        "    *(COMMON)\n"
+    )
+
+    old_stack = "  /* Stack */\n"
+    new_stack = (
+        "  /* Everything below is IntRAM arithmetic -- the stack and newlib\n"
+        "     heap bounds come off the location counter -- so remember it\n"
+        "     here and put it back after the ExtRAM section. An output\n"
+        "     section in another region moves the counter into that region,\n"
+        "     which would send __heap_start__ to ExtRAM while __heap_end__\n"
+        "     stayed in IntRAM, and _sbrk would hand out memory forever\n"
+        "     without ever reaching its limit. */\n"
+        "  _intram_end = . ;\n"
+        "\n"
+        "  /* Scratch buffers too big for a 16 KB SRAM. NOLOAD and never\n"
+        "     zeroed, so nothing here may be read before it is written. */\n"
+        "  .extbss (NOLOAD):\n"
+        "  {\n"
+        "    *(.extbss)\n"
+        "  } >ExtRAM\n"
+        "\n"
+        "  . = _intram_end ;\n"
+        "\n"
+        "  /* Stack */\n"
+    )
+
+    for old, new, what in (
+        (old_region, new_region, "ExtRAM region"),
+        (old_bss, new_bss, "*(.bss.*) collected"),
+        (old_stack, new_stack, ".extbss section"),
+    ):
+        if old not in s:
+            sys.exit(f"FAIL {ld}: cannot place {what} (upstream changed?)")
+        s = s.replace(old, new, 1)
+    ld.write_text(s)
+    print(f"[ok]   {ld}: .bss.* collected, .extbss in ExtRAM, heap kept in IntRAM")
+
+    attr = ' __attribute__((section(".extbss")))'
+    for rel, old, label in (
+        ("src/vm/vaudio.c",
+         "uint8_t audioFifoPlay[AUDIO_FIFOPLAY];",
+         "audioFifoPlay"),
+        ("src/vm/vlog.c",
+         "static uint8_t  buffer_temp[4096];",
+         "buffer_temp"),
+    ):
+        f = root / rel
+        src = read_src(f)
+        if ".extbss" in src:
+            print(f"[skip] extbss: {rel} already moved")
+            continue
+        if old not in src:
+            sys.exit(f"FAIL {f}: cannot find {label} to move to .extbss")
+        new = old[:-1] + attr + ";  /* see .extbss in ml67q4051.ld */"
+        f.write_text(src.replace(old, new, 1))
+        print(f"[ok]   {f}: {label} -> .extbss (4 KB out of IntRAM)")
+
+
 def patch_no_libc_malloc(root: Path) -> None:
     """Stop the network stack reaching libc's malloc, which lands on live globals.
 
@@ -517,8 +919,9 @@ def patch_no_libc_malloc(root: Path) -> None:
     millisecond timer, which is thousands of ticks in by the time the radio
     associates.
 
-    NOT APPLIED -- it builds a brick, measured 2026-10-25. Left here the way
-    audio_ampli is left: the finding is right, this formulation of it is not.
+    HISTORY, kept because the sequence is the lesson. Applied on its own on
+    2026-10-25 it built a brick, and preflight.py passed it. It is applied
+    again now, after `extbss`, which is the precondition it was missing.
 
     Removing the libc rand() call sites removes the libc objects that pulled
     malloc in, and that changes the set of input objects the linker sees. The
@@ -542,10 +945,16 @@ def patch_no_libc_malloc(root: Path) -> None:
     the only reason the bad layout was caught at all is that the control build
     existed to compare against.
 
-    To ship the fix, the orphan placement has to stop being an accident
-    first: give `.bss.*` an explicit home after `__bss_end__` in the linker
-    script, prove the layout with preflight, and only then remove the rand()
-    calls. The order matters -- doing it the other way round is this entry.
+    The orphan placement had to stop being an accident first. `extbss` does
+    that -- it collects `.bss.*` into `.bss` explicitly and moves 8 KB of
+    scratch buffers to external RAM so the result still fits under the stacks
+    -- and a step-list guard now refuses this step unless `extbss` is present.
+    With the layout pinned, removing the rand() calls changes no addresses.
+
+    Worth keeping even though `extbss` already moves the heap off the
+    globals: libc rand() without srand() returns the same sequence on every
+    boot, so every rabbit of this model produced an identical EAPOL SNonce
+    sequence from cold. nab_rand seeds itself from the millisecond timer.
     """
     h = root / "inc/common.h"
     src = read_src(h)
@@ -2720,40 +3129,40 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -2779,18 +3188,19 @@ def main() -> int:
             "not reach. Reading one of them is the 2026-06-20 brick. Add "
             "audio_fifo_data, or drop linker_keep."
         )
-    # Same shape, same reason. no_libc_malloc builds an image that bricks and
-    # that preflight.py passed on 2026-10-25; see its docstring. It stays in
-    # the dispatch table so the work is not lost, but naming it has to be a
-    # deliberate act with the linker-script half done first, not something a
-    # mode list carries quietly.
-    if "no_libc_malloc" in steps:
+    # Same shape, same reason, and this is the precondition that was missing
+    # on 2026-10-25: no_libc_malloc changes which objects get linked, and
+    # without an explicit home for .bss.* the linker then places 85 orphan
+    # sections inside .bss, on top of the stacks. extbss gives them that
+    # home. With it the step is safe; without it, it builds a brick that
+    # preflight passed. Order, not merit.
+    if "no_libc_malloc" in steps and "extbss" not in steps:
         sys.exit(
-            "FAIL step list: no_libc_malloc changes the linked object set, "
-            "which moves the 85 orphaned .bss.* sections inside .bss -- the "
-            "zero-loop then clears the VM heap and the rabbit stalls before "
-            "locate.jsp. Place .bss.* explicitly in the linker script first. "
-            "See patch_no_libc_malloc's docstring for the measured layout."
+            "FAIL step list: no_libc_malloc changes the linked object set, so "
+            "the 85 orphaned .bss.* sections move inside .bss and land on the "
+            "stacks that init.s reserves -- the 2026-06-20 brick. Add extbss, "
+            "which places .bss.* explicitly and moves 8 KB of scratch to "
+            "external RAM. See patch_no_libc_malloc's docstring."
         )
     fns = {
         "eapol_replay": patch_eapol_replay,
@@ -2813,6 +3223,8 @@ def main() -> int:
         "audio_fifo_data": patch_audio_fifo_data,
         "audio_halfduplex": patch_audio_halfduplex,
         "bounded_waits": patch_bounded_waits,
+        "usb_robustness": patch_usb_robustness,
+        "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,

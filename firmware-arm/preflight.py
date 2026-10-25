@@ -51,7 +51,15 @@ from pathlib import Path
 # deliberately outside the usable region.
 INTROM_ORIGIN, INTROM_LENGTH = 0x08000000, 124 * 1024
 INTRAM_ORIGIN, INTRAM_LENGTH = 0x10000000, 16 * 1024
-EXTRAM_ORIGIN, EXTRAM_LENGTH = 0xD0000000, 1024 * 1024
+# ExtRAM is declared as 32 KB, not the 1 MB the stock script claimed: the USB
+# pool starts at EXTRAM_ADDR 0xD0008000 and the VM heap at SRAM_BASE
+# 0xD0010000 (inc/utils/mem.h, inc/vm/vmem.h). A 1 MB region would let a
+# section be placed straight through both, and neither is visible to the
+# linker. .extbss lives in the 32 KB below the pool -- see patch_extbss.
+EXTRAM_ORIGIN, EXTRAM_LENGTH = 0xD0000000, 32 * 1024
+# What the linker cannot see, and so what a region check cannot cover.
+USB_POOL_ORIGIN = 0xD0008000   # EXTRAM_ADDR, inc/utils/mem.h
+VM_HEAP_ORIGIN = 0xD0010000    # SRAM_BASE / _vmem_heap, inc/vm/vmem.h
 
 # sys/asm/init.s carves 0x1680 bytes off the top of IntRAM for the six mode
 # stacks, in this order downwards: UND 0x80, SVC 0x80, ABT 0x80, FIQ 0x100,
@@ -324,9 +332,9 @@ def check_memory_landmarks(elf: Elf, r: Report) -> None:
     *inside* the `.bss` output section instead of after it, and three things
     went wrong at once:
 
-        __bss_end__     0x10003208   the zero-loop now clears the orphans,
-                                     which is the 2026-06-20 brick: it leaves
-                                     no VM heap at all
+        __bss_end__     0x10003208   above the stacks init.s reserves from
+                                     0x10002980 -- .bss lands on them, which
+                                     is the 2026-06-20 brick
         __heap_start__  0x10003208
         __heap_end__    0x10002888   below its own start: a negative heap
         __stack_end__   0x10002988   below __bss_end__: .bss over the stack
@@ -334,12 +342,41 @@ def check_memory_landmarks(elf: Elf, r: Report) -> None:
     Every other check passed. They look at sections, and none of these is a
     section: a heap is two symbols and a stack is a region nothing declares.
 
-    The lesson worth keeping is why the good layout is good. Nothing in the
-    linker script arranges for the orphans to sit after `__bss_end__` — the
-    linker simply places them there, given this set of input objects. It is
-    an accident that the working firmware depends on, so any change to what
-    gets linked can flip it, and the only safe place to find out is here.
+    The lesson worth keeping is why the good layout was good. Nothing in the
+    linker script arranged for the orphans to sit after `__bss_end__` — the
+    linker simply placed them there, given that set of input objects. The
+    working firmware depended on an accident, so any change to what got
+    linked could flip it. `extbss` ends the accident: `.bss.*` is collected
+    explicitly and 8 KB of scratch moves to external RAM so the result fits
+    under the stacks. These checks stay anyway, because the next step that
+    changes the link set will not announce itself either.
     """
+    # Two allocators live in external RAM at fixed addresses that no section
+    # header mentions: the USB/hcd pool and the VM heap. The linker will
+    # happily place a section straight through either, and nothing downstream
+    # would notice until a rabbit fetched its bytecode into the USB pool.
+    ext = [t for t in elf.allocated() if t["addr"] >= EXTRAM_ORIGIN]
+    clashes = []
+    for t in ext:
+        end = t["addr"] + t["size"]
+        for name, base in (("the USB/hcd pool", USB_POOL_ORIGIN),
+                           ("the VM heap", VM_HEAP_ORIGIN)):
+            if end > base:
+                clashes.append((t, name, base))
+    if clashes:
+        for t, name, base in clashes:
+            r.fail("external RAM leaves the two allocators alone",
+                   f"{t['sname']} 0x{t['addr']:08x}.."
+                   f"0x{t['addr'] + t['size']:08x} runs into {name} at "
+                   f"0x{base:08x}, which is a bare address in C "
+                   f"(inc/utils/mem.h, inc/vm/vmem.h) and invisible to the "
+                   f"linker")
+    elif ext:
+        top = max(t["addr"] + t["size"] for t in ext)
+        r.ok("external RAM leaves the two allocators alone",
+             f"{len(ext)} section(s) up to 0x{top:08x}, below the USB pool "
+             f"at 0x{USB_POOL_ORIGIN:08x}")
+
     bss_end = elf.symbols.get("__bss_end__")
     heap_start = elf.symbols.get("__heap_start__")
     heap_end = elf.symbols.get("__heap_end__")
@@ -385,9 +422,16 @@ def check_memory_landmarks(elf: Elf, r: Report) -> None:
             r.ok("the zeroed region stops below the stack",
                  f"{stack_end - bss_end} bytes between them")
 
-    # The orphans are the VM's heap. If the zero-loop has grown to cover
-    # them, the loader has nowhere to allocate and the rabbit stalls right
-    # after bc.jsp -- downloads its bytecode, never reaches locate.
+    # Orphaned .bss.* sections below __bss_end__ mean the linker has started
+    # collecting them without anyone saying where they go, which on a 16 KB
+    # SRAM puts .bss on the stacks. The check above catches that directly;
+    # this one names the cause, because the symptom is a rabbit that fetches
+    # its bytecode and then stops.
+    #
+    # It reports nothing once extbss is applied: there are no orphans left to
+    # find, which is the point of that step. Said plainly because the note
+    # this replaced claimed the orphans WERE the VM heap, and they never
+    # were -- _vmem_heap is a fixed address in external RAM.
     orphans = [t for t in elf.allocated()
                if t["sname"].startswith(".bss.")
                and INTRAM_ORIGIN <= t["addr"] < INTRAM_ORIGIN + INTRAM_LENGTH]
@@ -395,15 +439,17 @@ def check_memory_landmarks(elf: Elf, r: Report) -> None:
         swallowed = [t for t in orphans if t["addr"] < bss_end]
         if swallowed:
             total = sum(t["size"] for t in swallowed)
-            r.fail("the VM heap survives the zero-loop",
+            r.fail("no orphan .bss.* has been swallowed by .bss",
                    f"{len(swallowed)} .bss.* section(s), {total} bytes, now "
-                   f"sit below __bss_end__ 0x{bss_end:08x} and are cleared at "
-                   f"startup. That region IS the VM heap -- see apply-mods.py's "
-                   f"note of 2026-06-21. A rabbit on this image downloads its "
-                   f"bytecode and stalls before locate.jsp")
+                   f"sit below __bss_end__ 0x{bss_end:08x}. The linker has "
+                   f"started collecting them with nowhere to put them, which "
+                   f"on a 16 KB SRAM runs .bss into the stacks -- the "
+                   f"2026-06-20 brick. Apply extbss, which places them and "
+                   f"moves 8 KB of scratch to external RAM")
         else:
-            r.ok("the VM heap survives the zero-loop",
-                 f"{len(orphans)} .bss.* section(s) above __bss_end__")
+            r.ok("no orphan .bss.* has been swallowed by .bss",
+                 f"{len(orphans)} left above __bss_end__, unzeroed -- apply "
+                 f"extbss to collect them")
 
 
 def check_kept_sections(elf: Elf, r: Report) -> None:
