@@ -210,7 +210,7 @@ accelerator, only arithmetic, and this chip does arithmetic. What it would
 cost, in order of difficulty:
 
 - **P-256 field arithmetic.** ~~Call it 6-12 KB of flash~~ — **done and
-  measured, 2026-10-27**: `crypto/p256.c`, **5 452 bytes** of ARM7TDMI flash
+  measured, 2026-10-27**: `../crypto/p256.c`, **5 452 bytes** of ARM7TDMI flash
   (5 292 text + 160 rodata) and 132 bytes of `.bss`, against 19 688 bytes
   spare in the `lean` image. It passes 14 OpenSSL vectors and a set of
   algebraic identities that need no external data, under ASan and UBSan:
