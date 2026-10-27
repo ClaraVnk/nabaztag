@@ -17,7 +17,7 @@
  * checked against OpenSSL.
  */
 
-#include "p256.h"
+#include "net/p256.h"
 
 #include <string.h>
 

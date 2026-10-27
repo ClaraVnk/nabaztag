@@ -3,7 +3,7 @@
  * @brief FIPS 180-4 SHA-256, RFC 2104 HMAC, and 802.11's counter-mode KDF.
  */
 
-#include "sha256.h"
+#include "net/sha256.h"
 
 #include <string.h>
 

@@ -753,6 +753,146 @@ static uint8_t rt2501_rx_errors;
     ], "comram_tries", "the ComRAM wait is bounded (1000 tries, then drop)")
 
 
+def patch_wpa3_sae(root: Path) -> None:
+    """Wire SAE into the driver so a rabbit can join a WPA3 network.
+
+    The cryptography is in `crypto/` and tested on a build machine against
+    OpenSSL; this is the part that has to live in the radio code. Four
+    things had to be found out before any of it could be written, and each
+    one changed the shape of the answer:
+
+    **The password never reaches the driver.** The bytecode computes
+    PBKDF2(password, ssid) itself and hands the C side a 32-byte PMK --
+    `eapol_init()` is literally `memcpy(pmk, ieee80211_key, 32)`. SAE needs
+    the password, not the PMK. It does pass through C exactly once, in
+    `netPmk()` (src/vm/vnet.c), on its way into `mypassword_to_pmk`, so
+    that is where it is captured. The alternative was reverse-engineering
+    the config-sector offset out of the Metal bytecode.
+
+    **The PMK hand-off is therefore trivial.** Once SAE has run, writing its
+    PMK into `ieee80211_key` before `eapol_init()` makes the four-way
+    handshake run unchanged, with the RT2573 still doing CCMP in hardware.
+    That is the whole reason WPA3 is reachable on 2006 silicon at all.
+
+    **The scan result cannot carry a SAE flag.** `scan_result.encryption`
+    goes up to the VM, and `vinterp.c`'s OPnetAuth only calls `netAuth`
+    when `(crypt & 0xF0) == encrypt` against the stored config byte. Set a
+    new bit in the high nibble and the bytecode silently stops associating.
+    So SAE-capable BSSIDs go in a small driver-side cache instead, and what
+    the VM sees stays 0x4a.
+
+    **It keeps its own cache rather than extending the cipher one.**
+    `patches/wpa2-scanned-ciphers.patch` already caches per-BSSID data and
+    the obvious move was to add a byte to it. But patches apply *after*
+    apply-mods, so editing the lines around its context is how that patch
+    stops applying -- quietly, with fuzz, or not at all. Forty bytes of RAM
+    is cheaper than coupling the two.
+
+    What is NOT here: BIP validation of received management frames. The
+    RSN IE advertises MFPC, which is what an AP with MFPR=1 requires of us,
+    so association works -- but an unprotected deauthenticate is still
+    honoured, which is the attack 802.11w exists to stop. The code for it is
+    written and tested (`crypto/cmac.c`, `bip_cmac_128`); what is missing is
+    pulling the IGTK out of the four-way handshake's key data and checking
+    the MMIE. Until that lands, this is WPA3's key exchange on WPA2's
+    management-frame security. Said plainly because "supports WPA3" would
+    imply otherwise.
+    """
+    staging = root.parent / "sae-crypto"
+    if not staging.is_dir():
+        sys.exit(f"FAIL wpa3_sae: {staging} is missing -- the Dockerfile "
+                 f"stages the SAE crypto there, outside the nabgcc tree, so "
+                 f"that modes without this step do not compile it")
+    for name in ("p256", "sha256", "cmac", "sae"):
+        src_c = staging / f"{name}.c"
+        src_h = staging / f"{name}.h"
+        if not src_c.is_file() or not src_h.is_file():
+            sys.exit(f"FAIL wpa3_sae: {name}.c/.h missing from {staging}")
+        (root / "src/net" / f"{name}.c").write_bytes(src_c.read_bytes())
+        (root / "inc/net" / f"{name}.h").write_bytes(src_h.read_bytes())
+    print(f"[ok]   {root}: SAE crypto copied into src/net and inc/net")
+
+    def edit(rel, pairs, marker, label):
+        f = root / rel
+        src = read_src(f)
+        if marker in src:
+            print(f"[skip] wpa3_sae: {rel} already done")
+            return
+        nl = "\r\n" if "\r\n" in src else "\n"
+        for old, new, what in pairs:
+            o, n = old.replace("\n", nl), new.replace("\n", nl)
+            if o not in src:
+                sys.exit(f"FAIL {f}: cannot find {what} (upstream changed?)")
+            src = src.replace(o, n, 1)
+        f.write_text(src)
+        print(f"[ok]   {f}: {label}")
+
+    # -- the constants -----------------------------------------------------
+    edit("inc/net/ieee80211.h", [
+        ("#define IEEE80211_AUTH_ALG_SHARED\t0x0001",
+         "#define IEEE80211_AUTH_ALG_SHARED\t0x0001\n"
+         "#define IEEE80211_AUTH_ALG_SAE\t\t0x0003\n"
+         "/* SAE carries its commit in sequence 1 and its confirm in 2, both\n"
+         "   directions, which is why the sequence number alone says what a\n"
+         "   frame is. */\n"
+         "#define IEEE80211_SAE_COMMIT\t\t0x0001\n"
+         "#define IEEE80211_SAE_CONFIRM\t\t0x0002",
+         "the auth algorithm constants"),
+        ("#define IEEE80211_AUTH_PSK         0x02",
+         "#define IEEE80211_AUTH_PSK         0x02\n"
+         "#define IEEE80211_AUTH_AKM_SAE     0x08",
+         "the AKM suite constants"),
+        ("enum {\n\tIEEE80211_AUTH_OPEN,\n\tIEEE80211_AUTH_SHARED,\n};",
+         "enum {\n\tIEEE80211_AUTH_OPEN,\n\tIEEE80211_AUTH_SHARED,\n"
+         "\tIEEE80211_AUTH_SAE,\n};",
+         "the authmode enum"),
+        ("void ieee80211_init(void);",
+         "/* Captured on its way into PBKDF2: SAE needs the password itself,\n"
+         "   and netPmk() is the only place it exists in C. */\n"
+         "void ieee80211_sae_password(const uint8_t *password);\n"
+         "void ieee80211_init(void);",
+         "the password hook"),
+    ], "IEEE80211_AUTH_ALG_SAE", "SAE constants and the password hook")
+
+    # -- the passphrase, captured where it passes through C ----------------
+    edit("src/vm/vnet.c", [
+        ("void netPmk(uint8_t *ssid,uint8_t *key,uint8_t *buf)\n{\n"
+         "  mypassword_to_pmk(key,ssid,strlen((char*)ssid),buf);\n}",
+         "void netPmk(uint8_t *ssid,uint8_t *key,uint8_t *buf)\n{\n"
+         "  /* The only point in the firmware where the password exists as\n"
+         "     text: the bytecode hands it over once, here, to be turned\n"
+         "     into a PMK. SAE cannot use the PMK -- it needs the password\n"
+         "     -- so it is stashed before PBKDF2 eats it. */\n"
+         "  ieee80211_sae_password(key);\n"
+         "  mypassword_to_pmk(key,ssid,strlen((char*)ssid),buf);\n}",
+         "netPmk"),
+    ], "ieee80211_sae_password", "the password is captured for SAE")
+
+    # -- the driver ------------------------------------------------------
+    edit("src/net/ieee80211.c", [
+        ('static const uint8_t ieee80211_wpa2_oui[IEEE80211_OUI_LEN] =\n{ 0x00, 0x0f, 0xac, 0x00 };\n',
+         'static const uint8_t ieee80211_wpa2_oui[IEEE80211_OUI_LEN] =\n{ 0x00, 0x0f, 0xac, 0x00 };\n\n/* ------------------------------------------------------------------ SAE */\n\n#include "net/sae.h"\n\n/* BSSIDs seen advertising AKM suite 8. A second cache beside the one in\n   patches/wpa2-scanned-ciphers.patch, deliberately: that patch is applied\n   after apply-mods, and editing the lines around its context is how it\n   stops applying -- quietly, with fuzz, or not at all. 48 bytes of RAM is\n   cheaper than a coupling nobody would notice breaking. */\n#define IEEE80211_SAE_CACHE 8\nstatic uint8_t ieee80211_sae_bssids[IEEE80211_SAE_CACHE][IEEE80211_ADDR_LEN];\nstatic uint8_t ieee80211_sae_count;\n\n/* The password as text. See patch_wpa3_sae: this is the only place in the\n   firmware where it exists in that form. */\nstatic uint8_t ieee80211_sae_pw[64];\nstatic sae_ctx ieee80211_sae;\n\nvoid ieee80211_sae_password(const uint8_t *password)\n{\n  uint32_t i = 0;\n  while(password[i] && i < sizeof(ieee80211_sae_pw) - 1) {\n    ieee80211_sae_pw[i] = password[i];\n    i++;\n  }\n  ieee80211_sae_pw[i] = 0;\n}\n\nstatic void ieee80211_sae_remember(const uint8_t *bssid)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0) return;\n  if(ieee80211_sae_count < IEEE80211_SAE_CACHE)\n    memcpy(ieee80211_sae_bssids[ieee80211_sae_count++], bssid,\n           IEEE80211_ADDR_LEN);\n}\n\nstatic int32_t ieee80211_sae_known(const uint8_t *bssid)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0) return 1;\n  return 0;\n}\n\n/* The bodies are further down, next to rt2501_auth: they call\n   ieee80211_associate(), ieee80211_mask_to_rate() and the transmit path,\n   none of which is declared this early in the file. The data has to be up\n   here because the scan and the auth dispatch both reach it. */\nstatic int32_t ieee80211_sae_begin(void);\nstatic void ieee80211_input_sae_auth(uint16_t seq, uint16_t status,\n                                     uint8_t *body, uint32_t blen);\n',
+         'the wpa2 OUI constant'),
+        ('                    if(*(current+IEEE80211_OUI_LEN-1) == IEEE80211_AUTH_PSK)\n                      found = 1;\n',
+         '                    if(*(current+IEEE80211_OUI_LEN-1) == IEEE80211_AUTH_PSK)\n                      found = 1;\n                    /* Suite 8 is SAE. Accepting it here is what makes a\n                       WPA3 network a candidate at all: without it the scan\n                       returns IEEE80211_CRYPT_UNSUPPORTED and the network\n                       is never offered to the bytecode. */\n                    if(*(current+IEEE80211_OUI_LEN-1) == IEEE80211_AUTH_AKM_SAE) {\n                      found = 1;\n                      ieee80211_sae_remember(scan_result.bssid);\n                    }\n',
+         'the AKM suite loop'),
+        ('void rt2501_auth(const uint8_t *ssid, const uint8_t *mac,\n',
+         '\n/* --------------------------------------------------- SAE, continued */\n\n/* nab_rand() is the firmware\'s non-allocating PRNG, seeded from the\n   millisecond timer (patch_no_libc_malloc). SAE\'s secrecy rests on these\n   bytes, and an xorshift seeded from a timer is a weak place to rest it --\n   written down here rather than discovered later. It is what this chip has:\n   there is no entropy source on a 2006 Nabaztag. */\nstatic void ieee80211_sae_rng(uint8_t *out, uint32_t len, void *arg)\n{\n  uint32_t i;\n  (void)arg;\n  for(i=0;i<len;i++) out[i] = (uint8_t)(nab_rand() >> 11);\n}\n\n/* CLR_WDT lives in inc/common.h but expands to WDTCON, which this\n   file does not otherwise reach. */\n#include "ml674061.h"\n\n/* The watchdog fires at about 2.09 s and a scalar multiplication is the\n   longest thing this firmware ever computes. */\nstatic void ieee80211_sae_tick(void) { CLR_WDT; }\n\n/* An authentication frame with a body, which the stock sender cannot do:\n   its struct ends after algorithm, sequence and status. */\nstatic int32_t ieee80211_send_auth_body(uint16_t seq, const uint8_t *body,\n                                        uint32_t blen)\n{\n  struct {\n    TXD_STRUC txd;\n    struct ieee80211_frame header;\n    uint8_t auth[6];\n  } *auth;\n  uint8_t *write_ptr;\n  uint16_t duration;\n  uint32_t frame_length;\n\n  disable_ohci_irq();\n  auth = hcd_malloc(sizeof(*auth) + blen + 7, COMRAM, 15);\n  enable_ohci_irq();\n  if(auth == NULL) {\n    DBG_WIFI("SAE: no COMRAM for the auth frame"EOL);\n    return 0;\n  }\n\n  auth->header.i_fc[0] = IEEE80211_FC0_TYPE_MGT|IEEE80211_FC0_SUBTYPE_AUTH\n      |(IEEE80211_FC0_VERSION_0 << IEEE80211_FC0_VERSION_SHIFT);\n  auth->header.i_fc[1] = IEEE80211_FC1_DIR_NODS;\n  memcpy(auth->header.i_addr1, ieee80211_assoc_mac, IEEE80211_ADDR_LEN);\n  memcpy(auth->header.i_addr2, rt2501_mac, IEEE80211_ADDR_LEN);\n  memcpy(auth->header.i_addr3, ieee80211_assoc_bssid, IEEE80211_ADDR_LEN);\n  auth->header.i_seq[0] = 0;\n  auth->header.i_seq[1] = 0;\n\n  write_ptr = auth->auth;\n  *(write_ptr++) = (IEEE80211_AUTH_ALG_SAE & 0x00ff);\n  *(write_ptr++) = (IEEE80211_AUTH_ALG_SAE & 0xff00) >> 8;\n  *(write_ptr++) = (seq & 0x00ff);\n  *(write_ptr++) = (seq & 0xff00) >> 8;\n  *(write_ptr++) = (IEEE80211_STATUS_SUCCESS & 0x00ff);\n  *(write_ptr++) = (IEEE80211_STATUS_SUCCESS & 0xff00) >> 8;\n  memcpy(write_ptr, body, blen);\n  write_ptr += blen;\n\n  frame_length = sizeof(struct ieee80211_frame)\n                 + (uint32_t)(write_ptr - auth->auth);\n  duration = rt2501_txtime(frame_length,\n      ieee80211_mask_to_rate(ieee80211_lowest_txrate)) + IEEE80211_SIFS;\n  auth->header.i_dur[0] = (duration & 0x00ff);\n  auth->header.i_dur[1] = (duration & 0xff00) >> 8;\n\n  /* The argument order matters and bit me: Rate, Length, QueIdx,\n     PacketId. Length went in as 0 and the length ended up in QueIdx,\n     so the commit left with a zero-length descriptor and the AP never\n     saw a frame -- the rabbit sat in AUTH, retrying for ever. And the\n     rate wants mask_to_rt2501rate, not mask_to_rate: one is the\n     hardware encoding and the other is the 802.11 one. */\n  rt2501_make_tx_descriptor(&auth->txd,\n      RT2501_CIPHER_NONE,                                   /* CipherAlg */\n      0,                                                    /* KeyTable */\n      0,                                                    /* KeyIdx */\n      1,                                                    /* Ack */\n      0,                                                    /* Fragment */\n      0,                                                    /* InsTimestamp */\n      1,                                                    /* RetryMode */\n      0,                                                    /* Ifs */\n      ieee80211_mask_to_rt2501rate(ieee80211_lowest_txrate), /* Rate */\n      frame_length,                                         /* Length */\n      0,                                                    /* QueIdx */\n      0);                                                   /* PacketId */\n\n  disable_ohci_irq();\n  if(!rt2501_tx(auth, sizeof(TXD_STRUC) + frame_length)) {\n    DBG_WIFI("SAE: TX error"EOL);\n    enable_ohci_irq();\n    return 0;\n  }\n  enable_ohci_irq();\n  return 1;\n}\n\n/* Build the password element and send our commit. */\nstatic int32_t ieee80211_sae_begin(void)\n{\n  uint8_t commit[SAE_COMMIT_LEN];\n\n  if(ieee80211_sae_pw[0] == 0) {\n    DBG_WIFI("SAE: no password captured"EOL);\n    return 0;\n  }\n  /* Taking over from rt2501_auth means taking over everything it does\n     after the point we hook: it tells the autoresponder the AP rates\n     and switches the radio to the AP channel just before building its\n     descriptor. Skipping those sent the commit while the radio was\n     still hopping through the scan, and the emulator counted it under\n     "transmitted into the void" -- six commits, no reply, the rabbit\n     stuck in AUTH for ever. */\n  rt2501_write(rt2501_dev, RT2501_TXRX_CSR5,\n               ieee80211_mask_to_rt2501mask(ieee80211_assoc_rateset));\n  rt2501_switch_channel(ieee80211_assoc_channel);\n\n  DBG_WIFI("SAE: deriving the password element"EOL);\n  if(!sae_commit(&ieee80211_sae, rt2501_mac, ieee80211_assoc_bssid,\n                 (const char *)ieee80211_sae_pw,\n                 ieee80211_sae_rng, NULL, ieee80211_sae_tick)) {\n    DBG_WIFI("SAE: could not build a commit"EOL);\n    sae_clear(&ieee80211_sae);\n    return 0;\n  }\n  sae_commit_bytes(&ieee80211_sae, commit);\n  if(!ieee80211_send_auth_body(IEEE80211_SAE_COMMIT, commit, sizeof commit)) {\n    sae_clear(&ieee80211_sae);\n    return 0;\n  }\n  DBG_WIFI("SAE: commit sent"EOL);\n  return 1;\n}\n\n/* One received SAE authentication frame. */\nstatic void ieee80211_input_sae_auth(uint16_t seq, uint16_t status,\n                                     uint8_t *body, uint32_t blen)\n{\n  if(status != IEEE80211_STATUS_SUCCESS) {\n    sprintf(dbg_buffer, "SAE: the AP refused us, status %u"EOL, status);\n    DBG_WIFI(dbg_buffer);\n    sae_clear(&ieee80211_sae);\n    ieee80211_state = IEEE80211_S_IDLE;\n    return;\n  }\n\n  if(seq == IEEE80211_SAE_COMMIT) {\n    uint8_t confirm[SAE_CONFIRM_LEN];\n    if(!sae_peer_commit(&ieee80211_sae, body, blen, ieee80211_sae_tick)) {\n      DBG_WIFI("SAE: the AP\'s commit is unusable"EOL);\n      sae_clear(&ieee80211_sae);\n      ieee80211_state = IEEE80211_S_IDLE;\n      return;\n    }\n    sae_confirm_bytes(&ieee80211_sae, confirm);\n    if(!ieee80211_send_auth_body(IEEE80211_SAE_CONFIRM, confirm,\n                                 sizeof confirm)) {\n      sae_clear(&ieee80211_sae);\n      ieee80211_state = IEEE80211_S_IDLE;\n      return;\n    }\n    DBG_WIFI("SAE: keys derived, confirm sent"EOL);\n    return;\n  }\n\n  if(seq == IEEE80211_SAE_CONFIRM) {\n    if(!sae_peer_confirm(&ieee80211_sae, body, blen)) {\n      /* The one place SAE tells us the password is wrong. A failed confirm\n         must not be retried with the same scalar, so drop to idle and let\n         the bytecode start over. */\n      DBG_WIFI("SAE: the confirm did not verify -- wrong password?"EOL);\n      sae_clear(&ieee80211_sae);\n      ieee80211_state = IEEE80211_S_IDLE;\n      return;\n    }\n    /* The whole point: the four-way handshake reads its PMK out of\n       ieee80211_key, so handing SAE\'s PMK over is a memcpy and the rest of\n       the association is unchanged. */\n    memcpy(ieee80211_key, ieee80211_sae.pmk, EAPOL_MASTER_KEY_LENGTH);\n    sae_clear(&ieee80211_sae);\n    eapol_init();\n    DBG_WIFI("SAE: accepted, associating"EOL);\n    ieee80211_associate();\n    return;\n  }\n\n  sprintf(dbg_buffer, "SAE: unexpected sequence %u"EOL, seq);\n  DBG_WIFI(dbg_buffer);\n}\n\nvoid rt2501_auth(const uint8_t *ssid, const uint8_t *mac,\n',
+         'rt2501_auth, for the SAE bodies'),
+        ('\tDBG_WIFI("Sending auth request"EOL);\n',
+         '\t/* A WPA3 network needs SAE before association, and SAE is an\n\t   authentication-frame exchange of its own -- so this returns here\n\t   rather than falling through to the open-auth frame below. */\n\tif(ieee80211_sae_known(bssid)\n\t   && (ieee80211_encryption & 0xF0) == IEEE80211_CRYPT_WPA2) {\n\t\tieee80211_authmode = IEEE80211_AUTH_SAE;\n\t\tieee80211_state = IEEE80211_S_AUTH;\n\t\tieee80211_timeout = IEEE80211_AUTH_TIMEOUT;\n\t\tif(ieee80211_sae_begin()) return;\n\t\t/* Could not start: an AP in transition mode still takes PSK, so\n\t\t   try the ordinary path rather than giving up on the network. */\n\t\tDBG_WIFI("SAE: falling back to open auth + PSK"EOL);\n\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n\t\tieee80211_state = IEEE80211_S_IDLE;\n\t}\n\n\tDBG_WIFI("Sending auth request"EOL);\n',
+         'the auth request send point'),
+        ('\t\t\t\t\tif(ieee80211_authmode == IEEE80211_AUTH_OPEN) {\n',
+         '\t\t\t\t\tif(ieee80211_authmode == IEEE80211_AUTH_SAE) {\n\t\t\t\t\t\tif(((frame_current[0] << 0)|(frame_current[1] << 8))\n\t\t\t\t\t\t   != IEEE80211_AUTH_ALG_SAE) {\n\t\t\t\t\t\t\tDBG_WIFI("SAE: the AP replied with another algorithm"EOL);\n\t\t\t\t\t\t\tsae_clear(&ieee80211_sae);\n\t\t\t\t\t\t\tieee80211_state = IEEE80211_S_IDLE;\n\t\t\t\t\t\t\tbreak;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tieee80211_input_sae_auth(\n\t\t\t\t\t\t\t(frame_current[2] << 0)|(frame_current[3] << 8),\n\t\t\t\t\t\t\t(frame_current[4] << 0)|(frame_current[5] << 8),\n\t\t\t\t\t\t\t&frame_current[6],\n\t\t\t\t\t\t\tlength-sizeof(struct ieee80211_frame)-6);\n\t\t\t\t\t} else if(ieee80211_authmode == IEEE80211_AUTH_OPEN) {\n',
+         'the received-auth dispatch'),
+        ('      *(write_ptr-1) = IEEE80211_AUTH_PSK;\n          /* RSN Capability */\n      *(write_ptr++) = 0x00;\n      *(write_ptr++) = 0x00;\n',
+         '      /* Suite 8 when we got here through SAE, 2 otherwise. */\n      *(write_ptr-1) = (ieee80211_authmode == IEEE80211_AUTH_SAE)\n                       ? IEEE80211_AUTH_AKM_SAE : IEEE80211_AUTH_PSK;\n          /* RSN Capability. MFPC (0x0080) is mandatory with WPA3: an AP\n             with MFPR set refuses a station that does not claim it. We\n             claim it and do not yet enforce it on received frames -- see\n             the note in patch_wpa3_sae about BIP. */\n      *(write_ptr++) = (ieee80211_authmode == IEEE80211_AUTH_SAE) ? 0x80 : 0x00;\n      *(write_ptr++) = 0x00;\n',
+         'the transmitted RSN IE'),
+    ], "ieee80211_sae_remember", "SAE wired into scan, auth and association")
+
+    print("[ok]   wpa3_sae: crypto, password hook and driver in place")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -3091,7 +3231,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-nomdns", "phase8-rom"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-nomdns", "phase8-rom"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -3104,6 +3244,9 @@ def main() -> int:
             "bootloader patch in isolation. "
             "pages-only   = minimal + modernized UI, NO bootloader patch. "
             "Use to verify the page rewrite in isolation. "
+            "lean-wpa3    = lean plus the WPA3-SAE client. A separate mode "
+            "on purpose: `lean` is what every rabbit on the warren runs, "
+            "and an experimental key exchange does not belong in it.\n"
             "lean-nomdns  = lean minus the mDNS announcer/resolver, nothing "
             "else changed. Diagnostic build for the connection drops "
             "reported on lean; needs working DNS to find its server. "
@@ -3152,6 +3295,7 @@ def main() -> int:
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -3194,6 +3338,22 @@ def main() -> int:
     # sections inside .bss, on top of the stacks. extbss gives them that
     # home. With it the step is safe; without it, it builds a brick that
     # preflight passed. Order, not merit.
+    # wpa3_sae needs nab_rand() for its scalars, which no_libc_malloc
+    # provides, and it needs .bss zeroed at boot: a sae_ctx that starts with
+    # stale SRAM is a context whose state field may already read
+    # SAE_ACCEPTED. On an image before extbss it would have been an
+    # un-zeroed .bss.* orphan, which is usbhost_init_status all over again.
+    if "wpa3_sae" in steps:
+        missing = [d for d in ("no_libc_malloc", "extbss") if d not in steps]
+        if missing:
+            sys.exit(
+                "FAIL step list: wpa3_sae needs " + ", ".join(missing) +
+                ". nab_rand() comes from no_libc_malloc and is what SAE's "
+                "secrecy rests on; extbss is what zeroes the SAE context at "
+                "boot. Without either, this builds a WPA3 client that is "
+                "worse than no WPA3 client."
+            )
+
     if "no_libc_malloc" in steps and "extbss" not in steps:
         sys.exit(
             "FAIL step list: no_libc_malloc changes the linked object set, so "
@@ -3223,6 +3383,7 @@ def main() -> int:
         "audio_fifo_data": patch_audio_fifo_data,
         "audio_halfduplex": patch_audio_halfduplex,
         "bounded_waits": patch_bounded_waits,
+        "wpa3_sae": patch_wpa3_sae,
         "usb_robustness": patch_usb_robustness,
         "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,

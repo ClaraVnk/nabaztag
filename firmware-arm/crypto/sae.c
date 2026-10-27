@@ -3,7 +3,7 @@
  * @brief WPA3-SAE, 802.11-2020 12.4. See sae.h for the design notes.
  */
 
-#include "sae.h"
+#include "net/sae.h"
 
 #include <string.h>
 

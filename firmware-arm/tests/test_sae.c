@@ -37,7 +37,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sae.h"
+#include "net/sae.h"
 
 static int failures;
 

@@ -243,6 +243,12 @@ int main(int argc, char **argv)
    * ends: the rabbit through rt2501_auth(), the AP through vap_set_pmk(). */
   if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
     uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
+    /* SAE needs the password itself, not the PMK. On a real rabbit the
+     * bytecode hands it over once, in netPmk(); this binary has no
+     * bytecode, so the harness does what netPmk does. Without it SAE finds
+     * no password, falls back to open auth, and the scenario passes for the
+     * wrong reason -- which is how it first passed here. */
+    ieee80211_sae_password((const uint8_t *)sim.psk);
     mypassword_to_pmk((const uint8_t *)sim.psk, (uint8_t *)target_ssid,
                       (uint16_t)strlen(target_ssid), pmk);
     memcpy(configured_key, pmk, sizeof(pmk));

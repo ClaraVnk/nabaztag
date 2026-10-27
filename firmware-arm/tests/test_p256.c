@@ -25,7 +25,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "p256.h"
+#include "net/p256.h"
 #include "vectors_p256.h"
 
 static int failures;

@@ -39,6 +39,19 @@ COPY crypto/nab_sig.h               /build/nabgcc/inc/nab_sig.h
 # (MIT) — see the note in the file and upstream/UPLG-LICENSE.
 COPY crypto/aes128.c                /build/nabgcc/src/net/aes128.c
 COPY crypto/aes128.h                /build/nabgcc/inc/net/aes128.h
+# WPA3-SAE's cryptography, staged OUTSIDE the nabgcc tree. The `wpa3_sae`
+# step copies it in; modes without that step never compile it.
+#
+# It was COPY'd straight into src/net/ first, on the assumption that
+# --gc-sections would drop what nothing calls and the image would be
+# unchanged. It does drop it, and the image still changed: same size,
+# 107 288 bytes, hash 31060c76 -> c10440d6. Linking is not that
+# predictable, and `releases/README.md` promises the released image rebuilds
+# byte-identically. Measured, not assumed -- which is the only reason it was
+# caught before being written down as fact.
+COPY crypto/p256.c crypto/p256.h crypto/sha256.c crypto/sha256.h \
+     crypto/cmac.c crypto/cmac.h crypto/sae.c crypto/sae.h \
+     /build/sae-crypto/
 COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 
 # Apply our source modifications (idempotent, prints what landed).
