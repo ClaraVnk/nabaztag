@@ -209,23 +209,38 @@ of this file blurred it. Nothing in the silicon forbids SAE: it needs no
 accelerator, only arithmetic, and this chip does arithmetic. What it would
 cost, in order of difficulty:
 
-- **P-256 field arithmetic.** WPA3 mandates SAE group 19, which is NIST
-  P-256, so a scalar multiplication over a 256-bit prime field in software.
-  Call it 6-12 KB of flash and a few hundred milliseconds per association on
-  a 48 MHz ARM7TDMI with no multiplier worth the name. SAE-H2E rather than
-  hunting-and-pecking avoids up to forty modular exponentiations to find the
-  password element, and is worth having for that reason alone.
+- **P-256 field arithmetic.** ~~Call it 6-12 KB of flash~~ — **done and
+  measured, 2026-10-27**: `crypto/p256.c`, **5 452 bytes** of ARM7TDMI flash
+  (5 292 text + 160 rodata) and 132 bytes of `.bss`, against 19 688 bytes
+  spare in the `lean` image. It passes 14 OpenSSL vectors and a set of
+  algebraic identities that need no external data, under ASan and UBSan:
+  `make -C ../tests`. Montgomery multiplication rather than the usual
+  special-prime reduction — maybe half the speed, and far harder to get
+  subtly wrong — and no precomputed tables, which is what keeps it this
+  small. SAE-H2E rather than hunting-and-pecking still matters: it avoids up
+  to forty modular exponentiations to find the password element.
+  `p256_decompress()` is there for it already.
 - **The watchdog.** A scalar multiplication that runs for 200 ms without
-  `CLR_WDT` reboots the rabbit. The arithmetic has to be interruptible or
-  the loop has to feed the dog, and this is the kind of detail that turns a
-  correct implementation into a boot loop.
+  `CLR_WDT` reboots the rabbit. Handled by construction rather than left to
+  the caller: every long loop in `p256.c` takes a `tick` callback and calls
+  it 272 times per scalar multiplication, which is more than once per bit of
+  the scalar. The host figure is 0.7-2 ms depending on optimisation; the
+  honest statement about the rabbit is that nobody has timed it there yet,
+  and the arithmetic-heavy factor between a GHz out-of-order host with
+  64-bit multiplies and a 48 MHz ARM7TDMI is large enough that an estimate
+  would be a guess dressed up as a number. What is settled is that it cannot
+  silently exceed the 2.09 s window.
 - **AES-CMAC, for 802.11w.** Management frame protection is mandatory with
   WPA3, and the RT2501 does CCMP for data in hardware but nothing for
   management frames. That is BIP in software, which needs an AES *encrypt*
   side — `../crypto/aes128.c` is decrypt-only, and `src/vapcrypto.c` here
-  already has the other half.
-- **Flash.** The tight one. `--gc-sections` freed 6-10 KB and the ROM-pages
-  work exists precisely because this budget is nearly spent.
+  already has the other half. Now the largest piece still missing.
+- **Flash.** It was the tight one. `--gc-sections` freed 6-10 KB, dropping
+  libc's `malloc` with `no_libc_malloc` freed another 8.4 KB on 2026-10-27,
+  and the `lean` image now has **19 688 bytes spare** with P-256's 5 452
+  already accounted for. What is left to pay for is SHA-256 and HMAC (this
+  tree has SHA-1 only), AES-CMAC for 802.11w, and the SAE state machine
+  itself. It is no longer the thing that decides whether this is possible.
 
 Where SAE would live is settled by the same observation that makes this
 emulator work: the four-way handshake and the 802.11 management frames are C,

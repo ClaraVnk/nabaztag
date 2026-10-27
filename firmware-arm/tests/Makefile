@@ -29,6 +29,9 @@ all: net/aes128.h
 	@echo
 	@echo "== random, truncated and adversarial input"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_fuzz test_fuzz.c $(SRC) && /tmp/t_fuzz
+	@echo
+	@echo "== P-256, against OpenSSL and against the curve"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_p256 test_p256.c ../crypto/p256.c && /tmp/t_p256
 
 # The sources include <net/aes128.h> the way the firmware tree lays them out.
 net/aes128.h:
@@ -37,10 +40,15 @@ net/aes128.h:
 
 vectors:
 	python3 vectors.py > vectors.h
+	python3 vectors_p256.py > vectors_p256.h
 
+# The flash budget is the reason WPA3 was "not impossible, just unimplemented"
+# for so long, so the size is part of the test, not a footnote.
 arm:
 	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/aes128.c -o /tmp/aes128.o
 	@arm-none-eabi-size /tmp/aes128.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/p256.c -o /tmp/p256.o
+	@arm-none-eabi-size /tmp/p256.o
 
 clean:
-	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz
+	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz /tmp/t_p256
