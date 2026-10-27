@@ -18,7 +18,7 @@ ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
 # measure one in isolation -- that is the whole point of naming them, and
 # dropping these four is how wpa2-mixed-gtk, wpa2-rekey and wpa2-ptk-rekey
 # fail, which is what they were written to show.
-ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,audio_halfduplex
+ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git python3 ca-certificates \
@@ -37,6 +37,14 @@ COPY firmware-arm/crypto/aes128.h /build/nabgcc/inc/net/aes128.h
 
 # Run the same modifications the flashed firmware gets, so a fix can be tried
 # here before it costs a power cycle.
+# The SAE crypto, staged where patch_wpa3_sae expects to find it: outside
+# the nabgcc tree, so that step lists without wpa3_sae do not compile it.
+COPY firmware-arm/crypto/p256.c firmware-arm/crypto/p256.h \
+     firmware-arm/crypto/sha256.c firmware-arm/crypto/sha256.h \
+     firmware-arm/crypto/cmac.c firmware-arm/crypto/cmac.h \
+     firmware-arm/crypto/sae.c firmware-arm/crypto/sae.h \
+     /build/sae-crypto/
+
 COPY firmware-arm/apply-mods.py /build/apply-mods.py
 RUN python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
 

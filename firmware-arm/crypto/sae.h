@@ -42,8 +42,8 @@
 
 #include <stdint.h>
 
-#include "p256.h"
-#include "sha256.h"
+#include "net/p256.h"
+#include "net/sha256.h"
 
 /** How many hunting-and-pecking rounds. The standard's own recommendation
  *  is at least 40: the chance that 40 rounds all miss is about 2^-40. */

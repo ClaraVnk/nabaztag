@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sha256.h"
+#include "net/sha256.h"
 #include "vectors_sha256.h"
 
 static int failures;

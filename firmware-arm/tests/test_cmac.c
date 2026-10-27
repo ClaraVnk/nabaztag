@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "cmac.h"
+#include "net/cmac.h"
 #include "vectors_cmac.h"
 
 static int failures;

@@ -28,7 +28,15 @@ FW += $(NABGCC)/src/net/eapol.c
 FW += $(NABGCC)/src/net/hash.c
 FW += $(NABGCC)/src/net/rc4.c
 FW += $(NABGCC)/src/usb/rt2501usb_buffer.c
+CRYPTO_H := obj/include/net/aes128.h obj/include/net/p256.h \
+            obj/include/net/sha256.h obj/include/net/cmac.h \
+            obj/include/net/sae.h
+
 FW += ../crypto/aes128.c
+# WPA3-SAE. apply-mods' wpa3_sae step also drops these into the nabgcc
+# tree, but the emulator builds them from crypto/ directly, the way it
+# already does for AES -- one copy, and the host tests use the same one.
+FW += ../crypto/p256.c ../crypto/sha256.c ../crypto/cmac.c ../crypto/sae.c
 
 # The hardware stubs nabgcc already ships for its own host build of the VM.
 # Upstream's work, used as it stands — see README.md.
@@ -88,12 +96,12 @@ vm: $(VM_TARGET)
 
 # eapol.c includes <net/aes128.h>, so the AES header has to sit under a net/
 # directory. ../crypto keeps it flat, as the ARM build's Dockerfile does.
-obj/include/net/aes128.h: ../crypto/aes128.h
+obj/include/net/%.h: ../crypto/%.h
 	@mkdir -p $(@D)
 	cp $< $@
 
 define emulator_compile
-obj/$(notdir $(basename $(1))).o: $(1) obj/include/net/aes128.h obj/.tree-stamp
+obj/$(notdir $(basename $(1))).o: $(1) $(CRYPTO_H) obj/.tree-stamp
 	@mkdir -p obj
 	$$(CC) -c $$(CFLAGS) $$(SAN) $$< -o $$@
 endef

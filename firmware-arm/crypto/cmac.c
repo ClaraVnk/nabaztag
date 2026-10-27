@@ -3,7 +3,7 @@
  * @brief RFC 4493 AES-128-CMAC, and the 802.11w BIP on top of it.
  */
 
-#include "cmac.h"
+#include "net/cmac.h"
 
 #include <string.h>
 

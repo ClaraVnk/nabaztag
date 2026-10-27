@@ -199,15 +199,52 @@ it has to agree with.
 
 ## What it already answers
 
-**WPA3 personal, SAE only: the rabbit does not try.** `ieee80211_input_mgt()`
-walks the RSN element's AKM list looking for suite 2 (PSK); a WPA3-only AP
-offers only suite 8 (SAE), so the scan result comes back
-`IEEE80211_CRYPT_UNSUPPORTED` and the network is never a candidate.
+**WPA3 personal, SAE only: it associates, as of 2026-10-27.**
+`scenarios/wpa3-sae.txt` spent months asserting `IDLE` because
+`ieee80211_input_mgt()` walked the RSN element's AKM list looking for suite 2
+(PSK), found only suite 8 (SAE), and marked the network
+`IEEE80211_CRYPT_UNSUPPORTED`. Build with `wpa3_sae` in `MOD_STEPS` (the
+default now) and the whole chain runs: the scan reports `0x4a`, the rabbit
+sends an authentication frame with algorithm 3 and its SAE commit, the AP
+answers with its own commit and confirm, the rabbit verifies and hands the
+derived PMK to `eapol.c`, which runs the ordinary four-way handshake. The
+RT2573 still does CCMP for data in hardware.
 
-Unimplemented, not impossible — the distinction matters and an earlier draft
-of this file blurred it. Nothing in the silicon forbids SAE: it needs no
-accelerator, only arithmetic, and this chip does arithmetic. What it would
-cost, in order of difficulty:
+Both halves of SAE are our own code, so this proves the *integration* and
+not interoperability: frame layout, sequence numbers, the channel being
+programmed before the commit goes out, the PMK reaching eapol, the
+association completing. A real access point is the test that settles the
+rest.
+
+Three things that made it work, none of them cryptography:
+
+- **The password never reaches the driver.** The bytecode runs PBKDF2 itself
+  and hands C a 32-byte PMK. SAE needs the password, which passes through C
+  exactly once, in `netPmk()`.
+- **A SAE flag cannot go in `scan_result.encryption`.** That byte goes up to
+  the VM, and `OPnetAuth` only calls `netAuth` when `(crypt & 0xF0)` matches
+  the stored config byte. SAE-capable BSSIDs go in a driver-side cache
+  instead, and the VM keeps seeing `0x4a`.
+- **Returning early from `rt2501_auth` means taking over what follows it.**
+  It writes the AP rates to the autoresponder and calls
+  `rt2501_switch_channel()` *after* the point where SAE hooks in. Skipping
+  those sent six commits while the radio was still hopping through the scan
+  — all six counted under "transmitted into the void", the rabbit stuck in
+  `AUTH`, and nothing in the log said why.
+
+What it cost, measured on the ARM7TDMI: the `lean-wpa3` image is 114 444
+bytes against `lean`'s 107 288, so **7 156 bytes**, with 12 532 still spare.
+
+Still missing, and the reason this is a separate build mode rather than part
+of `lean`: BIP validation. The RSN IE advertises MFPC, which is what an AP
+with MFPR set requires of us, so association works — but an unprotected
+deauthenticate is still honoured, which is the attack 802.11w exists to
+stop. `../crypto/cmac.c`'s `bip_cmac_128` is written and tested; what is
+missing is pulling the IGTK out of the four-way handshake and checking the
+MMIE. Until that lands this is WPA3's key exchange on WPA2's
+management-frame security.
+
+The original estimate of what it would cost, kept because it was close:
 
 - **P-256 field arithmetic.** ~~Call it 6-12 KB of flash~~ — **done and
   measured, 2026-10-27**: `../crypto/p256.c`, **5 452 bytes** of ARM7TDMI flash

@@ -18,4 +18,4 @@ psk nabaztag
 tick 50
 stop 30000
 
-at 20000 expect IDLE
+at 20000 expect RUN

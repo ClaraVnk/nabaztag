@@ -15,12 +15,15 @@ CFLAGS  ?= -O1 -g -std=c99 -Wall -Wextra -Werror -pedantic
 SAN     ?= -fsanitize=address,undefined -fno-omit-frame-pointer
 INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
+# Defined before any rule that uses it: a prerequisite list is
+# expanded when the rule is read, not when it runs.
+CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h
 
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
 .PHONY: all vectors clean arm
-all: net/aes128.h
+all: $(CRYPTO_H)
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
@@ -46,9 +49,9 @@ all: net/aes128.h
 # The prerequisite matters: without it the copy is made once and then goes
 # stale in silence, so a new declaration in crypto/aes128.h reads as an
 # undeclared function in a file that includes the header it is in.
-net/aes128.h: ../crypto/aes128.h
+net/%.h: ../crypto/%.h
 	@mkdir -p net
-	@cp ../crypto/aes128.h net/
+	@cp $< net/
 
 vectors:
 	python3 vectors.py > vectors.h

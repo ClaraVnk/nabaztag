@@ -36,6 +36,8 @@
 #include "net/eapol.h"
 #include "net/hash.h"
 
+#include "net/sae.h"
+
 #include "sim.h"
 #include "vap.h"
 #include "vapcrypto.h"
@@ -291,6 +293,57 @@ static uint32_t build_auth_resp(uint8_t *out, const struct sim_ap *a,
   *p++ = 0x00; *p++ = 0x00;                     /* open system */
   *p++ = 0x02; *p++ = 0x00;                     /* sequence 2  */
   *p++ = status & 0xff; *p++ = (status >> 8) & 0xff;
+
+  return (uint32_t)(p - out);
+}
+
+/* ------------------------------------------------- SAE, the AP's half ---
+ *
+ * The rabbit's SAE is in ../crypto/sae.c and so is this; the two halves run
+ * the same code with the roles swapped. test_sae.c says at length what that
+ * does and does not prove, and the same caveat applies here with one thing
+ * added: this exchange goes over the emulated air, through the rabbit's own
+ * ieee80211.c, its own state machine and its own four-way handshake. So it
+ * proves the *integration* -- frame layout, sequence numbers, the PMK
+ * reaching eapol, the association completing -- which is exactly what the
+ * host test cannot reach and what a wrong byte offset would break.
+ *
+ * It still does not prove interoperability with a UniFi.
+ */
+static sae_ctx vap_sae;
+static int vap_sae_live;
+
+static void vap_sae_rng(uint8_t *out, uint32_t len, void *arg)
+{
+  /* Deterministic, so a failing scenario replays identically. */
+  static uint32_t st = 0x1d92164f;
+  uint32_t i;
+  (void)arg;
+  for(i=0;i<len;i++) {
+    st ^= st << 13; st ^= st >> 17; st ^= st << 5;
+    out[i] = (uint8_t)(st >> 19);
+  }
+}
+
+static uint32_t build_auth_sae(uint8_t *out, const struct sim_ap *a,
+                               uint16_t seq, const uint8_t *body,
+                               uint32_t blen)
+{
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+  uint8_t *p = out + sizeof(*fr);
+
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_AUTH;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+  memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, a->bssid, IEEE80211_ADDR_LEN);
+
+  *p++ = 0x03; *p++ = 0x00;                       /* algorithm 3 = SAE */
+  *p++ = seq & 0xff; *p++ = (seq >> 8) & 0xff;
+  *p++ = 0x00; *p++ = 0x00;                       /* success */
+  memcpy(p, body, blen);
+  p += blen;
 
   return (uint32_t)(p - out);
 }
@@ -812,7 +865,75 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       if(length < sizeof(*fr) + 6) return;
       algorithm = body[0] | (body[1] << 8);
       seq       = body[2] | (body[3] << 8);
+
+      /* SAE: algorithm 3, two messages each way. Handled before the
+         open/shared check below, which would refuse it as an unknown
+         algorithm -- and that refusal is exactly what scenarios/wpa3-sae.txt
+         used to assert. */
+      if(algorithm == 0x0003 &&
+         (a->security == SIM_SEC_WPA3_SAE || a->security == SIM_SEC_WPA2_WPA3)) {
+        const uint8_t *sae_body = body + 6;
+        uint32_t sae_len = length - sizeof(*fr) - 6;
+
+        if(seq == 1) {
+          uint8_t commit[SAE_COMMIT_LEN], confirm[SAE_CONFIRM_LEN];
+          /* Our own commit first: the PWE depends on both MAC addresses, so
+             it cannot be built before the station is known. */
+          if(!sae_commit(&vap_sae, a->bssid, rt2501_mac, sim.psk,
+                         vap_sae_rng, NULL, NULL)) {
+            sim_log("AP %s: SAE could not build a commit", macstr(a->bssid));
+            return;
+          }
+          if(!sae_peer_commit(&vap_sae, sae_body, sae_len, NULL)) {
+            sim_log("AP %s: SAE refused the station's commit", macstr(a->bssid));
+            sae_clear(&vap_sae);
+            return;
+          }
+          vap_sae_live = 1;
+          sae_commit_bytes(&vap_sae, commit);
+          n = build_auth_sae(out, a, 1, commit, sizeof commit);
+          queue_frame(out, n, a->rssi, a->channel);
+          sae_confirm_bytes(&vap_sae, confirm);
+          n = build_auth_sae(out, a, 2, confirm, sizeof confirm);
+          queue_frame(out, n, a->rssi, a->channel);
+          sim_log("AP %s: SAE commit and confirm sent", macstr(a->bssid));
+          vap_stats.auth_responses++;
+          return;
+        }
+
+        if(seq == 2) {
+          if(!vap_sae_live) return;
+          if(!sae_peer_confirm(&vap_sae, sae_body, sae_len)) {
+            sim_log("AP %s: SAE confirm did not verify", macstr(a->bssid));
+            sae_clear(&vap_sae);
+            vap_sae_live = 0;
+            return;
+          }
+          /* The station is authenticated and the four-way handshake will
+             run on the PMK SAE just produced, not on the passphrase. */
+          vap_set_pmk(vap_sae.pmk);
+          a->authenticated = 1;
+          sim_log("AP %s: SAE accepted, PMK installed", macstr(a->bssid));
+          sae_clear(&vap_sae);
+          vap_sae_live = 0;
+          return;
+        }
+        return;
+      }
+
       if(seq != 1) return;             /* only the station's first message */
+
+      /* A WPA3-only AP does not accept open-system authentication. Without
+         this the rabbit could fall back to PSK, associate, and the scenario
+         would report RUN while SAE had never run -- which is exactly what
+         happened the first time this was wired up. */
+      if(a->security == SIM_SEC_WPA3_SAE && algorithm == IEEE80211_AUTH_ALG_OPEN) {
+        sim_log("AP %s: SAE-only, refusing open-system auth", macstr(a->bssid));
+        n = build_auth_resp(out, a, IEEE80211_STATUS_ALG);
+        queue_frame(out, n, a->rssi, a->channel);
+        return;
+      }
+
       if(algorithm != IEEE80211_AUTH_ALG_OPEN && a->security != SIM_SEC_WEP) {
         sim_log("AP %s: refusing auth algorithm %u", macstr(a->bssid), algorithm);
         n = build_auth_resp(out, a, IEEE80211_STATUS_ALG);
