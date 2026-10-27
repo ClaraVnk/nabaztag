@@ -239,7 +239,7 @@ Still missing, and the reason this is a separate build mode rather than part
 of `lean`: BIP validation. The RSN IE advertises MFPC, which is what an AP
 with MFPR set requires of us, so association works — but an unprotected
 deauthenticate is still honoured, which is the attack 802.11w exists to
-stop. `crypto/cmac.c`'s `bip_cmac_128` is written and tested; what is
+stop. `../crypto/cmac.c`'s `bip_cmac_128` is written and tested; what is
 missing is pulling the IGTK out of the four-way handshake and checking the
 MMIE. Until that lands this is WPA3's key exchange on WPA2's
 management-frame security.
