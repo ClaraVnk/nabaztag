@@ -545,6 +545,51 @@ int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
   return 1;
 }
 
+void p256_negate(p256_point *pt)
+{
+  fe y, zero;
+  p256_ready();
+  fe_from_bytes(y, pt->y);
+  if (limbs_is_zero(y)) return;
+  memset(zero, 0, sizeof zero);
+  fe_sub(y, zero, y);
+  fe_to_bytes(pt->y, y);
+}
+
+void p256_scalar_add(uint8_t out[P256_BYTES], const uint8_t a[P256_BYTES],
+                     const uint8_t b[P256_BYTES])
+{
+  fe x, y, t;
+  uint32_t carry, borrow;
+
+  p256_ready();
+  fe_from_bytes(x, a);
+  fe_from_bytes(y, b);
+  carry = limbs_add(x, x, y);
+  /* mod n, not mod p: one conditional subtraction is enough because both
+     inputs are below n, so the sum is below 2n. */
+  borrow = limbs_sub(t, x, N);
+  limbs_cmov(x, x, t, carry | (borrow ^ 1));
+  fe_to_bytes(out, x);
+}
+
+int p256_scalar_valid(const uint8_t k[P256_BYTES])
+{
+  fe x, one;
+  p256_ready();
+  fe_from_bytes(x, k);
+  fe_set_u32(one, 1);
+  return limbs_cmp(x, one) > 0 && limbs_cmp(x, N) < 0;
+}
+
+int p256_below_p(const uint8_t v[P256_BYTES])
+{
+  fe x;
+  p256_ready();
+  fe_from_bytes(x, v);
+  return limbs_cmp(x, P) < 0;
+}
+
 void p256_get_p(uint8_t out[P256_BYTES]) { p256_ready(); fe_to_bytes(out, P); }
 void p256_get_n(uint8_t out[P256_BYTES]) { p256_ready(); fe_to_bytes(out, N); }
 
