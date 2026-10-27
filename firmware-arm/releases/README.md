@@ -27,8 +27,8 @@ normal and it is the last step of every flash, OTA included).
 
 | | |
 |---|---|
-| **Size** | 231 378 bytes (`Nab.bin` 115 608) |
-| **sha256** | `2f35637bce320d23ef03e33bc602a1e63aa9459d2949e589eee457d7db3c3ab2` |
+| **Size** | 214 738 bytes (`Nab.bin` 107 288) |
+| **sha256** | `31060c76651b9fd6a1e6139d268500a702398c2873649a6bf2fd2bd59f103bda` |
 | **Build mode** | `lean` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
@@ -39,7 +39,51 @@ multicast frame. This build carries a real AES-128, the RFC 3394 unwrap with
 its integrity check, and the GTK KDE parser, wired into message 3 and the
 group rekey. PR #20 has the full story and the test suite.
 
-**Replaced on 2026-10-25.** It adds the three waits that used to feed the
+**Replaced on 2026-10-27.** This is the build that stops the internal RAM
+being laid out by accident, and it closes pacifox's #25 and #27.
+
+Every `.bss.*` is zeroed at boot now. Until this image, `-fdata-sections` gave
+each variable its own section, the linker script collected only `*(.bss)`, and
+85 sections sat past `__bss_end__` where the startup loop never reached them:
+`pmk`, `ptk`, `gtk`, `anonce`, `snonce`, `replay_counter`, the scan cipher
+cache. They booted holding whatever the SRAM held at power-on, so whether an
+association succeeded was partly a dice roll and every replug re-rolled it.
+Collecting them needs somewhere to put 8 KB of pure scratch, so `audioFifoPlay`
+and vlog's `buffer_temp` move to a NOLOAD `.extbss` in external RAM, below the
+USB pool at `0xD0008000`. Ported from RedoXyde/nabgcc `6303737` (Léonard,
+uplg) — his linker script, his section attributes, his save and restore of the
+location counter around the ExtRAM section.
+
+The user stack goes from 1 916 to **10 104 bytes** of headroom, which was
+finding 1; the newlib heap no longer starts on `counter_timer`, which was
+finding 2. Seven radio failures go with it (#25 findings 3, 4 and 5): the 8051
+start request is checked, a failed enumeration returns NULL instead of being
+reported as success, reception is re-armed after a failed allocation, a USB
+error no longer arrives looking like a short frame, the ComRAM leak on every
+failed transmit is closed, its busy-loop is bounded, and a transient receive
+error no longer kills the radio until the next power cycle.
+
+**Hardware-validated on 2026-10-27** by OTA on a Nabaztag:tag v2: sent
+09:14:24, downloaded 245 ms later, and after the power cycle `bc.jsp`
+09:21:42, `locate.jsp` 09:21:57, operational 09:22:02 — then a spoken
+sentence fetched at 09:22:22 **and heard**, and both MIDI jingles after it,
+also heard.
+
+Those last two clauses are the whole reason this image took two attempts. The
+first flash, on 2026-10-26, was called mute on the strength of one 119-byte
+MIDI jingle that nobody heard — a sound of well under a second, on a build
+that had moved the audio FIFO to external RAM, which made the explanation feel
+obvious. It was not evidence. Rolled back, then re-flashed and tested properly
+against a control: the same sentence through the same path on the previous
+image first, so that silence and "I heard it" could be told apart. Both the
+MP3 path and the MIDI decoder — separate decoders in the VS1003, and the MIDI
+one is what every owner hears at connect — were checked by ear before this
+image was offered to anyone else.
+
+The image it replaces, `2f35637bce320d23…`, is kept on the warren as the
+rollback.
+
+**Previously replaced on 2026-10-25.** It added the three waits that used to feed the
 watchdog while they hung: the two VS1003 DREQ waits and the RT2501 bring-up
 loops (#25, #27). A wedged codec or a radio that never reports ready used to
 stop the rabbit with nothing left to rescue it, because the waits kept
