@@ -62,6 +62,23 @@ int p256_mul_base(p256_point *out, const uint8_t k[P256_BYTES],
  *  (b == -a) or either input is invalid. */
 int p256_add(p256_point *out, const p256_point *a, const p256_point *b);
 
+/** pt = -pt, i.e. y = p - y. SAE's commit element is the inverse of a
+ *  point, and nothing else in the protocol needs a subtraction. */
+void p256_negate(p256_point *pt);
+
+/** out = (a + b) mod n. SAE adds scalars twice: once to build its own
+ *  commit scalar and once to derive the key context from both. */
+void p256_scalar_add(uint8_t out[P256_BYTES], const uint8_t a[P256_BYTES],
+                     const uint8_t b[P256_BYTES]);
+
+/** 1 if 1 < k < n, which is what SAE requires of a received commit scalar
+ *  and of its own. */
+int p256_scalar_valid(const uint8_t k[P256_BYTES]);
+
+/** 1 if the 32 bytes are a field element strictly below p. Hunting and
+ *  pecking has to reject a candidate above p rather than reduce it. */
+int p256_below_p(const uint8_t v[P256_BYTES]);
+
 /** The curve's own constants, big-endian, for callers that need them (SAE
  *  needs p and n to reduce and to range-check). */
 void p256_get_p(uint8_t out[P256_BYTES]);

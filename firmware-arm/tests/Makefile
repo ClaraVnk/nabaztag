@@ -32,15 +32,29 @@ all: net/aes128.h
 	@echo
 	@echo "== P-256, against OpenSSL and against the curve"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_p256 test_p256.c ../crypto/p256.c && /tmp/t_p256
+	@echo
+	@echo "== SHA-256, HMAC and the 802.11 KDF"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_sha256 test_sha256.c ../crypto/sha256.c && /tmp/t_sha256
+	@echo
+	@echo "== the AES forward cipher, CMAC and BIP"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_cmac test_cmac.c ../crypto/cmac.c && /tmp/t_cmac
+	@echo
+	@echo "== a full SAE exchange (see the header: the peer is this code)"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_sae test_sae.c ../crypto/sae.c ../crypto/p256.c ../crypto/sha256.c && /tmp/t_sae
 
 # The sources include <net/aes128.h> the way the firmware tree lays them out.
-net/aes128.h:
+# The prerequisite matters: without it the copy is made once and then goes
+# stale in silence, so a new declaration in crypto/aes128.h reads as an
+# undeclared function in a file that includes the header it is in.
+net/aes128.h: ../crypto/aes128.h
 	@mkdir -p net
 	@cp ../crypto/aes128.h net/
 
 vectors:
 	python3 vectors.py > vectors.h
 	python3 vectors_p256.py > vectors_p256.h
+	python3 vectors_sha256.py > vectors_sha256.h
+	python3 vectors_cmac.py > vectors_cmac.h
 
 # The flash budget is the reason WPA3 was "not impossible, just unimplemented"
 # for so long, so the size is part of the test, not a footnote.
@@ -49,6 +63,13 @@ arm:
 	@arm-none-eabi-size /tmp/aes128.o
 	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/p256.c -o /tmp/p256.o
 	@arm-none-eabi-size /tmp/p256.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/sha256.c -o /tmp/sha256.o
+	@arm-none-eabi-size /tmp/sha256.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/cmac.c -o /tmp/cmac.o
+	@arm-none-eabi-size /tmp/cmac.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/sae.c -o /tmp/sae.o
+	@arm-none-eabi-size /tmp/sae.o
 
 clean:
-	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz /tmp/t_p256
+	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz /tmp/t_p256 \
+		/tmp/t_sha256 /tmp/t_cmac /tmp/t_sae
