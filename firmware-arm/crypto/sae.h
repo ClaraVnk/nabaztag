@@ -103,6 +103,26 @@ int sae_commit(sae_ctx *c,
 #define SAE_COMMIT_LEN (2 + P256_BYTES + 2 * P256_BYTES)
 void sae_commit_bytes(const sae_ctx *c, uint8_t out[SAE_COMMIT_LEN]);
 
+/** The longest anti-clogging token we will echo back. The standard does not
+ *  fix a length -- it is whatever the AP chose -- and 256 is far beyond what
+ *  any implementation sends. */
+#define SAE_TOKEN_MAX 256
+#define SAE_COMMIT_TOKEN_LEN (SAE_COMMIT_LEN + SAE_TOKEN_MAX)
+
+/**
+ * @brief Our commit with an anti-clogging token spliced in.
+ *
+ * An access point under load answers a commit with status 76 and a token,
+ * and expects the commit again with that token echoed. It is not an error
+ * and it is not optional: a client that treats status 76 as a refusal
+ * cannot associate with a busy AP at all.
+ *
+ * The token goes between the group and the scalar (802.11-2020 12.4.7.4).
+ * Returns the number of bytes written.
+ */
+uint32_t sae_commit_bytes_token(const sae_ctx *c, uint8_t *out,
+                                const uint8_t *token, uint32_t tlen);
+
 /**
  * @brief Take the peer's commit and derive KCK, PMK and PMKID.
  *

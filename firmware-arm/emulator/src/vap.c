@@ -37,6 +37,7 @@
 #include "net/hash.h"
 
 #include "net/sae.h"
+#include "net/cmac.h"
 
 #include "sim.h"
 #include "vap.h"
@@ -277,6 +278,14 @@ static uint32_t build_beacon(uint8_t *out, const struct sim_ap *a,
   return (uint32_t)(p - out);
 }
 
+/* The integrity group key, for 802.11w. Fixed, like vap_gtk: this is a
+ * simulator, and a key nobody can predict is a key nobody can debug. */
+static uint8_t vap_igtk[16] = {
+  0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,
+  0x48,0x49,0x4a,0x4b,0x4c,0x4d,0x4e,0x4f
+};
+static uint8_t vap_ipn[6] = { 1, 0, 0, 0, 0, 0 };
+
 static uint32_t build_auth_resp(uint8_t *out, const struct sim_ap *a,
                                 uint16_t status)
 {
@@ -325,6 +334,10 @@ static void vap_sae_rng(uint8_t *out, uint32_t len, void *arg)
   }
 }
 
+static uint32_t build_auth_sae_status(uint8_t *out, const struct sim_ap *a,
+                                     uint16_t seq, uint16_t status,
+                                     const uint8_t *body, uint32_t blen);
+
 static uint32_t build_auth_sae(uint8_t *out, const struct sim_ap *a,
                                uint16_t seq, const uint8_t *body,
                                uint32_t blen)
@@ -346,6 +359,17 @@ static uint32_t build_auth_sae(uint8_t *out, const struct sim_ap *a,
   p += blen;
 
   return (uint32_t)(p - out);
+}
+
+static uint32_t build_auth_sae_status(uint8_t *out, const struct sim_ap *a,
+                                      uint16_t seq, uint16_t status,
+                                      const uint8_t *body, uint32_t blen)
+{
+  uint32_t n = build_auth_sae(out, a, seq, body, blen);
+  uint8_t *st = out + sizeof(struct ieee80211_frame) + 4;
+  st[0] = status & 0xff;
+  st[1] = (status >> 8) & 0xff;
+  return n;
 }
 
 static uint32_t build_assoc_resp(uint8_t *out, const struct sim_ap *a,
@@ -391,6 +415,33 @@ static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
   *p++ = reason & 0xff; *p++ = (reason >> 8) & 0xff;
 
   return (uint32_t)(p - out);
+}
+
+/* The same frame with an 802.11w MMIE: element 76, length 16, then KeyID,
+ * the packet number and eight bytes of MIC over the masked header and the
+ * body with the MIC field zeroed. */
+static uint32_t build_deauth_protected(uint8_t *out, struct sim_ap *a,
+                                       int disassoc, uint16_t reason)
+{
+  uint32_t n = build_deauth(out, a, disassoc, reason);
+  uint8_t *body = out + sizeof(struct ieee80211_frame);
+  uint32_t blen = n - sizeof(struct ieee80211_frame);
+  uint8_t *mmie = body + blen;
+  int i;
+
+  /* Bump the packet number: a replay of the previous one must not pass. */
+  for(i = 0; i < 6; i++) if(++vap_ipn[i]) break;
+
+  *mmie++ = 76;
+  *mmie++ = 16;
+  *mmie++ = 0x04; *mmie++ = 0x00;          /* key id 4 */
+  memcpy(mmie, vap_ipn, 6);
+  mmie += 6;
+  memset(mmie, 0, 8);
+  blen += 18;
+
+  bip_cmac_128(body + blen - 8, vap_igtk, out, body, blen);
+  return sizeof(struct ieee80211_frame) + blen;
 }
 
 static const char *cipher_name(uint8_t suite)
@@ -681,8 +732,9 @@ static void vap_send_msg3(int ap)
      * data, wrapped with the KEK. This is the path crypto/aes128.c and the
      * wpa2_gtk modification exist for, and it was previously only reachable
      * by flashing a rabbit and watching whether broadcast traffic arrived. */
-    uint8_t kde[24];
+    uint8_t kde[24 + 32];
     uint8_t *p = kde;
+    uint32_t klen;
     *p++ = 0xdd;
     *p++ = 0x16;                                  /* 4 OUI + 2 + 16 */
     *p++ = 0x00; *p++ = 0x0f; *p++ = 0xac;        /* RSN OUI */
@@ -690,12 +742,33 @@ static void vap_send_msg3(int ap)
     *p++ = 0x01;                                  /* key id 1 */
     *p++ = 0x00;                                  /* reserved */
     memcpy(p, vap_gtk, sizeof(vap_gtk));
+    p += sizeof(vap_gtk);
 
-    if(!vap_aes_key_wrap(hs->ptk + 16, kde, sizeof(kde), key_data)) {
+    /* And the IGTK, when this AP protects management frames: KDE type 9,
+     * KeyID(2) + IPN(6) + the 16-byte key. The rabbit needs it to tell a
+     * real deauthenticate from a forged one -- without it, 802.11w is just
+     * a bit advertised in the RSN IE. */
+    if(a->pmf || a->security == SIM_SEC_WPA3_SAE) {
+      *p++ = 0xdd;
+      *p++ = 0x1c;                                /* 4 OUI + 2 + 6 + 16 */
+      *p++ = 0x00; *p++ = 0x0f; *p++ = 0xac;
+      *p++ = 0x09;                                /* data type 9: IGTK */
+      *p++ = 0x04; *p++ = 0x00;                   /* key id 4 */
+      memcpy(p, vap_ipn, 6);                      /* IPN */
+      p += 6;
+      memcpy(p, vap_igtk, 16);
+      p += 16;
+    }
+
+    klen = (uint32_t)(p - kde);
+    /* RFC 3394 wraps multiples of 8. */
+    while(klen % 8) kde[klen++] = 0xdd, kde[klen-1] = 0x00;
+
+    if(!vap_aes_key_wrap(hs->ptk + 16, kde, klen, key_data)) {
       sim_note_failure("the AP could not wrap the group key");
       return;
     }
-    key_data_length = sizeof(kde) + 8;
+    key_data_length = klen + 8;
   }
 
   body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH + key_data_length;
@@ -877,6 +950,39 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
 
         if(seq == 1) {
           uint8_t commit[SAE_COMMIT_LEN], confirm[SAE_CONFIRM_LEN];
+
+          /* An anti-clogging token, once, if the scenario asked for one.
+             The station must come back with the same commit and the token
+             echoed; a client that treats status 76 as a refusal stops
+             here. */
+          if(a->sae_token && !a->sae_asked) {
+            static const uint8_t token[] = {
+              0x5a, 0xa5, 0x13, 0x37, 0xc0, 0xff, 0xee, 0x00,
+              0xde, 0xad, 0xbe, 0xef, 0x12, 0x34, 0x56, 0x78
+            };
+            uint8_t resp[64];
+            uint32_t rn;
+            a->sae_asked = 1;
+            memcpy(resp, token, sizeof token);
+            rn = build_auth_sae_status(out, a, 1, 76, resp, sizeof token);
+            queue_frame(out, rn, a->rssi, a->channel);
+            sim_log("AP %s: SAE wants an anti-clogging token", macstr(a->bssid));
+            return;
+          }
+          /* The token, if we asked for one, sits between the group and the
+             scalar. Skip it rather than feeding it to sae_peer_commit. */
+          /* A commit with no token is exactly SAE_COMMIT_LEN; anything
+             longer is the token we asked for. Subtracting 2 as well, as the
+             first attempt did, ate two bytes of the scalar on every commit
+             -- including the ones that carried no token at all. */
+          if(sae_len > SAE_COMMIT_LEN) {
+            uint32_t extra = sae_len - SAE_COMMIT_LEN;
+            sim_log("AP %s: the station echoed a %u-byte token",
+                    macstr(a->bssid), extra);
+            memmove((void *)(sae_body + 2), sae_body + 2 + extra,
+                    sae_len - 2 - extra);
+            sae_len -= extra;
+          }
           /* Our own commit first: the PWE depends on both MAC addresses, so
              it cannot be built before the station is known. */
           if(!sae_commit(&vap_sae, a->bssid, rt2501_mac, sim.psk,
@@ -1242,6 +1348,34 @@ void vap_deauth(int ap, int disassoc, uint16_t reason)
     }
     n = build_deauth(out, a, disassoc, reason);
     sim_log("AP %s: sending %s, reason %u", macstr(a->bssid),
+            disassoc ? "disassociation" : "deauthentication", reason);
+    queue_frame(out, n, a->rssi, a->channel);
+    a->associated = 0;
+    a->authenticated = 0;
+    memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
+    vap_stats.deauths_sent++;
+  }
+}
+
+/**
+ * @brief A deauthentication the station can verify: the control case.
+ *
+ * The forged-deauth scenario proves the rabbit ignores an unsigned frame.
+ * On its own that would also pass if the rabbit ignored every management
+ * frame, which would be worse than the bug. This is the other half.
+ */
+void vap_deauth_protected(int ap, int disassoc, uint16_t reason)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t n;
+  struct sim_ap *a;
+
+  for(int i=0;i<sim.nb_aps;i++) {
+    if(ap >= 0 && i != ap) continue;
+    a = &sim.aps[i];
+    if(!a->up) continue;
+    n = build_deauth_protected(out, a, disassoc, reason);
+    sim_log("AP %s: sending a signed %s, reason %u", macstr(a->bssid),
             disassoc ? "disassociation" : "deauthentication", reason);
     queue_frame(out, n, a->rssi, a->channel);
     a->associated = 0;

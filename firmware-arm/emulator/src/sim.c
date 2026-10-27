@@ -215,7 +215,7 @@ void sim_note_fetch(void)
  *   realtime                       pace the loop to the wall clock, for when
  *                                  something outside has its own timers
  *   stop <ms>
- *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf]
+ *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf] [sae-token]
  *   at <ms> deauth [<bssid>] [reason <n>]
  *   at <ms> disassoc [<bssid>] [reason <n>]
  *   at <ms> down <bssid>
@@ -291,8 +291,16 @@ int sim_load(const char *path)
       a->security = sec;
       a->rssi     = (n >= 6) ? (int16_t)strtol(tok[5], NULL, 10) : -55;
       a->up       = 1;
-      for(int i = 5; i < n; i++)
+      /* Braces, now that there is more than one flag: the loop had none,
+         and the second test landed outside it. */
+      for(int i = 5; i < n; i++) {
         if(!strcmp(tok[i], "pmf")) a->pmf = 1;
+        /* Make the AP answer the first SAE commit with status 76 and a
+           token, the way a loaded access point does. Without this the
+           rabbit never exercises that path, and the path is the most
+           likely reason a real association fails. */
+        if(!strcmp(tok[i], "sae-token")) a->sae_token = 1;
+      }
       sim.nb_aps++;
     } else if((!strcmp(tok[0], "at") || !strcmp(tok[0], "fetch")) && n >= 3) {
       struct sim_event *e;
@@ -311,6 +319,10 @@ int sim_load(const char *path)
         e->arg = 7;  /* IEEE80211_REASON_NOT_ASSOCED, what an AP sends on a reboot */
         for(int i = 3; i < n; i++) {
           if(!strcmp(tok[i], "reason") && i + 1 < n) e->arg = (int)strtol(tok[++i], NULL, 10);
+          /* `protected` makes the AP sign the frame with the IGTK, which is
+             the control for the forged case: a rabbit that drops every
+             management frame would pass the forged test and fail this one. */
+          else if(!strcmp(tok[i], "protected")) e->kind = SIM_EV_DEAUTH_PROT;
           else if(strchr(tok[i], ':')) e->ap = ap_by_bssid(tok[i]);
         }
       } else if(!strcmp(tok[2], "down") || !strcmp(tok[2], "up")) {

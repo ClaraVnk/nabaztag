@@ -69,4 +69,16 @@ void bip_cmac_128(uint8_t mic[8], const uint8_t igtk[16],
                   const uint8_t hdr[24],
                   const uint8_t *body, uint32_t blen);
 
+/**
+ * @brief Find the IGTK KDE in unwrapped EAPOL key data.
+ *
+ * The AP sends it in message 3 alongside the GTK when management frame
+ * protection is in use: KDE type 9, whose data is KeyID (2, little-endian),
+ * IPN (6) and then the 16-byte key.
+ *
+ * @return 1 if one was found and copied out, 0 otherwise.
+ */
+int32_t rsn_find_igtk(const uint8_t *data, uint32_t len,
+                      uint8_t *key_id, uint8_t ipn[6], uint8_t igtk[16]);
+
 #endif /* NAB_CMAC_H */
