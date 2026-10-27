@@ -1,5 +1,32 @@
 # Naboot full — config-mode AP regression — forensics & recovery plan
 
+## ✅ CLOSED — 2026-10-27: the proper fix shipped, and one line below was wrong
+
+Read the rest as what it is: a record of a hunt, with its hypotheses still
+in it. Two corrections, both earned the hard way.
+
+**The stop-gap below is no longer what ships.** Collecting `*(.bss .bss.*)`
+was the right instinct and it bricked the rabbit a second time, so the fix
+in June was narrowed to forcing `play_w`/`play_r` into `.data`. The real
+obstacle was never the heap: on a 16 KB SRAM the collected `.bss` runs into
+the 0x1680 bytes of stacks that `init.s` reserves from the top of RAM.
+`extbss` (PR #61, shipped #63) moves `audioFifoPlay` and vlog's
+`buffer_temp` — 8 KB of pure scratch — to a NOLOAD `.extbss` in external
+RAM, which leaves room to zero all of `.bss` properly. Every EAPOL global is
+now cleared at boot, and the user stack has 10 104 bytes instead of 1 916.
+
+**"Hypothesis B: VM heap starvation" is wrong, and it cost four months.**
+The claim that bracketing `.bss.*` leaves "zero VM heap" and stalls the
+bytecode loader does not hold: `VMALLOC` never touches the newlib heap at
+all. `_vmem_heap` is a fixed address in external RAM, `inc/vm/vmem.h:16`.
+The only path to libc's heap was `rand()`, which is gone. Written down
+plainly because that sentence sat in `apply-mods.py` and in the project
+README as settled fact and argued against the correct fix every time
+somebody looked.
+
+What a forensics file should carry, in hindsight: which hypotheses were
+*disproved*, by what measurement, and not just which one was adopted.
+
 ## ✅ RESOLVED — 2026-06-20: it was the linker, not modernize_pages
 
 The brick was **`.bss` never being zeroed at startup**, a latent bug in the

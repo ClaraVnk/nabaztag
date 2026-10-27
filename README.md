@@ -360,13 +360,30 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   garbage globals → Data Abort at boot. This hit *every* mode (even
   `minimal`/vanilla), which **exonerates `modernize_pages`** (the original
   suspect). The *first* fix (`97e05d1`) bracketed `*(.bss .bss.*)` so the
-  zero-loop clears all of it — but on the 16 KB SRAM that pushes
-  `__heap_start__` past the end of `.bss`, leaving **zero VM heap**, so the
-  bytecode loader stalls right after `bc.jsp`. The **final** fix (`3cd45d8`)
-  reverts the bracket (keeping the ~9 KB heap the working firmware relies on)
-  and instead forces the one global that actually faulted — the audio FIFO
-  indices `play_w`/`play_r` — into `.data` (init 0), so `audioPlayFetchByte()`
-  can't read a garbage index before `audioPlayStart()` runs. Recovered
+  zero-loop clears all of it — and bricked the rabbit, because on a 16 KB
+  SRAM the collected `.bss` runs into the 0x1680 bytes of stacks that
+  `init.s` reserves from the top of RAM. The stop-gap (`3cd45d8`) reverted
+  the bracket and forced the one global that actually faulted — the audio
+  FIFO indices `play_w`/`play_r` — into `.data` (init 0), so
+  `audioPlayFetchByte()` can't read a garbage index before
+  `audioPlayStart()` runs.
+
+  **Settled on 2026-10-27** (`extbss`, PRs #61 and #63), and the way it was
+  wrong for four months is the part worth keeping. The note next to that
+  revert said bracketing `.bss.*` left *zero VM heap* and stalled the
+  bytecode loader. It does not: `VMALLOC` never touches the newlib heap —
+  `_vmem_heap` is a fixed address in external RAM (`inc/vm/vmem.h:16`) — and
+  the brick was `.bss` landing on the stacks. Believing the wrong mechanism
+  argued against the right fix, which is to stop keeping 8 KB of pure
+  scratch in a 16 KB SRAM: `audioFifoPlay` and vlog's `buffer_temp` now live
+  in a NOLOAD `.extbss` in external RAM (ported from RedoXyde/nabgcc
+  `6303737`, Léonard/uplg), `.bss.*` is collected properly, and the user
+  stack goes from 1 916 to **10 104 bytes** of headroom. Every EAPOL global
+  — `pmk`, `ptk`, `gtk`, `anonce`, `snonce`, `replay_counter` — is zeroed at
+  boot now instead of starting on whatever the SRAM held, which is what made
+  association partly a dice roll on each replug. `preflight.py` gained the
+  checks that would have caught the 2026-06-20 brick, and the ones that
+  caught a second attempt at it on 2026-10-25. Recovered
   with a **Raspberry Pi as a bit-bang JTAG adapter** (no probe, F/F Dupont to
   the 8-pin header) + a TCL reimplementation of the OKI ML67Q4051 flash
   sequence on stock OpenOCD; flash read/erase/program verified byte-exact.
