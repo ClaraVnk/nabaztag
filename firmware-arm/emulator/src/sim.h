@@ -37,6 +37,8 @@ struct sim_ap {
   int      security;
   int      up;              /* 0 = powered off / out of range            */
   int      pmf;             /* 1 = refuse unprotected deauth (802.11w)   */
+  int      sae_token;       /* 1 = demand an anti-clogging token first   */
+  int      sae_asked;       /* whether this AP has asked yet             */
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
@@ -45,6 +47,7 @@ struct sim_ap {
 enum {
   SIM_EV_NONE,
   SIM_EV_DEAUTH,        /* AP deauthenticates the rabbit        */
+  SIM_EV_DEAUTH_PROT,   /* ... with a valid 802.11w MMIE        */
   SIM_EV_DISASSOC,      /* AP disassociates the rabbit          */
   SIM_EV_AP_DOWN,       /* AP stops answering entirely          */
   SIM_EV_AP_UP,

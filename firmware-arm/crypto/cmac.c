@@ -196,3 +196,32 @@ void bip_cmac_128(uint8_t mic[8], const uint8_t igtk[16],
   aes_cmac_v(tag, igtk, p, l, 2);
   memcpy(mic, tag, 8);
 }
+
+int32_t rsn_find_igtk(const uint8_t *data, uint32_t len,
+                      uint8_t *key_id, uint8_t ipn[6], uint8_t igtk[16])
+{
+  uint32_t pos = 0;
+
+  /* Same walk as rsn_find_gtk, same hazard: every length here came off the
+     air. elen covers OUI(3) + type(1) + the KDE data, and the IGTK's data
+     is KeyID(2) + IPN(6) + key(16), so elen is exactly 28. */
+  while (pos + 2 <= len) {
+    uint8_t type = data[pos];
+    uint8_t elen = data[pos + 1];
+
+    if (type == 0xdd && elen == 0) return 0;      /* pad KDE */
+    if (pos + 2 + elen > len) return 0;
+
+    if (type == 0xdd && elen == 4 + 2 + 6 + 16 &&
+        data[pos + 2] == 0x00 && data[pos + 3] == 0x0f &&
+        data[pos + 4] == 0xac && data[pos + 5] == 0x09) {
+      const uint8_t *kde = data + pos + 6;
+      *key_id = (uint8_t)(kde[0] | (kde[1] << 8));
+      memcpy(ipn, kde + 2, 6);
+      memcpy(igtk, kde + 8, 16);
+      return 1;
+    }
+    pos += 2 + elen;
+  }
+  return 0;
+}

@@ -123,6 +123,28 @@ void sae_commit_bytes(const sae_ctx *c, uint8_t out[SAE_COMMIT_LEN])
   memcpy(out + 2 + 2 * P256_BYTES, c->own_element.y, P256_BYTES);
 }
 
+uint32_t sae_commit_bytes_token(const sae_ctx *c, uint8_t *out,
+                                const uint8_t *token, uint32_t tlen)
+{
+  uint32_t n = 0;
+
+  if (tlen > SAE_TOKEN_MAX) tlen = SAE_TOKEN_MAX;
+
+  out[n++] = GROUP_19 & 0xff;
+  out[n++] = (uint8_t)(GROUP_19 >> 8);
+  if (token && tlen) {
+    memcpy(out + n, token, tlen);
+    n += tlen;
+  }
+  memcpy(out + n, c->own_scalar, P256_BYTES);
+  n += P256_BYTES;
+  memcpy(out + n, c->own_element.x, P256_BYTES);
+  n += P256_BYTES;
+  memcpy(out + n, c->own_element.y, P256_BYTES);
+  n += P256_BYTES;
+  return n;
+}
+
 int sae_peer_commit(sae_ctx *c, const uint8_t *in, uint32_t len,
                     p256_tick tick)
 {

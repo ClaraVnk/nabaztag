@@ -41,6 +41,7 @@ void vap_poll(void);
 void vap_to_station(const uint8_t *source_mac, const uint8_t *body,
                     uint32_t body_length);
 void vap_deauth(int ap, int disassoc, uint16_t reason);
+void vap_deauth_protected(int ap, int disassoc, uint16_t reason);
 void vap_reauth(int ap);
 void vap_rekey(int ap);
 void vap_ptk_rekey(int ap);

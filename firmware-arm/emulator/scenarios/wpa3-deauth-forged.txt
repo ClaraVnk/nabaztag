@@ -1,0 +1,39 @@
+# WPA3: a forged deauthenticate has to be ignored.
+#
+# This is the difference WPA3 makes in daily use. On WPA2 anyone within
+# radio range can knock a rabbit off its network with a deauthenticate it
+# never has to prove it sent -- a two-line script, and the reason a rabbit
+# can drop for no visible cause. With 802.11w the access point sends an
+# IGTK in message 3, and every deauthenticate and disassociate afterwards
+# carries an MMIE whose MIC is computed under that key.
+#
+# The frame sent at 20 s here is the unprotected kind: no MMIE at all, which
+# is exactly what an attacker sends. The rabbit must stay associated.
+#
+# Compare with wpa2-deauth.txt, where the same frame is obeyed and the
+# rabbit reconnects -- correctly, because on WPA2 there is no way to tell
+# the two apart. The assertion at 25 s is the one that matters: it fails if
+# ieee80211_mgmt_ok() ever stops checking, which is how this protection
+# would quietly disappear.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+tick 50
+stop 40000
+
+at 10000 expect RUN
+at 20000 deauth reason 7
+at 25000 expect RUN
+at 35000 expect RUN
+
+# And the control: the same frame, signed with the IGTK, must be obeyed.
+# Without it the test above would also pass on a rabbit that threw every
+# management frame away -- which would be worse than the bug.
+#
+# `expect` only tests equality, so the assertion names the state the rabbit
+# is actually in while it reconnects. That is enough to discriminate: a
+# signed frame that was ignored would leave it in RUN, and RUN is the one
+# state this cannot be. IDLE and SCAN both pass by too fast to catch -- the
+# rabbit leaves RUN and starts scanning inside the same 50 ms tick.
+at 36000 deauth reason 7 protected
+at 37000 expect AUTH

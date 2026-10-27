@@ -1,0 +1,19 @@
+# WPA3-SAE where the access point demands an anti-clogging token first.
+#
+# This is the path most likely to decide whether a real association works,
+# and the one a client gets wrong by treating status 76 as a refusal. A
+# loaded AP answers the first commit with status 76 and a token; the station
+# has to send the same commit again with the token echoed between the group
+# and the scalar.
+#
+# The firmware's own handling is in ieee80211_input_sae_auth(): before this
+# existed, any non-success status cleared the SAE context and dropped to
+# IDLE, so the rabbit would have reported "wrong password" against a busy
+# access point with the right one.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 sae-token
+psk nabaztag
+tick 50
+stop 30000
+
+at 20000 expect RUN
