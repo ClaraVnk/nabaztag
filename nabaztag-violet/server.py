@@ -656,16 +656,60 @@ def _pitch(data: bytes) -> bytes:
                     pass
 
 
+def _to_rabbit_audio(data: bytes) -> bytes:
+    """Re-encode speech into what the rabbit's decoder actually wants.
+
+    A Home Assistant TTS entity hands back whatever its engine produces:
+    Piper a 22050 Hz WAV, a cloud voice a 44.1 kHz stereo MP3. The VS1003 in
+    the rabbit is not a media player — it wants mono, and a WAV long enough
+    to be a sentence overruns the playback buffer, which is heard as silence.
+    The espeak path has always downsampled for exactly that reason; this one
+    sent the bytes through untouched, so a rabbit that played the built-in
+    jingles perfectly stayed mute on every spoken word. Reported 2026-11-04.
+
+    Mono MP3 at 22050 Hz, constant bit rate: the format Violet itself streamed
+    to these rabbits, and a tenth of the size of the WAV. Returns the input
+    unchanged if ffmpeg is unavailable or fails — mute speech is better than
+    no speech.
+    """
+    if not data:
+        return data
+    import tempfile, subprocess, os
+    src = dst = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".in", delete=False) as f:
+            f.write(data); src = f.name
+        dst = src + ".mp3"
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-ac", "1", "-ar", "22050",
+             "-codec:a", "libmp3lame", "-b:a", "64k", dst],
+            check=True, capture_output=True, timeout=30)
+        with open(dst, "rb") as fh:
+            out = fh.read()
+        return out or data
+    except Exception as exc:  # noqa
+        log.warning("could not re-encode TTS for the rabbit: %s", exc)
+        return data
+    finally:
+        for q in (src, dst):
+            if q:
+                try:
+                    os.unlink(q)
+                except OSError:
+                    pass
+
+
 def synth_tts(text: str, voice: str = "fr", speed: int = 160, pitch: int = 50) -> bytes:
     """Make speech audio for the rabbit. When tts_engine is piper/ha it synthesizes
     through the chosen Home Assistant TTS entity (tts_entity) — a neural voice;
-    otherwise the bundled espeak-ng (always works, fully local). Returns MP3 (HA
-    TTS) or WAV (espeak); the rabbit decodes both. VOICE_PITCH > 0 shifts it up."""
+    otherwise the bundled espeak-ng (always works, fully local). Returns mono
+    22050 Hz MP3 (HA TTS, re-encoded for the rabbit's decoder) or 8 kHz WAV
+    (espeak); the rabbit decodes both. VOICE_PITCH > 0 shifts it up."""
     text = _clean_for_tts(text)
     if TTS_ENGINE in ("piper", "ha"):
         audio = synth_via_ha(text)
         if audio:
-            return _pitch(audio)
+            return _to_rabbit_audio(_pitch(audio))
         log.warning("HA TTS (%s) returned nothing — falling back to espeak", TTS_ENTITY)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         path = tf.name

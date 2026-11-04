@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.3
+
+- **A neural voice is now re-encoded for the rabbit's decoder, so it is
+  actually heard.** With `tts_engine: piper` (or any Home Assistant TTS
+  entity) the audio was streamed to the rabbit exactly as the engine produced
+  it: Piper a 22050 Hz WAV, a cloud voice a 44.1 kHz stereo MP3. The VS1003 in
+  the rabbit wants mono, and a WAV long enough to be a sentence overruns its
+  playback buffer — three seconds of Piper is 132 KB, where about 47 KB fits.
+  The result was a rabbit that moved its ears, lit its belly and played every
+  built-in jingle perfectly, and stayed completely mute on speech. The espeak
+  path had always downsampled for this very reason; this one had not.
+  Speech from a Home Assistant engine is now mono 22050 Hz MP3 at a constant
+  64 kbit/s — the format Violet itself streamed to these rabbits, and a fifth
+  of the size. If ffmpeg fails the original bytes are sent as before.
+  Reported from the contact form, on a rabbit whose jingles worked and whose
+  voice never came.
+
 ## 0.16.2
 
 - **A healthy rabbit is no longer dropped after every sound.** 0.16.1 dropped
