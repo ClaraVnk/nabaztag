@@ -39,6 +39,7 @@ struct sim_ap {
   int      pmf;             /* 1 = refuse unprotected deauth (802.11w)   */
   int      sae_token;       /* 1 = demand an anti-clogging token first   */
   int      sae_asked;       /* whether this AP has asked yet             */
+  int      sae_h2e_only;    /* 1 = refuse hunting-and-pecking commits    */
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */

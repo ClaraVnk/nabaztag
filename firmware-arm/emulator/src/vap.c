@@ -951,6 +951,36 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
         if(seq == 1) {
           uint8_t commit[SAE_COMMIT_LEN], confirm[SAE_CONFIRM_LEN];
 
+          /* An access point that will only do hash-to-element.
+           *
+           * This models the one explanation nothing has been able to rule
+           * out for Nabazprout, which goes orange on a WPA3-only UniFi and
+           * is fine in transition mode. hostapd calls the knob `sae_pwe`;
+           * at 1 it accepts H2E commits and nothing else. UniFi Network 10.x
+           * does not expose the field at all, so the controller cannot say
+           * whether it is set, and only the AP's own log would.
+           *
+           * What a real AP does here is refuse with status 1: the station's
+           * commit was derived by hunting and pecking, and no amount of
+           * retrying changes that. Our firmware can only hunt and peck
+           * (crypto/sae.h says why at length), so the exchange is over
+           * before it starts -- the rabbit clears the context, drops to
+           * IDLE, the bytecode retries, and it hunts and pecks again.
+           *
+           * The wire tells the two apart by the RSNXE and by which side of
+           * 12.4.4.3 produced the password element, neither of which is
+           * visible in a commit body on its own. Refusing every commit is
+           * therefore the whole of the model, and it is enough: the point is
+           * to show what this firmware does when an AP says no like that,
+           * not to re-implement hostapd's bookkeeping. */
+          if(a->sae_h2e_only) {
+            uint32_t rn = build_auth_sae_status(out, a, 1, 1, NULL, 0);
+            queue_frame(out, rn, a->rssi, a->channel);
+            sim_log("AP %s: SAE is H2E-only here, and that commit was hunted "
+                    "and pecked — refused, status 1", macstr(a->bssid));
+            return;
+          }
+
           /* An anti-clogging token, once, if the scenario asked for one.
              The station must come back with the same commit and the token
              echoed; a client that treats status 76 as a refusal stops

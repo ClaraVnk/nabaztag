@@ -1,0 +1,36 @@
+# A WPA3-only access point that will only do hash-to-element.
+#
+# This is a reproduction, not a hypothesis. On 2026-11-07 Nabazprout, running
+# the fixed firmware (f4eba8ba, the one that finally hands SAE the passphrase
+# from config-sector offset 92), still went orange on a WPA3-only UniFi SSID
+# and still joined the same SSID in transition mode. Everything local had been
+# eliminated, PMF was ruled in and then ruled out -- the association request
+# does claim MFPC -- and the controller could not answer the one question
+# left, because UniFi Network 10.x does not expose sae_pwe at all.
+#
+# So the question gets asked here instead: if an AP refuses hunting and
+# pecking, what does this firmware do? Exactly what the rabbit does.
+#
+# crypto/sae.h says why we only hunt and peck: H2E needs the Simplified SWU
+# mapping, a few hundred lines whose correctness cannot be checked against
+# anything in this project -- no library call, no vector set -- and writing it
+# blind and flashing it is not how this firmware has been built. The AP here
+# refuses with status 1, which is what a real one does: the commit it received
+# was derived the old way, and retrying cannot change that.
+#
+# Expected outcome: no association, ever. ieee80211_input_sae_auth() treats a
+# non-success status as a refusal, clears the context and drops to IDLE; the
+# bytecode starts over and hunts and pecks again. A loop, not a fallback --
+# and on a WPA3-only AP there is no PSK path to fall back to anyway.
+#
+# When H2E lands, this scenario is the one that flips: change the assertion to
+# `expect RUN` and it becomes the proof that it works. Until then it is the
+# standing record of a limit we chose on purpose.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 h2e-only
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 30000
+
+at 20000 expect-not RUN

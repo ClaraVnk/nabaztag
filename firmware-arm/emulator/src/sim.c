@@ -220,6 +220,7 @@ void sim_note_fetch(void)
  *                                  something outside has its own timers
  *   stop <ms>
  *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf] [sae-token]
+ *                                 [h2e-only]
  *   at <ms> deauth [<bssid>] [reason <n>]
  *   at <ms> disassoc [<bssid>] [reason <n>]
  *   at <ms> down <bssid>
@@ -307,6 +308,7 @@ int sim_load(const char *path)
          and the second test landed outside it. */
       for(int i = 5; i < n; i++) {
         if(!strcmp(tok[i], "pmf")) a->pmf = 1;
+        if(!strcmp(tok[i], "h2e-only")) a->sae_h2e_only = 1;
         /* Make the AP answer the first SAE commit with status 76 and a
            token, the way a loaded access point does. Without this the
            rabbit never exercises that path, and the path is the most
