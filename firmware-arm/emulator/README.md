@@ -199,7 +199,21 @@ it has to agree with.
 
 ## What it already answers
 
-**WPA3 personal, SAE only: it associates, as of 2026-10-27.**
+**WPA3 personal, SAE only: it associates, as of 2026-10-27 — and it did not
+on real hardware until 2026-11-07, which is worth more than the pass.** The
+scenario passed because this harness called `ieee80211_sae_password()` itself,
+"doing what netPmk does". On a rabbit, netPmk runs when the password is typed,
+not when it boots, so `ieee80211_sae_pw` was always empty and SAE never
+started: against a WPA3-only UniFi the rabbit never authenticated at all, and
+against a transition-mode one it associated over PSK and looked fine. A
+harness that supplies what the firmware cannot had hidden that for ten days.
+
+The harness now reads the passphrase out of the config page it boots from,
+offset 92, exactly as the patched `wifiAuth` does — so the WPA3 scenarios
+carry a `conf` line, and `scenarios/wpa3-sae-no-stored-password.txt` boots
+without one and asserts that nothing associates. If that scenario ever
+reaches `RUN`, the others have gone back to proving nothing.
+
 `scenarios/wpa3-sae.txt` spent months asserting `IDLE` because
 `ieee80211_input_mgt()` walked the RSN element's AKM list looking for suite 2
 (PSK), found only suite 8 (SAE), and marked the network
@@ -232,8 +246,11 @@ Three things that made it work, none of them cryptography:
   — all six counted under "transmitted into the void", the rabbit stuck in
   `AUTH`, and nothing in the log said why.
 
-What it cost, measured on the ARM7TDMI: the `lean-wpa3` image is 114 444
-bytes against `lean`'s 107 288, so **7 156 bytes**, with 12 532 still spare.
+What it cost, measured on the ARM7TDMI: the `lean-wpa3` image is 116 996
+bytes against `lean`'s 107 288, so **9 708 bytes**, with 9 980 still spare.
+(114 444 of those were the first build; the remaining 2 552 are BIP, the
+`netSaePw` opcode and the rest of what it took to make this work on a rabbit
+rather than in here.)
 
 Still missing, and the reason this is a separate build mode rather than part
 of `lean`: BIP validation. The RSN IE advertises MFPC, which is what an AP

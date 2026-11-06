@@ -16,10 +16,10 @@ the top of nabgcc's mtl/boot/boot.0.0.0.13.mtl:
     58  32  SSID
     90   1  authentication: 0 open system, 1 shared key
     91   1  cipher: 0x00 none, 0x10 WEP, 0x20 WPA, 0x40 WPA2
-    92  64  the key, for WEP
+    92  64  the key: the WEP key, or the WPA passphrase
     156  1  proxy enabled  157 4  proxy address   161 2  proxy port
     163  6  login          169 6  password
-    175 32  the PMK, which is what WPA and WPA2 actually use
+    175 32  the PMK, which is what WPA and WPA2 associate with
     207  1  0x47, the byte that says this page means something
 
 The cipher byte matters more than it looks: it is what OPnetAuth compares the
@@ -75,10 +75,18 @@ CIPHERS = {
 def pmk(passphrase: str, ssid: str) -> bytes:
     """PBKDF2-HMAC-SHA1, 4096 iterations — what eapol.c's F() computes.
 
-    The rabbit stores the PMK and not the passphrase: eapol_init() copies
-    ieee80211_key straight into pmk without running a derivation, so a
-    passphrase left in that field would be used as if it were already a
-    master key.
+    The rabbit associates with the PMK and not the passphrase: eapol_init()
+    copies ieee80211_key straight into pmk without running a derivation, so a
+    passphrase in THAT field would be used as if it were already a master
+    key.
+
+    It keeps both, though, and this file used to write only the PMK -- which
+    is how a WPA3 build that could not possibly work passed every scenario
+    here. The real config form writes the passphrase to CONF_WIFIKEY0 for
+    every security mode (`v=='n'`, boot.0.0.0.13.mtl:1814) and derives the
+    PMK from it once; SAE needs the passphrase and reads it back from there.
+    A page with an empty offset 92 is not a configured WPA2 rabbit, it is a
+    rabbit that can do PSK and nothing else.
     """
     return hashlib.pbkdf2_hmac("sha1", passphrase.encode(), ssid.encode(), 4096, 32)
 
@@ -122,6 +130,10 @@ def main() -> int:
     elif args.security in ("wpa", "wpa2"):
         if not args.psk:
             sys.exit(f"{args.security} needs --psk to derive a PMK from")
+        # Both, as the real config form does: the PMK is what the four-way
+        # handshake uses, the passphrase is what SAE needs and the only thing
+        # PBKDF2 cannot be run backwards from.
+        put(page, OFF_WIFIKEY0, args.psk.encode(), 64, "the passphrase")
         page[OFF_WIFIPMK : OFF_WIFIPMK + 32] = pmk(args.psk, args.ssid)
 
     if args.ip:

@@ -41,6 +41,7 @@
 static uint8_t eeprom[EEPROM_SIZE];
 static char eeprom_path[512];
 static int eeprom_dirty;
+static int eeprom_loaded;
 
 /**
  * @brief Point the EEPROM at a file, reading it if it is there.
@@ -67,8 +68,23 @@ void hw_eeprom_open(const char *path)
   }
   n = fread(eeprom, 1, sizeof(eeprom), f);
   fclose(f);
+  eeprom_loaded = (n > 207) && (eeprom[207] == 0x47);
   sim_log("eeprom: %s, %zu bytes, magic 0x%02x %s", path, n, eeprom[207],
           eeprom[207] == 0x47 ? "(configured)" : "(blank — expect config mode)");
+}
+
+/*
+ * The config page, for a caller that has to read it field by field.
+ *
+ * Only one does, and it is worth the exception: the Wi-Fi harness needs the
+ * passphrase at offset 92 the way the bootloader's wifiAuth does. It used to
+ * take it from the scenario's `psk` line instead, which is how a WPA3 build
+ * whose password never reached the driver passed every scenario here --
+ * the harness was supplying what the firmware could not.
+ */
+const uint8_t *hw_eeprom_page(void)
+{
+  return eeprom_loaded ? eeprom : NULL;
 }
 
 /** @brief Write the EEPROM back, if the rabbit changed it. */

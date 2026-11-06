@@ -60,6 +60,7 @@ enum {
   SIM_EV_ARP,           /* the gateway answers ARP, or stops    */
   SIM_EV_STOP,          /* end the run                          */
   SIM_EV_EXPECT_STATE,  /* assert ieee80211_state at this tick   */
+  SIM_EV_REFUSE_STATE,  /* assert it is NOT that state            */
 };
 
 struct sim_event {
@@ -83,6 +84,7 @@ struct sim_scenario {
   struct sim_event events[SIM_MAX_EVENTS];
   int              nb_events;
   char             psk[64];
+  char             conf[512];   /* a config page, as mkconf.py writes one */
   uint32_t         stop_ms;
   uint32_t         tick_ms;      /* how much virtual time one loop costs */
   int              realtime;     /* pace the loop to the wall clock */

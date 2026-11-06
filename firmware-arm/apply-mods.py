@@ -778,6 +778,17 @@ def patch_wpa3_sae(root: Path) -> None:
     that is where it is captured. The alternative was reverse-engineering
     the config-sector offset out of the Metal bytecode.
 
+    That last paragraph was right about everything except the conclusion,
+    and the error cost ten days. `netPmk()` runs when the password is
+    **typed**, not when the rabbit boots: on every boot afterwards the
+    bootloader reads the cached PMK and never calls it, so the hook below
+    captures nothing and SAE never starts. The config-sector offset turned
+    out to be no mystery either -- `boot.0.0.0.13.mtl:211` names it. The
+    passphrase is now handed over at association time by
+    `patch_wpa3_boot_password`, which this step requires and which is where
+    the whole story is written down. The hook here stays: it is what makes
+    SAE work on the very association that follows a config change.
+
     **The PMK hand-off is therefore trivial.** Once SAE has run, writing its
     PMK into `ieee80211_key` before `eapol_init()` makes the four-way
     handshake run unchanged, with the RT2573 still doing CCMP in hardware.
@@ -927,6 +938,133 @@ def patch_wpa3_sae(root: Path) -> None:
     ], "ieee80211_install_igtk", "the IGTK is installed from message 3")
 
     print("[ok]   wpa3_sae: crypto, password hook and driver in place")
+
+
+def patch_wpa3_boot_password(root: Path) -> None:
+    """Hand SAE the passphrase the config sector already holds.
+
+    `patch_wpa3_sae` captures the password in `netPmk()`, on the grounds that
+    it is the only place it passes through C -- and notes that the
+    alternative was "reverse-engineering the config-sector offset out of the
+    Metal bytecode". That reasoning had one hole, and a WPA3-only UniFi found
+    it on the first try: **netPmk runs when the password is typed, not when
+    the rabbit boots.**
+
+    `boot.0.0.0.13.mtl:1867` computes the PMK once, in the config-form
+    handler, and caches it. On every boot after that, `wifiAuth` reads the
+    cached PMK and hands THAT to netAuth:
+
+        let if crypt==WEP then wifiwepkey confGetWifikey0
+            else if crypt==WPA || crypt==WPA2 then confGetWifipmk -> key in
+
+    So `ieee80211_sae_pw` is empty, `ieee80211_sae_begin()` returns 0 at its
+    first line, and the SAE branch falls through to open auth + PSK --
+    silently, because that fallback exists for transition-mode APs. On a
+    WPA3-only network the rabbit simply never authenticates: the first belly
+    light blinks orange for ever. Observed on hardware 2026-11-06, and the
+    emulator could not have caught it, because its harness calls
+    `ieee80211_sae_password()` itself in place of the bytecode.
+
+    No offence to the original reasoning: the offset was the hard part and it
+    is no longer a mystery. `boot.0.0.0.13.mtl:211` says
+    `const CONF_WIFIKEY0=92;;  //64`, the config form writes the passphrase
+    there for every security mode (`v=='n'` at line 1814), and
+    `confGetWifikey0` reads it back. Nothing new is stored, nothing has to be
+    re-typed in config mode, and no passphrase lands in flash that was not
+    already there.
+
+    What is added is one opcode to carry it across, exactly as verifySig was:
+    `netSaePw <passphrase>`, called from wifiAuth just before netAuth. A new
+    opcode rather than calling netPmk again, because netPmk means PBKDF2 --
+    4096 iterations of HMAC-SHA1, the step the config handler lights the
+    whole belly for -- and paying that on every association to obtain a
+    string we already have in flash would be an odd trade.
+    """
+    # 1. The opcode number, in both copies of vbc.h.
+    for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
+        t = q.read_text()
+        if "OPnetSaePw" in t:
+            print(f"[skip] {q}: OPnetSaePw already present")
+            continue
+        a = "#define OPverifySig 152\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: OPverifySig anchor missing — run the vbc step first")
+        q.write_text(t.replace(a, a + "#define OPnetSaePw 153\n", 1))
+        print(f"[ok]   {q}: added OPnetSaePw 153")
+
+    # 2. The dispatch case. One argument, a bin; returns 1 if it took it.
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "OPnetSaePw" not in t:
+        needle = "      case OPverifySig:\n"
+        if needle not in t:
+            sys.exit(f"FAIL {q}: OPverifySig case missing — run the vinterp step first")
+        case = (
+            "      case OPnetSaePw:\n"
+            "        {\n"
+            "          /* The passphrase, from the config sector, for SAE. The\n"
+            "             bytecode owns this string; sae_password() copies it. */\n"
+            "          int32_t pw=VALTOPNT(VSTACKGET(0));\n"
+            "          int32_t ok=0;\n"
+            "          if (pw!=NIL)\n"
+            "          {\n"
+            "            ieee80211_sae_password((const uint8_t*)VSTARTBIN(pw));\n"
+            "            ok=1;\n"
+            "          }\n"
+            "          VSTACKSET(0, INTTOVAL(ok));\n"
+            "        }\n"
+            "        break;\n"
+        )
+        t = t.replace(needle, case + needle, 1)
+        if '#include "net/ieee80211.h"' not in t:
+            t = t.replace('#include "vbc.h"', '#include "vbc.h"\n#include "net/ieee80211.h"', 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: added OPnetSaePw case")
+    else:
+        print(f"[skip] {q}: case already present")
+
+    # 3. The compiler's stdlib tables. NBcore caps the loop that walks them,
+    #    so a new entry without the bump is a label the compiler cannot see.
+    q = root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp"
+    t = q.read_text()
+    if '"netSaePw"' in t:
+        print(f"[skip] {q}: netSaePw already registered")
+    else:
+        nb = "#define NBcore 120"
+        if nb not in t:
+            sys.exit(f"FAIL {q}: NBcore 120 not found — run the stdlib step first")
+        t = t.replace(nb, "#define NBcore 121", 1)
+        edits = [
+            ('/*17*/"verifySig"\n};',   '/*17*/"verifySig",\n/*18*/"netSaePw"\n};'),
+            ('/*17*/OPverifySig,\n};',  '/*17*/OPverifySig,\n/*18*/OPnetSaePw,\n};'),
+            ('/*17*/2\n};',             '/*17*/2,\n/*18*/1\n};'),
+            ('/*17*/"fun[S S]I"\n};',   '/*17*/"fun[S S]I",\n/*18*/"fun[S]I"\n};'),
+        ]
+        for old, newtext in edits:
+            if old not in t:
+                sys.exit(f"FAIL {q}: could not splice {old!r} — the verifySig step must run first")
+            t = t.replace(old, newtext, 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: registered netSaePw in all 4 stdlib arrays (NBcore 121)")
+
+    # 4. The call, in the bootloader, where the association is actually made.
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if "netSaePw" in t:
+        print(f"[skip] {q}: wifiAuth already hands the passphrase over")
+        return
+    a = "\t\t\tnetAuth hd wifiscans Iecholn auth crypt key;\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: expected exactly one netAuth call in wifiAuth, found {t.count(a)}")
+    call = (
+        "\t\t\t// SAE needs the passphrase, and `key` above is the cached PMK.\n"
+        "\t\t\t// Harmless on a WPA2 network: nothing reads it unless the scan\n"
+        "\t\t\t// saw AKM suite 8 on this BSSID.\n"
+        "\t\t\tif crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2\n"
+        "\t\t\tthen netSaePw confGetWifikey0;\n"
+    )
+    write_src(q, t.replace(a, call + a, 1))
+    print(f"[ok]   {q}: wifiAuth hands the stored passphrase to SAE")
 
 
 def patch_extbss(root: Path) -> None:
@@ -3331,7 +3469,7 @@ def main() -> int:
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -3391,6 +3529,27 @@ def main() -> int:
                 "worse than no WPA3 client."
             )
 
+    # wpa3_boot_pw is the other half of wpa3_sae: the driver can do SAE, and
+    # this is what gives it a password to do it with. Shipping one without the
+    # other is a WPA3 client that silently associates over WPA2 -- which is
+    # what 52283f99 did, and the reason this check is here rather than in a
+    # comment.
+    if "wpa3_boot_pw" in steps and "wpa3_sae" not in steps:
+        sys.exit("FAIL step list: wpa3_boot_pw is useless without wpa3_sae.")
+    # ...but only for a real image. An emulator build has no Metal VM and no
+    # bootloader, so it omits vbc/vinterp/stdlib and models wifiAuth in C
+    # instead; requiring the opcode there would just stop it compiling.
+    if ("wpa3_sae" in steps and "vbc" in steps
+            and "wpa3_boot_pw" not in steps):
+        sys.exit(
+            "FAIL step list: wpa3_sae without wpa3_boot_pw builds a WPA3 "
+            "client whose password is never captured, so SAE never starts "
+            "and the association falls back to PSK without saying so -- "
+            "silently, because that fallback is there for transition-mode "
+            "APs. That was 52283f99, and it took a WPA3-only UniFi to find "
+            "it. Add wpa3_boot_pw."
+        )
+
     if "no_libc_malloc" in steps and "extbss" not in steps:
         sys.exit(
             "FAIL step list: no_libc_malloc changes the linked object set, so "
@@ -3421,6 +3580,7 @@ def main() -> int:
         "audio_halfduplex": patch_audio_halfduplex,
         "bounded_waits": patch_bounded_waits,
         "wpa3_sae": patch_wpa3_sae,
+        "wpa3_boot_pw": patch_wpa3_boot_password,
         "usb_robustness": patch_usb_robustness,
         "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,

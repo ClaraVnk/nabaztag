@@ -210,7 +210,11 @@ void sim_note_fetch(void)
  * @brief Read a scenario file.
  *
  * Directives, one per line, '#' starts a comment:
- *   psk <passphrase>
+ *   psk <passphrase>              what the AP knows; the PMK is derived from it
+ *   conf <file>                   a config page (mkconf.py). WPA3 needs one:
+ *                                 SAE reads the passphrase out of it, as the
+ *                                 bootloader's wifiAuth does, and a scenario
+ *                                 without one is a rabbit that can only do PSK
  *   tick <ms>                      virtual time per main-loop pass
  *   realtime                       pace the loop to the wall clock, for when
  *                                  something outside has its own timers
@@ -229,6 +233,12 @@ void sim_note_fetch(void)
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
+ *   at <ms> expect-not <state>     the opposite, for when what matters is
+ *                                 that something did NOT happen. `expect RUN`
+ *                                 pins one state out of six; `expect-not RUN`
+ *                                 says the association never completed, which
+ *                                 is the property a negative test is really
+ *                                 about and cannot be satisfied by accident
  *
  *   fetch <ms> <event>             the same events, but <ms> after the rabbit
  *                                  starts downloading a sound or a
@@ -263,6 +273,8 @@ int sim_load(const char *path)
 
     if(!strcmp(tok[0], "psk") && n >= 2) {
       snprintf(sim.psk, sizeof(sim.psk), "%s", tok[1]);
+    } else if(!strcmp(tok[0], "conf") && n >= 2) {
+      snprintf(sim.conf, sizeof(sim.conf), "%s", tok[1]);
     } else if(!strcmp(tok[0], "realtime")) {
       sim.realtime = 1;
     } else if(!strcmp(tok[0], "tick") && n >= 2) {
@@ -353,6 +365,13 @@ int sim_load(const char *path)
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
       } else if(!strcmp(tok[2], "expect") && n >= 4) {
         e->kind = SIM_EV_EXPECT_STATE;
+        e->arg = parse_state(tok[3]);
+        if(e->arg < 0) {
+          fprintf(stderr, "%s:%d: unknown state \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
+      } else if(!strcmp(tok[2], "expect-not") && n >= 4) {
+        e->kind = SIM_EV_REFUSE_STATE;
         e->arg = parse_state(tok[3]);
         if(e->arg < 0) {
           fprintf(stderr, "%s:%d: unknown state \"%s\"\n", path, lineno, tok[3]);

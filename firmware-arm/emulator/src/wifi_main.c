@@ -30,6 +30,11 @@
 #include "net/eapol.h"
 
 #include "sim.h"
+#include "hw.h"
+
+/* boot.0.0.0.13.mtl:211 — `const CONF_WIFIKEY0=92;;  //64`. The config form
+ * writes the passphrase there for every security mode (`v=='n'`, line 1814). */
+#define CONF_WIFIKEY0 92
 #include "vap.h"
 #include "vapcrypto.h"
 
@@ -175,6 +180,17 @@ void sim_run_events(void)
           sim_note_failure(why);
         }
         break;
+      case SIM_EV_REFUSE_STATE:
+        if(ieee80211_state != e->arg)
+          sim_log("ok   state is %s, and not %s, as expected",
+                  sim_state_name(ieee80211_state), sim_state_name(e->arg));
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "state must not be %s, but it is",
+                   sim_state_name(e->arg));
+          sim_note_failure(why);
+        }
+        break;
       default: break;
     }
   }
@@ -235,6 +251,11 @@ int main(int argc, char **argv)
           scenario ? scenario : "(default)", target_ssid, sim.tick_ms,
           sim.stop_ms);
 
+  /* The config sector, if the scenario named one. Opened before the first
+   * association, because that is when its passphrase is needed. */
+  if(sim.conf[0] != 0)
+    hw_eeprom_open(sim.conf);
+
   if(vap_crypto_selftest() != 0) {
     fprintf(stderr, "the emulator's own crypto is wrong; not running\n");
     return 2;
@@ -244,12 +265,30 @@ int main(int argc, char **argv)
    * ends: the rabbit through rt2501_auth(), the AP through vap_set_pmk(). */
   if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
     uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
-    /* SAE needs the password itself, not the PMK. On a real rabbit the
-     * bytecode hands it over once, in netPmk(); this binary has no
-     * bytecode, so the harness does what netPmk does. Without it SAE finds
-     * no password, falls back to open auth, and the scenario passes for the
-     * wrong reason -- which is how it first passed here. */
-    ieee80211_sae_password((const uint8_t *)sim.psk);
+    /* SAE needs the password itself, not the PMK, and where it comes from
+     * is the whole point.
+     *
+     * This used to be `ieee80211_sae_password(sim.psk)` -- the harness
+     * standing in for netPmk(). It passed every WPA3 scenario, and the
+     * firmware it was testing could not associate with a WPA3-only UniFi:
+     * netPmk runs when the password is TYPED, not when the rabbit boots, so
+     * on real hardware ieee80211_sae_pw was always empty and SAE never
+     * started. A harness that supplies what the firmware cannot is not a
+     * test, and this one hid the bug for ten days.
+     *
+     * So it reads the passphrase where the bootloader's wifiAuth now reads
+     * it: offset 92 of the config page, CONF_WIFIKEY0. No config page, no
+     * passphrase, no SAE -- which is exactly what an unconfigured rabbit
+     * does, and is asserted by scenarios/wpa3-sae-no-stored-password.txt. */
+    const uint8_t *page = hw_eeprom_page();
+    if(page != NULL && page[CONF_WIFIKEY0] != 0) {
+      ieee80211_sae_password(page + CONF_WIFIKEY0);
+      sim_log("SAE: passphrase read from the config page, offset %d",
+              CONF_WIFIKEY0);
+    } else {
+      sim_log("SAE: the config page holds no passphrase — SAE cannot start, "
+              "and an association here means PSK");
+    }
     mypassword_to_pmk((const uint8_t *)sim.psk, (uint8_t *)target_ssid,
                       (uint16_t)strlen(target_ssid), pmk);
     memcpy(configured_key, pmk, sizeof(pmk));
