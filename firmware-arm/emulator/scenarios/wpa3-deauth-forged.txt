@@ -18,6 +18,7 @@
 
 ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
 psk nabaztag
+conf obj/conf/wpa3.eeprom
 tick 50
 stop 40000
 

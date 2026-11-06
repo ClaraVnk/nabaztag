@@ -146,7 +146,16 @@ FORCE:
 
 SCENARIOS = $(sort $(wildcard scenarios/*.txt))
 
-check: $(TARGET)
+# The config page the WPA3 scenarios boot from. SAE reads its passphrase out
+# of offset 92, exactly as the bootloader's wifiAuth does, so the scenarios
+# cannot pass by being handed a password the firmware would not have.
+obj/conf/wpa3.eeprom: mkconf.py | obj
+	@mkdir -p obj/conf
+	python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 -o $@
+
+CONFS = obj/conf/wpa3.eeprom
+
+check: $(TARGET) $(CONFS)
 	@mkdir -p obj/logs; fail=0; \
 	for s in $(SCENARIOS); do \
 	  log=obj/logs/$$(basename $$s .txt).log; \
