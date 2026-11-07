@@ -62,7 +62,12 @@ echo ">> building image on $REMOTE_HOST ($RUNTIME)"
 # Capture the full log locally and surface the relevant tail.
 LOGFILE="$HERE/bin/.build.log"
 mkdir -p "$HERE/bin"
-if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $RUNTIME build --build-arg MODE=$MODE -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
+# Every image stamps its own boot URL with the minute it was built, so a
+# rabbit says which build it is running and a flash that wrote nothing can be
+# seen rather than assumed. Overridable, for a reproducible rebuild.
+BUILD_MARK="${BUILD_MARK:-$(date -u +%y%m%d%H%M)}"
+echo "   build mark: $BUILD_MARK (the boot URL will carry &z=$BUILD_MARK)"
+if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $RUNTIME build --build-arg MODE=$MODE --build-arg BUILD_MARK=$BUILD_MARK -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
   echo "!! $RUNTIME build FAILED on $REMOTE_HOST — last 80 lines:" >&2
   tail -80 "$LOGFILE" >&2
   echo "(full log at $LOGFILE)" >&2

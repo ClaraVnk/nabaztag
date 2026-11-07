@@ -68,6 +68,12 @@ COPY boot-mods/ /build/boot-mods/
 #             future OTAs can verify .sim signatures.
 ARG MODE=full
 ENV NAB_MODE=$MODE
+# The build stamp the boot URL carries. Passed in by build.sh so the stamp is
+# the moment the image was built, not the moment a cached layer was. An image
+# that cannot say which one it is cannot be told apart from the one it was
+# meant to replace -- which is how five months of flashes went unnoticed.
+ARG BUILD_MARK=
+ENV NAB_BUILD_MARK=$BUILD_MARK
 # Quick sanity probe before the real patch run — confirms apply-mods.py is
 # the version we just shipped and the stdlib anchors are still present in
 # upstream. (Helps diagnose cache hits that mask stale patch logic.)

@@ -10,6 +10,7 @@ landed.
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -1279,14 +1280,22 @@ def patch_boot_marker(root: Path) -> None:
     """
     q = root / "mtl/boot/boot.0.0.0.13.mtl"
     t = read_src(q)
-    if '"&z=1"' in t:
+    # The stamp build.sh passes in: the minute the image was built, so no two
+    # builds say the same thing. Without it the marker was a literal 1, which
+    # proved an image was new but could not say WHICH new image -- and the
+    # whole point is telling one build from another.
+    mark = os.environ.get("NAB_BUILD_MARK") or "1"
+    if not re.fullmatch(r"[0-9A-Za-z._-]{1,16}", mark):
+        sys.exit(f"FAIL {q}: NAB_BUILD_MARK must be 1-16 URL-safe characters, "
+                 f"got {mark!r}")
+    if '"&z=' in t:
         print(f"[skip] {q}: boot_url already carries the marker")
         return
     a = '::"&h="::(itoa HARDWARE)'
     if t.count(a) != 1:
         sys.exit(f"FAIL {q}: expected one boot_url tail, found {t.count(a)}")
-    write_src(q, t.replace(a, a + '::"&z=1"', 1))
-    print(f"[ok]   {q}: boot_url carries the literal marker &z=1")
+    write_src(q, t.replace(a, a + f'::"&z={mark}"', 1))
+    print(f"[ok]   {q}: boot_url carries the build mark &z={mark}")
 
 
 
