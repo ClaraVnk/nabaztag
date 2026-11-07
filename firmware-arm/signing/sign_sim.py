@@ -7,10 +7,13 @@ Input format (produced by nabgcc utils/mkfirmware.php):
 Output format (signed):
     <input> + '-sig-' + signature_hex(128 ASCII) + '-sig-'
 
-The signature is computed over the RAW payload bytes (bytes.fromhex of the
-hex segment between the size header and the closing '-violet-'). The legacy
-bootloader stops at the closing '-violet-' so signed .sim remain installable
-by the unmodified bootloader — only the NEW bootloader checks the trailer.
+The signature is computed over the PLAIN image -- the payload after
+`uncrypt`, byte for byte the Nab.bin that gets written to flash. See
+simpayload.py: it used to cover the obfuscated payload instead, which the
+rabbit can never reproduce because it de-obfuscates before it verifies, and
+that mismatch is why no signed .sim had ever installed. The legacy bootloader
+stops at the closing '-violet-' so signed .sim remain installable by the
+unmodified bootloader — only the NEW bootloader checks the trailer.
 """
 
 import argparse
@@ -19,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ed25519
+import simpayload
 
 _MAGIC = b"-violet-"
 _SIG_MAGIC = b"-sig-"
@@ -74,12 +78,13 @@ def main() -> int:
         return 2
 
     blob, payload = _parse_sim(sim_path.read_bytes())
-    sig = ed25519.sign(priv, payload)
+    signed_over = simpayload.deobfuscate(payload)
+    sig = ed25519.sign(priv, signed_over)
     signed = blob + _SIG_MAGIC + sig.hex().encode("ascii") + _SIG_MAGIC
 
     out_path.write_bytes(signed)
     print(f"signed {sim_path.name} → {out_path}")
-    print(f"  payload bytes : {len(payload)}")
+    print(f"  payload bytes : {len(payload)} (signature covers the plain image)")
     print(f"  signature hex : {sig.hex()}")
     return 0
 

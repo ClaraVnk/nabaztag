@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ed25519
+import simpayload
 
 _MAGIC = b"-violet-"
 _SIG_MAGIC = b"-sig-"
@@ -63,7 +64,8 @@ def main() -> int:
     except ValueError as exc:
         print(f"verify({Path(args.sim).name}) = False  ({exc})")
         return 1
-    ok = ed25519.verify(pub, payload, sig)
+    # The plain image, which is what the rabbit verifies. See simpayload.py.
+    ok = ed25519.verify(pub, simpayload.deobfuscate(payload), sig)
     print(f"verify({Path(args.sim).name}, key={Path(args.pub_header).name}) = {ok}")
     return 0 if ok else 1
 
