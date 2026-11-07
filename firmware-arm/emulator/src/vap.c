@@ -523,7 +523,18 @@ struct vap_handshake {
   int      rekey_pending;
   uint8_t  anonce[EAPOL_NONCE_LENGTH];
   uint8_t  snonce[EAPOL_NONCE_LENGTH];
-  uint8_t  ptk[64];          /* kck[16] | kek[16] | tk[16] | mic[16] */
+  /* 64 bytes of PTK, in a buffer of 80, and the twenty extra are not
+   * padding. prf() writes whole 20-byte SHA-1 blocks: for a 64-byte output
+   * it runs (64+19)/20 = 4 times and writes 80. The firmware knows -- its
+   * own ptk_buffer is 80 and it copies 64 out of it -- and this AP did not,
+   * so every PTK derivation overran into the field that follows.
+   *
+   * That field was the replay counter, so each handshake left the AP's
+   * counter set to sixteen bytes of HMAC. The counters then ran backwards
+   * between frames, the firmware correctly rejected message 3 as a replay,
+   * and the rabbit sat in EAPOL with an orange belly. On 2026-11-07 that was
+   * read as the Wi-Fi fault we were hunting on real hardware. It was this. */
+  uint8_t  ptk[EAPOL_PTK_LENGTH + 20];   /* kck[16] kek[16] tk[16] mic[16] */
   uint64_t replay;
 };
 
