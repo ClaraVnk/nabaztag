@@ -64,7 +64,14 @@ def main() -> int:
         "",
         "halt",
         "oki_wd_off",
-        "oki_id",
+        # oki_reset_mode first: an interrupted session leaves the part in
+        # autoselect, where the identifier reads 0x18/0x18 and an erase is a
+        # shot in the dark. Then a gate that throws rather than warns -- on
+        # 2026-11-07 the warning alone let a write erase three sectors of a
+        # working rabbit. -erased is for the resume case, where sector 0 is
+        # already blank and the identifier is therefore gone.
+        "oki_reset_mode",
+        "oki_id_or_die" + (" -erased" if args.no_erase else ""),
         "",
     ]
     if not args.verify_only:

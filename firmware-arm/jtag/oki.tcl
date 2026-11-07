@@ -112,6 +112,38 @@ proc oki_id {} {
     if {$mfr != 0x98 || $dev != 0xCD} {
         echo "  (expected 0x98 / 0xcd -- check the wiring before writing anything)"
     }
+    return [list $mfr $dev]
+}
+
+# oki_id printed that warning and returned, and on 2026-11-07 a write script
+# read "manufacturer 0x18, device 0x18" -- the autoselect-stuck signature an
+# interrupted session leaves behind, documented in README.md -- printed the
+# warning, and then erased the first three sectors of a working rabbit anyway.
+# A check that does not stop anything is not a check. Erasing is the one step
+# there is no way back from, so it gets a gate that throws.
+#
+# Pass -erased to allow the all-0xFF answer, which is what an *already erased*
+# sector 0 reports: autoselect reads the array there, so the identifier is
+# simply gone and cannot be confirmed. That is the legitimate resume case
+# (mkfwprog.py --no-erase) and nothing else.
+proc oki_id_or_die {args} {
+    global FLASH_BASE
+    set allow_erased [expr {[lsearch -exact $args "-erased"] >= 0}]
+    lassign [oki_id] mfr dev
+    if {$mfr == 0x98 && $dev == 0xCD} { return }
+    if {$allow_erased && $mfr == 0xFF && $dev == 0xFF} {
+        echo "  (0xff/0xff with -erased: sector 0 is blank, so the id is gone -- continuing)"
+        return
+    }
+    if {$mfr == 0x18 && $dev == 0x18} {
+        error "the flash is still in autoselect/program mode from an earlier\
+               session. Run oki_reset_mode and read the id again; do NOT erase\
+               while it answers 0x18/0x18."
+    }
+    error [format "flash id is 0x%02x/0x%02x, expected 0x98/0xcd -- refusing to\
+                   erase. Check the five wires, that the rabbit is on its own\
+                   mains, and whether sector 0 is already blank (then pass\
+                   -erased)." $mfr $dev]
 }
 
 # Sector erase is a six-write sequence and the last two writes are NOT a
