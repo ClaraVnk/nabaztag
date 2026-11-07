@@ -1,5 +1,39 @@
 # Naboot — flash + recovery guide
 
+> ## Flash at your own risk
+>
+> **You alone are responsible for what happens to your rabbit.** There is no
+> warranty here of any kind, express or implied, and nobody involved in this
+> project is liable for a rabbit that stops working. These are 2006 devices,
+> most of them twenty years old, and the part you are rewriting is the only
+> copy of the code that lets them boot.
+>
+> What that means concretely, from this project's own experience rather than
+> from a lawyer:
+>
+> - **A flash can leave the rabbit unable to re-enter config mode.** It
+>   happened here on 2026-11-08. Getting it back meant opening the base and
+>   reprogramming the chip over JTAG — see [`jtag/`](jtag/). If you are not
+>   willing to open the rabbit and solder nothing but connect five wires,
+>   assume a failed flash is final.
+> - **"It worked" has been a lie before.** Until 2026-11-07 the flash writer
+>   checked nothing it wrote, so a write that did nothing was indistinguishable
+>   from one that succeeded, right down to the belly lighting green. Five
+>   months of flashes on the maintainer's own rabbit had in fact written
+>   nothing at all. The `flash_verify` step now reads back every word, but the
+>   lesson stands: do not assume.
+> - **Images that have never run on hardware carry real defects.** The USB
+>   fix shipped on 2026-10-25 reported every successful transfer as an error
+>   and condemned the radio; it was found on 2026-11-07, the first time it
+>   ever executed on a real rabbit. Prefer a build whose line in
+>   [`releases/README.md`](releases/README.md) says it was hardware-verified,
+>   and on a date you recognise.
+> - **Flashing is never required.** A stock rabbit works fine with the Home
+>   Assistant add-on. Naboot is what unlocks signed OTA, the modern config UI
+>   and dialing a remote warren — conveniences, not necessities.
+>
+> If a rabbit matters to you, do not make it your first one.
+
 The `firmware-arm/` tree builds several `.sim` *modes* from the same pinned
 sources (`apply-mods.py --mode …`). All embed the Ed25519 `verifySig` opcode (so
 OTAs can be signature-gated); they differ in how invasive they are on the
