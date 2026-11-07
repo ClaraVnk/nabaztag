@@ -220,6 +220,64 @@ def patch_stdlib_core(root: Path) -> None:
     print(f"[ok]   {p}: registered verifySig in all 4 stdlib arrays")
 
 
+def patch_sign_open_aliasing(root: Path) -> None:
+    """Let crypto_sign_open be called with one buffer, which is how we call it.
+
+    `nab_sig.c` composes [sig || payload] in the scratch buffer and passes it
+    as BOTH the input and the output of crypto_sign_open, on the stated
+    grounds that "only the sig prefix gets overwritten by the message bytes".
+    That is wrong, and it is the reason `verifySig` has never once returned 1:
+
+        FOR(i,n) m[i] = sm[i];
+        FOR(i,32) m[i+32] = pk[i];     <-- the public key lands on sm[32..63]
+        crypto_hash(h,m,n);
+        reduce(h);
+        scalarmult(p,q,h);
+        scalarbase(q,sm + 32);         <-- and this needs sm[32..63]
+
+    With m == sm the second half of the signature is gone by the time
+    scalarbase reads it, so the check fails for every key, every message and
+    every length. Proven offline 2026-11-07: TweetNaCl could not verify its
+    own signature over a five-byte message through that call, and succeeded
+    immediately with two distinct buffers.
+
+    So no signed .sim has ever installed on this hardware -- not over OTA, not
+    through the signature-gated httpflash -- which is the whole of
+    ClaraVnk/nabaztag's five months of flashes that wrote nothing.
+
+    The fix keeps the one-buffer API, because the alternative is a second
+    buffer the size of the image (107 KB) on a device that has little to
+    spare. Thirty-two bytes of stack hold the half of the signature that
+    scalarbase needs. Upstream is untouched on disk; this patches the copy the
+    Dockerfile puts in the build tree, so the change is visible here rather
+    than hidden in a vendored file.
+    """
+    p = root / "src/crypto/tweetnacl.c"
+    t = p.read_text()
+    if "/* alias-safe */" in t:
+        print(f"[skip] {p}: crypto_sign_open is already alias-safe")
+        return
+
+    a = """  FOR(i,n) m[i] = sm[i];
+  FOR(i,32) m[i+32] = pk[i];"""
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {p}: crypto_sign_open is not the shape this patch expects")
+    t = t.replace(a, """  /* alias-safe: callers pass m == sm, and the line below drops the public
+     key on sm[32..63], which scalarbase still has to read. Keep it. */
+  u8 sig2[32];
+  FOR(i,32) sig2[i] = sm[32+i];
+  FOR(i,n) m[i] = sm[i];
+  FOR(i,32) m[i+32] = pk[i];""", 1)
+
+    b = "  scalarbase(q,sm + 32);"
+    if t.count(b) != 1:
+        sys.exit(f"FAIL {p}: the scalarbase call is not where it was")
+    t = t.replace(b, "  scalarbase(q,sig2);", 1)
+
+    p.write_text(t)
+    print(f"[ok]   {p}: crypto_sign_open survives m == sm")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -4089,47 +4147,47 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -4217,6 +4275,7 @@ def main() -> int:
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
         "strip_tweetnacl": strip_tweetnacl,
+        "sign_open_alias": patch_sign_open_aliasing,
         "modernize_pages": modernize_pages,
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,

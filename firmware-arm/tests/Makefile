@@ -22,8 +22,31 @@ CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm
-all: $(CRYPTO_H)
+.PHONY: all vectors clean arm sign_open
+# The shipped tweetnacl is upstream + apply-mods' `sign_open_alias`, so the
+# test has to be built against the patched copy, not against upstream: the
+# whole point is the one-buffer call, and upstream fails it.
+TN_DIR := /tmp/nab-tn
+$(TN_DIR)/tweetnacl.c: ../upstream/tweetnacl/tweetnacl.c ../apply-mods.py
+	@mkdir -p $(TN_DIR)/src/crypto
+	@# apply-mods.py checks it is looking at a nabgcc tree; this stub is
+	@# enough for a step that only touches src/crypto/tweetnacl.c.
+	@touch $(TN_DIR)/Makefile
+	@cp ../upstream/tweetnacl/tweetnacl.c $(TN_DIR)/src/crypto/tweetnacl.c
+	@cp ../upstream/tweetnacl/tweetnacl.h $(TN_DIR)/
+	@python3 ../apply-mods.py --steps sign_open_alias $(TN_DIR) >/dev/null
+	@cp $(TN_DIR)/src/crypto/tweetnacl.c $(TN_DIR)/tweetnacl.c
+
+# Third-party code does not get our warning policy -- upstream tweetnacl does
+# not survive -Wextra -Werror -pedantic, and the firmware does not build it
+# that way either. The sanitizers still apply: those are what matter here.
+sign_open: $(TN_DIR)/tweetnacl.c
+	@echo "== crypto_sign_open called with one buffer, as nab_sig.c calls it"
+	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TN_DIR) -c -o /tmp/tn.o $(TN_DIR)/tweetnacl.c
+	@$(CC) $(CFLAGS) $(SAN) -I$(TN_DIR) -o /tmp/t_sign_open \
+		test_sign_open.c /tmp/tn.o && /tmp/t_sign_open
+
+all: $(CRYPTO_H) sign_open
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
