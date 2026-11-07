@@ -1067,6 +1067,209 @@ def patch_wpa3_boot_password(root: Path) -> None:
     print(f"[ok]   {q}: wifiAuth hands the stored passphrase to SAE")
 
 
+def patch_wpa3_timing(root: Path) -> None:
+    """Measure what a SAE commit costs on the real chip, and say so out loud.
+
+    #65 measured what P-256 costs in **flash** -- 5 452 bytes -- and nobody
+    has ever measured what it costs in **milliseconds** on an ARM7TDMI at
+    32.768 MHz. That number decides a live question: hostapd retransmits a
+    SAE commit after about a second and gives up not long after, so if
+    deriving the password element and doing one scalar multiplication takes
+    several seconds here, this firmware cannot complete an exchange with any
+    access point, and no amount of cryptographic correctness will save it.
+    It would not be a crypto bug or a network bug. It would be too slow.
+
+    The only honest way to get the number is to take it on the hardware, so
+    that is what this does: `netSaeMs <passphrase>` runs one real commit,
+    timed with `counter_timer` (1 ms per tick), and returns the elapsed
+    milliseconds. The bootloader appends it to its `bc.jsp` query string as
+    `&t=`, where the warren's own HTTP log records it for free -- no new
+    endpoint, no new protocol, and it arrives over WPA2 where the rabbit can
+    still reach a server.
+
+    This is a diagnostic build, which is why it is a mode of its own. It adds
+    one commit's worth of delay to every boot, and a rabbit that nobody is
+    measuring should not pay that.
+
+    Two details worth keeping. The probe gets its own `sae_ctx` in .bss
+    rather than sharing the live one, so a measurement cannot disturb an
+    association in flight. And it passes the rabbit's own MAC as both peers:
+    the derivation sorts the two addresses and then does exactly the same
+    arithmetic either way, so the timing is honest even though the commit
+    itself is meaningless.
+    """
+    # 1. The opcode number.
+    for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
+        t = q.read_text()
+        if "OPnetSaeMs" in t:
+            print(f"[skip] {q}: OPnetSaeMs already present")
+            continue
+        a = "#define OPnetSaePw 153\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: OPnetSaePw anchor missing — wpa3_boot_pw must run first")
+        q.write_text(t.replace(a, a + "#define OPnetSaeMs 154\n", 1))
+        print(f"[ok]   {q}: added OPnetSaeMs 154")
+
+    # 2. The timed commit itself, beside the rest of the SAE code.
+    q = root / "src/net/ieee80211.c"
+    # read_src/write_src, not read_text/write_text: this file is 2 250 CRLF
+    # lines and the plain helpers rewrite every one of them to LF, which
+    # changes the whole file and stops wpa2-scanned-ciphers.patch applying at
+    # its very first hunk. Cost: two builds.
+    t = read_src(q)
+    if "ieee80211_sae_time_commit" not in t:
+        # Appended at the END of the file, deliberately. patches/ apply AFTER
+        # apply-mods, and wpa2-scanned-ciphers.patch anchors its first hunk
+        # around line 50 -- the first version of this step inserted here
+        # beside ieee80211_sae_remember and the patch stopped applying, which
+        # is the failure patch_wpa3_sae's own docstring warns about. Nothing
+        # below needs to be early: ieee80211_sae_rng and ieee80211_sae_tick
+        # are static and defined further up, and this only has to compile.
+        if "static void ieee80211_sae_remember(const uint8_t *bssid)" not in t:
+            sys.exit(f"FAIL {q}: SAE block not found — wpa3_sae must run first")
+        fn = (
+            "/* One commit, timed, for the diagnostic build. Its own context so a\n"
+            "   measurement cannot disturb a real association, and the rabbit's own\n"
+            "   MAC on both sides -- the derivation sorts the pair and then does the\n"
+            "   same work regardless, so the number is honest. */\n"
+            "static sae_ctx ieee80211_sae_probe;\n"
+            "\n"
+            "uint32_t ieee80211_sae_time_commit(const uint8_t *password)\n"
+            "{\n"
+            "  uint32_t t0, t1;\n"
+            "\n"
+            "  if(password == NULL || password[0] == 0) return 0;\n"
+            "  t0 = counter_timer;\n"
+            "  if(!sae_commit(&ieee80211_sae_probe, rt2501_mac, rt2501_mac,\n"
+            "                 (const char *)password,\n"
+            "                 ieee80211_sae_rng, NULL, ieee80211_sae_tick)) {\n"
+            "    sae_clear(&ieee80211_sae_probe);\n"
+            "    return 0;\n"
+            "  }\n"
+            "  t1 = counter_timer;\n"
+            "  sae_clear(&ieee80211_sae_probe);\n"
+            "  sprintf(dbg_buffer, \"SAE: a commit costs %lu ms here\"EOL,\n"
+            "          (unsigned long)(t1 - t0));\n"
+            "  DBG_WIFI(dbg_buffer);\n"
+            "  return t1 - t0;\n"
+            "}\n"
+        )
+        # ...and the block we append has to speak the file's own line endings.
+        nl = "\r\n" if "\r\n" in t else "\n"
+        if nl == "\r\n":
+            fn = fn.replace("\n", "\r\n")
+        write_src(q, t.rstrip("\r\n") + nl + nl + fn)
+        print(f"[ok]   {q}: ieee80211_sae_time_commit added")
+    else:
+        print(f"[skip] {q}: already there")
+
+    # 3. Its declaration.
+    q = root / "inc/net/ieee80211.h"
+    t = read_src(q)
+    if "ieee80211_sae_time_commit" not in t:
+        # No trailing newline in the needle: this header is CRLF in the
+        # pristine tree, and read_src preserves that. A "\n" here only
+        # matched because another step had already rewritten the file
+        # through write_text and flattened it -- an order dependency that
+        # held in the shipped mode and broke the moment the emulator built
+        # a shorter step list.
+        a = "void ieee80211_sae_password(const uint8_t *password);"
+        if a not in t:
+            sys.exit(f"FAIL {q}: the password hook is missing — wpa3_sae must run first")
+        nl = "\r\n" if "\r\n" in t else "\n"
+        t = t.replace(a, a + nl +
+                      "/* Diagnostic: how long one commit takes on this chip, in ms. */" + nl +
+                      "uint32_t ieee80211_sae_time_commit(const uint8_t *password);", 1)
+        write_src(q, t)
+        print(f"[ok]   {q}: declared")
+
+    # 4. The dispatch case.
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "OPnetSaeMs" not in t:
+        needle = "      case OPnetSaePw:\n"
+        if needle not in t:
+            sys.exit(f"FAIL {q}: OPnetSaePw case missing — wpa3_boot_pw must run first")
+        case = (
+            "      case OPnetSaeMs:\n"
+            "        {\n"
+            "          /* Times one real SAE commit. Seconds, possibly. */\n"
+            "          int32_t pw=VALTOPNT(VSTACKGET(0));\n"
+            "          int32_t ms=0;\n"
+            "          if (pw!=NIL)\n"
+            "            ms=(int32_t)ieee80211_sae_time_commit((const uint8_t*)VSTARTBIN(pw));\n"
+            "          VSTACKSET(0, INTTOVAL(ms));\n"
+            "        }\n"
+            "        break;\n"
+        )
+        t = t.replace(needle, case + needle, 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: added OPnetSaeMs case")
+
+    # 5. The compiler tables.
+    q = root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp"
+    t = q.read_text()
+    if '"netSaeMs"' in t:
+        print(f"[skip] {q}: netSaeMs already registered")
+    else:
+        nb = "#define NBcore 121"
+        if nb not in t:
+            sys.exit(f"FAIL {q}: NBcore 121 not found — wpa3_boot_pw must run first")
+        t = t.replace(nb, "#define NBcore 122", 1)
+        for old, newtext in [
+            ('/*18*/"netSaePw"\n};',  '/*18*/"netSaePw",\n/*19*/"netSaeMs"\n};'),
+            ('/*18*/OPnetSaePw,\n};', '/*18*/OPnetSaePw,\n/*19*/OPnetSaeMs,\n};'),
+            ('/*18*/1\n};',           '/*18*/1,\n/*19*/1\n};'),
+            ('/*18*/"fun[S]I"\n};',   '/*18*/"fun[S]I",\n/*19*/"fun[S]I"\n};'),
+        ]:
+            if old not in t:
+                sys.exit(f"FAIL {q}: could not splice {old!r}")
+            t = t.replace(old, newtext, 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: registered netSaeMs (NBcore 122)")
+
+    # 6. The measurement reaches us in the boot URL, where the warren's HTTP
+    #    log already records every query string.
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if "netSaeMs" in t:
+        print(f"[skip] {q}: boot_url already carries the measurement")
+        return
+    a = '::"&h="::(itoa HARDWARE)::nil;;'
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: expected one boot_url tail, found {t.count(a)}")
+    write_src(q, t.replace(
+        a, '::"&h="::(itoa HARDWARE)::"&t="'
+           '::(itoa netSaeMs confGetWifikey0)::nil;;', 1))
+    print(f"[ok]   {q}: boot_url reports the commit cost as &t=")
+
+
+def patch_boot_marker(root: Path) -> None:
+    """Make the running build say so in its own boot URL, with no opcode.
+
+    Four characters of literal string appended to `boot_url`, and nothing
+    else: no new opcode, no call, no arithmetic. It exists to answer one
+    question a flash cannot otherwise answer -- is the bytecode region of
+    the flash actually the bytecode we handed it? -- because every other
+    marker we have depends on code that could itself be the thing failing.
+
+    Pair it with `lean-marker`, which is `lean` and this step. The size
+    matters: on 2026-11-07 every image that had ever provably flashed was
+    about 107 KB, and no 117 KB WPA3 image had ever been shown to run, so
+    the marker needs to exist at the small size too or it answers nothing.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if '"&z=1"' in t:
+        print(f"[skip] {q}: boot_url already carries the marker")
+        return
+    a = '::"&h="::(itoa HARDWARE)'
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: expected one boot_url tail, found {t.count(a)}")
+    write_src(q, t.replace(a, a + '::"&z=1"', 1))
+    print(f"[ok]   {q}: boot_url carries the literal marker &z=1")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -3405,7 +3608,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-nomdns", "phase8-rom"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -3469,7 +3672,13 @@ def main() -> int:
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,boot_marker,linker_keep,gc_sections",
         "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,linker_keep,gc_sections",
+        # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
+        # bc.jsp query. A diagnostic build: it delays every boot by exactly
+        # the thing it is measuring. Flash it, read the number off the
+        # warren's HTTP log, flash lean-wpa3 back.
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -3534,6 +3743,9 @@ def main() -> int:
     # other is a WPA3 client that silently associates over WPA2 -- which is
     # what 52283f99 did, and the reason this check is here rather than in a
     # comment.
+    if "wpa3_timing" in steps and "wpa3_boot_pw" not in steps:
+        sys.exit("FAIL step list: wpa3_timing needs wpa3_boot_pw — it times a "
+                 "commit built from the config sector's passphrase.")
     if "wpa3_boot_pw" in steps and "wpa3_sae" not in steps:
         sys.exit("FAIL step list: wpa3_boot_pw is useless without wpa3_sae.")
     # ...but only for a real image. An emulator build has no Metal VM and no
@@ -3581,6 +3793,8 @@ def main() -> int:
         "bounded_waits": patch_bounded_waits,
         "wpa3_sae": patch_wpa3_sae,
         "wpa3_boot_pw": patch_wpa3_boot_password,
+        "wpa3_timing": patch_wpa3_timing,
+        "boot_marker": patch_boot_marker,
         "usb_robustness": patch_usb_robustness,
         "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,
