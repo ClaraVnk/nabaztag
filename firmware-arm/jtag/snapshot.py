@@ -103,6 +103,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-o", "--out", type=Path, default=Path("snap"))
     ap.add_argument("--elf", type=Path, help="the ELF of the image on the chip")
+    ap.add_argument("--force-elf", action="store_true",
+                    help="decode even when the flash does not match the Nab.bin "
+                         "beside the ELF. Every address is then suspect")
     ap.add_argument("--cfg", type=Path, default=Path("nabaztag-pi.cfg"))
     ap.add_argument("--oki", type=Path, default=Path("oki.tcl"))
     ap.add_argument("--extram", action="store_true",
@@ -183,6 +186,30 @@ def main() -> int:
         print("no --elf, so no decoded state; pass the ELF of the image on "
               "the chip and this prints what every global holds")
         return 0
+
+    # The ELF has to be the image that is actually in the chip. On 2026-11-07
+    # it was not -- `bin/full/Nab.elf` read against a chip running
+    # lean-wpa3-timed -- and nothing complained, because a wrong address
+    # returns plausible bytes rather than an error. gc_sections and extbss
+    # move the whole layout, so the decoded state was fiction that read like
+    # evidence. The flash is already in hand, so the claim is checkable.
+    binary = args.elf.with_name("Nab.bin")
+    if binary.exists():
+        want = binary.read_bytes()
+        if blob[:len(want)] != want:
+            first = next((i for i, (a, b) in enumerate(zip(blob, want)) if a != b),
+                         len(want))
+            msg = (f"{args.elf} is NOT the image in this chip: the flash differs "
+                   f"from {binary.name} at offset {first:#x}. Every address below "
+                   f"would be read from the wrong layout. Find the right build "
+                   f"(the &z= stamp in the boot URL names the build minute) or "
+                   f"pass --force-elf if you know better.")
+            if not args.force_elf:
+                sys.exit(msg)
+            print(f"warning: {msg}")
+    else:
+        print(f"note: no {binary.name} beside the ELF, so the image in the chip "
+              f"could not be confirmed to match it")
 
     ram = iram.read_bytes()
     syms = symbols(args.elf)
