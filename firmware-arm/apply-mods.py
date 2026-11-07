@@ -278,6 +278,7 @@ def patch_sign_open_aliasing(root: Path) -> None:
     print(f"[ok]   {p}: crypto_sign_open survives m == sm")
 
 
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -1395,8 +1396,25 @@ def patch_boot_marker(root: Path) -> None:
     a = '::"&h="::(itoa HARDWARE)'
     if t.count(a) != 1:
         sys.exit(f"FAIL {q}: expected one boot_url tail, found {t.count(a)}")
-    write_src(q, t.replace(a, a + f'::"&z={mark}"', 1))
-    print(f"[ok]   {q}: boot_url carries the build mark &z={mark}")
+    # `&s=1` rides along: it says this image's signature verification works,
+    # which the warren needs because a rabbit whose verifier is broken is
+    # served a bytecode whose OTA path does not ask it to verify at all --
+    # leaning on the server's own check instead. That is a real reduction in
+    # defence, so it ends by itself: a rabbit that reports s=1 gets the normal,
+    # gated bytecode again, per rabbit, with nobody having to remember.
+    #
+    # A literal and not a timestamp, deliberately: build marks are UTC, the
+    # warren's logs are local, and a comparison between the two is the kind of
+    # thing that eats an evening. It joins fw_boot_marks for free, that being
+    # "everything beyond v, m, l, p and h".
+    #
+    # It lives here and not in sign_open_alias because `minimal` carries the
+    # alias fix but must keep a bootloader byte-identical to vanilla wpa2 --
+    # that is the whole promise of the rescue build. A minimal rabbit is
+    # therefore served the recovery bytecode indefinitely, which is safe: it
+    # has no signature gate of its own either way.
+    write_src(q, t.replace(a, a + f'::"&z={mark}"::"&s=1"', 1))
+    print(f"[ok]   {q}: boot_url carries &z={mark} and &s=1")
 
 
 
@@ -4147,7 +4165,7 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
@@ -4169,7 +4187,7 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
         "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
         "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
