@@ -37,6 +37,25 @@ def write_src(path: Path, text: str) -> None:
         f.write(text)
 
 
+def read_flat(path: Path) -> tuple[str, str]:
+    """A source's text with LF endings, plus the ending it actually uses.
+
+    Some of nabgcc's files are CRLF in the pristine tree and others are LF,
+    and a step that anchors on "\n" quietly matches the second kind and not
+    the first. That is how patch_wpa3_timing came to depend on another step
+    having rewritten its file first, and how patch_flash_verify failed on
+    mem.c, which is CRLF throughout. Flatten, patch, restore.
+    """
+    t = read_src(path)
+    if "\r\n" in t:
+        return t.replace("\r\n", "\n"), "\r\n"
+    return t, "\n"
+
+
+def write_flat(path: Path, text: str, nl: str) -> None:
+    write_src(path, text if nl == "\n" else text.replace("\n", nl))
+
+
 def patch_vbc_h(root: Path) -> None:
     """Add OPverifySig opcode to both nabgcc and mtl_linux vbc.h copies."""
     targets = [
@@ -1268,6 +1287,234 @@ def patch_boot_marker(root: Path) -> None:
         sys.exit(f"FAIL {q}: expected one boot_url tail, found {t.count(a)}")
     write_src(q, t.replace(a, a + '::"&z=1"', 1))
     print(f"[ok]   {q}: boot_url carries the literal marker &z=1")
+
+
+
+def patch_flash_verify(root: Path) -> None:
+    """Make a flash that wrote nothing say so, instead of rebooting proudly.
+
+    This is the most expensive bug this project has had. `write_uc_flash_sec`
+    issues an erase, spins on FLACON until the controller reports done, then
+    programs four bytes at a time and spins again -- and checks nothing. The
+    author's own `write_ok` variable is commented out two lines above. So a
+    sector that refuses to erase, a part that never starts the command, a
+    worn cell that will not take a bit: all of it is invisible. `flash_uc`
+    then trips the watchdog on purpose, the rabbit reboots, and the belly runs
+    the whole triumphant sequence -- white LEDs, reset, orange, green -- while
+    the firmware on the chip is the one that was already there.
+
+    A Nabaztag ran a firmware from June 2026 for five months that way, through
+    four flashes that all "succeeded", including two the owner watched to the
+    end. It took a JTAG dump to find out, and the dump also found a bit in
+    sector 0 that reads 0x41 on one pass and 0x43 on the next.
+
+    So, three things, all in the same spirit: never claim more than was
+    verified.
+
+    - Both FLACON spins get a bound. Unbounded, a part that never answers
+      hangs a rabbit with no diagnosis at all -- which is worse than a wrong
+      answer, because nothing is on screen and nothing is in the log.
+    - The erase is verified: an erased sector reads 0xFF everywhere, and if it
+      does not, there is no point programming over it.
+    - Every programmed word is read back. This is the one that matters: it is
+      the only thing that can tell a flash that worked from a flash that did
+      not, and it costs one read per word on a part that already spends
+      milliseconds per command.
+
+    The failure then travels all the way up -- `write_uc_flash_sec` returns a
+    status, `flash_uc` refuses to trip the watchdog and returns the address
+    that failed, `sysFlash` passes it on, `OPflashFirmware` pushes nil, and
+    `httpflash` turns the belly red and serves the error page. The rabbit
+    keeps the firmware it had, which it was going to keep anyway, and this
+    time it admits it.
+    """
+    q = root / "src/utils/mem.c"
+    t, nl = read_flat(q)
+    if "flash_verify_word" in t:
+        print(f"[skip] {q}: the flash writer already verifies itself")
+        return
+
+    a = "void write_uc_flash_sec(uint32_t address, uint8_t *data,"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: expected one write_uc_flash_sec definition")
+    t = t.replace(a, "int32_t write_uc_flash_sec(uint32_t address, uint8_t *data,", 1)
+
+    # A bound on the completion spin. 2^20 reads of a peripheral register is
+    # far longer than any command this part takes and still finite.
+    a = """  //Wait for the completion of the command
+  while((get_value(FLACON) & (0x04|0x8|0x2))!= 0x2);
+//-----------------------------"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: the erase completion spin is not where it was")
+    t = t.replace(a, """  //Wait for the completion of the command, but not forever
+  {
+    uint32_t spin=0;
+    while((get_value(FLACON) & (0x04|0x8|0x2))!= 0x2)
+      if(++spin > 0x100000) return 1;   /* erase never completed */
+  }
+
+  //----------------------------------------------------------------
+  // An erased sector reads 0xFF everywhere. If it does not, there is
+  // nothing to be gained by programming on top of it.
+  //----------------------------------------------------------------
+  for(cmpt_int=0; cmpt_int<4096; cmpt_int++)
+    if(read_char[cmpt_int] != 0xFF) return 2;   /* sector did not erase */
+//-----------------------------""", 1)
+
+    a = """\t  //Wait for the completion of the command
+\t  while((get_value(FLACON) & (0x04|0x8|0x2))!= 0x2);
+  }"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: the programming completion spin is not where it was")
+    t = t.replace(a, """\t  //Wait for the completion of the command, but not forever
+    {
+      uint32_t spin=0;
+      while((get_value(FLACON) & (0x04|0x8|0x2))!= 0x2)
+        if(++spin > 0x100000) return 3;   /* word never programmed */
+    }
+
+    //--------------------------------------------------------------
+    // flash_verify_word: read the four bytes back. This is the whole
+    // point of the patch -- without it a write that did nothing is
+    // indistinguishable from one that worked.
+    //--------------------------------------------------------------
+    if(read_char[cmpt_int]   != temp[cmpt_int]   ||
+       read_char[cmpt_int+1] != temp[cmpt_int+1] ||
+       read_char[cmpt_int+2] != temp[cmpt_int+2] ||
+       read_char[cmpt_int+3] != temp[cmpt_int+3]) return 4;
+  }""", 1)
+
+    a = """  //Start watchdog clock
+  clr_bit(TBGCON,0x80);
+}"""
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: expected one watchdog restart at the end of the sector writer")
+    t = t.replace(a, """  //Start watchdog clock
+  clr_bit(TBGCON,0x80);
+  return 0;
+}""", 1)
+
+    a = """__attribute__ ((section(".ramfunc"))) void flash_uc(uint8_t *data, int32_t nb_byte, uint8_t *temp)
+{
+  int32_t address=0;
+  while(nb_byte>0)
+  {
+    write_uc_flash_sec(address,data,(nb_byte<4096)?nb_byte:4096,temp);
+    nb_byte-=4096;
+    data+=4096;
+    address+=4096;
+  }"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: flash_uc is not the shape this patch expects")
+    t = t.replace(a, """__attribute__ ((section(".ramfunc"))) int32_t flash_uc(uint8_t *data, int32_t nb_byte, uint8_t *temp)
+{
+  int32_t address=0;
+  while(nb_byte>0)
+  {
+    if(write_uc_flash_sec(address,data,(nb_byte<4096)?nb_byte:4096,temp))
+      return address ? address : -1;  /* the address that failed; 0 means 0 */
+    nb_byte-=4096;
+    data+=4096;
+    address+=4096;
+  }""", 1)
+
+    # Only trip the watchdog once every sector has been verified. The caller
+    # cannot be reached otherwise: the reset happens inside the while(1).
+    a = """  put_hvalue(WDTCNT,0x5A5A);  //release write protection
+  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us
+  while(1);
+
+}"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: the deliberate watchdog reset is not where it was")
+    t = t.replace(a, """  put_hvalue(WDTCNT,0x5A5A);  //release write protection
+  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us
+  while(1);
+
+  return 0;  /* unreachable: the line above is the reset */
+}""", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: the flash writer verifies its erase and every word")
+
+    q = root / "inc/utils/mem.h"
+    t, nl = read_flat(q)
+    a = '__attribute__ ((section(".ramfunc"))) void flash_uc('
+    if a not in t:
+        sys.exit(f"FAIL {q}: no flash_uc declaration to retype")
+    t = t.replace(a, '__attribute__ ((section(".ramfunc"))) int32_t flash_uc(', 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: flash_uc returns a status")
+
+    q = root / "inc/vm/vlog.h"
+    t, nl = read_flat(q)
+    a = "void sysFlash(uint8_t *firmware,int32_t len);"
+    if a not in t:
+        sys.exit(f"FAIL {q}: no sysFlash declaration to retype")
+    write_flat(q, t.replace(a, "int32_t sysFlash(uint8_t *firmware,int32_t len);", 1), nl)
+    print(f"[ok]   {q}: sysFlash returns a status")
+
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    a = """void sysFlash(uint8_t* firmware,int32_t len)
+{
+  __disable_interrupt();
+  flash_uc((uint8_t*)firmware,len,buffer_temp);
+}"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: sysFlash is not the shape this patch expects")
+    write_flat(q, t.replace(a, """int32_t sysFlash(uint8_t* firmware,int32_t len)
+{
+  /* On success this does not return: flash_uc ends by tripping the watchdog
+   * on purpose. It returns only when nothing was written, and then the
+   * interrupts have to come back or the rabbit is worse off than before the
+   * flash it refused. */
+  int32_t bad;
+  __disable_interrupt();
+  bad=flash_uc((uint8_t*)firmware,len,buffer_temp);
+  __enable_interrupt();
+  return bad;
+}""", 1), nl)
+    print(f"[ok]   {q}: sysFlash re-enables interrupts and reports the failure")
+
+    q = root / "src/vm/vinterp.c"
+    t, nl = read_flat(q)
+    a = """            DBG_VM("************FLASH AND REBOOT NOW");
+            sysFlash(VSTARTBIN(firmware),VSIZEBIN(firmware));"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: OPflashFirmware is not the shape this patch expects")
+    write_flat(q, t.replace(a, """            DBG_VM("************FLASH AND REBOOT NOW");
+            /* Returns only on failure -- a successful flash resets the chip
+             * from inside sysFlash. nil tells the bytecode so; the opcode
+             * used to leave the firmware on the stack either way, which is
+             * how a flash that wrote nothing looked like one that worked. */
+            if (sysFlash(VSTARTBIN(firmware),VSIZEBIN(firmware))!=0)
+              VSTACKSET(0,NIL);""", 1), nl)
+    print(f"[ok]   {q}: flashFirmware answers nil when nothing was written")
+
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    a = """		Secholn "######### sig OK, flashing";
+		setleds 0xffffff;
+		flashFirmware firm 0x13fb6754 0x0407FE58;
+		nil
+	)"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: httpflash is not the shape this patch expects "
+                 f"— run the bootloader step first")
+    write_flat(q, t.replace(a, """		Secholn "######### sig OK, flashing";
+		setleds 0xffffff;
+		if (flashFirmware firm 0x13fb6754 0x0407FE58)==nil then
+		(
+			// A successful flash never gets here: the chip resets itself
+			// from inside the opcode. Getting here means the erase or a
+			// word did not take and the old firmware is still in place.
+			Secholn "######### flash FAILED, firmware unchanged";
+			setleds 0xff0000;
+			page_error
+		)
+		else nil
+	)""", 1), nl)
+    print(f"[ok]   {q}: a flash that wrote nothing serves the error page")
 
 
 def patch_extbss(root: Path) -> None:
@@ -3671,14 +3918,14 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,boot_marker,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -3795,6 +4042,7 @@ def main() -> int:
         "wpa3_boot_pw": patch_wpa3_boot_password,
         "wpa3_timing": patch_wpa3_timing,
         "boot_marker": patch_boot_marker,
+        "flash_verify": patch_flash_verify,
         "usb_robustness": patch_usb_robustness,
         "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,
