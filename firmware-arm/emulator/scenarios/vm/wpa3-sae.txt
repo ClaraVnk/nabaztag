@@ -1,0 +1,22 @@
+# A whole rabbit, driven by its own bootloader bytecode, onto a WPA3-only AP.
+#
+# For ./rabbit-vm built with BYTECODE pointing at boot.0.0.0.13.bin — the
+# bootloader, not the bytecode a warren serves. That distinction is the whole
+# point of this scenario: wifiAuth, the netSaePw call that hands SAE the
+# stored passphrase, and the boot URL all live in the bootloader, and until
+# 2026-11-07 nothing outside a real rabbit had ever executed them. Two WPA3
+# bugs in two days lived in exactly that gap.
+#
+# The EEPROM says wpa2 on purpose. The config form writes the passphrase to
+# offset 92 whatever the security mode, and the rabbit's own netAuth check
+# compares the scan's cipher against the stored one; what makes this a WPA3
+# association is the AP, not the configuration.
+#
+#   python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 \
+#     --server localhost:18080/vl -o rabbit.eeprom
+#   ./rabbit-vm scenarios/vm/wpa3-sae.txt --eeprom rabbit.eeprom --warren localhost
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+tick 50
+stop 120000

@@ -60,6 +60,11 @@ VM += $(NABGCC)/src/vm/vaudio.c
 VM += stubs/audio.c
 VM += $(NABGCC)/testvm/stubs/hal/i2c.c
 VM += $(NABGCC)/testvm/stubs/hal/spi.c
+# The bootloader bytecode calls verifySig before it flashes anything, so a
+# VM pointed at boot.0.0.0.13 needs the opcode's implementation. Harmless
+# when the step list leaves verifySig out: nothing then references them.
+VM += ../crypto/nab_sig.c
+VM += ../upstream/tweetnacl/tweetnacl.c
 VM += obj/dumpbc.c
 VM += src/vm_main.c
 
@@ -68,7 +73,7 @@ OBJ = $(addprefix obj/,$(notdir $(SRC:.c=.o)))
 
 CFLAGS  = -O1 -g -std=gnu99
 CFLAGS += -D_NAB_SIM -DDEBUG -DDEBUG_WIFI
-CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Istubs -Iobj/include -I../crypto
+CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Istubs -Iobj/include -I../crypto -I../keys -I../upstream/tweetnacl
 # Declarations the firmware uses without declaring; see the header.
 CFLAGS += -include src/prelude.h
 # The 2006 sources predate most of these diagnostics and the emulator exists
