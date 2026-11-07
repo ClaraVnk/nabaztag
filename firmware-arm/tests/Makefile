@@ -23,6 +23,11 @@ ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
 .PHONY: all vectors clean arm sign_open
+# `all` must stay the default goal. The rules below used to come first,
+# which made the staging file the default target: `make` then built that
+# one file, ran not a single suite, and exited 0. The ARM step noticed
+# only because net/*.h was never created.
+.DEFAULT_GOAL := all
 # The shipped tweetnacl is upstream + apply-mods' `sign_open_alias`, so the
 # test has to be built against the patched copy, not against upstream: the
 # whole point is the one-buffer call, and upstream fails it.
