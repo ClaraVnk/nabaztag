@@ -1,11 +1,13 @@
 # Naboot — shipped releases
 
-> **Note (2026-11-07):** every image here was re-signed. The signature used
-> to cover the obfuscated `.sim` payload, which no rabbit with a signature
-> gate can reproduce — it de-obfuscates before it verifies — so none of these
-> was installable except from stock firmware, which has no gate. The payloads
-> are byte-for-byte what they were; only the trailer moved, so the sha256 of
-> each *file* changed and the `Nab.bin` inside did not.
+> **Note (2026-11-08):** every image here was rebuilt. Two defects made signed
+> flashing impossible until tonight: the signature covered the obfuscated
+> `.sim` payload while the rabbit verifies the plain image, and — the blocking
+> one — `crypto_sign_open` was called with one buffer as both input and output,
+> so `verifySig` never once returned 1. Both are fixed, and these builds carry
+> the fix plus the radio repairs of the same evening. A rabbit running an
+> older build cannot install any of this over the air; it needs the recovery
+> bytecode the warren now serves, or JTAG.
 
 > **Flashing is done at your own risk** — no warranty, no liability. A failed
 > flash can leave the rabbit unable to re-enter config mode, recoverable only
@@ -25,22 +27,35 @@ experimental builds stay out of git (see `../.gitignore`).
 | **Build mode** | `lean` (modernized config UI + Ed25519-gated OTA + mDNS announcer **and resolver** + `--gc-sections`, with the surgical `.bss`/audio-FIFO fix) |
 | **Firmware version** | `0.0.0.13` |
 | **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
-| **sha256** | `916545839eee5ab5246262743580ebdfce4a91b7d69d9d565fa605329005f0a4` |
+| **sha256** | `c66efc960d24b153f33abd602c8c3ab2a7aa0f5fc131d2cae87039604f09ec50` |
 
-**Verified live (2026-06-21):** boots, loads its bytecode, resolves its server
-over multicast mDNS, completes the XMPP handshake, speaks — and a full
-**signed OTA was flashed over the air and recovered cleanly** (the rabbit
-re-flashed itself with this exact `.sim` and came back operational — **after
-a power cycle**: the post-flash reboot leaves the radio asleep and the belly
-blinking orange until the rabbit is unplugged and plugged back in. That is
-normal and it is the last step of every flash, OTA included).
+**Verified live (2026-11-08):** boots, loads its bytecode, resolves its
+server, completes the XMPP handshake, and reports its own build in its boot
+URL (`&z=2611072242&s=1`) — written over JTAG and read back byte-exact.
+
+**Correction to what this section used to claim.** It said a signed OTA had
+been flashed over the air and recovered cleanly, on 2026-06-21. That was not
+true, and could not have been: `verifySig` has never returned 1 on any
+rabbit, because the firmware's wrapper passed one buffer as both the input and
+the output of `crypto_sign_open` (`b8f6dd1`). Every signed image was refused,
+in silence, by every rabbit with a signature gate — which is why five months
+of flashes reported success and wrote nothing. The June image is gone from
+this folder for that reason: a rabbit flashed with it could never be updated
+over the air again. `minimal` is the parachute.
+
+Expect to unplug and plug back in after any flash: the post-flash reboot
+leaves the 2006 radio asleep and the belly orange until it does.
 
 ## `naboot-lean-wpa2.signed.sim` — lean + the WPA2 group-key fix
 
+> Byte-identical to `naboot-stable.signed.sim` as of 2026-11-08: the WPA2
+> group-key fix is in `lean`, so stable *is* this build. Two names, one
+> file, kept so existing links still resolve.
+
 | | |
 |---|---|
-| **Size** | 214 738 bytes (`Nab.bin` 107 288) |
-| **sha256** | `5f9b5523d77de44853381151a8c33f644c11abbc082ec3cf8adcb63e2ce8fcba` |
+| **Size** | 215 570 bytes (`Nab.bin` 107 704) |
+| **sha256** | `c66efc960d24b153f33abd602c8c3ab2a7aa0f5fc131d2cae87039604f09ec50` |
 | **Build mode** | `lean` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
@@ -172,8 +187,8 @@ your bytecode.
 | **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep`, `audio_fifo_data`, `cold_state`, the EAPOL and interpreter fixes, and `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
 | **Firmware version** | `0.0.0.13` |
 | **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
-| **sha256** | `fd8d1985b3a433550c182fe054ba31eeb26cd52988e3c2405085eb36a1462bfb` |
-| **Built** | 2026-10-23, and it passes `preflight.py` — see below |
+| **sha256** | `74c23d2de12d6ba4c45c23e19f07166e80491317ab5ea1ce9ad3d4bfbf0f412a` |
+| **Built** | 2026-11-08, and it passes `preflight.py` — see below |
 
 **When to use it:** flash this when a build (`lean`/`full`) left the rabbit in a
 state where config mode still answers but the modernized UI misbehaves, or when
