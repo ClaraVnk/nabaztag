@@ -1482,16 +1482,34 @@ def patch_flash_verify(root: Path) -> None:
 }"""
     if a not in t:
         sys.exit(f"FAIL {q}: sysFlash is not the shape this patch expects")
-    write_flat(q, t.replace(a, """int32_t sysFlash(uint8_t* firmware,int32_t len)
+    write_flat(q, t.replace(a, """/* The last flash failure, kept where a debugger can read it.
+ *
+ * The bytecode is the only thing that sees sysFlash's return value, and on
+ * 2026-11-07 the OTA path dropped it on the floor: an over-the-air flash
+ * wrote nothing, lit the belly green, and the firmware's own diagnosis died
+ * with the stack frame. Rebuilding the runtime bytecode needs the Violet
+ * sources and the patched Metal compiler, which are not always at hand --
+ * JTAG always is. Two words of .bss, and `nm` tells you where they are.
+ *
+ * nab_flash_error: 0 = nothing has failed since boot, otherwise the address
+ * flash_uc stopped at (-1 for offset 0, which is a legitimate address).
+ * nab_flash_calls: how many times sysFlash has been entered, so a zero error
+ * can be told from a flash that was never attempted. */
+int32_t nab_flash_error;
+int32_t nab_flash_calls;
+
+int32_t sysFlash(uint8_t* firmware,int32_t len)
 {
   /* On success this does not return: flash_uc ends by tripping the watchdog
    * on purpose. It returns only when nothing was written, and then the
    * interrupts have to come back or the rabbit is worse off than before the
    * flash it refused. */
   int32_t bad;
+  nab_flash_calls++;
   __disable_interrupt();
   bad=flash_uc((uint8_t*)firmware,len,buffer_temp);
   __enable_interrupt();
+  nab_flash_error=bad;
   return bad;
 }""", 1), nl)
     print(f"[ok]   {q}: sysFlash re-enables interrupts and reports the failure")
@@ -1504,11 +1522,23 @@ def patch_flash_verify(root: Path) -> None:
         sys.exit(f"FAIL {q}: OPflashFirmware is not the shape this patch expects")
     write_flat(q, t.replace(a, """            DBG_VM("************FLASH AND REBOOT NOW");
             /* Returns only on failure -- a successful flash resets the chip
-             * from inside sysFlash. nil tells the bytecode so; the opcode
-             * used to leave the firmware on the stack either way, which is
-             * how a flash that wrote nothing looked like one that worked. */
-            if (sysFlash(VSTARTBIN(firmware),VSIZEBIN(firmware))!=0)
-              VSTACKSET(0,NIL);""", 1), nl)
+             * from inside sysFlash. The opcode used to leave the firmware on
+             * the stack either way, which is how a flash that wrote nothing
+             * looked like one that worked.
+             *
+             * On failure it now answers the *address* flash_uc stopped at
+             * (-1 for offset 0, since 0 is a legitimate address and nil is
+             * reserved), not a bare nil. An OTA that writes nothing is
+             * otherwise indistinguishable from one that writes half the
+             * image, and on 2026-11-07 that distinction was the whole
+             * question: the write failed, the firmware knew, and nobody
+             * could ask it what it knew. `if x!=nil` still reads as before
+             * for every caller that only wants a yes or no. */
+            {
+              int32_t bad=sysFlash(VSTARTBIN(firmware),VSIZEBIN(firmware));
+              if (bad!=0)
+                VSTACKSET(0,INTTOVAL(bad));
+            }""", 1), nl)
     print(f"[ok]   {q}: flashFirmware answers nil when nothing was written")
 
     q = root / "mtl/boot/boot.0.0.0.13.mtl"

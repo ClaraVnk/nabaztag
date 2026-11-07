@@ -62,16 +62,79 @@ fun parsesig_fw req=
 // HTTP_NORMAL callback: invoked with `[httpreq full_body]`. We verify the
 // signature and (if valid) call flashFirmware. flashFirmware never
 // returns — the rabbit reboots into the new image.
+// 0..15 as an ASCII hex digit. Local name: this module has to stay safe to
+// include beside the bootloader, which has its own Hx.
+fun hx_fw v=
+	if v<10 then '0'+v else 'A'+v-10;;
+
+
+// `v` as eight hex digits, most significant first.
+fun hex8_fw v=
+	let strnew 8 -> s in
+	(
+		strset s 0 hx_fw (v>>28)&15;
+		strset s 1 hx_fw (v>>24)&15;
+		strset s 2 hx_fw (v>>20)&15;
+		strset s 3 hx_fw (v>>16)&15;
+		strset s 4 hx_fw (v>>12)&15;
+		strset s 5 hx_fw (v>>8)&15;
+		strset s 6 hx_fw (v>>4)&15;
+		strset s 7 hx_fw v&15;
+		s
+	);;
+
+
+// The URL the current OTA came from, so the callback can reach the same
+// server: httprequest hands the callback no user parameter of its own.
+var g_ota_url;;
+
+
+fun ota_quiet httpreq body= 0;;
+
+
+// Tell the warren why an OTA did not install.
+//
+// This exists because of 2026-11-07: an OTA downloaded, verified its
+// signature, flashed nothing at all, and left the belly green. The only
+// reason anybody found out is that the build stamp in the next boot URL had
+// not changed. The firmware knew -- flash_verify had the failing address in
+// its hand -- and there was no way to ask it.
+//
+// Everything before "/ota/" in the image URL is scheme and host, so a short
+// path on the same server costs one strstr and does not fetch the image a
+// second time. No endpoint has to exist for this to be readable: the warren
+// logs every request with its query string, so a 404 in the access log IS
+// the report. `e` is the address flash_uc stopped at, or one of the small
+// sentinels below -- addresses are sector-aligned, so they cannot collide.
+fun ota_fail_report bad=
+	let strstr g_ota_url "/ota/" 0 -> i in
+	if i!=nil then
+	httprequest "GET"
+		strcatlist ((strsub g_ota_url 0 i)::"/vl/otafail?e="::(hex8_fw bad)::nil)
+		nil #ota_quiet HTTP_NORMAL;;
+
+
+// HTTP_NORMAL callback: invoked with `[httpreq full_body]`. Verify the
+// signature, then flash. flashFirmware returns ONLY on failure -- a verified
+// flash resets the chip from inside sysFlash -- and what it returns is the
+// address that would not take. Every refusal now reports itself; the first
+// version of this function dropped all four of them in silence.
 fun ota_cb httpreq body=
 	let parsefirm_fw body -> firm in
 	let parsesig_fw body -> sig in
-	if firm!=nil then
-	if sig!=nil then
-	if (verifySig firm sig)!=0 then
-	flashFirmware firm 0x13fb6754 0x0407FE58;;
+	if firm==nil then (ota_fail_report 0xF1; 0)
+	else if sig==nil then (ota_fail_report 0xF2; 0)
+	else if (verifySig firm sig)==0 then (ota_fail_report 0xF3; 0)
+	else
+	let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+	(
+		ota_fail_report if bad==nil then 0xF4 else bad;
+		0
+	);;
 
 
 // Public entry: kick off the OTA download. Async — returns immediately;
 // the callback handles verify + flash when the body arrives.
 fun flashFromUrl url=
+	set g_ota_url=url;
 	httprequest "GET" url nil #ota_cb HTTP_NORMAL;;
