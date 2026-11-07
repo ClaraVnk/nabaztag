@@ -1526,6 +1526,117 @@ def patch_flash_verify(root: Path) -> None:
     print(f"[ok]   {q}: a flash that wrote nothing serves the error page")
 
 
+def patch_rx_recovery(root: Path) -> None:
+    """Stop a burst of receive errors from killing the radio until the mains.
+
+    `usb_robustness` bounded the retries after a bulk-in error, which was the
+    right half of the fix. The other half it left in place: once the budget
+    is spent it still does `rt2501_connected = 0`, and that is the same
+    one-way door its own comment describes -- only the USB connect hook sets
+    the flag back, and a stick soldered to the board never disconnects. So
+    the patch did not close the door, it moved it ten errors further back.
+
+    Measured on Nabazprout over JTAG, 2026-11-07, after a clean power cycle:
+
+        rt2501_rx_errors = 11      (the limit is 10)
+        rt2501_connected = 0
+        ieee80211_state  = IDLE,  scan_cache_len = 0,  rssi_average = 0
+        rt2501_channel   = 14
+
+    rt2501_state() answers RT2501_S_BROKEN for ever from there. The
+    bootloader's `initW` only acts on RT2501_S_IDLE, so it never scans again,
+    `wifiscans` stays nil, `wifiAuth` returns 0 at its second line, and the
+    belly holds the orange that `setleds 0xff8000` left on it. That is the
+    "unplug it and plug it back in" bug, and it is the only way out.
+
+    Eleven errors across a fourteen-channel sweep is about one per channel,
+    which fits a sweep reprogramming the RF while transfers are in flight --
+    a budget of ten is then smaller than one full scan, so the radio dies
+    during its first long sweep and survives whenever the network turns up on
+    an early channel. That is inference, not measurement: the counter proves
+    the door, not what knocked on it. Both halves are widened anyway, since
+    both are wrong in the same direction.
+
+    So: a bulk-in error never clears rt2501_connected. The receive path is
+    parked instead, and rt2501_timer() rebuilds it -- at most one attempt per
+    tick, which bounds the work whatever the radio is doing, and refills the
+    budget with it so a burst cannot accumulate into a death sentence.
+    """
+    f = root / "src/usb/rt2501usb.c"
+    t, nl = read_flat(f)
+
+    if "rt2501_rx_down" in t:
+        print(f"[skip] {f}: receive path already recoverable")
+        return
+
+    a = ("/* Consecutive receive errors, reset by any good frame. Only the USB connect\n"
+         "   hook sets rt2501_connected back to 1, so giving up has to be a decision\n"
+         "   rather than a reflex. */\n"
+         "static uint8_t rt2501_rx_errors;\n"
+         "#define RT2501_RX_ERROR_LIMIT 10")
+    if a not in t:
+        sys.exit(f"FAIL {f}: the rx error counter is not where usb_robustness "
+                 f"left it -- run that step first")
+    t = t.replace(a, (
+        "/* Consecutive receive errors, reset by any good frame. */\n"
+        "static uint8_t rt2501_rx_errors;\n"
+        "/* Set when the budget above is spent. rt2501_timer() rebuilds the\n"
+        "   receive path and clears this; nothing else does. */\n"
+        "static uint8_t rt2501_rx_down;\n"
+        "/* One full channel sweep costs about one error per channel, so this has\n"
+        "   to be comfortably more than fourteen or the first long scan spends it. */\n"
+        "#define RT2501_RX_ERROR_LIMIT 64"), 1)
+
+    stale = "       until the next power cycle. Re-arm a bounded number of times first;\n" \
+            "       if they all fail, give up exactly as before. */"
+    if stale not in t:
+        sys.exit(f"FAIL {f}: usb_robustness's comment about giving up is not where "
+                 f"it was, and leaving a stale one would be worse than not patching")
+    t = t.replace(stale, (
+        "       until the next power cycle. Re-arm a bounded number of times first;\n"
+        "       if they all fail, park the receive path -- see below. Nothing here\n"
+        "       gives up for good any more. */"), 1)
+
+    b = ('    DBG_WIFI("too many RX errors, radio down"EOL);\n'
+         "    rt2501_connected = 0;\n"
+         "    return;")
+    if b not in t:
+        sys.exit(f"FAIL {f}: the give-up branch is not where usb_robustness left it")
+    t = t.replace(b, (
+        "    /* Not rt2501_connected = 0: that is the one-way door, and a bulk-in\n"
+        "       error is not evidence the dongle left. Park the receive path and\n"
+        "       let the timer rebuild it. */\n"
+        '    DBG_WIFI("too many RX errors, parking the receive path"EOL);\n'
+        "    rt2501_rx_down = 1;\n"
+        "    return;"), 1)
+
+    c = ("void rt2501_timer(void)\n"
+         "{\n"
+         "  if(!rt2501_connected) return;\n"
+         "  if(rt2501_rx_starved) rt2501_submit_rx();")
+    if c not in t:
+        sys.exit(f"FAIL {f}: rt2501_timer is not where usb_robustness left it")
+    t = t.replace(c, (
+        "void rt2501_timer(void)\n"
+        "{\n"
+        "  if(!rt2501_connected) return;\n"
+        "  if(rt2501_rx_starved) rt2501_submit_rx();\n"
+        "  if(rt2501_rx_down)\n"
+        "  {\n"
+        "    /* One attempt per tick: bounded whatever the radio is doing, and the\n"
+        "       budget refills with it so a burst during a sweep cannot add up to a\n"
+        "       permanent death. A radio that really is gone simply arrives here\n"
+        "       again next tick. */\n"
+        "    rt2501_rx_down = 0;\n"
+        "    rt2501_rx_errors = 0;\n"
+        "    rt2501_frame_position = 0;\n"
+        "    rt2501_submit_rx();\n"
+        "  }"), 1)
+
+    write_flat(f, t, nl)
+    print(f"[ok]   {f}: a receive-error burst no longer costs the radio until the mains")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -3905,47 +4016,47 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean":      "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,flash_verify,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -4053,6 +4164,7 @@ def main() -> int:
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,
         "usb_robustness": patch_usb_robustness,
+        "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
