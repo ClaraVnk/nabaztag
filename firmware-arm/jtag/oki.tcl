@@ -37,20 +37,27 @@ set UNLOCK2     0x0800AAA8
 # stops the time base for exactly this reason; so do we, once, up front.
 proc oki_wd_off {} {
     global TBGCON
-    mwb $TBGCON [expr {[oki_rb $TBGCON] | 0x80}]
+    oki_wb $TBGCON [expr {[oki_rb $TBGCON] | 0x80}]
 }
 
+# read_memory and write_memory rather than mdb and mwb: they take and return
+# values instead of printing them. That matters here -- a full image is some
+# 27000 words, each polled until the controller says it is done, and mdb
+# would print a line every single time. The log would cost more than the
+# flashing.
 proc oki_rb {addr} {
-    # mdb prints "0x080000000: 12"; take the last field.
-    set line [mdb $addr]
-    return [expr {"0x[lindex [split [string trim $line]] end]"}]
+    return [lindex [read_memory $addr 8 1] 0]
+}
+
+proc oki_wb {addr v} {
+    write_memory $addr 8 [list $v]
 }
 
 # Programming is prohibited by default and permitted one command at a time,
 # the way the firmware does it: FLACON=0x03 right before each unlock.
 proc oki_permit {} {
     global FLACON
-    mwb $FLACON 0x03
+    oki_wb $FLACON 0x03
 }
 
 # A command is finished when BUSY is clear and FWEND is set. The firmware
@@ -67,9 +74,26 @@ proc oki_wait {{tries 2000}} {
 
 proc oki_unlock {cmd} {
     global UNLOCK1 UNLOCK2
-    mwb $UNLOCK1 0xAA
-    mwb $UNLOCK2 0x55
-    mwb $UNLOCK1 $cmd
+    oki_wb $UNLOCK1 0xAA
+    oki_wb $UNLOCK2 0x55
+    oki_wb $UNLOCK1 $cmd
+}
+
+# Put the part back in plain read mode. A session that was interrupted
+# mid-command -- a killed OpenOCD, a cable pulled, a timeout -- leaves the
+# flash in autoselect or program mode, and then every read is nonsense: the
+# ID came back 0x18/0x18 once, which looks exactly like bad wiring and is
+# not. 0xF0 costs one write and removes a whole class of false alarms.
+proc oki_reset_mode {} {
+    global FLASH_BASE
+    # The watchdog first, always. A rabbit whose sector 0 is erased executes
+    # 0xFF, faults, and the watchdog resets it over and over -- so every read
+    # lands in a different reset and comes back as garbage. That is what made
+    # the ID read 0x18/0x18. Halting the time base makes the part hold still.
+    oki_wd_off
+    oki_permit
+    oki_wb $FLASH_BASE 0xF0
+    oki_reset_status
 }
 
 # Autoselect: manufacturer 0x98 (OKI), device 0xCD on this part. Cheap proof
@@ -77,23 +101,50 @@ proc oki_unlock {cmd} {
 # anything is erased.
 proc oki_id {} {
     global FLASH_BASE
-    oki_permit
+    oki_reset_mode
     oki_unlock 0x90
+    # Autoselect answers on 32-bit boundaries on this part: the
+    # manufacturer repeats over base+0..3 and the device over base+4..7.
     set mfr [oki_rb $FLASH_BASE]
-    set dev [oki_rb [expr {$FLASH_BASE + 1}]]
-    mwb $FLASH_BASE 0xF0   ;# leave autoselect
+    set dev [oki_rb [expr {$FLASH_BASE + 4}]]
+    oki_wb $FLASH_BASE 0xF0   ;# leave autoselect
     echo [format "flash id: manufacturer 0x%02x, device 0x%02x" $mfr $dev]
-    if {$mfr != 0x98} {
-        echo "  (expected 0x98 -- check the wiring before writing anything)"
+    if {$mfr != 0x98 || $dev != 0xCD} {
+        echo "  (expected 0x98 / 0xcd -- check the wiring before writing anything)"
     }
 }
 
+# Sector erase is a six-write sequence and the last two writes are NOT a
+# third unlock: AA, 55, 80 to the unlock addresses, then AA, 55 again, then
+# 0x30 to the sector itself. Reusing oki_unlock for that second half slips an
+# extra 0xAA into the command and the part simply never starts -- FLACON sits
+# at 0x01 with FWEND never set, which is exactly how the first run of this
+# script failed. Nothing is erased in that case, so it costs a retry, not a
+# rabbit.
 proc oki_erase_sector {addr} {
+    global UNLOCK1 UNLOCK2
     oki_permit
     oki_unlock 0x80
-    oki_unlock 0xAA
-    mwb $addr 0x30
+    oki_wb $UNLOCK1 0xAA
+    oki_wb $UNLOCK2 0x55
+    oki_wb $addr 0x30
     oki_wait
+}
+
+# An erased sector reads 0xFFFFFFFF everywhere. One batched read per sector,
+# so this is nearly free, and it is the difference between knowing the erase
+# worked and assuming it. The firmware assumes.
+proc oki_verify_erased {addr} {
+    global SECTOR_SIZE
+    set words [read_memory $addr 32 [expr {$SECTOR_SIZE / 4}]]
+    set i 0
+    foreach w $words {
+        if {$w != 0xFFFFFFFF} {
+            error [format "sector at 0x%08x did not erase: word %d reads 0x%08x" \
+                   $addr $i $w]
+        }
+        incr i
+    }
 }
 
 # Four bytes per command, which is what the part accepts and why a full
@@ -101,10 +152,9 @@ proc oki_erase_sector {addr} {
 proc oki_program_word {addr b0 b1 b2 b3} {
     oki_permit
     oki_unlock 0xA0
-    mwb $addr            $b0
-    mwb [expr {$addr+1}] $b1
-    mwb [expr {$addr+2}] $b2
-    mwb [expr {$addr+3}] $b3
+    # The part wants four separate byte writes; one write_memory is one JTAG
+    # round-trip instead of four.
+    write_memory $addr 8 [list $b0 $b1 $b2 $b3]
     oki_wait
 }
 
@@ -114,10 +164,12 @@ proc oki_program_word {addr b0 b1 b2 b3} {
 proc oki_erase_firmware {{last 29}} {
     global FLASH_BASE SECTOR_SIZE
     oki_wd_off
+    oki_reset_mode
     for {set s 0} {$s <= $last} {incr s} {
         set addr [expr {$FLASH_BASE + $s * $SECTOR_SIZE}]
         echo [format "erasing sector %2d at 0x%08x" $s $addr]
         oki_erase_sector $addr
+        oki_verify_erased $addr
     }
 }
 
@@ -134,5 +186,5 @@ proc oki_dump {path {base 0} {len 0}} {
 
 proc oki_reset_status {} {
     global FLACON
-    mwb $FLACON 0x02
+    oki_wb $FLACON 0x02
 }

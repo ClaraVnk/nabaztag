@@ -35,6 +35,11 @@ def main() -> int:
     ap.add_argument("-o", "--output", type=Path, default=Path("fwprog.tcl"))
     ap.add_argument("--verify-only", action="store_true",
                     help="emit the readback and comparison, no erase or write")
+    ap.add_argument("--no-erase", action="store_true",
+                    help="program without erasing first — to resume a write "
+                         "that was interrupted on sectors already erased. "
+                         "Programming only clears bits, so rewriting a word "
+                         "that already holds the right value is harmless.")
     args = ap.parse_args()
 
     data = args.image.read_bytes()
@@ -63,11 +68,19 @@ def main() -> int:
         "",
     ]
     if not args.verify_only:
-        out += [f"oki_erase_firmware {CONF_SECTOR - SPARED}", ""]
-        for off, w in live:
+        if not args.no_erase:
+            out += [f"oki_erase_firmware {CONF_SECTOR - SPARED}", ""]
+        # A line every 1000 words. Programming a whole image takes over an
+        # hour on a bit-banged adapter, and a run with no output is
+        # indistinguishable from a run that has wedged -- which matters when
+        # the rabbit cannot boot until it finishes.
+        for n, (off, w) in enumerate(live):
             addr = FLASH_BASE + off
+            if n % 1000 == 0:
+                out.append(f'echo "programmed {n} of {len(live)} words"')
             out.append("oki_program_word 0x%08x 0x%02x 0x%02x 0x%02x 0x%02x"
                        % (addr, w[0], w[1], w[2], w[3]))
+        out.append(f'echo "programmed {len(live)} of {len(live)} words"')
         out += ["", "oki_reset_status", ""]
 
     out += [
