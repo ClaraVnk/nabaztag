@@ -47,6 +47,11 @@ it at `bin/full/firmware0.0.0.13.signed.sim` on your own machine.
 
 ## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
 
+The station's OpenOCD configuration, the OKI flash sequence in TCL and the
+generator that turns a `Nab.bin` into a write script now live in
+[`jtag/`](jtag/) — they were on the flash station's SD card and that card is
+gone. `jtag/README.md` has the wiring diagram and the three commands.
+
 When the rabbit can't re-enter config mode (true brick), reflash over **JTAG**.
 You don't need a J-Link/BusBlaster: a **Raspberry Pi** drives the JTAG lines
 directly (bit-bang) with **F/F Dupont wires**.
