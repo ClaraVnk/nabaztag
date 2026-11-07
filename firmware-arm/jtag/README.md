@@ -108,17 +108,24 @@ configuration; erase 31 and it comes back as it left the factory.
   this file called `0x18/0x18` the signature of a session left in autoselect;
   that was wrong, and a gate built on it went on to refuse every legitimate
   write. `oki_id` is logged for the record and decides nothing.
-- **Halt the core before erasing anything, and keep it halted.** This is the
-  one that actually bites. On 2026-11-08 a write erased sectors 0–2 while the
-  core was running: the chip executed the hole where its own startup code had
-  been, left debug state, and OpenOCD lost it with
-  `timeout waiting for SYSCOMP & DBGACK`. The rabbit then would not boot —
-  recoverable here, since the config page in sector 31 is spared and the image
-  can simply be written again, but it costs the ten minutes twice.
-  `mkfwprog.py` emits `oki_require_halted` ahead of the erase, which throws
-  unless `curstate` is `halted`. The erase itself is checked by
-  `oki_verify_erased` on every sector, and the whole image by a read-back and
-  a byte compare — those are the checks with a basis.
+- **The first erase on a healthy rabbit dies on sector 2. Just run it again.**
+  Three writes on 2026-11-07, same pattern every time: sectors 0 and 1 erase
+  and verify, then sector 2 answers
+  `timeout waiting for SYSCOMP & DBGACK, last DBG_STATUS: 0` — the core has
+  left debug state. The two attempts that failed were both launched on a
+  *working* rabbit that had just been halted; the attempt that ran to
+  completion was launched on a chip already wedged in an abort loop from the
+  previous failure. So a failed attempt leaves the chip in the state where the
+  next one works, and the second run goes through all thirty sectors.
+  Annoying, reproducible, and not yet explained: the core being halted is not
+  the answer (`oki_require_halted` passed on a failing run), so something in a
+  live rabbit stays active across a halt and interferes after two sectors —
+  a peripheral still bus-mastering is the obvious suspect, unproven.
+  Budget two runs and do not panic at the first failure: sector 31 is spared,
+  so the config page survives and the image can simply be written again.
+  `mkfwprog.py` still emits `oki_require_halted`, which is cheap and correct
+  as far as it goes. The checks that carry the weight are `oki_verify_erased`
+  on every sector and the read-back byte compare of the whole image.
 - **Halt the watchdog before touching the flash.** A rabbit whose sector 0 is
   erased executes `0xFF`, faults, and resets itself over and over, so every
   read lands in a different reset. `oki_wd_off` stops the time base. Also in
