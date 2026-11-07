@@ -51,6 +51,48 @@ it at `bin/full/firmware0.0.0.13.signed.sim` on your own machine.
   via UART pads on the PCB — which means opening the shell. That risk is
   unchanged from any flash on this device, including the original wpa2 one.
 
+## If your rabbit refuses every signed image (builds before 2026-11-08)
+
+Read this before reaching for a screwdriver.
+
+**What was wrong.** `verifySig` never once returned 1, on any rabbit. The
+firmware's wrapper passed one buffer as both the input and the output of
+`crypto_sign_open`, and TweetNaCl drops the public key on the half of the
+signature it still has to read, so verification failed for every key, every
+message and every length. Any build with a signature-gated `httpflash` —
+`full`, `lean`, every `lean-*` — therefore refused every signed `.sim`, in
+silence: no red belly, no error page, the sequence completed and nothing was
+written. That is why flashes reported success for five months and the chip
+never changed. Fixed in `b8f6dd1`; the regression test is
+`tests/test_sign_open.c`.
+
+**What that means for you.** The broken verifier is in the firmware your
+rabbit is *running*, not in the image being sent, so it refuses the very
+image that fixes the refusal. The config-page upload path uses the same
+verifier. Over the air, that rabbit cannot be updated at all.
+
+**You almost certainly do not need JTAG.** Le Terrier serves the runtime
+bytecode fresh at every boot, and for a rabbit that cannot verify a signature
+it now serves a build whose OTA path leans on the warren's own check instead
+— `simsig.verify_file` runs there before any firmware is offered. So:
+
+1. Unplug the rabbit, wait ten seconds, plug it back in. It fetches the
+   recovery bytecode on that boot.
+2. Press the firmware update button on its page.
+3. Unplug and plug back in again when the flash ends.
+
+After that the rabbit reports `&s=1` in its boot URL, the warren serves it the
+normal gated bytecode again, and the signature check is back on — per rabbit,
+automatically. The window where it is off lasts exactly one update.
+
+**Be aware of what is traded during that window.** The rabbit's own signature
+check was the one thing that did not depend on the transport, and the
+transport is plain HTTP. For the length of one update, "is the server sound"
+stops being the whole question, and your DNS and network path join it. If that
+is not a trade you want, flash over JTAG instead — the steps are below — or
+roll back to `releases/naboot-minimal.signed.sim` from your rabbit's own setup
+page, which has no gate.
+
 ## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
 
 The station's OpenOCD configuration, the OKI flash sequence in TCL and the
