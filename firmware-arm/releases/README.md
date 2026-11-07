@@ -1,12 +1,9 @@
 # Naboot — shipped releases
 
-> **Flash at your own risk — no warranty, no liability.** You are rewriting the
-> only copy of the code that boots a twenty-year-old device, and a failed flash
-> can leave it unable to re-enter config mode, recoverable only by opening the
-> base and reprogramming the chip over JTAG. Read
-> [`../RECOVERY.md`](../RECOVERY.md) before you upload anything; its first
-> section says plainly what has already gone wrong here. Flashing is optional —
-> a stock rabbit works fine with the Home Assistant add-on.
+> **Flashing is done at your own risk** — no warranty, no liability. A failed
+> flash can leave the rabbit unable to re-enter config mode, recoverable only
+> over JTAG. See [`../RECOVERY.md`](../RECOVERY.md). Flashing is optional: a
+> stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware builds we ship: the hardware-verified **stable**
 release the community downloads, plus the **minimal rescue** build to roll back to

@@ -250,14 +250,11 @@ Full guide (API, pairing, troubleshooting) is in
 
 ## Flash Naboot & adopt your rabbit on Le Terrier
 
-> ⚠️ **Flashing is at your own risk.** No warranty, no liability — you are
-> rewriting the only copy of the code that boots a twenty-year-old device, and
-> a failed flash can leave it unable to re-enter config mode, recoverable only
-> by opening the base and reprogramming the chip over JTAG. That has happened
-> here. **Read [`firmware-arm/RECOVERY.md`](firmware-arm/RECOVERY.md) first**:
-> its opening section lists what has already gone wrong, including months of
-> flashes that reported success and wrote nothing. And note that flashing is
-> **optional** — a stock rabbit works fine on the add-on above, with nothing
+> ⚠️ **Flashing is done at your own risk** — no warranty, no liability. A
+> failed flash can leave the rabbit unable to re-enter config mode,
+> recoverable only over JTAG
+> (see [`firmware-arm/RECOVERY.md`](firmware-arm/RECOVERY.md)). Flashing is
+> **optional**: a stock rabbit works fine on the add-on above, with nothing
 > flashed.
 
 Don't want to run a server at home? Put your rabbit on the public warren —
