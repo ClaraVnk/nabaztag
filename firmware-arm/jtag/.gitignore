@@ -1,0 +1,5 @@
+# A snapshot carries a rabbit's own configuration page: its SSID, its
+# passphrase and its derived PMK. It never belongs in the repository.
+snap/
+*.bin
+*.eeprom
