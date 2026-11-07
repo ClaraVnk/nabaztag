@@ -760,8 +760,19 @@ static uint8_t rt2501_rx_errors;
         new = ("""  /* Only when the error branch above did not already flag one: it sets
      URB_XFERERR, and overwriting that with the OHCI condition code -- a
      small positive number -- turned every USB error into a short frame for
-     callers that test `status < 0`. */
-  if(urb->status >= 0)
+     callers that test `status < 0`.
+
+     The guard tests for that flag and NOT for `status >= 0`, which is the
+     shape this was written in first. Every URB is set to URB_PENDING (-1)
+     when it is submitted (hcd.c:494, :649), so while the transfer is in
+     flight `status` is negative by construction: `status >= 0` is false at
+     every completion, the transfer count was never stored, `status` stayed
+     -1, and every caller read a successful transfer as an error. Measured
+     over JTAG on 2026-11-07, the first time this patch ever ran on hardware:
+     65 receive errors and not one good frame, which is what condemned the
+     radio. URB_XFERERR is assigned nowhere else in this function, so the
+     flag is the honest question to ask. */
+  if(urb->status != URB_XFERERR)
     urb->status = (int8_t)urb->result;""").replace("\n", nl)
         f.write_text(src.replace(old, new, 1))
         print(f"[ok]   {f}: a flagged USB error survives to the caller")
