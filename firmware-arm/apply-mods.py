@@ -99,15 +99,27 @@ def patch_vinterp_c(root: Path) -> None:
         '          int32_t sig=VALTOPNT(VPULL());\n'
         '          int32_t payload=VALTOPNT(VSTACKGET(0));\n'
         '          int32_t ok=0;\n'
+        '          nab_verify_calls++;\n'
         '          if ((payload!=NIL) && (sig!=NIL) && (VSIZEBIN(sig)==64))\n'
         '          {\n'
+        '            /* payload+64 of scratch, on top of the 215 KB HTTP body and\n'
+        '             * the payload itself: about 430 KB live at once for an OTA.\n'
+        '             * When this allocation fails, ok stays 0 and the bytecode\n'
+        '             * reads that as a BAD SIGNATURE -- a refusal for want of\n'
+        '             * memory, indistinguishable from a forgery. Counted apart,\n'
+        '             * because on 2026-11-07 that distinction was the whole\n'
+        '             * question and nothing could answer it. */\n'
         '            int32_t scratch=VMALLOCBIN(VSIZEBIN(payload)+64);\n'
         '            if (scratch>=0)\n'
         '              ok = nab_verify_sig(\n'
         '                  (const uint8_t*)VSTARTBIN(payload), VSIZEBIN(payload),\n'
         '                  (const uint8_t*)VSTARTBIN(sig),\n'
         '                  (void*)VSTARTBIN(scratch));\n'
+        '            else\n'
+        '              nab_verify_nomem++;\n'
         '          }\n'
+        '          else nab_verify_badargs++;\n'
+        '          if (ok) nab_verify_ok++;\n'
         '          VSTACKSET(0, INTTOVAL(ok));\n'
         '        }\n'
         '        break;\n'
@@ -118,11 +130,31 @@ def patch_vinterp_c(root: Path) -> None:
 
     # Add the include at the top of the include block.
     inc_anchor = '#include "vbc.h"'
-    if inc_anchor in s and '#include "nab_sig.h"' not in s:
-        s = s.replace(inc_anchor, inc_anchor + '\n#include "nab_sig.h"', 1)
-    elif '#include "nab_sig.h"' not in s:
-        # Fallback: just prepend
-        s = '#include "nab_sig.h"\n' + s
+    # Four words of .bss so a refusal can be told apart from a forgery. The
+    # opcode answers the bytecode with a bare 0 for "no" and the bytecode has
+    # no else, so on 2026-11-07 an OTA that refused a perfectly good image
+    # looked exactly like one that refused a tampered one -- and there was no
+    # way to ask which. Read them over JTAG with `nm -S` on the resident ELF:
+    #   calls 0            -> the bytecode never got as far as verifySig
+    #   calls 1, badargs 1 -> payload or sig was nil, or the sig was not 64 B
+    #   calls 1, nomem 1   -> the scratch allocation failed; NOT a bad signature
+    #   calls 1, ok 0      -> the signature really does not match
+    counters = ('int32_t nab_verify_calls;\n'
+                'int32_t nab_verify_ok;\n'
+                'int32_t nab_verify_nomem;\n'
+                'int32_t nab_verify_badargs;\n')
+    if '#include "nab_sig.h"' not in s:
+        if inc_anchor in s:
+            s = s.replace(inc_anchor, inc_anchor + '\n#include "nab_sig.h"', 1)
+        else:
+            s = '#include "nab_sig.h"\n' + s
+    # Separately, and whichever branch placed the include: the counters have to
+    # be defined or the file does not compile. The first version of this put
+    # them in one branch only, the other branch is the one that runs, and the
+    # dry run caught it.
+    if 'nab_verify_calls' in s and 'int32_t nab_verify_calls;' not in s:
+        s = s.replace('#include "nab_sig.h"\n',
+                      '#include "nab_sig.h"\n\n' + counters, 1)
     p.write_text(s)
     print(f"[ok]   {p}: added OPverifySig case + nab_sig.h include")
 
