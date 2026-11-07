@@ -64,14 +64,14 @@ def main() -> int:
         "",
         "halt",
         "oki_wd_off",
-        # oki_reset_mode first: an interrupted session leaves the part in
-        # autoselect, where the identifier reads 0x18/0x18 and an erase is a
-        # shot in the dark. Then a gate that throws rather than warns -- on
-        # 2026-11-07 the warning alone let a write erase three sectors of a
-        # working rabbit. -erased is for the resume case, where sector 0 is
-        # already blank and the identifier is therefore gone.
+        # The core must be halted before anything is erased: taking sector 0
+        # away from a running core mid-instruction is what wrecked the write
+        # of 2026-11-07. The identifier is printed for the log and is NOT a
+        # gate -- autoselect does not engage on this part, so it only ever
+        # reports the array's own bytes (see oki.tcl).
+        "oki_require_halted",
         "oki_reset_mode",
-        "oki_id_or_die" + (" -erased" if args.no_erase else ""),
+        "oki_id",
         "",
     ]
     if not args.verify_only:

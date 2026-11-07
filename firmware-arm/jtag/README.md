@@ -101,20 +101,24 @@ configuration; erase 31 and it comes back as it left the factory.
   however you configure it. To reset the rabbit, pull the plug.
 - **The first `halt` on a running rabbit often times out.** Run the command
   again. A rabbit already dead-looping in an abort handler halts first time.
-- **An interrupted session leaves the part in autoselect or program mode**,
-  and then every read is nonsense — the ID came back `0x18/0x18` once, which
-  looks exactly like bad wiring and is not. `oki_reset_mode` sends `0xF0` and
-  clears it; `oki_id` and `oki_erase_firmware` call it for you.
-- **Never erase on an identifier you have not confirmed.** On 2026-11-07 a
-  generated write script read `0x18/0x18`, printed the warning above, and then
-  erased the first three sectors of a perfectly healthy rabbit, because the
-  warning was only a warning. Erasing is the one step with no way back, so it
-  is now gated by `oki_id_or_die`, which throws unless the part answers
-  `0x98/0xCD`. `mkfwprog.py` emits it ahead of every erase. Once sector 0 is
-  blank the identifier is genuinely gone — autoselect reads the empty array
-  and answers `0xFF/0xFF` — so a resume passes `--no-erase`, which emits
-  `oki_id_or_die -erased`. That allowance exists for resuming and for nothing
-  else.
+- **The flash identifier cannot be read on this part — ignore it.** Autoselect
+  never engages: `oki_id` reads the array itself. `0x18/0x18` is just the low
+  byte of the two words at the reset vector (`0xe59ff018`, twice), and
+  `0xFF/0xFF` is the same read once sector 0 is blank. An earlier version of
+  this file called `0x18/0x18` the signature of a session left in autoselect;
+  that was wrong, and a gate built on it went on to refuse every legitimate
+  write. `oki_id` is logged for the record and decides nothing.
+- **Halt the core before erasing anything, and keep it halted.** This is the
+  one that actually bites. On 2026-11-08 a write erased sectors 0–2 while the
+  core was running: the chip executed the hole where its own startup code had
+  been, left debug state, and OpenOCD lost it with
+  `timeout waiting for SYSCOMP & DBGACK`. The rabbit then would not boot —
+  recoverable here, since the config page in sector 31 is spared and the image
+  can simply be written again, but it costs the ten minutes twice.
+  `mkfwprog.py` emits `oki_require_halted` ahead of the erase, which throws
+  unless `curstate` is `halted`. The erase itself is checked by
+  `oki_verify_erased` on every sector, and the whole image by a read-back and
+  a byte compare — those are the checks with a basis.
 - **Halt the watchdog before touching the flash.** A rabbit whose sector 0 is
   erased executes `0xFF`, faults, and resets itself over and over, so every
   read lands in a different reset. `oki_wd_off` stops the time base. Also in
