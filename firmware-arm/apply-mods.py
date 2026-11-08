@@ -1508,6 +1508,12 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
     ieee80211_state EAPOL with eapol_state stuck on message 3, then IDLE and
     a new scan, for ever. The access point drops a message 2 whose MIC it
     cannot verify without a word.
+
+    The PTK's length is an input of KDF-SHA-256 (it is hashed into every
+    block), unlike the SHA-1 PRF's: hostapd derives KCK + KEK + TK = 48
+    bytes for CCMP. The stock buffer is 64, sized for TKIP's MIC keys, and
+    asking the KDF for 64 gives a different KCK altogether. Same hardware
+    symptom, same silence; the emulator's access point asked for 64 too.
     The stock supplicant knows versions 1 and 2 only -- HMAC-MD5 with the
     SHA-1 PRF, HMAC-SHA-1 with the SHA-1 PRF -- so after a successful SAE
     exchange it answered message 1 with a message 2 whose MIC no real
@@ -1596,8 +1602,13 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
     b = (
         "  if(eapol_akm_sae()) {\n"
         "    /* Same concatenation, the AKM's KDF over it -- and no NUL after the\n"
-        "       label: that byte belongs to the SHA-1 PRF alone. */\n"
-        "    sha256_kdf(ptk, length, pmk, EAPOL_MASTER_KEY_LENGTH,\n"
+        "       label: that byte belongs to the SHA-1 PRF alone. The KDF hashes\n"
+        "       its output length into every block, so it must be hostapd's\n"
+        "       KCK + KEK + TK = 48 bytes for CCMP (wpa_pmk_to_ptk), not the\n"
+        "       64-byte TKIP buffer the SHA-1 PRF could fill without harm. */\n"
+        "    memset(ptk, 0, length);\n"
+        "    sha256_kdf(ptk, EAPOL_MICK_LENGTH + EAPOL_EK_LENGTH + 16,\n"
+        "               pmk, EAPOL_MASTER_KEY_LENGTH,\n"
         "               \"Pairwise key expansion\", concatenation, position);\n"
         "    return;\n"
         "  }\n"

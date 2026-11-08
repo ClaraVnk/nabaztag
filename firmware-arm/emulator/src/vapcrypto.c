@@ -230,7 +230,12 @@ void vap_compute_ptk_akm(const uint8_t *pmk,
          EAPOL_NONCE_LENGTH);
   position += EAPOL_NONCE_LENGTH;
 
-  sha256_kdf(ptk, length, pmk, EAPOL_MASTER_KEY_LENGTH,
+  /* KCK + KEK + TK for CCMP, 48 bytes, as hostapd's wpa_pmk_to_ptk():
+     the KDF's output length is hashed into every block, so asking for the
+     64-byte TKIP-sized buffer yields another key entirely. */
+  memset(ptk, 0, length);
+  sha256_kdf(ptk, EAPOL_MICK_LENGTH + EAPOL_EK_LENGTH + 16,
+             pmk, EAPOL_MASTER_KEY_LENGTH,
              "Pairwise key expansion", concatenation, position);
 }
 
