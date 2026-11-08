@@ -19,6 +19,39 @@ release the community downloads, plus the **minimal rescue** build to roll back 
 when a flash goes wrong. Both are reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
+## `naboot-1.0.0.0.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.0.0.0` (`firmware-arm/apply-mods.py`): WPA3-SAE (WPA3-only and WPA2/WPA3 transition; H2E-only access points are not supported), the adoption key and its five belly colours, HMAC-signed bytecode, XMPP over TLS 1.3 PSK, binary OTA, crash report in the boot URL, self-recovery when the access point forgets the rabbit, live JTAG telemetry |
+| **Firmware version** | `1.0.0.0` (the boot URL says `v=1.0.0.0`) |
+| **Size** | 118 344 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
+| **sha256** | `df654a2868257c32b34982cbf411381d6af55ee56d7fbfb0e9e07445a0c55125` |
+
+**Installed over the air (2026-11-08 23:47):** this exact file, sent by the
+warren as bytes to a rabbit running the `lean-wpa3-tls` build. It verified,
+wrote, restarted by itself — no unplugging — announced `v=1.0.0.0` with
+`r=3.0.1.1.1.0` (one signature check, passed; one flash write, no error),
+and opened its XMPP session over TLS 1.3 eleven seconds later.
+
+**From the config page.** Measured in the whole-rabbit emulator
+(`../emulator/scenarios/vm/config-upload.txt`): uploaded through the config
+page of `naboot-stable` and of the stock bootloader (0.0.0.10 and 0.0.0.13
+bytecode), it reaches `flashFirmware` with the heap at most at 66 %. The
+config page holds the image about three times, where the old hex OTA path
+held it six times and could not take an image this size.
+
+**Which way in.**
+- A stock rabbit, or one on `naboot-stable`/`naboot-minimal` of 2026-11-08:
+  the config page (blue mode), or the warren's update button.
+- A rabbit on a Naboot build from before 2026-11-08: its signature check
+  never passes, on the config page too. Unplug and replug it — the warren
+  then serves it the recovery bytecode — and use the update button.
+
+`naboot-stable` (0.0.0.13) below stays as the previous release.
+
 ## `naboot-stable.signed.sim`
 
 | | |
