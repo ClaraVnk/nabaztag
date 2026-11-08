@@ -72,13 +72,17 @@ called out. Use that to flash; use the rest of this file to understand it.
 **Prove the wiring, change nothing.** Manufacturer `0x98`, device `0xcd`:
 
 ```sh
-openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_id; shutdown"
+openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_id; resume; shutdown"
 ```
+
+The `resume` matters: attaching halts the core and `shutdown` does not undo
+it, so without it this read-only command leaves the rabbit frozen until its
+plug is pulled.
 
 **Read the flash back.** 128 KB at `0x08000000`, about five minutes:
 
 ```sh
-openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/flash.bin; shutdown"
+openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/flash.bin; resume; shutdown"
 sha256sum /tmp/flash.bin        # compare with bin/<mode>/Nab.bin
 ```
 

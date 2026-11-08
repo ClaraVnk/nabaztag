@@ -41,8 +41,13 @@ ssh -t pi-host 'bash ~/nabaztag-flash/setup-station.sh'
 ## 2. Prove the wiring before touching anything
 
 ```sh
-ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_id; shutdown"'
+ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_id; resume; shutdown"'
 ```
+
+**The `resume` is not optional.** Attaching halts the core, and `shutdown`
+does not undo that: without it the command that was supposed to "change
+nothing" leaves the rabbit frozen until you pull its plug. Measured
+2026-11-08 — `curstate` read `halted` after an `oki_id; shutdown`.
 
 What you want to see is `Examination succeed` and a `halt` that lands. The
 line `flash id: manufacturer 0x18, device 0x18` followed by
@@ -58,7 +63,7 @@ If the first `halt` times out, run the command again.
 Five minutes, and it is the only copy of what the rabbit is running now.
 
 ```sh
-ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/before.bin; shutdown"'
+ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/before.bin; resume; shutdown"'
 scp pi-host:/tmp/before.bin .
 sha256sum before.bin
 ```
@@ -95,7 +100,7 @@ nabgcc's `mem.c` — so a flash that wrote nothing looks exactly like one that
 worked. This is the step that tells them apart, and it is not optional.
 
 ```sh
-ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/after.bin; shutdown"'
+ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_dump /tmp/after.bin; resume; shutdown"'
 scp pi-host:/tmp/after.bin .
 cmp -n $(stat -f%z firmware-arm/bin/lean/Nab.bin) after.bin firmware-arm/bin/lean/Nab.bin && echo "byte-exact"
 ```
@@ -123,7 +128,9 @@ else looked fine.
 | `Error: not halted`, `failed to write memory`, first run | expected; relaunch |
 | `manufacturer 0x18, device 0x18` | expected; the identifier is not readable on this part |
 | `DBGACK timeout` on every attempt | RESETN is wired. Unwire it |
+| `scan chain interrogation failed: all zeroes` | the rabbit has no power. That is the whole message |
 | JTAG does not answer at all | the rabbit is not on its mains, or TDO/TDI are swapped |
+| the rabbit goes silent after a read | you forgot `resume`, or the halt outlasted three XMPP probes. Pull the plug |
 | first belly light blinks orange after the flash | expected; it needs the mains, not another flash |
 | `z=` unchanged after a power cycle | nothing was written. Go back to step 4 |
 
