@@ -1632,6 +1632,43 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
 
     write_src(q, t)
     print(f"[ok]   {q}: the handshake runs on SAE's own key schedule")
+def patch_firmware_version(root: Path) -> None:
+    """Say a version other than 0.0.0.13 in the boot URL and the setup page.
+
+    The firmware version is four bytes in the bootloader --
+    `const FIRMWARE="\0\0\0\13";;` -- rendered by `webip` as "0.0.0.13" in
+    `/vl/bc.jsp?v=` and in two places on the config page. Measured on
+    2026-11-08, nothing compares it: not the bootloader, not the Violet
+    runtime bytecode, not the warren (which stores it as `fw_version` and
+    keeps it out of the boot marks -- terrier tests/test_firmware_1_0_0_0.py),
+    not the Home Assistant add-on (which ignores the query string). So the
+    bump is safe, and it is cosmetic: the build mark `&z=`, not `v=`, is what
+    tells one image from another.
+
+    NAB_FIRMWARE_VERSION, default 1.0.0.0, four integers 0..255. In no mode
+    yet: the plan is to ship it with the first release after WPA3. Never in
+    `minimal`, whose bootloader must stay byte-identical to vanilla wpa2 --
+    the guard ties this step to `bootloader`, which minimal does not carry.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    want = os.environ.get("NAB_FIRMWARE_VERSION") or "1.0.0.0"
+    parts = want.split(".")
+    if len(parts) != 4 or not all(x.isdigit() and 0 <= int(x) <= 255 for x in parts):
+        sys.exit(f"FAIL {q}: NAB_FIRMWARE_VERSION must be four integers "
+                 f"0..255, got {want!r}")
+    # Metal string escapes are decimal: "\13" is the byte 13.
+    lit = '"' + "".join("\\" + str(int(x)) for x in parts) + '"'
+    old = 'const FIRMWARE="\\0\\0\\0\\13";;'
+    new = f"const FIRMWARE={lit};;"
+    if new in t:
+        print(f"[skip] {q}: FIRMWARE already {want}")
+        return
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: the FIRMWARE constant is not the stock 0.0.0.13 "
+                 f"line this step expects (found {t.count(old)})")
+    write_src(q, t.replace(old, new, 1))
+    print(f"[ok]   {q}: FIRMWARE {want} (boot URL v= and the setup page)")
 
 
 def patch_boot_marker(root: Path) -> None:
@@ -4844,6 +4881,12 @@ def main() -> int:
             "Without it they land in .bss and the startup zero-loop erases "
             "them -- which is the whole thing this step exists to stop."
         )
+    if "firmware_version" in steps and "bootloader" not in steps:
+        sys.exit(
+            "FAIL step list: firmware_version edits the bootloader, and a step "
+            "list without `bootloader` is minimal's -- whose bootloader must "
+            "stay byte-identical to vanilla wpa2."
+        )
     if "reset_reason" in steps and (
             "persist_counters" not in steps
             or steps.index("persist_counters") > steps.index("reset_reason")):
@@ -4894,6 +4937,7 @@ def main() -> int:
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
         "persist_counters": patch_persist_counters,
+        "firmware_version": patch_firmware_version,
         "reset_reason": patch_reset_reason,
         "dcc_console": patch_dcc_console,
         "no_libc_malloc": patch_no_libc_malloc,
