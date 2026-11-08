@@ -52,7 +52,7 @@ read.
 
 `emulator/tools/kx_warren.py` answers kx.jsp with OpenSSL's X25519 and HKDF
 (neither the rabbit's TweetNaCl nor the Terrier's kx.py) and prints the five
-colours it expects; `scenarios/vm/adoption-kx.txt` boots the bootloader of
+colours it expects; `emulator/scenarios/vm/adoption-kx.txt` boots the bootloader of
 `lean-wpa3-kx` against it, `--realtime`:
 
 - no key: kx.jsp asked at 5 s; LEDs 0-4 show the warren's five colours from
