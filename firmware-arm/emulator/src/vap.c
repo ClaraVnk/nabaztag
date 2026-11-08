@@ -633,9 +633,9 @@ static void vap_sign(struct eapol_frame *fr, uint32_t body_length,
 
   memset(fr->key_frame.key_mic, 0, EAPOL_KEYMIC_LENGTH);
   if(desc_ver == 0) {
-    uint8_t full[SHA256_DIGEST];
-    hmac_sha256(full, kck, EAPOL_MICK_LENGTH, eapol, body_length + 4);
-    memcpy(fr->key_frame.key_mic, full, EAPOL_KEYMIC_LENGTH);
+    /* AKM 8 (SAE): AES-128-CMAC, as hostapd's wpa_eapol_key_mic() --
+       "EAPOL-Key MIC using AES-CMAC (AKM-defined - SAE)". */
+    aes_cmac(fr->key_frame.key_mic, kck, eapol, body_length + 4);
   } else if(desc_ver == 2) {
     uint8_t full[20];
     hmac_sha1(kck, EAPOL_MICK_LENGTH, eapol, body_length + 4, full);
@@ -936,10 +936,8 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
                 length - LLC_LENGTH - 4);
       } else {
         if(vap_desc_ver(a) == 0) {
-          uint8_t full[SHA256_DIGEST];
-          hmac_sha256(full, hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
-                      body_length + 4);
-          memcpy(mine, full, EAPOL_KEYMIC_LENGTH);
+          /* AES-128-CMAC for AKM 8, as hostapd: see vap_sign(). */
+          aes_cmac(mine, hs->ptk, copy + LLC_LENGTH, body_length + 4);
         } else if(vap_desc_ver(a) == 2) {
           hmac_sha1(hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
                     body_length + 4, mine);
