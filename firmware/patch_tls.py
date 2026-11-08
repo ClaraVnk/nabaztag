@@ -49,6 +49,7 @@ VARS_NEW = """var XmppServerPort = 5222;;
 var XmppTlsPort = 0;;	// from locate.jsp "xmpp_tls <port>"; 0: the warren offers none
 var XmppTlsOn = 0;;	// the current socket runs TLS
 var XmppTlsSock;;	// the socket whose handshake was started
+var XmppTlsUp = 0;;	// the gate has had its TCPWRITE for this handshake
 proto XmppTlsSelect 1;;	// XmppTcpOpen calls it; defined after XmppTcpRead"""
 
 LOCATE_OLD = '\t\t\tset broadcasturl=listswitchstr conf "broad";\n'
@@ -78,6 +79,7 @@ TLS_FUNS = '''/* xmpp-over-tls -------------------------------------------------
 // rabbit holds a key, the one asked for otherwise.
 fun XmppTlsSelect port=
 	set XmppTlsSock=nil;
+	set XmppTlsUp=0;
 	if XmppTlsPort>0 && (tlsState)>=0 then (set XmppTlsOn=1; XmppTlsPort)
 	else (set XmppTlsOn=0; port);;
 
@@ -129,8 +131,10 @@ fun XmppTcpRead t val msg xSession =
 			(
 				// The first time through here with the handshake done, the
 				// gate still waits for its socket: give it the TCPWRITE it
-				// would have had, and it opens the stream as always.
-				if xSession.sGate.pStatus==pOpening then XmppTcpReadPlain t TCPWRITE nil xSession;
+				// would have had, and it opens the stream as always. (A flag,
+				// not pStatus==pOpening: Metal never compares constructors
+				// with ==, and the emulator showed why -- the gate timed out.)
+				if XmppTlsUp==0 then (set XmppTlsUp=1; XmppTcpReadPlain t TCPWRITE nil xSession);
 				if plain!=nil && (strlen plain)>0 then XmppTcpReadPlain t TCPREAD plain xSession;
 				0
 			)
