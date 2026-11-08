@@ -360,6 +360,50 @@ def patch_verify_wdt(root: Path) -> None:
     print(f"[ok]   {p}: the signature check feeds the watchdog 1,860 times")
 
 
+def patch_x25519_wdt(root: Path) -> None:
+    """Keep X25519 and make its ladder feed the watchdog; add nab_kx.
+
+    The adoption key exchange (crypto/nab_kx.c) runs two X25519 scalar
+    multiplications on the rabbit, once per adoption. TweetNaCl's ladder is
+    63.6 M instructions with nothing feeding the watchdog (tools/cost,
+    2026-11-08): 2-8 s against a 2.09 s window, so it would reset the rabbit
+    every time. One nab_verify_tick() per ladder step makes that 255 ticks,
+    ~250 k instructions apart; the inversion after it is inv25519, which
+    verify_wdt already ticks.
+
+    strip_tweetnacl drops crypto_scalarmult unless this step has marked the
+    file first, so this must come before it in a mode's list.
+
+    nab_kx.c and its header go into src/net and inc/net beside the SAE
+    crypto, whose sha256 they use. Tests: firmware-arm/tests, `make kx`.
+    """
+    p = root / "src/crypto/tweetnacl.c"
+    t = p.read_text()
+    if "/* nab: keep crypto_scalarmult */" in t:
+        print(f"[skip] {p}: X25519 already kept and ticked")
+        return
+    if "/* tweetnacl-stripped */" in t:
+        sys.exit(f"FAIL {p}: strip_tweetnacl ran first and removed X25519 -- "
+                 "put x25519_wdt before it")
+    a = "  for(i=254;i>=0;--i) {\n    r=(z[i>>3]>>(i&7))&1;\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {p}: crypto_scalarmult's ladder is not the shape this patch expects")
+    t = t.replace(a, "  for(i=254;i>=0;--i) {\n    nab_verify_tick();\n"
+                     "    r=(z[i>>3]>>(i&7))&1;\n", 1)
+    inc = '#include "tweetnacl.h"\n'
+    if inc not in t:
+        sys.exit(f"FAIL {p}: no tweetnacl.h include to hang the declaration on")
+    t = t.replace(inc, inc + "/* nab: keep crypto_scalarmult */\n"
+                             "extern void nab_verify_tick(void);\n", 1)
+    p.write_text(t)
+    here = Path(__file__).resolve().parent / "crypto"
+    (root / "src/net").mkdir(parents=True, exist_ok=True)
+    (root / "inc/net").mkdir(parents=True, exist_ok=True)
+    (root / "src/net/nab_kx.c").write_text((here / "nab_kx.c").read_text())
+    (root / "inc/net/nab_kx.h").write_text((here / "nab_kx.h").read_text())
+    print(f"[ok]   {p}: X25519 kept, its ladder feeds the watchdog; nab_kx added")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -390,6 +434,8 @@ def strip_tweetnacl(root: Path) -> None:
         "crypto_sign_keypair", "crypto_sign",
         "crypto_verify_16",
     ]
+    if "/* nab: keep crypto_scalarmult */" in s:
+        unused.remove("crypto_scalarmult")   # x25519_wdt: the adoption exchange
     # Order longest-first so e.g. crypto_box matches AFTER crypto_box_keypair
     # has had its turn (avoids prefix collisions even though our regex anchors
     # on a literal `(` after the name).
@@ -5551,6 +5597,7 @@ def main() -> int:
         "vinterp": patch_vinterp_c,
         "stdlib": patch_stdlib_core,
         "strip_tweetnacl": strip_tweetnacl,
+        "x25519_wdt": patch_x25519_wdt,
         "sign_open_alias": patch_sign_open_aliasing,
         "verify_wdt": patch_verify_wdt,
         "modernize_pages": modernize_pages,

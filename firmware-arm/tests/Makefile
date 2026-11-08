@@ -17,12 +17,12 @@ INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
 # Defined before any rule that uses it: a prerequisite list is
 # expanded when the rule is read, not when it runs.
-CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h
+CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h
 
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open
+.PHONY: all vectors clean arm sign_open kx
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -86,7 +86,26 @@ md5:
 
 slim: uart_fmt sbox md5
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox
+# The adoption key exchange: TweetNaCl's X25519 patched as the firmware
+# builds it (sign_open_alias, verify_wdt, x25519_wdt -- the last two call
+# nab_verify_tick, which test_kx.c counts) under nab_kx.c, against OpenSSL
+# via vectors_kx.py.
+TNKX_DIR := /tmp/nab-tn-kx
+$(TNKX_DIR)/tweetnacl.c: ../upstream/tweetnacl/tweetnacl.c ../apply-mods.py
+	@mkdir -p $(TNKX_DIR)/src/crypto
+	@touch $(TNKX_DIR)/Makefile
+	@cp ../upstream/tweetnacl/tweetnacl.c $(TNKX_DIR)/src/crypto/tweetnacl.c
+	@cp ../upstream/tweetnacl/tweetnacl.h $(TNKX_DIR)/
+	@python3 ../apply-mods.py --steps sign_open_alias,verify_wdt,x25519_wdt $(TNKX_DIR) >/dev/null
+	@cp $(TNKX_DIR)/src/crypto/tweetnacl.c $(TNKX_DIR)/tweetnacl.c
+
+kx: $(TNKX_DIR)/tweetnacl.c $(CRYPTO_H)
+	@echo "== the adoption key exchange, against OpenSSL"
+	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TNKX_DIR) -c -o /tmp/tn_kx.o $(TNKX_DIR)/tweetnacl.c
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -I$(TNKX_DIR) -o /tmp/t_kx test_kx.c \
+		../crypto/nab_kx.c ../crypto/sha256.c /tmp/tn_kx.o && /tmp/t_kx
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
