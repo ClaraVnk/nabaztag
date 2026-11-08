@@ -24,6 +24,7 @@
 #include "net/hash.h"
 #include "net/ieee80211.h"
 #include "net/eapol.h"
+#include "net/sha256.h"
 
 #include "vapcrypto.h"
 
@@ -198,6 +199,39 @@ void vap_compute_ptk(const uint8_t *pmk,
 
   prf(pmk, EAPOL_MASTER_KEY_LENGTH, ptk_prefix, sizeof(ptk_prefix),
       concatenation, (uint16_t)position, ptk, (uint16_t)length);
+}
+
+/*
+ * 802.11-2020 12.7.1.6.2 and Table 12-11: with AKM 00-0F-AC:8 the PTK is
+ * KDF-SHA-256-Length(PMK, "Pairwise key expansion", Min(AA,SPA) ||
+ * Max(AA,SPA) || Min(ANonce,SNonce) || Max(ANonce,SNonce)). Same
+ * concatenation as above, a different function over it, and no NUL after
+ * the label -- that byte belongs to the WPA2 PRF only. hostapd's
+ * wpa_pmk_to_ptk() takes this branch for every SAE association.
+ */
+void vap_compute_ptk_akm(const uint8_t *pmk,
+                         const uint8_t *anonce, const uint8_t *aa,
+                         const uint8_t *snonce, const uint8_t *sa,
+                         uint8_t *ptk, uint32_t length)
+{
+  uint8_t concatenation[128];
+  uint32_t position = 0;
+  int sa_is_higher = memcmp(sa, aa, IEEE80211_ADDR_LEN) > 0;
+  int snonce_is_higher = memcmp(snonce, anonce, EAPOL_NONCE_LENGTH) > 0;
+
+  memcpy(&concatenation[position], sa_is_higher ? aa : sa, IEEE80211_ADDR_LEN);
+  position += IEEE80211_ADDR_LEN;
+  memcpy(&concatenation[position], sa_is_higher ? sa : aa, IEEE80211_ADDR_LEN);
+  position += IEEE80211_ADDR_LEN;
+  memcpy(&concatenation[position], snonce_is_higher ? anonce : snonce,
+         EAPOL_NONCE_LENGTH);
+  position += EAPOL_NONCE_LENGTH;
+  memcpy(&concatenation[position], snonce_is_higher ? snonce : anonce,
+         EAPOL_NONCE_LENGTH);
+  position += EAPOL_NONCE_LENGTH;
+
+  sha256_kdf(ptk, length, pmk, EAPOL_MASTER_KEY_LENGTH,
+             "Pairwise key expansion", concatenation, position);
 }
 
 /* --- proof that the above is not inventing things ---------------------- */
