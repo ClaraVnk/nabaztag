@@ -61,6 +61,12 @@ scp -r jtag pi-host:~/nabaztag-flash
 ssh -t pi-host 'bash ~/nabaztag-flash/setup-station.sh'
 ```
 
+## The commands, in order
+
+[RUNBOOK.md](RUNBOOK.md) is the copy-paste version: every command from an
+untouched Pi to a confirmed boot mark, with the two normal-looking failures
+called out. Use that to flash; use the rest of this file to understand it.
+
 ## Three things to do with it
 
 **Prove the wiring, change nothing.** Manufacturer `0x98`, device `0xcd`:
