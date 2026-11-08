@@ -1,0 +1,4 @@
+Compiler : var g : I
+Compiler : const k : S
+Compiler : helper : fun [I] I
+Compiler : main : fun [] I

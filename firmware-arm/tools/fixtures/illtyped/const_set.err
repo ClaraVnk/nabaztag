@@ -1,0 +1,4 @@
+Compiler : proto main : fun [] w0
+Compiler : const K : I
+Compiler : 'K' is a const, it cannot be set
+Compiler : error compiling function 'main'

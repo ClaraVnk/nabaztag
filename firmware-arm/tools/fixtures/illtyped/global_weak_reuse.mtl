@@ -1,0 +1,5 @@
+// A `var x = nil` global is a weak variable: its first use fixes it for
+// the whole program, so this list of I then list of S is refused.
+proto main 0;;
+var acc = nil;;
+fun main = set acc = 1 :: nil; set acc = "a" :: nil;;

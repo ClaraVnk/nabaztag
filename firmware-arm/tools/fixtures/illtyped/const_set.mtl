@@ -1,0 +1,4 @@
+// set on a const.
+proto main 0;;
+const K = 1;;
+fun main = set K = 2;;

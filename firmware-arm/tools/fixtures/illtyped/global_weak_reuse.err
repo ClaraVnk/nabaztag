@@ -1,0 +1,8 @@
+Compiler : proto main : fun [] w0
+Compiler : var acc : w0
+Compiler : S cannot be unified with I
+Compiler :
+ list S
+does not match with
+ list I
+Compiler : error compiling function 'main'

@@ -1,0 +1,1209 @@
+Compiler : proto main : fun [] w0
+Compiler : proto setRunState : fun [w0] w1
+Compiler : proto getRunState : fun [] w0
+Compiler : Xw : fun [S] S
+Compiler : Xx : fun [u0] u0
+Compiler : Pingw : fun [u0] u1
+Compiler : Dnsw : fun [u0] u1
+Compiler : Progw : fun [u0] u1
+Compiler : Streamw : fun [u0] u1
+Compiler : var doPing : w0
+Compiler : const HARDWARE : I
+Compiler : proto buttoncheckevent : fun [] w0
+Compiler : var gItState : I
+Compiler : var gSleepState : I
+Compiler : var gStreamingState : I
+Compiler : var gProcessingState : I
+Compiler : var gProcessingWaitState : I
+Compiler : var gBusyState : I
+Compiler : var gItApp : w0
+Compiler : var gEarInited : I
+Compiler : var gRegistrationError : I
+Compiler : var bottomColor : I
+Compiler : var language : S
+Compiler : proto itNoteEarTouched : fun [w0 w1 w2] w3
+Compiler : proto processIncomingTrame : fun [w0 w1 w2] w3
+Compiler : proto dumpStatus : fun [] w0
+Compiler : var netip : S
+Compiler : var netmask : S
+Compiler : var netgateway : S
+Compiler : var netdnslist : w0
+Compiler : var mymac : w0
+Compiler : const macbroadcast : S
+Compiler : const ipbroadcast : S
+Compiler : const netip_empty : S
+Compiler : const netip_master : S
+Compiler : const netmask_master : S
+Compiler : const netgateway_master : S
+Compiler : const BYTECODE_REVISION_STR : S
+Compiler : getBytecodeRevision : fun [] S
+Compiler : strstr : fun [S S I] I
+Compiler : itoanil : fun [list I] list I
+Compiler : listlen : fun [list u0] I
+Compiler : listrem : fun [list u0 u0] list u0
+Compiler : slistlen : fun [list S] I
+Compiler : listnth : fun [list u0 I] u0
+Compiler : strgetnum : fun [S I I] I
+Compiler : listtostr : fun [list I] S
+Compiler : atoibin2 : fun [S] S
+Compiler : countpattern : fun [S S I] I
+Compiler : strreplace2 : fun [S S S S I I] u0
+Compiler : strreplace : fun [S S S] S
+Compiler : rev : fun [list u0 list u0] list u0
+Compiler : remfromlist : fun [list u0 u0] list u0
+Compiler : insert : fun [u0 list u0 fun [u0 u0] I] list u0
+Compiler : sort : fun [list u0 fun [u0 u0] I] list u0
+Compiler : select : fun [list u0 u1 fun [u0 u1] I] list u0
+Compiler : conc : fun [list u0 list u0] list u0
+Compiler : random : fun [I] I
+Compiler : _useparamip : fun [S I S I] u0
+Compiler : useparamip : fun [S] S
+Compiler : webip : fun [S] S
+Compiler : ipcmp : fun [S S] I
+Compiler : _fullwebmac : fun [S I] list S
+Compiler : fullwebmac : fun [S] S
+Compiler : _webmac : fun [S I] list S
+Compiler : webmac : fun [S] S
+Compiler : makestremptyifzero : fun [S] S
+Compiler : AsciiToInt : fun [I] I
+Compiler : IntToAscii : fun [I] I
+Compiler : XorHexStr : fun [S S] S
+Compiler : seqSplitHighLow : fun [S] [I I]
+Compiler : seqHighLowCmpHelper : fun [I I] I
+Compiler : seqHighLowCmp : fun [[I I] [I I]] I
+Compiler : dataToHexStr : fun [S] S
+Compiler : MACecho : fun [S I I] S
+Compiler : SEQecho : fun [S I I] S
+Compiler : IPecho : fun [S I I] S
+Compiler : itoh4 : fun [I] S
+Compiler : strputchk : fun [S I I] I
+Compiler : dump : fun [S] S
+Compiler : proto setleds : fun [w0] w1
+Compiler : const LED_NOSE : I
+Compiler : const LED_BODY_LEFT : I
+Compiler : const LED_BODY_MIDDLE : I
+Compiler : const LED_BODY_RIGHT : I
+Compiler : const LED_BASE : I
+Compiler : LEDS_STATE_START : fun [] TLedsState
+Compiler : LEDS_STATE_CONFIG_WAIT : fun [] TLedsState
+Compiler : LEDS_STATE_XMPP_OPENING_XMPP_TCP : fun [] TLedsState
+Compiler : LEDS_STATE_XMPP_OPENING_XMPP_BOSH : fun [] TLedsState
+Compiler : LEDS_STATE_XMPP_OPENING_XMPP : fun [] TLedsState
+Compiler : LEDS_STATE_XMPP_CONNECTED : fun [] TLedsState
+Compiler : TLedsState : constructor
+Compiler : proto leds_set_state : fun [w0] w1
+Compiler : const RGB_WHITE : I
+Compiler : const RGB_BLACK : I
+Compiler : const RGB_RED : I
+Compiler : const RGB_BLUE : I
+Compiler : const RGB_GREEN : I
+Compiler : const RGB_AMBER : I
+Compiler : const RGB_VIOLET : I
+Compiler : const RGB_ORANGE : I
+Compiler : setleds : fun [I] I
+Compiler : var leds_currentState : w0
+Compiler : leds_set_state : fun [TLedsState] I
+Compiler : proto addnewdns : fun [w0 w1] w2
+Compiler : proto dnslisttostr : fun [] w0
+Compiler : proto dnslistfromdhcp : fun [w0] w1
+Compiler : var tmp : w0
+Compiler : var val : w0
+Compiler : leftrotate : fun [tab I I] tab I
+Compiler : const md5r : tab I
+Compiler : const md5k : tab I
+Compiler : var md5h0h : I
+Compiler : var md5h0l : I
+Compiler : var md5h1h : I
+Compiler : var md5h1l : I
+Compiler : var md5h2h : I
+Compiler : var md5h2l : I
+Compiler : var md5h3h : I
+Compiler : var md5h3l : I
+Compiler : var md5len : I
+Compiler : var md5mult : I
+Compiler : var md5reste : I
+Compiler : var md5message : S
+Compiler : var md5return : S
+Compiler : var md5bloc : tab I
+Compiler : var md5ah : I
+Compiler : var md5al : I
+Compiler : var md5bh : I
+Compiler : var md5bl : I
+Compiler : var md5ch : I
+Compiler : var md5cl : I
+Compiler : var md5dh : I
+Compiler : var md5dl : I
+Compiler : var md5fh : I
+Compiler : var md5fl : I
+Compiler : var md5g : I
+Compiler : var md5msglen : I
+Compiler : var md5tmp1h : I
+Compiler : var md5tmp1l : I
+Compiler : var md5tmp2h : I
+Compiler : var md5tmp2l : I
+Compiler : var md5tmp3h : I
+Compiler : var md5tmp3l : I
+Compiler : var md5len64h : I
+Compiler : var md5len64l : I
+Compiler : md5bytes : fun [S] S
+Compiler : md5tohex : fun [S] S
+Compiler : md5 : fun [S] S
+Compiler : const Base64 : S
+Compiler : StoB64 : fun [S] S
+Compiler : B64toS : fun [S] S
+Compiler : tagS : fun [Attribute] w0
+Compiler : valueS : fun [Attribute] w0
+Compiler : Attribute : struct (2)
+Compiler : nameS : fun [Element] w0
+Compiler : attribute : fun [Element] w0
+Compiler : content : fun [Element] w0
+Compiler : Element : struct (3)
+Compiler : ContentElement : fun [Element] Content
+Compiler : ContentText : fun [S] Content
+Compiler : Content : constructor
+Compiler : inXml : fun [XmlResponse] w0
+Compiler : EndStrS : fun [XmlResponse] w0
+Compiler : XmlResponse : struct (2)
+Compiler : ListAttributes : fun [AttributeResponse] w0
+Compiler : toAnalyseS : fun [AttributeResponse] w0
+Compiler : AttributeResponse : struct (2)
+Compiler : BuildAttributes : fun [S] AttributeResponse
+Compiler : ReverseElements : fun [list u0] list u0
+Compiler : ParseXML : fun [S] XmlResponse
+Compiler : ParseXMLPacket : fun [S] XmlResponse
+Compiler : Xml_FindFirstElementNamed : fun [Element S] Element
+Compiler : Xmp_GetTextContent : fun [Element] S
+Compiler : Xml_GetElementAttribute : fun [Element S] S
+Compiler : proto XMLPrintContent : fun [w0 w1] w2
+Compiler : XMLPrintElement : fun [Element I] list Content
+Compiler : XMLPrintContent : fun [Content I] S
+Compiler : proto confGetWifissid : fun [] w0
+Compiler : proto confGetWificrypt : fun [] w0
+Compiler : proto confGetWifikey0 : fun [] w0
+Compiler : proto confGetWifiauth : fun [] w0
+Compiler : proto confGetWifipmk : fun [] w0
+Compiler : proto confGetDhcp : fun [] w0
+Compiler : proto confGetNetip : fun [] w0
+Compiler : proto confGetNetmask : fun [] w0
+Compiler : proto confGetNetgateway : fun [] w0
+Compiler : proto confGetNetdns : fun [] w0
+Compiler : proto confGetServerUrl : fun [] w0
+Compiler : proto confGetLogin : fun [] w0
+Compiler : proto confGetPwd : fun [] w0
+Compiler : proto confGetProxy : fun [] w0
+Compiler : proto confGetProxyip : fun [] w0
+Compiler : proto confGetProxyport : fun [] w0
+Compiler : const CONF_SERVERURL : I
+Compiler : const CONF_NETDHCP : I
+Compiler : const CONF_NETIP : I
+Compiler : const CONF_NETMASK : I
+Compiler : const CONF_NETGATEWAY : I
+Compiler : const CONF_NETDNS : I
+Compiler : const CONF_WIFISSID : I
+Compiler : const CONF_WIFIAUTH : I
+Compiler : const CONF_WIFICRYPT : I
+Compiler : const CONF_WIFIKEY0 : I
+Compiler : const CONF_PROXYENABLE : I
+Compiler : const CONF_PROXYIP : I
+Compiler : const CONF_PROXYPORT : I
+Compiler : const CONF_LOGIN : I
+Compiler : const CONF_PWD : I
+Compiler : const CONF_WIFIPMK : I
+Compiler : const CONF_MAGIC : I
+Compiler : const CONF_LENGTH : I
+Compiler : var conf : w0
+Compiler : confSave : fun [] I
+Compiler : confInit : fun [] S
+Compiler : confGet : fun [I I] S
+Compiler : confGetbin : fun [I I] S
+Compiler : confGetstr : fun [I I] S
+Compiler : confSet : fun [I S I] S
+Compiler : confSetbin : fun [I S I] S
+Compiler : confSetstr : fun [I S I] S
+Compiler : webport : fun [S] I
+Compiler : confGetWifissid : fun [] S
+Compiler : confGetWificrypt : fun [] I
+Compiler : confGetWifikey0 : fun [] S
+Compiler : confGetWifiauth : fun [] I
+Compiler : confGetWifipmk : fun [] S
+Compiler : confGetDhcp : fun [] I
+Compiler : confGetNetip : fun [] S
+Compiler : confGetNetmask : fun [] S
+Compiler : confGetNetgateway : fun [] S
+Compiler : confGetNetdns : fun [] S
+Compiler : confGetServerUrl : fun [] S
+Compiler : confGetLogin : fun [] S
+Compiler : confGetPwd : fun [] S
+Compiler : confGetProxy : fun [] I
+Compiler : confGetProxyip : fun [] S
+Compiler : confGetProxyport : fun [] I
+Compiler : proto resetarp : fun [] w0
+Compiler : proto cbnetarp : fun [w0 w1] w2
+Compiler : proto arptime : fun [] w0
+Compiler : proto arpreq : fun [w0 w1] w2
+Compiler : const ARPREQ : I
+Compiler : const ARPANS : I
+Compiler : var larp : w0
+Compiler : var larpreq : w0
+Compiler : mkarp : fun [I u0 S S] S
+Compiler : sendarp : fun [S] I
+Compiler : filterarpip : fun [list [S u0 u1] S] list [S u0 u1]
+Compiler : checkarp : fun [list [S u0 fun [S] u1] S] u2
+Compiler : cbnetarp : fun [S S] I
+Compiler : subnet_ : fun [S I] I
+Compiler : subnet : fun [S] I
+Compiler : arpreq : fun [S fun [S] I] I
+Compiler : filterarp : fun [list [S I u0] I] list [S I u0]
+Compiler : arptime : fun [] list [S I fun [S] I]
+Compiler : resetarp : fun [] I
+Compiler : proto cbnetudp : fun [w0 w1] w2
+Compiler : proto resetudp : fun [] w0
+Compiler : proto udpsend : fun [w0 w1 w2 w3 w4 w5] w6
+Compiler : proto regudp : fun [w0 w1] w2
+Compiler : mkudp : fun [S S I I S] S
+Compiler : udpSend2 : fun [S S] I
+Compiler : udpsend : fun [S I S I S S] I
+Compiler : var ludp : w0
+Compiler : remudp : fun [list [u0 u1] u0] list [u0 u1]
+Compiler : regudp : fun [w0 w1] list [w0 w1]
+Compiler : unregudp : fun [w0] list [w0 w1]
+Compiler : resetudp : fun [] list [w0 w1]
+Compiler : cbnetudp : fun [S w0] w1
+Compiler : proto cbnettcp : fun [w0 w1] w2
+Compiler : proto opentcp : fun [w0 w1 w2 w3 w4] w5
+Compiler : proto writetcp : fun [w0 w1 w2] w3
+Compiler : proto closetcp : fun [w0] w1
+Compiler : proto tcptime : fun [] w0
+Compiler : proto resettcp : fun [] w0
+Compiler : const TFIN : I
+Compiler : const TSYN : I
+Compiler : const TRST : I
+Compiler : const TPUSH : I
+Compiler : const TACK : I
+Compiler : const TURGE : I
+Compiler : const STOFF : I
+Compiler : const STSYN : I
+Compiler : const STEST : I
+Compiler : const STLISTEN : I
+Compiler : const STFIN : I
+Compiler : const CLIENT_SEQ_START : S
+Compiler : const CLIENT_SEQ_NULL : S
+Compiler : const TCPWRITE : I
+Compiler : const TCPREAD : I
+Compiler : const TCPCLOSE : I
+Compiler : const TCPSTART : I
+Compiler : const TCPMAX : I
+Compiler : Tcpw : fun [u0] u1
+Compiler : stateT : fun [Tcp] w0
+Compiler : locT : fun [Tcp] w0
+Compiler : dstT : fun [Tcp] w0
+Compiler : locpT : fun [Tcp] w0
+Compiler : dstpT : fun [Tcp] w0
+Compiler : seqT : fun [Tcp] w0
+Compiler : ackT : fun [Tcp] w0
+Compiler : cbT : fun [Tcp] w0
+Compiler : macT : fun [Tcp] w0
+Compiler : lastsentT : fun [Tcp] w0
+Compiler : retryT : fun [Tcp] w0
+Compiler : locksendT : fun [Tcp] w0
+Compiler : enableT : fun [Tcp] w0
+Compiler : Tcp : struct (13)
+Compiler : mktcp : fun [Tcp I S] S
+Compiler : resendtcp : fun [Tcp] I
+Compiler : headerlen : fun [S] I
+Compiler : datalength : fun [S] I
+Compiler : sendtcp : fun [Tcp S] I
+Compiler : sendtcpforretry : fun [Tcp S] I
+Compiler : tcpSend2 : fun [S Tcp S] I
+Compiler : var ltcp : w0
+Compiler : remtcp : fun [Tcp] list Tcp
+Compiler : var counttcp : w0
+Compiler : opentcp : fun [S I S I w0] Tcp
+Compiler : listentcp : fun [I w0] list Tcp
+Compiler : findtcp : fun [list Tcp I I S] Tcp
+Compiler : sendclose : fun [Tcp] I
+Compiler : cbnettcp : fun [S S] w0
+Compiler : writetcp : fun [Tcp S I] I
+Compiler : closetcp : fun [Tcp] I
+Compiler : tcpcb : fun [Tcp fun [Tcp I S] w0] fun [Tcp I S] w0
+Compiler : enabletcp : fun [Tcp I] I
+Compiler : enabledtcpP : fun [Tcp] I
+Compiler : tcptime : fun [] I
+Compiler : resettcp : fun [] I
+Compiler : proto startdhcp : fun [] w0
+Compiler : proto startdhcpserver : fun [] w0
+Compiler : proto startdnsclient : fun [] w0
+Compiler : proto dnstime : fun [] w0
+Compiler : const DHCP_DISCOVER : I
+Compiler : const DHCP_OFFER : I
+Compiler : const DHCP_REQUEST : I
+Compiler : const DHCP_DECLINE : I
+Compiler : const DHCP_ACK : I
+Compiler : const DHCP_NACK : I
+Compiler : var dhcp_client_started : I
+Compiler : var dhcp_lease_len : I
+Compiler : var dhcp_lease_start : I
+Compiler : var dhcp_infinite_lease : I
+Compiler : var dhcp_lease_t1 : I
+Compiler : Dhcpw : fun [S] S
+Compiler : updatedhcpleasetimes : fun [I] I
+Compiler : mkdhcp : fun [I S S S] S
+Compiler : mkdhcpans : fun [I S S S] S
+Compiler : extractdhcp_helper_dnslist : fun [S I I] list S
+Compiler : extractdhcp : fun [S I I I S list S S S] [I I S list S S S]
+Compiler : mkdhcpip : fun [S] S
+Compiler : cbnetdhcp : fun [S S S] u0
+Compiler : cbnetdhcp67 : fun [S S u0] u1
+Compiler : checkdhcp : fun [I] I
+Compiler : startdhcp : fun [] I
+Compiler : startdhcpserver : fun [] I
+Compiler : const MDNSR_IP : S
+Compiler : const MDNSR_PORT : I
+Compiler : const MDNSR_MAC : S
+Compiler : mdnsr_islocal : fun [S] I
+Compiler : SrvPriority : fun [SrvAnswer] w0
+Compiler : SrvWeight : fun [SrvAnswer] w0
+Compiler : SrvPort : fun [SrvAnswer] w0
+Compiler : SrvTargetS : fun [SrvAnswer] w0
+Compiler : SrvAnswer : struct (4)
+Compiler : var SrvAnswerL : w0
+Compiler : const DNSLOCAL : I
+Compiler : Dnsw : fun [S] S
+Compiler : parsequ : fun [S I] I
+Compiler : parsequs : fun [S I I] I
+Compiler : skipname : fun [S I] I
+Compiler : parseans : fun [S I I] [S I]
+Compiler : parsemsg : fun [S] [S I]
+Compiler : filterdns : fun [S] S
+Compiler : question : fun [I S] S
+Compiler : var dnsid : I
+Compiler : idD : fun [Dns] w0
+Compiler : domainD : fun [Dns] w0
+Compiler : reqD : fun [Dns] w0
+Compiler : timeoutD : fun [Dns] w0
+Compiler : cbD : fun [Dns] w0
+Compiler : idxDnsD : fun [Dns] w0
+Compiler : Dns : struct (6)
+Compiler : var ldnsreq : w0
+Compiler : var ldns : w0
+Compiler : dnsremoveipfromcacheR : fun [list [u0 u1] u0] list [u0 u1]
+Compiler : dnsremoveipfromcache : fun [S] list [S w0]
+Compiler : dnsreq : fun [S fun [S] w0] I
+Compiler : dnsHasAnotherServer : fun [Dns] I
+Compiler : dnsChangeIdInTrame : fun [S I] S
+Compiler : dnsAskNextServer : fun [Dns] u0
+Compiler : selectbyid : fun [Dns I] I
+Compiler : cbnetdns : fun [S u0 u1] I
+Compiler : filterdnsdead : fun [list Dns] list Dns
+Compiler : dnstime : fun [] I
+Compiler : startdnsclient : fun [] I
+Compiler : isip : fun [S I] I
+Compiler : DnsSrvCb2 : fun [u0 [u1 fun [u0 u1] u2]] u2
+Compiler : DnsSrvCb : fun [u0 fun [S I] I] I
+Compiler : DnsSrv : fun [S fun [S I] I] I
+Compiler : removedns_r : fun [S list S] list S
+Compiler : addnewdns_r : fun [S list S I] list S
+Compiler : addnewdns : fun [S I] list S
+Compiler : addnewdnslist : fun [list S] list S
+Compiler : dnslisttostr_r : fun [list S] list S
+Compiler : dnslisttostr : fun [] S
+Compiler : dnslistfromdhcp : fun [list S] list S
+Compiler : proto netstart : fun [] w0
+Compiler : proto nettime : fun [] w0
+Compiler : proto netSend2 : fun [w0 w1] w2
+Compiler : net : fun [S S] I
+Compiler : netstart : fun [] I
+Compiler : nettime : fun [] I
+Compiler : netSend2 : fun [S S] I
+Compiler : const HTTP_NORMAL : I
+Compiler : const HTTP_STREAM : I
+Compiler : const HTTP_DIRECT : I
+Compiler : const HTTP_SOLVE : I
+Compiler : const HTTP_REACH : I
+Compiler : const HTTP_CONNECTED : I
+Compiler : var lasthttpevent : w0
+Compiler : cnxH : fun [Httpreq] w0
+Compiler : inputH : fun [Httpreq] w0
+Compiler : outputH : fun [Httpreq] w0
+Compiler : indexH : fun [Httpreq] w0
+Compiler : cbH : fun [Httpreq] w0
+Compiler : typeH : fun [Httpreq] w0
+Compiler : stateH : fun [Httpreq] w0
+Compiler : aliveH : fun [Httpreq] w0
+Compiler : sonH : fun [Httpreq] w0
+Compiler : redirLevelH : fun [Httpreq] w0
+Compiler : Httpreq : struct (10)
+Compiler : proto httprequest : fun [w0 w1 w2 w3 w4] w5
+Compiler : proto httpabort : fun [w0] w1
+Compiler : httpgetcode : fun [S] I
+Compiler : httphandletmpredirect : fun [u0 Httpreq] u1
+Compiler : httptcpread : fun [Tcp S Httpreq] w0
+Compiler : httptcpwrite : fun [Tcp Httpreq] w0
+Compiler : const http_prefurl : S
+Compiler : cuturl : fun [S] [S I S]
+Compiler : _httptcpevent : fun [Tcp I S Httpreq] I
+Compiler : httpsendreq : fun [S [I Httpreq]] I
+Compiler : httprequest : fun [S S S fun [Httpreq S] w0 I] Httpreq
+Compiler : httpabort : fun [Httpreq] I
+Compiler : httpenable : fun [Httpreq I] I
+Compiler : httpenabledP : fun [Httpreq] I
+Compiler : httpstate : fun [Httpreq] I
+Compiler : httpinactive : fun [Httpreq] I
+Compiler : const http_sep : S
+Compiler : httpgetheader : fun [S] S
+Compiler : httpgetcontent : fun [S] S
+Compiler : configstartRun : fun [] Run
+Compiler : configwaitRun : fun [w0] Run
+Compiler : interactiveReqWaitRun : fun [w0] Run
+Compiler : rscLoadNextRun : fun [] Run
+Compiler : rscLoadWaitRun : fun [w0] Run
+Compiler : chorCmdRun : fun [w0] Run
+Compiler : streamCmdRun : fun [w0] Run
+Compiler : waitCmdRun : fun [w0] Run
+Compiler : cmdEvalOne : fun [w0] Run
+Compiler : idleRun : fun [] Run
+Compiler : sleepRun : fun [] Run
+Compiler : recordRun : fun [] Run
+Compiler : earResetWaitRun : fun [w0] Run
+Compiler : recordStartRun : fun [] Run
+Compiler : xmppLoginRun : fun [] Run
+Compiler : xmppReconnectRun : fun [w0] Run
+Compiler : Run : constructor
+Compiler : var run : w0
+Compiler : runToStr : fun [Run] S
+Compiler : const XMPP_PASSWORD_CHECK : I
+Compiler : const XMPP_PASSWORD_LENGTH : I
+Compiler : GetXmppPassword : fun [] S
+Compiler : GenXmppPassword : fun [] S
+Compiler : SetXmppPassword : fun [S] I
+Compiler : ResetXmppPassword : fun [] I
+Compiler : var NOWREGISTER : I
+Compiler : proto boshurl : fun [w0] w1
+Compiler : proto earInit : fun [] w0
+Compiler : proto sendmailxmppurl : fun [w0 w1] w2
+Compiler : const XmppTcpIdleTime : I
+Compiler : var XmppGlobalSession : w0
+Compiler : var XmppServerPort : I
+Compiler : const XmppVioletPlatformComponent : S
+Compiler : const XmppVioletObjectsComponent : S
+Compiler : const XmppVioletAppletComponent : S
+Compiler : const XmppVioletPlatformClient : S
+Compiler : const TcpServerNoResponseTimeOut : I
+Compiler : const XmppTcpOpenStream1 : S
+Compiler : const XmppTcpOpenStream2 : S
+Compiler : var XmppTcpCloseStream : S
+Compiler : const XmppBoshHttpTimeOut : I
+Compiler : const XmppPingDelay : I
+Compiler : const XmppPingMaxReponseDelay : I
+Compiler : const XmppBoshEncapsulation1 : S
+Compiler : const XmppBoshEncapsulation2 : S
+Compiler : const XmppBoshEncapsulation3 : S
+Compiler : const XmppBoshEncapsulation4 : S
+Compiler : const XmppBoshOpenStream1 : S
+Compiler : const XmppBoshOpenStream2 : S
+Compiler : const XmppBoshOpenStream3 : S
+Compiler : const XmppBoshOpenStream4 : S
+Compiler : const XmppBoshReOpenStream1 : S
+Compiler : const XmppBoshReOpenStream2 : S
+Compiler : const XmppBoshReOpenStream3 : S
+Compiler : const XmppBoshReOpenStream4 : S
+Compiler : var SendTry : I
+Compiler : const XmppSessionReadTimeout : I
+Compiler : proto XmppSessionStart : fun [w0 w1] w2
+Compiler : proto XmppSessionStop : fun [w0] w1
+Compiler : proto XmppSessionIdle : fun [] w0
+Compiler : proto XmppSessionRun : fun [] w0
+Compiler : proto XmppSessionSend : fun [w0 w1] w2
+Compiler : proto XmppSessionResponseSend : fun [w0 w1] w2
+Compiler : proto XmppSessionResponseSendErrorFeatureNotImplemented : fun [w0 w1 w2] w3
+Compiler : proto XmppSessionRead : fun [w0 w1] w2
+Compiler : proto XmppSessionSendButtonMsg : fun [w0 w1 w2] w3
+Compiler : proto XmppSessionSendEarMsg : fun [w0 w1] w2
+Compiler : proto XmppSessionRequestResource : fun [w0] w1
+Compiler : proto XmppSessionUnreachable : fun [w0] w1
+Compiler : proto XmppSessionIsDisconnected : fun [w0] w1
+Compiler : proto XmppSessionProcess : fun [w0 w1] w2
+Compiler : proto XmppSessionProcessR : fun [w0 w1 w2] w3
+Compiler : proto XmppSessionUpdate : fun [w0] w1
+Compiler : ssRegister1 : fun [] tXmppSessionStreamState
+Compiler : ssRegister2 : fun [] tXmppSessionStreamState
+Compiler : ssBind : fun [] tXmppSessionStreamState
+Compiler : ssUnBind : fun [] tXmppSessionStreamState
+Compiler : ssStartSession : fun [] tXmppSessionStreamState
+Compiler : ssGetSource : fun [] tXmppSessionStreamState
+Compiler : ssFree : fun [] tXmppSessionStreamState
+Compiler : ssLogging : fun [] tXmppSessionStreamState
+Compiler : ssPresence : fun [] tXmppSessionStreamState
+Compiler : tXmppSessionStreamState : constructor
+Compiler : stanzaIQGet : fun [] tXmppSessionStanzaTypes
+Compiler : stanzaIQSet : fun [] tXmppSessionStanzaTypes
+Compiler : stanzaIQResult : fun [w0] tXmppSessionStanzaTypes
+Compiler : stanzaMessage : fun [] tXmppSessionStanzaTypes
+Compiler : stanzaPresence : fun [] tXmppSessionStanzaTypes
+Compiler : stanzaIQError : fun [w0] tXmppSessionStanzaTypes
+Compiler : tXmppSessionStanzaTypes : constructor
+Compiler : clINT : fun [tXmmpSessionClient] w0
+Compiler : clASR : fun [tXmmpSessionClient] w0
+Compiler : clPPT : fun [tXmmpSessionClient] w0
+Compiler : clRFID : fun [tXmmpSessionClient] w0
+Compiler : clITMODE : fun [tXmmpSessionClient] w0
+Compiler : clSOURCES : fun [tXmmpSessionClient] w0
+Compiler : tXmmpSessionClient : struct (6)
+Compiler : sOpening : fun [] tXmppSession_Status
+Compiler : sLogging : fun [] tXmppSession_Status
+Compiler : sLoggedin : fun [] tXmppSession_Status
+Compiler : sOpened : fun [] tXmppSession_Status
+Compiler : sClosed : fun [] tXmppSession_Status
+Compiler : sRegistrationError : fun [] tXmppSession_Status
+Compiler : tXmppSession_Status : constructor
+Compiler : sGate : fun [tXmppSession] w0
+Compiler : sStatus : fun [tXmppSession] w0
+Compiler : sNonce : fun [tXmppSession] w0
+Compiler : sCnonce : fun [tXmppSession] w0
+Compiler : sRealm : fun [tXmppSession] w0
+Compiler : sUsername : fun [tXmppSession] w0
+Compiler : sPassword : fun [tXmppSession] w0
+Compiler : sQop : fun [tXmppSession] w0
+Compiler : sAlgo : fun [tXmppSession] w0
+Compiler : sCharset : fun [tXmppSession] w0
+Compiler : sDomain : fun [tXmppSession] w0
+Compiler : sJID : fun [tXmppSession] w0
+Compiler : sPreviousResource : fun [tXmppSession] w0
+Compiler : sNextResource : fun [tXmppSession] w0
+Compiler : sNextResourceBinding : fun [tXmppSession] w0
+Compiler : sResource : fun [tXmppSession] w0
+Compiler : sState : fun [tXmppSession] w0
+Compiler : sInQueue : fun [tXmppSession] w0
+Compiler : sOutQueue : fun [tXmppSession] w0
+Compiler : sStanzaID : fun [tXmppSession] w0
+Compiler : sClients : fun [tXmppSession] w0
+Compiler : sDisplayLeds : fun [tXmppSession] w0
+Compiler : sLastIOTime : fun [tXmppSession] w0
+Compiler : sLastReadTime : fun [tXmppSession] w0
+Compiler : sLastStreamState : fun [tXmppSession] w0
+Compiler : sNextRestart : fun [tXmppSession] w0
+Compiler : sPacketQueue : fun [tXmppSession] w0
+Compiler : sDataToSend : fun [tXmppSession] w0
+Compiler : sLastPingTime : fun [tXmppSession] w0
+Compiler : sLastPingIqId : fun [tXmppSession] w0
+Compiler : tXmppSession : struct (30)
+Compiler : proto XmppGateConnect : fun [w0] w1
+Compiler : proto XmppGateSend : fun [w0 w1] w2
+Compiler : proto XmppGateRead : fun [w0 w1] w2
+Compiler : proto XmppGateIdle : fun [w0] w1
+Compiler : proto XmppGateOpenStream : fun [w0] w1
+Compiler : proto XmppGateStreamOpened : fun [w0] w1
+Compiler : proto XmppGateStreamClosed : fun [w0 w1] w2
+Compiler : pTcp : fun [] tXmppGate_Mode
+Compiler : pBosh : fun [] tXmppGate_Mode
+Compiler : tXmppGate_Mode : constructor
+Compiler : pOpening : fun [] tXmppGate_Status
+Compiler : pOpen : fun [] tXmppGate_Status
+Compiler : pInStream : fun [] tXmppGate_Status
+Compiler : pClosing : fun [] tXmppGate_Status
+Compiler : pClose : fun [] tXmppGate_Status
+Compiler : tXmppGate_Status : constructor
+Compiler : pParent : fun [tXmppGate] w0
+Compiler : pMode : fun [tXmppGate] w0
+Compiler : pStatus : fun [tXmppGate] w0
+Compiler : pTry : fun [tXmppGate] w0
+Compiler : pTcpV : fun [tXmppGate] w0
+Compiler : pBoshV : fun [tXmppGate] w0
+Compiler : pBuffer : fun [tXmppGate] w0
+Compiler : pSId : fun [tXmppGate] w0
+Compiler : pActualMode : fun [tXmppGate] w0
+Compiler : tXmppGate : struct (9)
+Compiler : proto XmppTcpOpen : fun [w0 w1 w2] w3
+Compiler : proto XmppTcpSend : fun [w0 w1] w2
+Compiler : proto XmppTcpRead : fun [w0 w1 w2 w3] w4
+Compiler : proto XmppTcpIdle : fun [w0] w1
+Compiler : proto XmppTcpOpenStream : fun [w0] w1
+Compiler : xParent : fun [tXmppTcp] w0
+Compiler : xSocket : fun [tXmppTcp] w0
+Compiler : xHost : fun [tXmppTcp] w0
+Compiler : xPort : fun [tXmppTcp] w0
+Compiler : tXmppTcp : struct (4)
+Compiler : proto XmppBoshSend : fun [w0 w1] w2
+Compiler : proto XmppBoshRead : fun [w0 w1 w2] w3
+Compiler : proto XmppBoshIdle : fun [w0] w1
+Compiler : proto XmppBoshOpenStream : fun [w0] w1
+Compiler : proto XmppBoshReOpenStream : fun [w0] w1
+Compiler : proto XmppBoshSetUp : fun [w0 w1] w2
+Compiler : yParent : fun [tXmppTcp] w0
+Compiler : yHttpList : fun [tXmppTcp] w0
+Compiler : yMsgId : fun [tXmppTcp] w0
+Compiler : yServerIp : fun [tXmppTcp] w0
+Compiler : yMaxRequest : fun [tXmppTcp] w0
+Compiler : tXmppTcp : struct (5)
+Compiler : proto xmpps_JIDNode : fun [w0] w1
+Compiler : proto xmpps_JIDResource : fun [w0] w1
+Compiler : proto xmpps_JIDPlatform : fun [w0] w1
+Compiler : proto xmpps_PlatformJID : fun [w0 w1] w2
+Compiler : proto xmpps_ServerJID : fun [w0] w1
+Compiler : proto xmpps_OurJID : fun [w0] w1
+Compiler : proto xmpps_BindJID : fun [w0 w1] w2
+Compiler : proto xmppStateToStr : fun [w0] w1
+Compiler : proto xmpps_createStanza : fun [w0 w1 w2 w3 w4] w5
+Compiler : XmppTcpOpen : fun [S I tXmppSession] I
+Compiler : XmppTcpReOpen : fun [S I tXmppSession] I
+Compiler : XmppTcpActuallySendData : fun [tXmppSession] I
+Compiler : XmppTcpSend : fun [tXmppSession S] I
+Compiler : XmppTcpRead : fun [Tcp I S tXmppSession] I
+Compiler : XmppTcpIdle : fun [tXmppSession] I
+Compiler : XmppTcpOpenStream : fun [tXmppSession] I
+Compiler : XmppBoshSend : fun [tXmppSession S] I
+Compiler : XmppBoshRead : fun [Httpreq S tXmppSession] I
+Compiler : XmppBoshOpenStream : fun [tXmppSession] I
+Compiler : XmppBoshReOpenStream : fun [tXmppSession] I
+Compiler : XmppBoshSetUp : fun [w0 tXmppSession] I
+Compiler : XmppBoshIdle : fun [tXmppSession] I
+Compiler : XmppGateInfo : fun [tXmppSession] S
+Compiler : XmppGateReconnect : fun [tXmppSession w0] I
+Compiler : XmppGateConnect : fun [tXmppSession] I
+Compiler : XmppGateOpenStream : fun [tXmppSession] I
+Compiler : XmppGateReOpenStream : fun [tXmppSession] I
+Compiler : XmppGateStreamOpened : fun [tXmppSession] I
+Compiler : XmppGateStreamClosed : fun [tXmppSession tXmppGate_Mode] I
+Compiler : XmppGateSend : fun [tXmppSession S] I
+Compiler : XmppGateIdle : fun [tXmppSession] I
+Compiler : XmppGateHandlePingPackets : fun [tXmppSession Content] I
+Compiler : XmppGateRead : fun [tXmppSession Content] I
+Compiler : XmppGateClear : fun [tXmppSession] u0
+Compiler : _Sasl_challengeStr2List : fun [S list S] list S
+Compiler : Sasl_challengeStr2List : fun [S] list S
+Compiler : SechoListWithSlash : fun [list S] S
+Compiler : const gSasl_RandomStringChars : S
+Compiler : Sasl_randomString : fun [I] S
+Compiler : Sasl_response_value : fun [tXmppSession S] S
+Compiler : Sasl_processChallenge : fun [tXmppSession S] S
+Compiler : xmpps_JIDNode : fun [S] S
+Compiler : xmpps_JIDResource : fun [S] S
+Compiler : xmpps_JIDPlatform : fun [S] S
+Compiler : xmpps_PlatformJID : fun [w0 S] S
+Compiler : xmpps_ServerJID : fun [tXmppSession] S
+Compiler : xmpps_OurJID : fun [tXmppSession] S
+Compiler : xmpps_BindJID : fun [tXmppSession S] S
+Compiler : xmpps_getNextStanzaId : fun [tXmppSession] S
+Compiler : xmpps_createStanza : fun [tXmppSession S S tXmppSessionStanzaTypes S] S
+Compiler : XmppCreateBindIQ : fun [tXmppSession S] S
+Compiler : XmppCreateXmlPacket : fun [tXmppSession S S tXmppSessionStanzaTypes S S] S
+Compiler : xmpps_sendStanza : fun [tXmppSession tXmppSessionStreamState S w0 S] list [tXmppSessionStreamState S w0 S]
+Compiler : XmppSessionStart : fun [S I] tXmppSession
+Compiler : XmppSessionStop : fun [tXmppSession] I
+Compiler : XmppSessionSend : fun [tXmppSession [tXmppSession S S w0 S w1]] I
+Compiler : XmppSessionResponseSend : fun [tXmppSession S] I
+Compiler : XmppSessionResponseSendErrorFeatureNotImplemented : fun [tXmppSession S S] I
+Compiler : XmppSessionSendButtonMsg : fun [I I I] I
+Compiler : XmppSessionSendEarMsg : fun [I I] I
+Compiler : XmppSessionRequestResource : fun [S] I
+Compiler : XmppSessionRunR : fun [tXmppSession list [tXmppSessionStreamState [tXmppSession S S tXmppSessionStanzaTypes S S]]] S
+Compiler : sendPkts : fun [list [tXmppSessionStreamState [tXmppSession S S tXmppSessionStanzaTypes S S]] tXmppSessionStreamState] [list [tXmppSessionStreamState [tXmppSession S S tXmppSessionStanzaTypes S S]] S]
+Compiler : XmppSessionRun : fun [] I
+Compiler : var lastIdle : I
+Compiler : var tmpi : I
+Compiler : XmppSessionIdle : fun [] I
+Compiler : XmppSessionUnreachable : fun [I] I
+Compiler : XmppSessionSetStatus : fun [tXmppSession tXmppSession_Status] I
+Compiler : proto stopEverythingAndResetToIdle : fun [] w0
+Compiler : const XMPP_MAX_NB_SECS_BEFORE_TRYING_TO_RECONNECT : I
+Compiler : XmppSessionIsDisconnected : fun [tXmppSession] I
+Compiler : XmppSessionUpdate : fun [tXmppSession] I
+Compiler : XmppSessionRead : fun [tXmppSession Content] I
+Compiler : XmppGetRsc : fun [tXmppSession] S
+Compiler : XmppSessionProcessR : fun [tXmppSession list Content list Content] [tXmppSessionStreamState S]
+Compiler : proto XmppSessionProcessHandleStanzaIq : fun [w0 w1] w2
+Compiler : XmppSessionProcess : fun [tXmppSession Content] [tXmppSessionStreamState S]
+Compiler : proto XmppSessionProcessHandleStanzaIqSet : fun [w0 w1] w2
+Compiler : proto XmppSessionProcessHandleStanzaIqGet : fun [w0 w1] w2
+Compiler : proto XmppSessionProcessHandleStanzaIqError : fun [w0] w1
+Compiler : xmppStateToStr : fun [tXmppSessionStreamState] S
+Compiler : XmppSessionProcessHandleStanzaIq : fun [tXmppSession Element] [tXmppSessionStreamState S]
+Compiler : XmppSessionProcessHandleStanzaIqSet : fun [tXmppSession Element] [I S [tXmppSessionStreamState S]]
+Compiler : XmppSessionProcessHandleStanzaIqGet : fun [tXmppSession Element] [I S [tXmppSessionStreamState S]]
+Compiler : XmppSessionProcessHandleStanzaIqError : fun [S] [I S [tXmppSessionStreamState S]]
+Compiler : var lrec : w0
+Compiler : var recording : I
+Compiler : sqrt_ : fun [I I I] I
+Compiler : sqrt : fun [I] I
+Compiler : var buff : w0
+Compiler : var buffx : w0
+Compiler : var buffy : w0
+Compiler : cbrec : fun [S] I
+Compiler : itobin4 : fun [I] S
+Compiler : liststrlen : fun [list S I] I
+Compiler : mkriff : fun [list S] list S
+Compiler : recstart : fun [] I
+Compiler : recstop : fun [] I
+Compiler : recriff : fun [] list S
+Compiler : const MDNS_IP : S
+Compiler : const MDNS_PORT : I
+Compiler : const MDNS_MAC : S
+Compiler : var mdns_pkt : w0
+Compiler : var mdns_last : I
+Compiler : mdns_build_pkt : fun [] S
+Compiler : mdns_announce : fun [] I
+Compiler : mdns_tick : fun [I] I
+Compiler : getbinary_fw : fun [S S I I I] u0
+Compiler : parsefirm_fw : fun [S] S
+Compiler : parsesig_fw : fun [S] S
+Compiler : hx_fw : fun [I] I
+Compiler : hex8_fw : fun [I] S
+Compiler : var g_ota_url : w0
+Compiler : ota_quiet : fun [u0 u1] I
+Compiler : ota_fail_report : fun [I] Httpreq
+Compiler : ota_cb : fun [u0 S] I
+Compiler : flashFromUrl : fun [S] Httpreq
+Compiler : var g_stream_on : I
+Compiler : var g_stream_ip : w0
+Compiler : var g_stream_port : I
+Compiler : var g_stream_mac : w0
+Compiler : _streamsend : fun [S] I
+Compiler : cbrecstream : fun [S] I
+Compiler : _cbstreammac : fun [S] I
+Compiler : startmicstream : fun [S I] I
+Compiler : stopmicstream : fun [] I
+Compiler : const WAV_IDLE : I
+Compiler : const WAV_RUN : I
+Compiler : const WAV_EOF : I
+Compiler : const WAV_BUFFER_STARTSIZE : I
+Compiler : const WAV_BUFFER_MAXSIZE : I
+Compiler : const WAV_END_TIMEOUT : I
+Compiler : const WAV_NET_TIMEOUT : I
+Compiler : var wav_end_timeout : w0
+Compiler : var wav_http_cb : w0
+Compiler : var wav_state : I
+Compiler : var wav_http : w0
+Compiler : var wav_fifo : w0
+Compiler : var wav_buffering : I
+Compiler : var wav_buffering_since : I
+Compiler : var wav_index : w0
+Compiler : var wav_lasttime : w0
+Compiler : var wav_lastnet : w0
+Compiler : var wav_zeros : w0
+Compiler : var wav_curplayedbytes : I
+Compiler : var lastvol : w0
+Compiler : var forcedvol : I
+Compiler : volfrombutton : fun [I] I
+Compiler : Audiowln : fun [u0] u1
+Compiler : Audiow : fun [u0] u1
+Compiler : updatevol : fun [] I
+Compiler : forcevol : fun [I] I
+Compiler : unforcevol : fun [] I
+Compiler : wavgetzeros : fun [] S
+Compiler : wavstop : fun [] I
+Compiler : wavrunning : fun [] I
+Compiler : _wavplaycb : fun [u0] I
+Compiler : _wavstartnow : fun [] I
+Compiler : wavstartlocalEx : fun [list S I] I
+Compiler : wavstartlocal : fun [list S] I
+Compiler : _wavcbhttp : fun [Httpreq S] I
+Compiler : wavstarthttp : fun [S w0] Httpreq
+Compiler : wavtime : fun [] I
+Compiler : const EARSMODE_RESET : I
+Compiler : const EARSMODE_WAIT : I
+Compiler : const EARSMODE_WAITANDDETECT : I
+Compiler : const EARSMODE_DETECT : I
+Compiler : const EARS_HOLES : I
+Compiler : const EARS_TIMEOUT : I
+Compiler : const EARS_OFFZERO : I
+Compiler : Earsw : fun [u0] u1
+Compiler : numE : fun [Ear] w0
+Compiler : dirE : fun [Ear] w0
+Compiler : targetE : fun [Ear] w0
+Compiler : targetLoopE : fun [Ear] w0
+Compiler : posE : fun [Ear] w0
+Compiler : lvalE : fun [Ear] w0
+Compiler : ldelayE : fun [Ear] w0
+Compiler : ltimeE : fun [Ear] w0
+Compiler : countE : fun [Ear] w0
+Compiler : brokenE : fun [Ear] w0
+Compiler : Ear : struct (10)
+Compiler : var ears : w0
+Compiler : var earsmode : w0
+Compiler : var earslastmove : w0
+Compiler : var earslastmovetime : w0
+Compiler : var earsInited : I
+Compiler : var earevent : w0
+Compiler : var extleft : w0
+Compiler : var extright : w0
+Compiler : eargetevent : fun [] w0
+Compiler : earLoopCount : fun [I I] I
+Compiler : earCheck : fun [I] I
+Compiler : earMotorset : fun [Ear I] I
+Compiler : earStartReset : fun [] u0
+Compiler : earInit : fun [] I
+Compiler : earStartDetect : fun [] I
+Compiler : earDetectRun : fun [] I
+Compiler : earResetRun : fun [] I
+Compiler : earWaitRun : fun [] I
+Compiler : earRun : fun [] I
+Compiler : earResetting : fun [] I
+Compiler : earDetecting : fun [] I
+Compiler : earFinishedMoving : fun [] I
+Compiler : earSetWaitAndDetectMode : fun [] I
+Compiler : earSetWaitOnlyMode : fun [] I
+Compiler : earStop : fun [I] I
+Compiler : earTarget : fun [I] I
+Compiler : earGo : fun [I I I] I
+Compiler : earsGoToRefPos : fun [] I
+Compiler : var infodata : w0
+Compiler : var infosrc : w0
+Compiler : var infomessages : I
+Compiler : var infotaichi : I
+Compiler : infoInit : fun [] list [I tab [I tab I]]
+Compiler : const infoPalette : tab I
+Compiler : const bottomLedPalette : tab I
+Compiler : var infoStartTime : w0
+Compiler : var infoIndex : I
+Compiler : var infoType : w0
+Compiler : var infoVal : w0
+Compiler : var infoAnimColori : w0
+Compiler : var infoAnimColorStart : w0
+Compiler : var infoAnimColorDur : w0
+Compiler : const INFO_TIMEOUT : I
+Compiler : infoAnimationsOf : fun [I] tab [I tab I]
+Compiler : _infoNextIndex : fun [I] I
+Compiler : infoStartOne : fun [I] I
+Compiler : infoNext : fun [] I
+Compiler : _dumpinfosrc : fun [I] u0
+Compiler : dumpinfo : fun [] S
+Compiler : infoRun : fun [] I
+Compiler : __infosrc_update : fun [I I I] I
+Compiler : _infosrc_update : fun [I I] I
+Compiler : __infoslide : fun [I] I
+Compiler : __infosrc_del : fun [I I] I
+Compiler : _infosrc_del : fun [I] I
+Compiler : proto controlsound : fun [w0] w1
+Compiler : const midi_communion : S
+Compiler : newInfoUpdate : fun [S] S
+Compiler : infoUpdate : fun [S] I
+Compiler : var wifi : w0
+Compiler : var wifiscans : w0
+Compiler : initW : fun [] Wifi
+Compiler : gomasterW : fun [] Wifi
+Compiler : masterW : fun [] Wifi
+Compiler : gostationW : fun [w0] Wifi
+Compiler : dhcpW : fun [w0] Wifi
+Compiler : stationW : fun [] Wifi
+Compiler : reconnectW : fun [] Wifi
+Compiler : Wifi : constructor
+Compiler : const RT2501_S_BROKEN : I
+Compiler : const RT2501_S_IDLE : I
+Compiler : const RT2501_S_SCAN : I
+Compiler : const RT2501_S_CONNECTING : I
+Compiler : const RT2501_S_CONNECTED : I
+Compiler : const RT2501_S_MASTER : I
+Compiler : const IEEE80211_M_MANAGED : I
+Compiler : const IEEE80211_M_MASTER : I
+Compiler : var wifitry : w0
+Compiler : var master : I
+Compiler : proto envrestore : fun [w0] w1
+Compiler : _scanserialize : fun [list [S S S I I I I]] list S
+Compiler : scanserialize : fun [list [S S S I I I I]] list S
+Compiler : dumpscan : fun [list [S S S u0 u1 u2 u3]] list [S S S u0 u1 u2 u3]
+Compiler : ssidlen : fun [S I] I
+Compiler : scanunserialize : fun [S I I] list [S S S I I I I]
+Compiler : const IEEE80211_CRYPT_NONE : I
+Compiler : const IEEE80211_CRYPT_WEP64 : I
+Compiler : const IEEE80211_CRYPT_WEP128 : I
+Compiler : const IEEE80211_CRYPT_WPA : I
+Compiler : const IEEE80211_CRYPT_WPA_UNSUPPORTED : I
+Compiler : const IEEE80211_AUTH_OPEN : I
+Compiler : const IEEE80211_AUTH_SHARED : I
+Compiler : scancmpssid : fun [[S u0 u1 u2 u3 u4 u5] [S u6 u7 u8 u9 u10 u11]] I
+Compiler : wifiInit : fun [I] I
+Compiler : var laststate : w0
+Compiler : wifibyssid : fun [[S u0 u1 u2 u3 u4 u5] S] I
+Compiler : var retrytime : w0
+Compiler : _wifiwepkey : fun [S I I] list I
+Compiler : wifiwepkey : fun [S] S
+Compiler : wificrypttype : fun [I S] I
+Compiler : wifiAuth : fun [] I
+Compiler : wifiRun : fun [] I
+Compiler : wifiReady : fun [] I
+Compiler : wifiConnected : fun [] I
+Compiler : envrestore : fun [S] I
+Compiler : const tab_osc : tab I
+Compiler : osc : fun [I] I
+Compiler : var pingsrv : w0
+Compiler : var broadcasturl : w0
+Compiler : var recorddelay : I
+Compiler : var sources : w0
+Compiler : var gCurrentProgram : w0
+Compiler : var rsctoget : w0
+Compiler : var rscloaded : w0
+Compiler : var rsctmp : w0
+Compiler : var g_streaming_chor_enabled : I
+Compiler : var g_cookie : S
+Compiler : const MASK_BUTTON : I
+Compiler : const MASK_EAR_LEFT : I
+Compiler : const MASK_EAR_RIGHT : I
+Compiler : const MASK_RFID : I
+Compiler : var g_int_mask : I
+Compiler : var g_snd_btn_1 : S
+Compiler : var g_snd_btn_2 : S
+Compiler : var g_record_enabled : I
+Compiler : proto reset_IC : fun [] w0
+Compiler : proto _interactiveReqCBhttp : fun [w0 w1] w2
+Compiler : proto interactivePrgmDone : fun [] w0
+Compiler : proto interactiveSendUpload : fun [] w0
+Compiler : proto interactiveStop : fun [] w0
+Compiler : proto interactiveError : fun [] w0
+Compiler : proto interactiveResetEarsTouched : fun [] w0
+Compiler : var gCurAudioCmdIndex : I
+Compiler : var gCurStreamName : w0
+Compiler : const BROADCAST_KEYWORD : S
+Compiler : const SIGNCUTSIZE : I
+Compiler : const MSG_IDLE : I
+Compiler : const MSG_ASLEEP : I
+Compiler : const STREAMING_PING : I
+Compiler : const STD_NET_TIMEOUT : I
+Compiler : const LED_TIMEOUT : I
+Compiler : const CH_frame_duration : I
+Compiler : const CH_set_led_color : I
+Compiler : const CH_set_motor : I
+Compiler : const CH_set_leds_color : I
+Compiler : const CH_set_led_off : I
+Compiler : const CH_set_led_palette : I
+Compiler : const CH_randmidi : I
+Compiler : const CH_avance : I
+Compiler : const CH_ifne : I
+Compiler : const CH_attend : I
+Compiler : const CH_setmotordir : I
+Compiler : var current_palette : tab I
+Compiler : var current_palette_is_random : I
+Compiler : const all_palettes : tab tab I
+Compiler : set_current_palette : fun [I] I
+Compiler : set_current_palette_mode : fun [I] I
+Compiler : set_current_palette_color : fun [I I] I
+Compiler : const midi_acquired : S
+Compiler : const midi_ministop : S
+Compiler : const midi_abort : S
+Compiler : var midi_ears : S
+Compiler : const midi_ack : S
+Compiler : const midi_startInteractive : S
+Compiler : const midi_endInteractive : S
+Compiler : const midi_precedent : S
+Compiler : const midi_suivant : S
+Compiler : const chordef_interactiveerror : S
+Compiler : const chordef_startInteractive : S
+Compiler : const chordef_taichi : S
+Compiler : const chorstream_chorslist : list S
+Compiler : const midi_1noteA4 : S
+Compiler : const midi_1noteB5 : S
+Compiler : const midi_1noteBb4 : S
+Compiler : const midi_1noteC5 : S
+Compiler : const midi_1noteE4 : S
+Compiler : const midi_1noteF4 : S
+Compiler : const midi_1noteF5 : S
+Compiler : const midi_1noteG5 : S
+Compiler : const midi_2notesC6C4 : S
+Compiler : const midi_2notesC6F5 : S
+Compiler : const midi_2notesD4A5 : S
+Compiler : const midi_2notesD4G4 : S
+Compiler : const midi_2notesD5G4 : S
+Compiler : const midi_2notesE5A5 : S
+Compiler : const midi_2notesE5C6 : S
+Compiler : const midi_2notesE5E4 : S
+Compiler : const midi_3notesA4G5G5 : S
+Compiler : const midi_3notesB5A5F5 : S
+Compiler : const midi_3notesB5D5C6 : S
+Compiler : const midi_3notesD4E4G4 : S
+Compiler : const midi_3notesE5A5C6 : S
+Compiler : const midi_3notesE5C6D5 : S
+Compiler : const midi_3notesE5D5A5 : S
+Compiler : const midi_3notesF5C6G5 : S
+Compiler : var midi_startrecord : S
+Compiler : const midi_endrecord : S
+Compiler : const mp3_startrecord : S
+Compiler : const midi_RFIDok : S
+Compiler : const chor_RFIDok : S
+Compiler : var midilist : w0
+Compiler : getmidilist : fun [] tab S
+Compiler : controlsound : fun [S] I
+Compiler : var buttonlast : w0
+Compiler : var buttontime : w0
+Compiler : var buttonevent : w0
+Compiler : var buttonclicn : w0
+Compiler : const BUTTON_CLIC : I
+Compiler : const BUTTON_DCLIC : I
+Compiler : const BUTTON_LCLIC : I
+Compiler : const BUTTON_DLCLIC : I
+Compiler : const T_DCLIC : I
+Compiler : const T_LCLIC : I
+Compiler : buttonloop : fun [] I
+Compiler : buttongetevent : fun [] I
+Compiler : proto loop : fun [] w0
+Compiler : buttoncheckevent : fun [] I
+Compiler : configurl : fun [] S
+Compiler : recordurl : fun [I] S
+Compiler : rfidurl : fun [S] S
+Compiler : interactifurl : fun [S] S
+Compiler : sendmailxmppurl : fun [S S] S
+Compiler : boshurl : fun [S] S
+Compiler : interactifurl_start : fun [S] S
+Compiler : interactifurl_btn : fun [S I I I] S
+Compiler : interactifurl_done : fun [S] S
+Compiler : interactifurl_ear : fun [S I I I I] S
+Compiler : interactifurl_reco : fun [S I I] S
+Compiler : interactifurl_rfid : fun [S S] S
+Compiler : runinit : fun [] Run
+Compiler : filterconfig_word : fun [S] [S S]
+Compiler : filterconfig_line : fun [S I] list [S S]
+Compiler : filterconfig : fun [S I] list [S S]
+Compiler : dump_prgm : fun [list [S S]] list [S S]
+Compiler : _configcbhttp : fun [u0 S] I
+Compiler : var gConfigStart : I
+Compiler : runconfigstart : fun [] I
+Compiler : runconfigwait : fun [Httpreq] I
+Compiler : bintoi3 : fun [S I] I
+Compiler : pingextract_ : fun [S I list [I S]] list [I S]
+Compiler : pingextract : fun [S] list [I S]
+Compiler : rscfilterurl : fun [S] S
+Compiler : rscFromProgram : fun [list [S u0]] list [u0 I]
+Compiler : var paletteselected : I
+Compiler : CheckForPaletteBefore : fun [list [S S]] I
+Compiler : prgmStart : fun [] I
+Compiler : _rscLoadCBhttp : fun [Httpreq S I] I
+Compiler : runRscLoadNext : fun [] I
+Compiler : runRscLoadWait : fun [Httpreq] I
+Compiler : endOfProgram : fun [I] I
+Compiler : var recordtimestart : w0
+Compiler : var recordmode : w0
+Compiler : var recorddata : w0
+Compiler : var recordreq : w0
+Compiler : var recordretry : w0
+Compiler : var recordplayend : w0
+Compiler : uploading : fun [] I
+Compiler : runrecordstart : fun [] Run
+Compiler : _controlrecord : fun [w0] I
+Compiler : _cbrecordhttp : fun [u0 S] I
+Compiler : uploadtimeout : fun [] I
+Compiler : const AskR : I
+Compiler : const RecordingTime : I
+Compiler : runrecord : fun [] I
+Compiler : var chordata : w0
+Compiler : var chorindex : w0
+Compiler : var chortimescale : w0
+Compiler : var chornexttime : w0
+Compiler : var chorrandom : w0
+Compiler : var chortaichimotordir : w0
+Compiler : var chorendcb : w0
+Compiler : var chor_paused_dur : w0
+Compiler : var chor_paused : w0
+Compiler : var chor_paused_since : w0
+Compiler : msgchorstart : fun [list S w0 w1] I
+Compiler : msgendchor : fun [w0] I
+Compiler : runChorCmd : fun [w0] u1
+Compiler : _cbtaichiend : fun [u0] I
+Compiler : taichistart : fun [] I
+Compiler : var gInteractiveLastWavBytes : I
+Compiler : intDefaultStart : fun [] gInteractiveSoundsType
+Compiler : intDefaultStop : fun [] gInteractiveSoundsType
+Compiler : intNone : fun [] gInteractiveSoundsType
+Compiler : gInteractiveSoundsType : constructor
+Compiler : intchorDefaultStart : fun [] gInteractiveChorType
+Compiler : intchorDefaultStop : fun [] gInteractiveChorType
+Compiler : intchorStartNone : fun [] gInteractiveChorType
+Compiler : intchorStopNone : fun [] gInteractiveChorType
+Compiler : gInteractiveChorType : constructor
+Compiler : var gInteractiveSounds : w0
+Compiler : var gInteractiveChors : w0
+Compiler : var interactiveWaitEndTime_ms : I
+Compiler : proto _cbContinueStartInteractive : fun [w0] w1
+Compiler : proto _cbContinueStopInteractive : fun [w0] w1
+Compiler : proto _cbContinueErrorInteractive : fun [w0] w1
+Compiler : proto evalTrame : fun [w0] w1
+Compiler : gIntControlSound : fun [gInteractiveSoundsType] I
+Compiler : gIntControlChor : fun [gInteractiveChorType] I
+Compiler : interactiveStart : fun [S] I
+Compiler : _cbContinueStartInteractive : fun [w0] I
+Compiler : interactiveError : fun [] I
+Compiler : _cbContinueErrorInteractive : fun [w0] I
+Compiler : interactiveStop : fun [] I
+Compiler : _cbContinueStopInteractive : fun [w0] I
+Compiler : interactiveSendBtn : fun [I] I
+Compiler : interactivePrgmDone : fun [] I
+Compiler : interactiveSendRfid : fun [S] I
+Compiler : num_ET : fun [EarTouch] w0
+Compiler : refPos_ET : fun [EarTouch] w0
+Compiler : moveDir_ET : fun [EarTouch] w0
+Compiler : lastDV_ET : fun [EarTouch] w0
+Compiler : lastMoveTime_ET : fun [EarTouch] w0
+Compiler : turned_ET : fun [EarTouch] w0
+Compiler : EarTouch : struct (6)
+Compiler : var earsTouch : w0
+Compiler : const EAR_TOUCH_TIMEOUT : I
+Compiler : interactiveResetEarsTouched : fun [] I
+Compiler : earDeltaPosNormalized : fun [I] I
+Compiler : itNoteEarTouched : fun [I I I] I
+Compiler : touchedP : fun [I] I
+Compiler : interactiveSendEarTouched : fun [I I] I
+Compiler : interactiveEarProcessTouched : fun [] I
+Compiler : interactiveSendUpload : fun [] I
+Compiler : proto zeroRFIDchek : fun [] w0
+Compiler : _interactiveReqCBhttp : fun [Httpreq S] I
+Compiler : runInteractiveReqWait : fun [Httpreq] I
+Compiler : reset_IC : fun [] I
+Compiler : eval_IC_msg : fun [S] I
+Compiler : var chorst_pasdedanse : w0
+Compiler : var chorst_index : w0
+Compiler : var chorst_tempo : w0
+Compiler : var chorst_loops : w0
+Compiler : var chorst_nexttime : w0
+Compiler : var chorst_palettecolors : tab I
+Compiler : var chorst_oreille_chance : w0
+Compiler : dochorstream : fun [] I
+Compiler : stopStream : fun [] I
+Compiler : runStreamingCmd : fun [I] I
+Compiler : _cbGotoNextCmd : fun [I] I
+Compiler : _cbWavError : fun [] I
+Compiler : runWaitCmd : fun [I] Run
+Compiler : runEvalOneCommand : fun [I] I
+Compiler : var nexttaichi : w0
+Compiler : dotaichinow : fun [] I
+Compiler : runEarReset : fun [fun [] u0] u0
+Compiler : _goSleepNow : fun [] Run
+Compiler : _wakeupNow : fun [] Run
+Compiler : startSleep : fun [] I
+Compiler : endSleep : fun [] I
+Compiler : evalTrame : fun [S] list I
+Compiler : var gTramesQueue : w0
+Compiler : const TRAME_QUEUE_MAXLEN : I
+Compiler : _isResourceValid : fun [S] I
+Compiler : _queueTrameRemoveEntry : fun [w0] I
+Compiler : getNextValidPendingTrame : fun [] w0
+Compiler : processIncomingTrame : fun [S S S] list I
+Compiler : runLogin : fun [] list I
+Compiler : runIdle : fun [] I
+Compiler : var gWasNetActivity : I
+Compiler : noseled : fun [] I
+Compiler : bottomled : fun [] I
+Compiler : var lastrfid : w0
+Compiler : var RFIDchar : I
+Compiler : var RFIDint : I
+Compiler : var RFIDchek : I
+Compiler : var RFIDlast : I
+Compiler : var tmptps : I
+Compiler : _cbrfidhttp : fun [u0 S] I
+Compiler : dumprfid : fun [list S] list S
+Compiler : ParseRfidChar : fun [S I] I
+Compiler : ParseRfid : fun [S] I
+Compiler : zeroRFIDchek : fun [] I
+Compiler : _cbrfidendchor : fun [u0] I
+Compiler : checkRfidPresence : fun [] S
+Compiler : controlrfid : fun [] I
+Compiler : controlplay : fun [] I
+Compiler : controlwait : fun [] I
+Compiler : controlinteractif : fun [] I
+Compiler : controlprogramwait : fun [] I
+Compiler : dumpStatus : fun [] S
+Compiler : const CONTROL_WAIT : I
+Compiler : const CONTROL_PLAY : I
+Compiler : const CONTROL_INTERACTIF : I
+Compiler : const CONTROL_PROGRAMWAIT : I
+Compiler : getRunState : fun [] Run
+Compiler : setRunState : fun [Run] Run
+Compiler : stopEverythingAndResetToIdle : fun [] I
+Compiler : loop : fun [] I
+Compiler : main : fun [] I

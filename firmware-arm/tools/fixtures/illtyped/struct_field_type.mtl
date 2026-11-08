@@ -1,0 +1,4 @@
+// Point's x is declared I and set to a string.
+proto main 0;;
+type Point = [x: I y: I];;
+fun main = let [x: "one" y: 2] -> p in p.y;;

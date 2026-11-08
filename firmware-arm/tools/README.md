@@ -225,30 +225,35 @@ production bytecode byte-for-byte.
 - A `.mtl` source parser. The text we ingest is the line-oriented IR
   `.masm`, not the original Metal source. The `.mtl` → AST → encoder
   layer is in `mtl_comp.py` (see below).
-- A type checker. Metal has a small but real type system (used to
-  disambiguate `strcmp` vs `vstrcmp`, choose `OPset*` variants, etc.).
-  Phase 7a v1 skips this (trusts the source); the C++ port is the
-  follow-up.
+- A type checker. That lives in `mtl_comp.py` + `mtl_types.py` (the
+  port of `compiler_type.cpp`), not here: the encoder takes the bytes it
+  is given.
 - Float globals (`mtl_float`). Encoder only does int/string/tuple/nil.
   Easy add, just not needed yet.
 
 ## `mtl_comp.py` — `.mtl` source compiler (Phase 7a v1)
 
 A Python compiler from `.mtl` source to `.bin`, **byte-identical to the
-C++ `mtl_compiler`** for the supported subset. Built on top of the
-encoder; uses recursive descent that mirrors `compiler_term.cpp`'s
-precedence ladder.
+C++ `mtl_compiler`** for the supported subset, and **typed the way the
+C++ types** — see *Type checking* below. Built on top of the encoder;
+uses recursive descent that mirrors `compiler_term.cpp`'s precedence
+ladder, with the type inference of `compiler_type.cpp` (ported in
+`mtl_types.py`) called at the same points.
 
 ```sh
 python3 mtl_comp.py program.mtl -o program.bin   # envelope included
 python3 mtl_comp.py program.mtl -o body.bin --bare
+python3 mtl_comp.py program.mtl --types          # + one `Compiler : name : type` line per declaration
+python3 mtl_comp.py program.mtl --check          # type-check only, write nothing
 ```
 
 ### Validated byte-for-byte against mtl_compiler (C++)
 
-22 programs, committed in `fixtures/` next to the C++ reference each one
-compiles to. Re-check them all, plus `mtl_asm --self-test` and the
-`bootcode.hybrid` round-trip, with no container and no hardware:
+23 programs, committed in `fixtures/` next to the C++ reference each one
+compiles to (`NAME.bin`, the bytes) and the types it printed for it
+(`NAME.types`). Re-check them all, plus the 13 ill-typed programs in
+`fixtures/illtyped/`, `mtl_asm --self-test` and the `bootcode.hybrid`
+round-trip, with no container and no hardware:
 
 ```sh
 ./run-tests.sh          # one line per fixture; non-zero exit on any diff
@@ -281,6 +286,7 @@ Sizes below are the **body**; every `.bin` also carries the 17-byte
 | `destruc.mtl`      | 50 B  | `let TUPLE -> [a b c] in ...` (structured destructuring) |
 | `struct.mtl`       | 38 B  | `type Point=[x y z];;` + `[x:1 y:2 z:3]` + `.field` read |
 | `setfield.mtl`     | 46 B  | `set p.x = 99` (struct field write via OPstore) |
+| `rec_result.mtl`   | 60 B  | recursive fun whose result type is fixed by the other branch (`f : fun [I] S`) |
 
 The fixtures were rewritten from these descriptions when the suite was
 committed; the originals were never in the repo. 13 of the 22 come out
@@ -289,13 +295,90 @@ the same programs. The other 9 are a different program exercising the
 same feature — the description is the contract, the byte count is a
 historical note.
 
-**`mtl_comp.py` does not type-check, and the C++ compiler does.** This
-is not only a missing diagnostic: `mtl_compiler` refuses programs
-`mtl_comp` happily emits bytecode for. The first draft of
-`statemachine.mtl` assigned a `State` to a global initialised to `0`;
-Python produced 289 bytes, the C++ produced `State cannot be unified
-with I` and no output at all. Do not treat a clean `mtl_comp` run as
-evidence that the real compiler would accept the source.
+Until this suite's references were actually committed, `run-tests.sh`
+reported 41 of 43 checks failing on a fresh checkout: `firmware-arm/
+.gitignore` ignores `*.bin`, so the "committed" references never left
+the machine that made them. `fixtures/.gitignore` now re-includes them.
+
+### Type checking
+
+`mtl_comp.py` runs the C++ compiler's type inference, call for call.
+`mtl_types.py` is a port of `compiler_type.cpp` (node graphs, `recunif`,
+`reccopytype`, `recgoweak`, `recunifbigger`, `recechograph`); every
+`parse*` in `mtl_comp.py` makes the same `unif`/`copytype` calls at the
+same places as its C++ counterpart in `compiler_term.cpp`,
+`compiler_prog.cpp`, `compiler_var.cpp` and `compiler_file.cpp`, and the
+natives carry the signatures of `stdlib_core.cpp` (`strlen : fun[S]I`,
+`hd : fun[list u0]u0`, …) plus the firmware's `verifySig`, `netSaePw`,
+`netSaeMs` and `pageRender`. The C++ types in one left-to-right pass
+while it emits, and so does this; there is no separate inference pass.
+
+Measured against the real `mtl_compiler` (RedoXyde/mtl_linux @ 7e557a1,
+the build image's copy), which prints the type of every declaration
+while it compiles:
+
+- the production `bootcode.mtl`: **1209 of 1209** `Compiler :` lines
+  identical, string for string, `u0`/`w0` numbering included
+  (`fixtures/oracle/bootcode.types`), and the bytes still `cmp` clean;
+- the bootloader `boot.0.0.0.13.mtl`: **427 of 427**
+  (`fixtures/oracle/boot.0.0.0.13.types`);
+- the 23 fixtures: **93 of 93** (one `.types` file per fixture, e.g. `fixtures/tiny.types`).
+
+The variable numbering needed no normalising: `recechograph` names a
+variable after the count of variables already named while printing that
+one type, `u` and `w` sharing the counter, so it depends only on the
+graph's shape and the print order, both of which are mirrored.
+
+Both sources are not in the repo (Violet's bootcode is fetched at build
+time; the bootloader lives in nabgcc), so `run-tests.sh` checks them
+only when told where they are:
+
+```sh
+BOOTCODE_MTL=path/to/bootcode.mtl BOOTCODE_REF=path/to/reference-cxx-output.bin \
+BOOT_MTL=path/to/boot.0.0.0.13.mtl ./run-tests.sh
+```
+
+**Refusals.** `fixtures/illtyped/` holds 13 programs the C++ refuses,
+each confirmed on the real compiler before it was counted, with the
+C++'s own words in `NAME.err`. `mtl_comp` refuses every one of them with
+the same lines and writes no file:
+
+| Fixture | What is wrong | The C++'s verdict |
+|---|---|---|
+| `state_in_int.mtl` | a `State` stored in a global initialised to `0` (the first draft of `statemachine.mtl`) | `State cannot be unified with I` |
+| `arg_count.mtl` | `add3 1 2` | `unexpected term ';;'` / `function requires 3 arguments` |
+| `arg_type.mtl` | `strlen 42` | `S cannot be unified with I` / `[S]` vs `[I]` |
+| `match_wrong_cons.mtl` | a `Msg` matched against a `Wifi` constructor | `Wifi cannot be unified with Msg` |
+| `list_mixed.mtl` | `1 :: "two" :: 3 :: nil` | `[S list S]` vs `[S list I]` |
+| `struct_field_type.mtl` | `[x: "one"]` on a field declared `x: I` | `S cannot be unified with I` |
+| `struct_field_use.mtl` | an unannotated field set to `1`, then to `"one"` | `S cannot be unified with I` |
+| `proto_mismatch.mtl` | `proto twice 2;;` then `fun twice a = …` | `fun [I] I` is smaller than `fun [w0 w1] w2` / `prototype does not match` |
+| `if_branches.mtl` | `then` an I, `else` an S | `S cannot be unified with I` |
+| `cond_not_int.mtl` | `if "yes" then …` | `S cannot be unified with I` |
+| `const_set.mtl` | `set K = 2` on a `const` | `'K' is a const, it cannot be set` |
+| `for_init_type.mtl` | `for s = "a"; 1 do …` (Form 2 increments `s`) | `S cannot be unified with I` |
+| `global_weak_reuse.mtl` | `var acc = nil` set to a `list I`, then a `list S` | `list S` vs `list I` |
+
+A fourteenth candidate, a recursive function returning `f (n - 1)` on
+one branch and `"done"` on the other, is *accepted* by the C++
+(`f : fun [I] S`: a function's own result variable is shared, not
+copied, inside its body); it is now `fixtures/rec_result.mtl`.
+
+Two things the port changed in the codegen path, both read off the C++:
+`tcpListen` takes **1** argument (`corecode[]`; the old `BUILTINS` table
+said 2), and `- 0x10` is `OPintb 16; OPneg`, not `OPint -16`
+(`parsea6` folds the sign only into a *decimal* literal). Neither
+occurs in the production bootcode, which is why the bytes had matched
+before.
+
+Typing covers `.mtl` only. `mtl_pyc.py` does **not** share this: it
+walks a Python AST and emits opcodes through its own copy of the
+codegen (it imports only `BUILTINS`, `Scope` and `wire_wrap` from
+`mtl_comp`), so none of these `unif` calls run for it. Giving it the
+same guarantee means re-threading each typing call through its AST
+walker, in the C++'s evaluation order — a separate job. Until then a
+clean `mtl_pyc` run says nothing about types; compile the equivalent
+`.mtl` through `mtl_comp --check` first.
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -309,8 +392,12 @@ exactly — the bytecode order is identical.
 Top-level:
 - `proto NAME ARITY;;` — reserve a fun index (forward decl)
 - `var NAME [= EXPR];;` — mutable global (int/string/nil initializer)
-- `const NAME = EXPR;;` — same shape as var (no read-only enforcement
-  yet — the C++ doesn't enforce it either at runtime, only at type)
+- `const NAME = EXPR;;` — same shape as var; `set` on it is refused as
+  the C++ refuses it (`'K' is a const, it cannot be set`)
+- `proto NAME = fun [TYPES] TYPE;;` — a proto with an explicit type
+- `type NAME = [f1 f2: TYPE …];;` — struct; `type NAME;;` — declared,
+  defined later
+- `ifdef NAME { … } [else { … }]`, `ifndef NAME { … }`
 - `fun NAME [arg1 arg2 ...] = body;;`
 - `type NAME = Cons1 | Cons2 _ | Cons3 [type];;` — sum-type
   declaration. Each constructor gets an auto-incrementing tag (0, 1,
@@ -345,8 +432,11 @@ Expressions:
   `Cons _` (drops payload), or `_` (wildcard catch-all). Codegen
   uses `OPfirst` (tag fetch) + `OPeq` + `OPelse` chain, with
   back-patched gotos to the end label — byte-identical to the C++.
-- `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME
-- `set NAME = EXPR` — mutate a global or local
+- `let VALUE -> NAME in BODY` — bind VALUE to a fresh local NAME;
+  `let VALUE -> [a b _] in …` destructures
+- `set NAME = EXPR` — mutate a global or local; `set NAME.f.g = EXPR`
+  and `set NAME.(EXPR) = …` write a field or an index
+- `[f1: v1 f2: v2]` struct creation, `x.f` / `x.(i)` reads, `call F [args]`
 - `( EXPR )` — grouping
 
 ### Real boot.0.0.0.13.mtl — BYTE-IDENTICAL ✅
@@ -405,14 +495,14 @@ because `mtl_compiler` does — see *Which tool deals in which form*.
 
 ### Not yet supported
 
-`update x with [...]` (record updates with explicit copy), multi-char
-escapes in char literals `'\n'`, function pointers to builtins
-(`#Secho`), forward fun-to-fun references where neither has a
-`proto`, function names DUPED via re-definition.
+`update x with [...]` (record updates with explicit copy), the
+`(a :: b)` list pattern in a `let`, multi-char escapes in char literals
+`'\n'`, parametric types `type T(a) = …` beyond parsing them. A function
+pointer to a native (`#Secho`) now compiles as the C++ does (`OPint` of
+minus the opcode) but no fixture anchors it to a reference binary yet.
 
-None of these occur in the production `bootcode.mtl`, so nothing
-anchors them to a reference binary yet. Float literals and float
-globals are still rejected outright.
+None of these occur in the production `bootcode.mtl`. Float literals and
+float globals are still rejected outright.
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.
@@ -545,7 +635,7 @@ measurements settle it:
   becomes `/data/bootcode.hybrid` — carries the envelope.
 - `proto main 0;; fun main= 42;;` straight out of the real
   `mtl_compiler` is **37 bytes**: 20 of body and 17 of envelope. So does
-  every one of the 22 committed references in `fixtures/`.
+  every one of the 23 committed references in `fixtures/`.
 
 The reader on the device is `boot.mtl::getbytecode`, which does
 `strsub content 13 len` — it expects the envelope.

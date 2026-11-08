@@ -1,0 +1,7 @@
+Compiler : proto main : fun [] w0
+Compiler : S cannot be unified with I
+Compiler :
+ [S list S]
+does not match with
+ [S list I]
+Compiler : error compiling function 'main'

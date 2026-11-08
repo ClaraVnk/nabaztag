@@ -1,0 +1,5 @@
+Compiler : var FEATURE : I
+Compiler : proto main : fun [] w0
+Compiler : flavour : fun [] I
+Compiler : extra : fun [] I
+Compiler : main : fun [] I

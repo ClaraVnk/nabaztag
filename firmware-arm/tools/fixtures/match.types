@@ -1,0 +1,6 @@
+Compiler : proto main : fun [] w0
+Compiler : Ping : fun [] Msg
+Compiler : Pong : fun [w0] Msg
+Compiler : Msg : constructor
+Compiler : handle : fun [Msg] I
+Compiler : main : fun [] I

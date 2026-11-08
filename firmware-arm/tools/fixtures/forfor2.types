@@ -1,0 +1,3 @@
+Compiler : proto main : fun [] w0
+Compiler : var acc : I
+Compiler : main : fun [] I

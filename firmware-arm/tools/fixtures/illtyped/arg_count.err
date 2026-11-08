@@ -1,0 +1,5 @@
+Compiler : proto main : fun [] w0
+Compiler : add3 : fun [I I I] I
+Compiler : unexpected term ';;'
+Compiler : function requires 3 arguments
+Compiler : error compiling function 'main'

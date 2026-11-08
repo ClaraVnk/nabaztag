@@ -1,0 +1,3 @@
+// strlen wants S, gets I.
+proto main 0;;
+fun main = strlen 42;;
