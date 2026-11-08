@@ -8,6 +8,21 @@ That second use is not hypothetical. On 2026-11-07 a dump showed a rabbit
 running a build from 21 June, byte-exact, after five months of flashes that
 had all reported success. Nothing else in this project could have told us.
 
+## Quick start, on the Raspberry Pi
+
+```
+git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
+./firmware-arm/jtag/station.sh setup          # once, then log out and back in
+./firmware-arm/jtag/station.sh check          # 0x98 / 0xcd: the wiring is right
+./firmware-arm/jtag/station.sh flash Nab.bin  # write an image, read it back, compare
+./firmware-arm/jtag/station.sh listen         # the live status line, no halt
+./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
+```
+
+`listen` needs a firmware built with the `dcc_telemetry` step (mode
+`lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
+works on any rabbit, bricked or not.
+
 ![wiring](wiring.svg)
 
 The picture is generated: `./mkwiring.py -o wiring.svg`.
@@ -17,6 +32,7 @@ The picture is generated: `./mkwiring.py -o wiring.svg`.
 | file | what it is |
 | --- | --- |
 | `wiring.svg` / `mkwiring.py` | the five jumpers, and what draws them |
+| `station.sh` | the one command: setup, check, flash, listen, dump |
 | `setup-station.sh` | provisions a fresh Pi: packages, group, GPIO bank check |
 | `nabaztag-pi.cfg` | OpenOCD: linuxgpiod adapter, ARM7TDMI target, no SRST |
 | `oki.tcl` | the OKI ML67Q4051 flash sequence — id, dump, erase, program |
