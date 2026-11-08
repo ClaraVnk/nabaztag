@@ -51,7 +51,42 @@ sign_open: $(TN_DIR)/tweetnacl.c
 	@$(CC) $(CFLAGS) $(SAN) -I$(TN_DIR) -o /tmp/t_sign_open \
 		test_sign_open.c /tmp/tn.o && /tmp/t_sign_open
 
-all: $(CRYPTO_H) sign_open
+# The lean-wpa3-slim steps that touch C, tested the way they land in the
+# tree: apply-mods.py is run on a stub tree holding copies of the files it
+# edits, and the tests compile what came out. uart_fmt and sbox need nothing
+# but this repository; md5 edits nabgcc's src/net/hash.c, so it wants a
+# checkout (make md5 NABGCC=/path/to/nabgcc) and the emulator container has
+# one. The control runs first in each: the pristine file must pass too.
+SLIM_DIR := /tmp/nab-slim
+NABGCC ?=
+
+uart_fmt:
+	@echo "== the console formatters, against the sprintf they replace"
+	@mkdir -p $(SLIM_DIR)
+	@python3 -c 'import importlib.util as u; s=u.spec_from_file_location("am","../apply-mods.py"); m=u.module_from_spec(s); s.loader.exec_module(m); open("$(SLIM_DIR)/uart_fmt.inc","w").write(m._UART_FMT_C)'
+	@$(CC) $(CFLAGS) $(SAN) -I$(SLIM_DIR) -o /tmp/t_uart_fmt test_uart_fmt.c && /tmp/t_uart_fmt
+
+sbox: $(CRYPTO_H)
+	@echo "== cmac.c on aes128.c's S-box: FIPS-197, RFC 3394, CMAC and BIP again"
+	@rm -rf $(SLIM_DIR)/sbox && mkdir -p $(SLIM_DIR)/sbox/src/net && touch $(SLIM_DIR)/sbox/Makefile
+	@cp ../crypto/aes128.c ../crypto/cmac.c $(SLIM_DIR)/sbox/src/net/
+	@python3 ../apply-mods.py --steps share_sbox $(SLIM_DIR)/sbox >/dev/null
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes_shared test_aes.c $(SLIM_DIR)/sbox/src/net/aes128.c && /tmp/t_aes_shared
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_cmac_shared test_cmac.c $(SLIM_DIR)/sbox/src/net/cmac.c $(SLIM_DIR)/sbox/src/net/aes128.c && /tmp/t_cmac_shared
+
+md5:
+	@test -n "$(NABGCC)" || { echo "make md5 NABGCC=/path/to/nabgcc (it edits src/net/hash.c)"; exit 2; }
+	@echo "== MD5 and HMAC-MD5, pristine hash.c (control)"
+	@$(CC) $(CFLAGS) $(SAN) -Wno-unused-function -I$(NABGCC)/inc -DHASH_C='"$(NABGCC)/src/net/hash.c"' -o /tmp/t_md5_control test_md5.c && /tmp/t_md5_control
+	@rm -rf $(SLIM_DIR)/md5 && mkdir -p $(SLIM_DIR)/md5/src/net && touch $(SLIM_DIR)/md5/Makefile
+	@cp $(NABGCC)/src/net/hash.c $(SLIM_DIR)/md5/src/net/
+	@python3 ../apply-mods.py --steps md5_compact $(SLIM_DIR)/md5 >/dev/null
+	@echo "== MD5 and HMAC-MD5, hash.c after md5_compact"
+	@$(CC) $(CFLAGS) $(SAN) -Wno-unused-function -I$(NABGCC)/inc -DHASH_C='"$(SLIM_DIR)/md5/src/net/hash.c"' -o /tmp/t_md5 test_md5.c && /tmp/t_md5
+
+slim: uart_fmt sbox md5
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo

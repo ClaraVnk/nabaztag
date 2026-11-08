@@ -524,6 +524,22 @@ Don't want to run a server at home? Put your rabbit on the public warren —
   concentrated in stateful paths (`loop`, `cbnettcp`, `tcpwrite`,
   `tcpevent`) where C rewrites would require hardware-tested validation;
   this stack stays at the safe envelope.
+  **Measured again on 2026-11-08, against `lean-wpa3` (117 692 B of a
+  126 976-byte flash):** `rom_pages` no longer stacks — it and `wpa3_boot_pw`
+  both take opcode 153 — and it would not save flash anyway, since the pages
+  have to be stored either way (9 246 B of the 13 602-byte globals block).
+  Of the bytecode slices, `strip_secho` is worth 2 036 B (twice the claim),
+  `strip_dump` 517 B, `inline_mkwav` 105 B (not ~520), the echo opcodes 146 B
+  and the echo helpers 214 B; the whole bytecode bundle plus five unreferenced
+  functions is 2 880 B, not 6 KB. The real weight was on the C side: the
+  console's `sprintf` and thirteen `sprintf(dbg_buffer, …)` calls whose
+  `DBG_*` consumer compiles to nothing kept newlib's printf core and nano
+  malloc in every "lean" image — 5 680 B. With those, a loop-form MD5
+  (1 656 B) and one AES S-box instead of two (256 B), **`lean-wpa3-slim`
+  is 107 228 B, 19 748 spare**, same behaviour, not yet on hardware (the
+  steps edit the console and USB files, see `RECOVERY.md`). Compiling at
+  `-Os` would take another 10 112 B off `lean-wpa3` but rewrites every
+  function of a flag-validated image, so it is measured and not proposed.
 - **Phase 9 — gateway-independent resolution (mDNS) — done, Claude live on the
   recovered rabbit (2026-06-21):** after the un-brick the rabbit booted and
   reached XMPP, but the home gateway **silently dropped its unicast DNS** — a

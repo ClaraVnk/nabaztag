@@ -531,6 +531,13 @@ def patch_makefile(root: Path) -> None:
     _vfprintf_r / _printf_i / _sfvwrite_r / …  ~7 KB of newlib printf
     glue. Production firmware doesn't need them; the serial console is
     not wired up on a production rabbit anyway.
+
+    It does not drop the printf family by itself, though: the lean-wpa3
+    .map of 2026-11-08 still had sprintf, nano-svfprintf, vfprintf_i and
+    nano malloc/free/realloc linked, 4 316 bytes, pulled by the sprintf
+    calls in uart.c and by sprintf(dbg_buffer, ...) calls that sit outside
+    the DEBUG_* blocks. uart_no_sprintf and strip_dbg_sprintf are the steps
+    that finish the job (5 680 bytes together, lean-wpa3-slim).
     """
     p = root / "Makefile"
     s = p.read_text()
@@ -4459,7 +4466,9 @@ def patch_strip_dump(root: Path) -> None:
     unwired on the production rabbit), nobody reads that output, so we
     just delete the bodies and keep the passthrough semantics.
 
-    Saves ~300 B of boot bytecode. Caller sites stay 1:1 valid.
+    Measured with mtl_comp on the lean-wpa3 bootloader, 2026-11-08: 517 B
+    alone, 551 B with inline_dump_calls (the June estimate said ~300).
+    Caller sites stay 1:1 valid.
     """
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
     s = boot.read_bytes().decode("latin-1")
@@ -4616,7 +4625,20 @@ def patch_inline_dump_calls(root: Path) -> None:
 
     eol = "\r\n" if "\r\n" in s else "\n"
 
-    # 1. Delete `dump ` and `dumpscan ` keywords from code. These are
+    # 1. Delete the identity definitions `fun dump s=s;;` and
+    #    `fun dumpscan l0=l0;;` that patch_strip_dump wrote -- BEFORE the
+    #    keyword pass below, which would otherwise turn `fun dump s=s;;`
+    #    into `fun s=s;;` and leave two junk functions named `s` and `l0`
+    #    behind (it did, until the compiled function count was looked at
+    #    on 2026-11-08: 220 before and after, where 218 was expected).
+    for head, body in (("fun dump s=", "s"), ("fun dumpscan l0=", "l0")):
+        target = f"{head}{body};;{eol}"
+        if s.count(target) != 1:
+            sys.exit(f"FAIL inline_dump_calls: identity form {target!r} not found "
+                     "exactly once -- did strip_dump run?")
+        s = s.replace(target, "", 1)
+
+    # 2. Delete `dump ` and `dumpscan ` keywords from code. These are
     #    1-arg functions reduced to identity by patch_strip_dump, so
     #    deleting the keyword is a no-op semantically.
     pat = re.compile(r"\b(?:dumpscan|dump)\b[ \t]+")
@@ -4626,14 +4648,6 @@ def patch_inline_dump_calls(root: Path) -> None:
         n_call += 1
         return ""
     s = pat.sub(_sub, s)
-
-    # 2. Delete the now-dead `fun dump s=s;;` and `fun dumpscan l0=l0;;`
-    #    definitions. We re-locate the exact form patch_strip_dump wrote
-    #    (no leading whitespace per its `replacement = f"{head}{identity_arg};;{eol}"`).
-    for head, body in (("fun dump s=", "s"), ("fun dumpscan l0=", "l0")):
-        target = f"{head}{body};;{eol}"
-        if target in s:
-            s = s.replace(target, "", 1)
     s = f"/* dump-inlined */{eol}" + s
     boot.write_bytes(s.encode("latin-1"))
     print(f"[ok]   {boot}: inlined {n_call} dump/dumpscan callsites + dropped defs")
@@ -4651,8 +4665,9 @@ def patch_strip_echo_opcodes(root: Path) -> None:
     in ...`; `Iecholn rssi;` becomes `rssi;` which the sequence drop
     swallows just the same).
 
-    Saves ~5 B per callsite (opcode + arg push folded into the argument's
-    own emission).
+    Measured with mtl_comp on the lean-wpa3 bootloader, 2026-11-08: 146 B
+    for the 63 sites left after strip_secho (about 2 B each -- the opcode
+    byte and a shorter OPdrop sequence; the argument expression stays).
     """
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
     s = boot.read_bytes().decode("latin-1")
@@ -4685,8 +4700,8 @@ def patch_strip_echo_funs(root: Path) -> None:
     mac 0 1) ...`, `set t.ackT = SEQecho ...`, etc.). Reducing each to
     `src;;` preserves the return-value contract every caller relies on.
 
-    Saves ~120 B across the 3 fun bodies + their callees (Secho/Iecho
-    dynamic-arg calls that drop out as dead code).
+    Measured with mtl_comp on the lean-wpa3 bootloader, 2026-11-08: 214 B
+    across the 3 fun bodies (the June estimate said ~120).
     """
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
     s = boot.read_bytes().decode("latin-1")
@@ -4736,8 +4751,13 @@ def patch_strip_secho(root: Path) -> None:
     `nil` (a valid Metal expression) so the surrounding statement / body
     structure stays valid.
 
-    Saves ~1 KB across the bytecode (97 callsites × ~6 B opcodes +
-    deduped string globals).
+    Measured with mtl_comp on the lean-wpa3 bootloader, 2026-11-08: 2 036 B
+    for 106 sites (the June estimate said ~1 KB). The biggest single
+    bytecode saving; the strings were the weight, not the opcodes.
+    Lost observable: the rabbit's boot log on the UART pad, which a
+    production rabbit does not have wired -- and the emulator's rabbit-vm
+    transcript loses the same lines (its assertions are on the 802.11
+    state, not on the console).
     """
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
     s = boot.read_bytes().decode("latin-1")
@@ -4773,8 +4793,10 @@ def patch_inline_mkwav(root: Path) -> None:
     header literal, then delete the `fun mkwav freq channel bps=...`
     definition. Boot.mtl has exactly ONE mkwav callsite (at fifotest
     init) with fixed args, so this is a pure refactor — no behavior
-    change, just no longer paying ~520 B of bytecode for a value we
-    already know at build time.
+    change, just no longer paying for a value we already know at build
+    time. Measured with mtl_comp on the lean-wpa3 bootloader, 2026-11-08:
+    105 B, not the ~520 the June estimate said -- the fun is small, and the
+    46-byte literal it becomes costs most of what the call did.
     """
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
     s = boot.read_bytes().decode("latin-1")
@@ -4825,12 +4847,475 @@ def patch_inline_mkwav(root: Path) -> None:
     print(f"[ok]   {boot}: inlined mkwav (deleted fun + substituted callsite)")
 
 
+_UART_FMT_C = r'''
+/* Decimal and hex without newlib's sprintf. sprintf was the only thing
+   left pulling _svfprintf_r, _printf_i and nano's malloc/free/realloc into
+   the image once the DEBUG_* paths were off: 4.3 KB of lean-wpa3, measured
+   2026-11-08 (apply-mods.py uart_no_sprintf). The two helpers write the
+   same bytes as the formats they replace -- "%ld", "0x%lx", "%04lx",
+   "%02x" -- which tests/test_uart_fmt.c checks against sprintf itself. */
+static void put_hex_uart(uint32_t v, uint32_t min_digits)
+{
+  uint8_t d[8];
+  uint32_t n=0;
+  do {
+    uint32_t x=v&15;
+    d[n++]=(uint8_t)(x<10 ? '0'+x : 'a'+x-10);
+    v>>=4;
+  } while(v);
+  while(n<min_digits) d[n++]='0';
+  while(n) putch_uart(d[--n]);
+}
+
+static void put_dec_uart(int32_t v)
+{
+  uint8_t d[10];
+  uint32_t n=0;
+  uint32_t u=(uint32_t)v;
+  if(v<0) { putch_uart('-'); u=0u-u; }
+  do { d[n++]=(uint8_t)('0'+u%10); u/=10; } while(u);
+  while(n) putch_uart(d[--n]);
+}
+
+'''
+
+
+def patch_uart_no_sprintf(root: Path) -> None:
+    """Take sprintf out of the serial console.
+
+    patch_makefile's docstring says switching the DEBUG_* defines off "drops
+    the printf family". Measured on lean-wpa3 (2026-11-08), it does not:
+    src/hal/uart.c itself calls sprintf from putint_uart, puthx_uart, dump
+    and dumpbin, and the first three are live -- putint/puthx through the
+    VM's Iecho opcodes (vlog.c consoleint/consolehx), dump from eapol.c on
+    every EAPOL message 1 and MIC mismatch. So the linker keeps
+    lib_a-sprintf, nano-svfprintf, nano-vfprintf_i, and the nano malloc,
+    free, realloc, sbrk, msize and mlock they drag in: 4 316 bytes of flash
+    in the .map, plus the reent block in .data.
+
+    Two small formatters replace the four calls and write the same bytes
+    (tests/test_uart_fmt.c compares them with sprintf). The UART is still
+    written one busy-waited byte at a time, so the only timing change is
+    the formatting itself, microseconds against a 115 200-baud link.
+
+    Console path: hardware-risk by this project's rule, even though the
+    output is identical. The emulator does not compile this file (its
+    stubs/uart.c prints to stdout), which is why the test exists.
+    """
+    p = root / "src/hal/uart.c"
+    s, nl = read_flat(p)
+    if "put_hex_uart" in s:
+        print(f"[skip] {p}: sprintf already gone")
+        return
+    edits = [
+        ('#include <stdio.h>  // sprintf\n', ''),
+        ('/**\n * @brief Write an Integer to the serial port, in decimal form\n',
+         _UART_FMT_C.lstrip("\n") +
+         '/**\n * @brief Write an Integer to the serial port, in decimal form\n'),
+        ('  uint8_t buf[32];\n  sprintf((char*)buf,"%ld",v);\n  putst_uart(buf);\n',
+         '  put_dec_uart(v);\n'),
+        ('  uint8_t buf[12];\n  sprintf((char*)buf,"0x%lx",v);\n  putst_uart(buf);\n',
+         '  putst_uart((uint8_t*)"0x");\n  put_hex_uart(v,1);\n'),
+        ('  uint8_t buffer[64];\n  putst_uart((uint8_t*)EOL);\n',
+         '  putst_uart((uint8_t*)EOL);\n'),
+        ('    sprintf((char*)buffer,"%04lx ",i);\n    putst_uart(buffer);\n',
+         '    put_hex_uart((uint32_t)i,4);\n    putch_uart(\' \');\n'),
+        ('      sprintf((char*)buffer,"%02x ",src[i+j]); putst_uart(buffer);\n',
+         '      put_hex_uart(src[i+j],2); putch_uart(\' \');\n'),
+        ('  uint8_t buffer[6];\n  for(i=0;i<n;i++)\n',
+         '  for(i=0;i<n;i++)\n'),
+        ('    sprintf((char*)buffer,"%02x.",(p[i])&255);\n    putst_uart(buffer);\n',
+         '    put_hex_uart((uint32_t)((p[i])&255),2);\n    putch_uart(\'.\');\n'),
+    ]
+    for old, new in edits:
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: anchor not found exactly once: {old[:60]!r}")
+        s = s.replace(old, new, 1)
+    if re.search(r"\bsprintf\s*\(", s):
+        sys.exit(f"FAIL {p}: a sprintf call survived the rewrite")
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: putint/puthx/dump/dumpbin format without sprintf")
+
+
+_DBG_FLAG = {"DBG": "DEBUG", "DBG_AUD": "DEBUG_AUDIO"}
+
+
+def _debug_depth_at(lines: list[str]) -> list[bool]:
+    """For each line, whether it sits inside a #if/#ifdef on a DEBUG_* flag
+    (the production branch of its #else counts as outside). _NAB_SIM blocks
+    count as well: that is the emulator's host-only tracing (its
+    opnetauth-trace.patch), never compiled into a rabbit."""
+    out = []
+    stack: list[bool] = []
+    for l in lines:
+        t = l.strip()
+        if t.startswith("#if"):
+            stack.append("DEBUG" in t or "_NAB_SIM" in t or t.startswith("#if 0"))
+        elif t.startswith("#else") and stack:
+            stack[-1] = False
+        elif t.startswith("#endif") and stack:
+            stack.pop()
+        out.append(any(stack))
+    return out
+
+
+def _production_sprintf_sites(text: str) -> list[int]:
+    """Line numbers (1-based) of sprintf(...) calls compiled into a build
+    with every DEBUG_* flag off: outside such blocks, not in a comment."""
+    lines = text.split("\n")
+    in_dbg = _debug_depth_at(lines)
+    # block comments, so a sprintf inside /* ... */ is not counted
+    commented = [False] * len(lines)
+    for m in re.finditer(r"/\*.*?\*/", text, re.S):
+        a = text.count("\n", 0, m.start())
+        b = text.count("\n", 0, m.end())
+        for k in range(a, b + 1):
+            commented[k] = True
+    sites = []
+    for i, l in enumerate(lines):
+        if re.search(r"\bsprintf\s*\(", l) and not l.strip().startswith("//") \
+                and not in_dbg[i] and not commented[i]:
+            sites.append(i + 1)
+    return sites
+
+
+def patch_strip_dbg_sprintf(root: Path) -> None:
+    """Stop formatting debug text that nothing prints.
+
+    Thirteen `sprintf(dbg_buffer, ...)` calls in src/net and src/usb sit
+    outside any #ifdef DEBUG_* block (one of them per transmitted frame, in
+    rt2501_make_tx_descriptor). Each is followed by `DBG_WIFI(dbg_buffer)`
+    or `DBG_USB(dbg_buffer)`, and with the DEBUG_* flags off
+    (patch_makefile) those macros expand to nothing: the text is formatted
+    into dbg_buffer and never read -- rfid.c's snprintf is the only other
+    writer and it is already under DEBUG_RFID. Together with uart.c (see
+    patch_uart_no_sprintf) these were what kept sprintf, newlib's printf
+    core and nano malloc in the image: 4 316 bytes of lean-wpa3 (.map,
+    2026-11-08). The uart step alone measured +88 bytes, because eapol.o
+    still pulled sprintf in; the two steps are one saving.
+
+    Each sprintf/DBG pair is wrapped in `#ifdef DEBUG_<flag>` ... `#endif`,
+    so a debug build keeps its messages and a production build compiles
+    nothing. The pairing is checked site by site and the step fails on a
+    sprintf(dbg_buffer, ...) it cannot pair, so a site added later is noticed
+    rather than left behind. Behaviour: none, the buffer had no reader. Timing:
+    rt2501_rx_callback (USB bulk RX error), rt2501_connect, usbh_connect and
+    the SAE handlers no longer spend a sprintf -- faster, by microseconds.
+    USB and radio files are edited, so: hardware-risk by this project's rule.
+    """
+    start_re = re.compile(r"^[ \t]*sprintf\(\s*(?:\(char\s*\*\)\s*)?dbg_buffer\s*,", re.M)
+    dbg_re = re.compile(r"\s*(DBG(?:_[A-Z]+)?)\(\s*(?:\(char\s*\*\)\s*)?dbg_buffer\s*\);[ \t]*")
+    total = 0
+    for p in sorted(root.glob("src/**/*.c")):
+        if not p.is_file() or p.name == "uart.c":
+            continue
+        s, nl = read_flat(p)
+        if "sprintf" not in s or "/* dbg-sprintf-guarded */" in s:
+            continue
+        sites = _production_sprintf_sites(s)
+        if not sites:
+            continue
+        lines = s.split("\n")
+        # work from the bottom so earlier offsets stay valid
+        for ln in reversed(sites):
+            line_start = sum(len(x) + 1 for x in lines[:ln - 1])
+            m = start_re.match(s, line_start)
+            if not m:
+                sys.exit(f"FAIL strip_dbg_sprintf: {p}:{ln}: a sprintf that does not "
+                         "write dbg_buffer -- not touching it, look at it")
+            # the end of the sprintf statement: ';' at depth 0, outside strings
+            i = m.end()
+            depth = 1
+            in_str = False
+            while i < len(s):
+                c = s[i]
+                if in_str:
+                    if c == "\\":
+                        i += 1
+                    elif c == '"':
+                        in_str = False
+                elif c == '"':
+                    in_str = True
+                elif c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                elif c == ";" and depth == 0:
+                    break
+                i += 1
+            if i >= len(s):
+                sys.exit(f"FAIL strip_dbg_sprintf: {p}:{ln}: unterminated sprintf")
+            stmt_end = i + 1
+            d = dbg_re.match(s, stmt_end)
+            if not d:
+                sys.exit(f"FAIL strip_dbg_sprintf: {p}:{ln}: sprintf(dbg_buffer) not "
+                         "followed by DBG_x(dbg_buffer); -- not touching it")
+            macro = d.group(1)
+            flag = _DBG_FLAG.get(macro, macro.replace("DBG_", "DEBUG_"))
+            block_end = d.end()
+            # consume the rest of the DBG line
+            eol = s.find("\n", block_end)
+            eol = len(s) if eol < 0 else eol
+            block = s[line_start:eol]
+            s = s[:line_start] + f"#ifdef {flag}\n{block}\n#endif" + s[eol:]
+            total += 1
+            lines = s.split("\n")
+        left = _production_sprintf_sites(s)
+        if left:
+            sys.exit(f"FAIL strip_dbg_sprintf: {p}: sprintf still compiled at lines {left}")
+        s = s.replace("#include \"utils/debug.h\"", "#include \"utils/debug.h\"  /* dbg-sprintf-guarded */", 1) \
+            if '#include "utils/debug.h"' in s else "/* dbg-sprintf-guarded */\n" + s
+        write_flat(p, s, nl)
+        print(f"[ok]   {p}: {len(sites)} sprintf(dbg_buffer) call(s) now under their DEBUG_* flag")
+    if total == 0:
+        print("[skip] strip_dbg_sprintf: nothing left to guard")
+    else:
+        print(f"[ok]   strip_dbg_sprintf: {total} debug sprintf call(s) compiled out of production")
+
+
+def patch_md5_compact(root: Path) -> None:
+    """Fold the 64 unrolled MD5 steps into a loop over two tables.
+
+    hash.c carries Colin Plumb's MD5 with every step written out, and at -O1
+    on the ARM7TDMI that is 2 176 bytes of code for MD5Transform alone -- the
+    third-largest function in the image after interpGo and ieee80211_input
+    (lean-wpa3 .map, 2026-11-08). It is live: hmac_md5 is the MIC of WPA
+    (TKIP) EAPOL frames, key descriptor version 1.
+
+    The replacement is the same algorithm as a 64-pass loop: Rivest's T
+    table (256 B) and the 16 shift amounts (16 B). The T constants are not
+    retyped -- they are lifted from the 64 MD5STEP lines being replaced, and
+    the input-word and shift schedule those lines use is checked against the
+    closed forms the loop relies on, so a tree whose unrolled code differs
+    fails this step instead of getting a different hash.
+
+    tests/test_md5.c runs RFC 1321's seven digests and RFC 2202's HMAC-MD5
+    vectors through the patched file, with the pristine file as the control.
+    Timing: a few hundred more cycles per 64-byte block on the EAPOL path,
+    which is handshake-time, not frame-time.
+    """
+    p = root / "src/net/hash.c"
+    s, nl = read_flat(p)
+    if "md5_t[64]" in s:
+        print(f"[skip] {p}: MD5Transform already compact")
+        return
+    head = "static void MD5Transform(uint32_t buf[4], uint32_t in[16])\n{\n"
+    start = s.find(head)
+    if start < 0:
+        sys.exit(f"FAIL {p}: MD5Transform definition not found")
+    end = s.find("\n}\n", start)
+    if end < 0:
+        sys.exit(f"FAIL {p}: MD5Transform body end not found")
+    body = s[start:end + 3]
+    steps = re.findall(
+        r"MD5STEP\((F[1-4]), (\w), (\w), (\w), (\w), in\[(\d+)\] \+ (0x[0-9a-fA-F]+), (\d+)\);",
+        body)
+    if len(steps) != 64:
+        sys.exit(f"FAIL {p}: expected 64 MD5STEP lines, found {len(steps)}")
+    shifts = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]
+    regs = "abcd"
+    consts = []
+    for i, (f, w, x, y, z, g, k, sh) in enumerate(steps):
+        rnd = i % 4  # step i uses (a,b,c,d) rotated right i times: abcd, dabc, cdab, bcda
+        want_regs = regs[-rnd:] + regs[:-rnd] if rnd else regs
+        if f != f"F{i // 16 + 1}":
+            sys.exit(f"FAIL {p}: step {i} uses {f}")
+        if w + x + y + z != want_regs:
+            sys.exit(f"FAIL {p}: step {i} register order {w}{x}{y}{z}")
+        g_want = (i, (5 * i + 1) & 15, (3 * i + 5) & 15, (7 * i) & 15)[i // 16]
+        if int(g) != g_want:
+            sys.exit(f"FAIL {p}: step {i} reads in[{g}], loop form wants in[{g_want}]")
+        if int(sh) != shifts[(i // 16) * 4 + (i & 3)]:
+            sys.exit(f"FAIL {p}: step {i} shifts by {sh}")
+        consts.append(int(k, 16))
+    t_rows = []
+    for r in range(0, 64, 4):
+        t_rows.append("\t" + ", ".join(f"0x{v:08x}" for v in consts[r:r + 4]) + ",")
+    compact = (
+        "/* Rivest's T[i] = floor(2^32 * |sin(i+1)|), in the order the 64 unrolled\n"
+        "   MD5STEP lines used them. Lifted from those lines by apply-mods.py\n"
+        "   md5_compact, which also checked their input-word and shift schedule\n"
+        "   against the closed forms below. The unrolled transform was 2 176 bytes\n"
+        "   of ARM code; this is a 64-pass loop over 272 bytes of tables\n"
+        "   (lean-wpa3, 2026-11-08). */\n"
+        "static const uint32_t md5_t[64] = {\n" + "\n".join(t_rows) + "\n};\n"
+        "static const uint8_t md5_s[16] = {\n"
+        "\t7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21\n};\n\n"
+        + head +
+        "\tuint32_t a = buf[0], b = buf[1], c = buf[2], d = buf[3];\n"
+        "\tuint32_t i;\n\n"
+        "\tfor (i = 0; i < 64; i++) {\n"
+        "\t\tuint32_t f, g, s, t;\n"
+        "\t\tif (i < 16)      { f = d ^ (b & (c ^ d)); g = i; }\n"
+        "\t\telse if (i < 32) { f = c ^ (d & (b ^ c)); g = (5 * i + 1) & 15; }\n"
+        "\t\telse if (i < 48) { f = b ^ c ^ d;         g = (3 * i + 5) & 15; }\n"
+        "\t\telse             { f = c ^ (b | ~d);      g = (7 * i) & 15; }\n"
+        "\t\ts = md5_s[((i >> 2) & 12) | (i & 3)];\n"
+        "\t\tt = a + f + md5_t[i] + in[g];\n"
+        "\t\ta = d; d = c; c = b;\n"
+        "\t\tb += (t << s) | (t >> (32 - s));\n"
+        "\t}\n\n"
+        "\tbuf[0] += a;\n\tbuf[1] += b;\n\tbuf[2] += c;\n\tbuf[3] += d;\n}\n"
+    )
+    s = s[:start] + compact + s[end + 3:]
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: MD5Transform is a 64-pass loop (T lifted from the unrolled steps)")
+
+
+def _parse_byte_table(src: str, decl: str, path: Path) -> tuple[int, int, list[int]]:
+    """(start, end, values) of `decl ... = { ... };` in src."""
+    start = src.find(decl)
+    if start < 0:
+        sys.exit(f"FAIL {path}: {decl!r} not found")
+    end = src.find("};", start)
+    if end < 0:
+        sys.exit(f"FAIL {path}: end of {decl!r} not found")
+    end += 2
+    body = src[src.index("{", start) + 1:end - 2]
+    vals = [int(x, 0) for x in re.findall(r"0x[0-9a-fA-F]+|\b\d+\b", body)]
+    return start, end, vals
+
+
+def patch_share_sbox(root: Path) -> None:
+    """One AES S-box instead of two.
+
+    crypto/aes128.c (the decrypt side eapol.c unwraps the GTK with) and
+    crypto/cmac.c (the forward AES that BIP and SAE's CMAC need) each carry
+    their own 256-byte forward S-box: .rodata.aes_sbox and .rodata.sbox,
+    byte-identical, 512 bytes of flash in the lean-wpa3 .map (2026-11-08).
+    This exports aes128.c's and points cmac.c at it. The step compares the
+    two tables before it deletes one; the code around them is untouched.
+
+    Done here rather than in crypto/ so that `lean` and `lean-wpa3`, which
+    do not list this step, rebuild exactly as before.
+    """
+    aes = root / "src/net/aes128.c"
+    cmac = root / "src/net/cmac.c"
+    a, anl = read_flat(aes)
+    c, cnl = read_flat(cmac)
+    if "#define sbox aes_sbox" in c:
+        print(f"[skip] {cmac}: already shares aes128.c's S-box")
+        return
+    _, _, aes_vals = _parse_byte_table(a, "static const uint8_t aes_sbox[256] = {", aes)
+    cs, ce, cmac_vals = _parse_byte_table(c, "static const uint8_t sbox[256] = {", cmac)
+    if len(aes_vals) != 256 or aes_vals != cmac_vals:
+        sys.exit(f"FAIL share_sbox: the two S-boxes differ ({len(aes_vals)} vs "
+                 f"{len(cmac_vals)} values) -- refusing to merge them")
+    c = c[:cs] + (
+        "/* The forward S-box is aes128.c's (apply-mods.py share_sbox): the\n"
+        "   two tables were byte-identical and the second one cost 256 bytes\n"
+        "   of flash (lean-wpa3, 2026-11-08). */\n"
+        "extern const uint8_t aes_sbox[256];\n"
+        "#define sbox aes_sbox"
+    ) + c[ce:]
+    a = a.replace(
+        "static const uint8_t aes_sbox[256] = {",
+        "/* Shared with cmac.c -- see apply-mods.py share_sbox. */\n"
+        "const uint8_t aes_sbox[256] = {", 1)
+    write_flat(cmac, c, cnl)
+    write_flat(aes, a, anl)
+    print(f"[ok]   {cmac}: uses aes128.c's S-box (tables compared equal, 256 B dropped)")
+
+
+def patch_prune_dead_funs(root: Path) -> None:
+    """Delete the bootloader functions nothing references.
+
+    The Metal compiler emits every `fun` whether or not anything calls it.
+    A reachability walk over the compiled lean-wpa3 bootloader (every
+    OPint/OPintb immediate that equals a function index, from `main`) found
+    three unreachable functions, and a reference count over the source adds
+    two whose only other mention is their own recursion:
+
+        listnth        def + 1 self-call          42 B
+        itoanil        def only                   24 B
+        unregudp       def only                   17 B
+        wifiConnected  def only                   25 B
+        httpgetheader  the SECOND definition (line ~1773): the one call,
+                       in findsize, comes before it and binds to the
+                       first, so the redefinition is never used  49 B
+
+    The counts are re-checked here before anything is deleted: a tree where
+    a caller has appeared fails the step -- and so does mtl_comp, which is
+    how the first draft of this list (it named the first httpgetheader) was
+    caught: "unknown label 'httpgetheader'". ~160 bytes, measured with
+    mtl_comp (2026-11-08). The `prune_orphans` step of phase8-rom covered a
+    different list and needs rom_pages first.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "/* dead-funs-pruned */" in s:
+        print(f"[skip] {boot}: dead functions already pruned")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+
+    def block(src: str, head: str, nth: int = 1) -> tuple[int, int]:
+        start = -1
+        for _ in range(nth):
+            start = src.find(head, start + 1)
+            if start < 0:
+                return -1, -1
+        i = start + len(head)
+        n = len(src)
+        while i < n - 1:
+            if src[i:i + 2] == ";;":
+                j = i + 2
+                while j < n and src[j] in " \t":
+                    j += 1
+                if j < n and src[j] in "\r\n":
+                    j += 2 if src[j:j + 2] == "\r\n" else 1
+                    return start, j
+            i += 1
+        return -1, -1
+
+    targets = [
+        ("listnth", 2, "fun listnth l i=", 1),
+        ("itoanil", 1, "fun itoanil l=", 1),
+        ("unregudp", 1, "fun unregudp port=", 1),
+        ("wifiConnected", 1, "fun wifiConnected=", 1),
+        ("httpgetheader", 3, "fun httpgetheader res =", 2),
+    ]
+    for name, expected, _, _ in targets:
+        n_refs = len(re.findall(rf"\b{name}\b", s))
+        if n_refs != expected:
+            sys.exit(f"FAIL prune_dead_funs: `{name}` has {n_refs} refs, expected "
+                     f"{expected} -- a caller appeared, not deleting it")
+    if s.count("fun httpgetheader res =") != 2:
+        sys.exit("FAIL prune_dead_funs: expected two httpgetheader definitions")
+    for name, _, head, nth in targets:
+        start, end = block(s, head, nth)
+        if start < 0:
+            sys.exit(f"FAIL prune_dead_funs: could not delimit `{head}`")
+        s = s[:start] + s[end:]
+    s = f"/* dead-funs-pruned */{eol}" + s
+    boot.write_bytes(s.encode("latin-1"))
+    print(f"[ok]   {boot}: pruned {len(targets)} unreferenced functions")
+
+
+def patch_opt_size(root: Path) -> None:
+    """Compile at -Os instead of -O1. A MEASUREMENT step, in no shipped mode.
+
+    Every hardware-validated image was built at -O1; a flag change rewrites
+    every function, and a layout shift alone has been enough to wake an old
+    bug on this project. The step exists so the saving can be measured and
+    written down, not so it can be flashed.
+    """
+    p = root / "Makefile"
+    s = p.read_text()
+    if "CFLAGS += -Os\n" in s:
+        print(f"[skip] {p}: already -Os")
+        return
+    if "CFLAGS += -O1\n" not in s:
+        sys.exit(f"FAIL {p}: 'CFLAGS += -O1' anchor missing")
+    p.write_text(s.replace("CFLAGS += -O1\n", "CFLAGS += -Os\n", 1))
+    print(f"[ok]   {p}: -O1 -> -Os (measurement build only)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -4846,6 +5331,11 @@ def main() -> int:
             "lean-wpa3    = lean plus the WPA3-SAE client. A separate mode "
             "on purpose: `lean` is what every rabbit on the warren runs, "
             "and an experimental key exchange does not belong in it.\n"
+            "lean-wpa3-slim = lean-wpa3 minus what nothing reads: the debug "
+            "sprintf chain (newlib printf + nano malloc), the bootloader's "
+            "console literals and hex dumpers, 64 unrolled MD5 steps, a second "
+            "AES S-box. 107 228 B against lean-wpa3's 117 692 (2026-11-08), "
+            "same behaviour; the room for firmware 1.0.0.0's TLS client.\n"
             "lean-nomdns  = lean minus the mDNS announcer/resolver, nothing "
             "else changed. Diagnostic build for the connection drops "
             "reported on lean; needs working DNS to find its server. "
@@ -4913,6 +5403,21 @@ def main() -> int:
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
         "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        # lean-wpa3-os: lean-wpa3 compiled at -Os. A MEASUREMENT mode: it
+        # says what the flag would buy and is not to be flashed (every
+        # hardware-validated image is -O1; see patch_opt_size).
+        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
+        # lean-wpa3-slim: lean-wpa3 with the dead weight measured out of it,
+        # and nothing the rabbit does changed. C side: the serial console
+        # formats without sprintf (and so without newlib's printf and
+        # malloc), MD5 is a loop instead of 64 unrolled steps, cmac.c uses
+        # aes128.c's S-box. Bootloader bytecode, after every step that edits
+        # it: the console literals, echo opcodes and hex dumpers go (the
+        # UART pad is unwired on a production rabbit), mkwav is precomputed,
+        # and five unreferenced functions are dropped. Each saving is in the
+        # step's docstring with the measurement that justified it.
+        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
+        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -5087,6 +5592,12 @@ def main() -> int:
         "strip_echo_opcodes": patch_strip_echo_opcodes,
         "inline_dump_calls": patch_inline_dump_calls,
         "prune_orphans": patch_prune_orphans,
+        "uart_no_sprintf": patch_uart_no_sprintf,
+        "strip_dbg_sprintf": patch_strip_dbg_sprintf,
+        "md5_compact": patch_md5_compact,
+        "share_sbox": patch_share_sbox,
+        "prune_dead_funs": patch_prune_dead_funs,
+        "opt_size": patch_opt_size,
     }
     for step in steps:
         step = step.strip()
