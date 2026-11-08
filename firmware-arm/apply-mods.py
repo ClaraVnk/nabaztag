@@ -4525,8 +4525,13 @@ def main() -> int:
     # ...but only for a real image. An emulator build has no Metal VM and no
     # bootloader, so it omits vbc/vinterp/stdlib and models wifiAuth in C
     # instead; requiring the opcode there would just stop it compiling.
+    # The emulator's rabbit-vm now carries vbc/vinterp too, so its OTA path
+    # has a signature gate; it still reads the passphrase out of the config
+    # page itself and ships no boot bytecode for wpa3_boot_pw to patch. Its
+    # Containerfile says so with NAB_SIM=1.
     if ("wpa3_sae" in steps and "vbc" in steps
-            and "wpa3_boot_pw" not in steps):
+            and "wpa3_boot_pw" not in steps
+            and not os.environ.get("NAB_SIM")):
         sys.exit(
             "FAIL step list: wpa3_sae without wpa3_boot_pw builds a WPA3 "
             "client whose password is never captured, so SAE never starts "

@@ -64,7 +64,10 @@ VM += $(NABGCC)/testvm/stubs/hal/spi.c
 # VM pointed at boot.0.0.0.13 needs the opcode's implementation. Harmless
 # when the step list leaves verifySig out: nothing then references them.
 VM += ../crypto/nab_sig.c
-VM += ../upstream/tweetnacl/tweetnacl.c
+# The tree's own copy when the container staged one (and sign_open_alias
+# patched it), the vendored one otherwise.
+TWEETNACL ?= $(firstword $(wildcard $(NABGCC)/src/crypto/tweetnacl.c) ../upstream/tweetnacl/tweetnacl.c)
+VM += $(TWEETNACL)
 VM += obj/dumpbc.c
 VM += src/vm_main.c
 
