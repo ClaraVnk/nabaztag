@@ -53,12 +53,23 @@ through a simple control API.
 - 🧩 **Driven from Home Assistant** — speak text, play audio, original Violet
   jingles, ear choreographies, RGB light shows, weather / mail / air belly icons;
   button / RFID / ear-move events come back as HA events for your automations.
-- 🔧 **Optional custom firmware (Naboot)** — Ed25519-**signed OTA**, *verified
-  end-to-end on hardware* (flashed over the air, no JTAG), plus a modern config UI.
+- 🔧 **Optional custom firmware — Naboot 1.0.0.0** (2026-11-08, every item
+  proven on a real rabbit): **WPA3-SAE**, a per-rabbit **adoption key**
+  (X25519, confirmed by five belly colours), **HMAC-signed bytecode**, **XMPP
+  over TLS 1.3**, **binary OTA** pushed from the warren's page with the rabbit
+  restarting by itself, a crash report in the boot URL, and a modern config UI
+  — in 118 344 of 126 976 bytes of flash.
 - 📡 **Survives a hostile network** — a tiny firmware mDNS resolver lets the rabbit
   find its server over multicast even when the gateway refuses its unicast DNS.
 - 🔁 **Comes back by itself** — restart the server and the rabbit reconnects in
-  seconds, base LED violet, with nobody touching the plug.
+  seconds, base LED violet; lose the access point and it notices and rejoins on
+  its own. The old "unplug it" advice is mostly history.
+- 🛠️ **A JTAG station in one command** — a Raspberry Pi and five jumpers, no
+  probe to buy. `git clone` this repo on the Pi, then
+  `firmware-arm/jtag/station.sh setup|check|flash|listen|dump`: un-brick a
+  rabbit, write an image and read it back, dump what it *really* runs, or
+  watch its live status line without halting it. See
+  [`firmware-arm/jtag/README.md`](firmware-arm/jtag/README.md).
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server.
 - 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
@@ -72,9 +83,10 @@ through a simple control API.
 > (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit boots,
 > breathes, speaks, plays jingles, moves its ears, lights up, listens hands-free
 > for "hey Nabi", asks **Claude** and answers. The custom **Naboot** firmware
-> adds a signed OTA path (proven by actually flashing over the air) and a modern
-> config UI; **Le Terrier** is the public warren. See the **Roadmap** below for
-> the status of every phase.
+> (1.0.0.0) adds WPA3, a per-rabbit adoption key, signed bytecode, TLS and
+> over-the-air updates; **Le Terrier** is the public warren. The **Roadmap**
+> below says what is done and what comes next; the phase-by-phase story is in
+> [`docs/HISTORY.md`](docs/HISTORY.md).
 
 ## How it works
 
@@ -92,6 +104,10 @@ Our server completes the handshake using the documented **SASL success-bypass**
 (no Violet password needed), keeps the rabbit idle, pushes `violet:packet`
 commands, and **logs everything** the rabbit sends. No OpenJabNab, no reverse
 proxy — one clean process.
+
+A rabbit on **Naboot 1.0.0.0** whose owner has confirmed its adoption key runs
+the same XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from
+that adoption key; the plain port stays for every other rabbit.
 
 ## Home Assistant: the integration, or this add-on
 
@@ -191,21 +207,29 @@ apply unless the reminder is marked urgent).
 │                            # (Le Terrier — the public warren at
 │                            #  terrier.cyberloutre.fr — lives in a separate
 │                            #  private repo; the live site is the showcase.)
-├── firmware-arm/            # Naboot — custom ARM7 firmware (Phase 4/5). Forks
-│   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2 + Ed25519-gated httpflash +
-│   ├── boot-mods/mdns.mtl   #    modernized config UI + boot-side mDNS announcer.
-│   ├── crypto/              #    Build via ./build.sh --remote HOST --runtime
-│   ├── pages/               #    {docker,podman} --mode {minimal|full|max|lean|…}.
+├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.0. Forks
+│   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
+│   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
+│   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
+│   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
+│   │                        #    {docker,podman} --mode naboot-1.0.0.0 (or
+│   │                        #    minimal, lean, …).
+│   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
+│   │                        #    station.sh setup|check|flash|listen|dump
 │   ├── emulator/            #    A rabbit that is not a rabbit: the Wi-Fi stack
 │   │                        #    run on a build machine against a virtual AP,
 │   │                        #    so a fix costs a second instead of unplugging
 │   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
+│   ├── ADOPTION-KEY.md      #    The per-rabbit key: exchange, colours, HMAC, TLS.
 │   ├── BRICK_FORENSICS.md   #    Recovery plan + bisection ladder.
 │   └── RECOVERY.md
 ├── firmware/                # Runtime-side bytecode add-ons (mic stream, mDNS,
-│   ├── micstream.mtl        #    OTA helper) compiled into the hybrid bootcode
-│   ├── mdns.mtl             #    served by the add-on.
+│   ├── micstream.mtl        #    OTA, reconnect, the TLS seam) compiled into the
+│   ├── fwota.mtl            #    hybrid bootcode served by the add-on / warren.
+│   ├── patch_tls.py
 │   └── patch_main.py
+├── docs/
+│   └── HISTORY.md           # the phase-by-phase journal (the former Roadmap)
 ├── home-assistant/
 │   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
 │   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
@@ -260,18 +284,25 @@ Full guide (API, pairing, troubleshooting) is in
 Don't want to run a server at home? Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot** — the signed firmware lives at
-   **[`firmware-arm/releases/naboot-stable.signed.sim`](firmware-arm/releases/)**
-   (hardware-verified, reproducible). The illustrated 5-minute flashing guide is
-   at <https://terrier.cyberloutre.fr/naboot>.
+1. **Download Naboot 1.0.0.0** — the illustrated 5-minute flashing guide is
+   at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
+   is mode `naboot-1.0.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   118 344 of 126 976 bytes of flash. The earlier signed images — the
+   0.0.0.13 `lean` build and the `minimal` rescue build — stay in
+   [`firmware-arm/releases/`](firmware-arm/releases/).
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
    upgrade* and upload the file. **Don't unplug** during the ~30 s flash. When
-   it reboots, the first belly light blinks **orange**: that is expected —
-   **if it is still orange after a minute, unplug it, wait ten seconds, plug it back in**, and it rejoins your Wi-Fi. (Builds before 2026-11-08 need that power cycle every time: their post-flash software reset leaves the 2006 radio asleep. From the 2026-11-08 builds on, the rabbit comes back by itself — measured on an over-the-air install, 54 s from download to boot URL, nobody at the plug.)
-   This is the only manual flash — from here on, updates are **signed OTA**,
-   over the air.
+   it reboots, the first belly light blinks **orange** while it looks for your
+   Wi-Fi: that is expected, and on 1.0.0.0 the rabbit comes back **by itself**
+   (measured on an over-the-air install: 54 s from download to boot URL,
+   nobody at the plug). Only builds before 2026-11-08 needed a power cycle
+   after every flash — their post-flash software reset left the 2006 radio
+   asleep — so if you are coming from one and it is still orange after a
+   minute, unplug it, wait ten seconds, plug it back in, once.
+   This is the only manual flash — from here on, updates are pushed from the
+   warren's page and the rabbit installs them and restarts on its own.
 3. **Point it at Le Terrier.** After it reboots, re-enter config mode (head
    button while plugging in → belly **blue** again) and reopen
    `http://192.168.0.1` — it now shows *Naboot's* setup page. Enter your home
@@ -284,322 +315,107 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    about this hardware assumes. No `https://` either, in any case: the 2006
    firmware speaks plain HTTP only. (Running your own warren? Put
    `your-host/vl` here instead.)
-4. **Adopt it.** The rabbit dials Le Terrier and **says its adoption code out
-   loud** (e.g. *“BRAMBLE 4 2”*). Sign up on the Terrier, type that code on the
-   **`/pair`** page — the rabbit is yours, and any update reaches it
-   automatically. *Missed the code? It is spoken again on the next connect,
-   but at most once every ~10 minutes per rabbit — so wait that long before
-   power-cycling, or you'll get a silent boot.*
+4. **Adopt it — the spoken code, then the colours.** On its first boot
+   against Le Terrier the rabbit runs a key exchange with the warren (a few
+   seconds) and then lights **five colours on its belly for one minute**. It
+   is not crashed: it is showing you its key. It then fetches its bytecode,
+   connects, and **says its adoption code out loud** (e.g. *“BRAMBLE 4 2”*).
+   Sign up on the Terrier and type that code on the **`/pair`** page — the
+   rabbit is yours. The warren's page then shows the five colours *it*
+   computed and asks whether the belly showed the same: **confirm**, and from
+   then on the warren signs that rabbit's bytecode (the rabbit refuses
+   unsigned bytecode), its XMPP moves onto TLS, and every update reaches it
+   over the air. Until you confirm, the colours come back for a minute at
+   every boot — unplug and replug to see them again. *Missed the code? It is
+   spoken again on the next connect, but at most once every ~10 minutes per
+   rabbit — so wait that long before power-cycling, or you'll get a silent
+   boot.*
 
 > **Nothing happens after step 3 — no code, no voice?** Then the rabbit never
 > reached the Terrier, and the firmware is not the first suspect. Check, in
 > order: that **Boot URL host** has no `https://` and no typo (a wrong host
 > fails silently — though a missing `/vl` is fine here, both forms answer);
 > the belly LEDs (**blue** = still in config mode; **orange** = looking for
-> Wi-Fi — and **right after any flash or OTA, orange is normal until you
-> unplug and replug the rabbit**; do that first); that your 2.4 GHz network
-> lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only"); and that
-> the rabbit can resolve `terrier.cyberloutre.fr` (it needs working DNS). Want
+> Wi-Fi, normal for up to a minute after a flash; **five colours for a
+> minute** = the adoption exchange of step 4, wait it out); that your 2.4 GHz
+> network lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only");
+> on **WPA3**, that the access point allows SAE *hunting-and-pecking* — an
+> H2E-only (hash-to-element) setting is not supported yet, WPA3-only and
+> WPA2/WPA3 transition both are; and that the rabbit can resolve
+> `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash
 > **[`firmware-arm/releases/naboot-minimal.signed.sim`](firmware-arm/releases/)**
 > the same way — it is the rescue build (`RECOVERY.md`).
 
 > The custom firmware is **optional**: a stock rabbit works fine on the Home
-> Assistant add-on above (nothing flashed). Naboot is what unlocks **signed OTA**
-> + the modern config UI + dialing a remote warren like Le Terrier.
+> Assistant add-on above (nothing flashed). Naboot is what unlocks **WPA3**,
+> the **adoption key** with signed bytecode and **TLS**, **over-the-air
+> updates**, the modern config UI, and dialing a remote warren like Le Terrier.
 
 ## Roadmap
 
-- **Phase 1 — working (verified live):** the rabbit boots our bytecode, completes
-  the full XMPP handshake (incl. answering its `violet:iq:sources` query with an
-  init packet), becomes operational (`idle`) and **breathes**. It receives binary
-  **AmbientPacket** commands (ears, belly weather/stock/mail/air-quality icons,
-  nose) and sleep/wake. Connection + command pipeline confirmed on the real device.
-- **Phase 1.5 — working (verified live on the device):** the rich command channel
-  runs end-to-end. The rabbit **speaks** (built-in espeak-ng TTS), **plays audio**
-  (MP3 and WAV), **moves its ears** to precise positions and runs **RGB light
-  shows** — pushed as `MessagePacket` programs whose audio/choreography resources
-  the rabbit fetches back over HTTP from the add-on. Getting here needed two
-  protocol fixes: the server must answer the rabbit's **presence** (so it reaches
-  the `ssFree` state where it executes pushed commands) and must not let `<unbind>`
-  be mistaken for a bind. A ready-to-use Home Assistant package (incl. a
-  *speak Claude's reply on the rabbit* script) ships in `home-assistant/`.
-- **Phase 2 — voice → Claude — working (verified live), no firmware hacking:**
-  the stock bytecode already does **push-to-talk** — hold the head button, speak,
-  and it records the mic and POSTs the audio to `/vl/record.jsp`. The add-on
-  decodes it, runs **bundled whisper.cpp** for speech-to-text, sends the text to a
-  **Home Assistant conversation agent** (e.g. the Anthropic/Claude integration),
-  and speaks the reply back. The agent can also **drive the rabbit** by embedding
-  `[ears …]` / `[led …]` / `[nose …]` tags in its reply. TTS is bundled **espeak-ng**
-  or, for a much nicer voice, **Piper** via the HA Piper add-on. Enable it with the
-  `voice_pipeline` / `conversation_agent` / `tts_engine` options.
-- **Phase 3 — wake word — beta (opt-in, off by default):** push-to-talk is
-  stable and needs no firmware change; the hands-free wake word ("hey Nabi") is
-  **beta** — always-listening is opt-in and **off at source by default** (the mic
-  does not stream until you turn it on; turning it off stops capture at the
-  rabbit, not just server-side). It works end-to-end but the wake-word accuracy
-  and barge-in handling are still being tuned. The stock firmware
-  only records the mic on a physical button press — the server can't start a
-  recording. So passive listening required a **custom mic-streaming bytecode**.
-  Solution: a *hybrid* bytecode that adds a server-triggered **UDP microphone
-  stream** (`firmware/micstream.mtl`, à la `openab`) to the stock Violet
-  bytecode, compiled with RedoXyde's `mtl_linux` in a Linux x86 container.
-  Server-side `wake_loop` swaps the audio buffer every few seconds, runs bundled
-  whisper.cpp, and if "Nabi" is heard, the rest of the utterance is sent to the
-  conversation agent and the reply spoken back. Confirmed live: "Nabi, raconte
-  une blague" → Claude reply spoken full-voice in the Piper voice with action
-  tags driving ears + LEDs simultaneously.
-- **Phase 4 — firmware upgrades — done (Naboot, hardware-verified
-  2026-06-20):** with the toolchain stood up, built **Naboot**, a fork of
-  `RedoXyde/nabgcc` (wpa2 branch) compiled as a `.sim` flashable via the
-  config-mode upload page (no JTAG / no opening). Adds an **Ed25519-gated OTA**
-  path (`verifySig` opcode 152 + `flashFirmware` gated on signature against
-  `firmware-arm/keys/signing_pubkey.h`), strips the upstream debug `printf`
-  glue, and wraps the linker script's vector / startup / bytecode sections in
-  `KEEP()` so `--gc-sections` is safe to enable. Build is reproducible from
-  the pinned upstream commits (`nabgcc` `2c05b53f`, `mtl_linux` `7e557a15`).
-  Status (2026-06-20): **brick root-caused and fixed.** It was a linker bug,
-  not a Naboot mod — `-fdata-sections` splits `.bss` into per-variable `.bss.*`
-  sections that the nabgcc linker (`sys/ml67q4051.ld`) left outside
-  `__bss_start__..__bss_end__`, so the startup zero-loop never cleared them →
-  garbage globals → Data Abort at boot. This hit *every* mode (even
-  `minimal`/vanilla), which **exonerates `modernize_pages`** (the original
-  suspect). The *first* fix (`97e05d1`) bracketed `*(.bss .bss.*)` so the
-  zero-loop clears all of it — and bricked the rabbit, because on a 16 KB
-  SRAM the collected `.bss` runs into the 0x1680 bytes of stacks that
-  `init.s` reserves from the top of RAM. The stop-gap (`3cd45d8`) reverted
-  the bracket and forced the one global that actually faulted — the audio
-  FIFO indices `play_w`/`play_r` — into `.data` (init 0), so
-  `audioPlayFetchByte()` can't read a garbage index before
-  `audioPlayStart()` runs.
+The long, dated story of every phase — what was tried, what broke, what was
+measured — lives in **[`docs/HISTORY.md`](docs/HISTORY.md)**, unabridged. This
+is the short version.
 
-  **Settled on 2026-10-27** (`extbss`, PRs #61 and #63), and the way it was
-  wrong for four months is the part worth keeping. The note next to that
-  revert said bracketing `.bss.*` left *zero VM heap* and stalled the
-  bytecode loader. It does not: `VMALLOC` never touches the newlib heap —
-  `_vmem_heap` is a fixed address in external RAM (`inc/vm/vmem.h:16`) — and
-  the brick was `.bss` landing on the stacks. Believing the wrong mechanism
-  argued against the right fix, which is to stop keeping 8 KB of pure
-  scratch in a 16 KB SRAM: `audioFifoPlay` and vlog's `buffer_temp` now live
-  in a NOLOAD `.extbss` in external RAM (ported from RedoXyde/nabgcc
-  `6303737`, Léonard/uplg), `.bss.*` is collected properly, and the user
-  stack goes from 1 916 to **10 104 bytes** of headroom. Every EAPOL global
-  — `pmk`, `ptk`, `gtk`, `anonce`, `snonce`, `replay_counter` — is zeroed at
-  boot now instead of starting on whatever the SRAM held, which is what made
-  association partly a dice roll on each replug. `preflight.py` gained the
-  checks that would have caught the 2026-06-20 brick, and the ones that
-  caught a second attempt at it on 2026-10-25. Recovered
-  with a **Raspberry Pi as a bit-bang JTAG adapter** (no probe, F/F Dupont to
-  the 8-pin header) + a TCL reimplementation of the OKI ML67Q4051 flash
-  sequence on stock OpenOCD; flash read/erase/program verified byte-exact.
-  Both `minimal` and the full **`lean`** build (modernized pages + sig-gated OTA
-  + mDNS) now **boot and run** on the rabbit — JTAG confirms it executes in User
-  mode with a live main loop, no longer the Abort dead-loop. See
-  `firmware-arm/RECOVERY.md` and `BRICK_FORENSICS.md`. Six pre-built variants:
-  `minimal` (rescue, vanilla bootloader +
-  verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
-  bisects), `full` (sig-gated OTA + modernized UI), `max` (`full` + boot-side
-  mDNS), `lean` (`max` + `--gc-sections`).
-- **Phase 5 — setup UX — done (hardware-verified 2026-06-21):** rewrote the four
-  config-mode HTML pages (`page_a / page_done / page_u / page_error`) in
-  modern semantic HTML with a dark theme, mobile viewport, and the same form
-  field names + template markers the firmware backend expects, so the existing
-  `cbhttp` / `httpindex` / `httpflash` paths in `boot.0.0.0.13.mtl` keep
-  working unchanged. Saved ~5 KB of ROM in the process. Source HTML lives
-  under `firmware-arm/pages/`; injection into the boot bytecode is done by
-  `firmware-arm/apply-mods.py:modernize_pages`. The modernized pages, rendered
-  on a real rabbit (the `lean` build) from a phone at `192.168.0.1`:
+**Done — Naboot 1.0.0.0 (2026-11-08; every item proven on a real rabbit)**
 
-  <p align="center">
-    <img src="images/naboot-config-setup.png" alt="Naboot config — Wi-Fi setup" height="380">
-    &nbsp;&nbsp;
-    <img src="images/naboot-config-upgrade.png" alt="Naboot config — firmware upgrade" height="380">
-  </p>
+- **WPA3-SAE** — WPA3-only and WPA2/WPA3 transition networks, on 2006 silicon
+  (SAE in software, CCMP still in the radio). Hunting-and-pecking only: an
+  access point set to H2E-only is not supported yet (see *Later*).
+- **Adoption key** — one X25519 exchange at adoption; the rabbit shows five
+  belly colours, the owner confirms they match the warren's page. Until
+  confirmed, the colours show for a minute at every boot.
+  [`firmware-arm/ADOPTION-KEY.md`](firmware-arm/ADOPTION-KEY.md).
+- **HMAC-signed bytecode** — a confirmed rabbit refuses bytecode its warren
+  did not sign.
+- **XMPP over TLS 1.3** (PSK, port 5223) for confirmed rabbits; the PSK is
+  derived from the adoption key.
+- **Binary OTA** — the update is pushed from the warren's page; the rabbit
+  verifies it, installs it and restarts by itself. Nobody at the plug.
+- **Crash report** — reset reason and counters in the boot URL, so the warren
+  sees what used to need a JTAG read.
+- **Self-recovery** — the rabbit notices an access point that forgot it and
+  rejoins by itself; a server restart was already survived by the runtime
+  bytecode (reconnect, no reboot).
+- **Live telemetry over JTAG** without halting the rabbit
+  (`firmware-arm/jtag/listen.sh`).
+- **The JTAG station in one command** — clone the repo on a Raspberry Pi,
+  then `firmware-arm/jtag/station.sh` does setup, check, flash, listen and
+  dump. Five jumpers, no probe.
+- Also in the image: the modernized config UI, mDNS announcer and resolver,
+  the Ed25519 signature gate, and a reproducible build — 118 344 of
+  126 976 bytes of flash. Around it: Le Terrier live, the HACS integration,
+  the whole-rabbit emulator, and a Metal toolchain in Python whose
+  `mtl_comp.py --check` type-checks the real runtime bytecode.
 
-- **Phase 6 — Le Terrier — DONE (live at https://terrier.cyberloutre.fr/):**
-  the public warren every Naboot rabbit dials back to. Dependency-free Python
-  (stdlib + Flask for the owner UI), deployed on Loutre's VPS via a rootless
-  Podman quadlet behind Caddy 2 (auto-Let's-Encrypt). Reachable from any
-  network: `/vl/locate.jsp` → ping/broad/xmpp_domain, `/vl/bc.jsp` →
-  signed `.hybrid` baseline bytecode (104 824 B), XMPP `:5222` published
-  direct (the rabbit hardware has no TLS, so Caddy stays on the HTTP/HTTPS
-  layer). The owner UI is FR/EN, has Open Graph + Twitter card metadata (so
-  the link previews cleanly in iMessage), and walks an owner through signup
-  → claim → pair → drive in three steps. Multi-tenant per-MAC state in
-  SQLite; per-owner / per-rabbit accounts; ProxyFix so HTTPS canonical URLs
-  resolve cleanly behind Caddy. **Adoption is wired up:** an unclaimed rabbit
-  that dials in mints a pair code and **says it out loud** ("BRAMBLE 4 2") so its
-  human can claim it on `/pair`; the on-device **download + flash + adopt guide**
-  is at [`/naboot`](https://terrier.cyberloutre.fr/naboot). Still on the list:
-  per-rabbit bytecode minting (every paired rabbit gets the same baseline today).
-  The Terrier **source now lives in a private repo** (it carries the warren's
-  state); the live site is the showcase. **Naboot is the firmware on the rabbit;
-  Le Terrier is the home they all dial back to.**
-- **Phase 7 — modernize the Metal toolchain in Python (in progress, working v1 shipped):**
-    Toolchain landed (all in `firmware-arm/tools/`):
-    - **`mtl_dis.py`** — disassembler. Decodes all 153 opcodes,
-      reconstructs globals, resolves jump targets, annotates `OPexec`
-      callsites with names (via `--src boot.0.0.0.13.mtl`), auto-strips
-      the `amber<hex>...Mind` HTTP wire wrapper. Outputs text, JSON, or
-      `--format masm` for re-assembling.
-    - **`mtl_dis.py --check`** — structural validator. Refuses
-      bins with unknown opcodes, out-of-range jump targets, OPexec to
-      out-of-range fun indices, or funtable entries outside the code
-      section. Should gate every freshly-built `.sim` before flash.
-    - **`mtl_asm.py`** — bytecode encoder. Library API + line-oriented
-      `.masm` text format. **Validated byte-for-byte against the C++
-      `mtl_compiler`** on real production bytecode: full `bin → .masm
-      → bin` round-trip on `boot.0.0.0.13.bin` (31 437 B) and
-      `bootcode_hybrid.bin` (103 525 B, 459 functions).
-    - **`mtl_comp.py` — `.mtl` source compiler.** Recursive-descent
-      parser + codegen that emits byte-identical `.bin` to the C++
-      `mtl_compiler` for the supported subset (proto / var / const /
-      fun, integers, strings, builtins, user-fun calls, arithmetic
-      and comparison, if/then/else, let-in, set, sequencing). Tested
-      byte-for-byte on 23 progressively richer programs, the largest
-      344 bytes. It has never compiled a real Violet source — see
-      Phase 7a below for where it stops and what closing the gap
-      would buy.
-    1. **Phase 7a — Python MTL compiler (code landed, not yet able to
-       build the real thing):** `mtl_comp.py` exists and emits
-       byte-identical bytecode to the C++ `mtl_compiler` on 23 test
-       programs — the largest of which is 344 bytes. On 2026-11-08 it
-       was pointed at the real preprocessed `bootcode.mtl` (10 677
-       lines, the exact input the C++ compiler had just turned into a
-       105 KB image) and stopped twice in two minutes:
+**Next**
 
-       - `i32 operand out of range: 281474959933440` — `0xFFFFFF000000`,
-         one of MD5's 48-bit masks. The C++ compiler truncates to 32
-         bits; this one raises.
-       - `line 466: unknown field '('` — `set md5bloc.(j*2) = …`,
-         computed array indexing. `.field` on a struct is supported,
-         `.(EXPR)` is not.
+- **Per-rabbit wake word** compiled into the bytecode — it is recorded on the
+  warren today, but not yet minted into each rabbit's own bytecode.
+- **HTTP over TLS-PSK** for the bytecode and OTA fetches — today only the
+  XMPP stream is encrypted; the bytecode (HMAC) and the image (Ed25519) are
+  authenticated but travel in clear.
+- **Close the plain XMPP port** once every rabbit has migrated to TLS.
 
-       Neither is research; both are constructs the 2006 sources use and
-       the Python compiler has never seen, because it has only ever been
-       run on its own tests. **The milestone that retires the C++ binary
-       is one command**: compile the real `bootcode.mtl` and have `cmp`
-       report byte-identical against the reference image. Until then the
-       32-bit `mtl_compiler` is still the only thing that can build a
-       bytecode, inside a Debian container with `libc6:i386`.
-    2. **Phase 7b — "view as Python" layer (code landed, blocked on 7a):**
-       `mtl_pyc.py` compiles a Python subset straight to Metal bytecode via
-       the stdlib `ast` module, and `mtl_depyc.py` renders bytecode back as
-       Python. So the contributor-facing surface already is Python. It is
-       only worth relying on once 7a can build the real sources, since
-       `mtl_pyc` shares `mtl_comp`'s codegen and therefore its gaps.
-    3. **Phase 7c — put the toolchain under test (not started):** these
-       four tools are 4 500 lines and **nothing in CI runs any of them**.
-       `mtl_asm`/`mtl_dis` round-trip the real 103 KB bytecode
-       byte-identically, which is the strongest guarantee in the set and is
-       checked by hand. The regression test that matters is the 7a
-       milestone itself — compile the real source, compare to the
-       reference image — so 7c is mostly 7a's test, wired up.
-- **Phase 8 — shrink the firmware by moving boot-bytecode logic to C
-  (prototype landed):** the rabbit's bootloader is ~3000 lines of Metal
-  bytecode (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM.
-  Native ARM is roughly 3× denser than Metal bytecode, so rewriting boot-side
-  hot paths in C — and stripping the corresponding VM opcodes — would free
-  10–20 KB of ROM (the flash budget is 124 KB and `max` uses ~92%).
-  **Scope clarification:** Phase 8 only touches the **boot bytecode**, which
-  is already inside the `.sim` and already requires a flash to change. It
-  does **NOT** touch the runtime bytecode (`firmware/*.mtl`), which is
-  downloaded fresh from the server on every boot and stays OTA-instant.
-  **`phase8-rom` build mode** stacks 8 source-level slices on top of
-  `lean`: (1) the 4 config-portal HTML pages move from Metal globals
-  into a C-side `const char[]` and render through a new `OPpageRender`
-  opcode; (2) `pagefill`/`listreplacestr` and 4 stillborn helpers
-  pruned as orphans after rom_pages obsoleted their callers;
-  (3) `mkwav 8000 1 16` precomputed at build time and inlined as a
-  46-byte literal; (4) `dump`/`dumpscan` reduced to identity, callsites
-  inlined, defs dropped; (5) all 86 `Secho{ln} "literal"` calls
-  replaced with `nil`; (6) user echo helpers `MACecho`/`SEQecho`/`IPecho`
-  collapsed to identity (return-value contract preserved); (7) every
-  dynamic-arg `Secho`/`Iecho`/`{ln}` opcode keyword deleted — verified
-  as pure stack passthroughs in vinterp.c; (8) every prior slice
-  composable + idempotent. The resulting `.sim` is **220 330 B —
-  17.9 KB smaller than minimal/rescue (238 706 B), 6.2 KB smaller
-  than the previous best (`lean` at 226 658 B)** — and ~10 KB of
-  vmem RAM is freed at runtime. The remaining big bytecode is
-  concentrated in stateful paths (`loop`, `cbnettcp`, `tcpwrite`,
-  `tcpevent`) where C rewrites would require hardware-tested validation;
-  this stack stays at the safe envelope.
-  **Measured again on 2026-11-08, against `lean-wpa3` (117 692 B of a
-  126 976-byte flash):** `rom_pages` no longer stacks — it and `wpa3_boot_pw`
-  both take opcode 153 — and it would not save flash anyway, since the pages
-  have to be stored either way (9 246 B of the 13 602-byte globals block).
-  Of the bytecode slices, `strip_secho` is worth 2 036 B (twice the claim),
-  `strip_dump` 517 B, `inline_mkwav` 105 B (not ~520), the echo opcodes 146 B
-  and the echo helpers 214 B; the whole bytecode bundle plus five unreferenced
-  functions is 2 880 B, not 6 KB. The real weight was on the C side: the
-  console's `sprintf` and thirteen `sprintf(dbg_buffer, …)` calls whose
-  `DBG_*` consumer compiles to nothing kept newlib's printf core and nano
-  malloc in every "lean" image — 5 680 B. With those, a loop-form MD5
-  (1 656 B) and one AES S-box instead of two (256 B), **`lean-wpa3-slim`
-  is 107 228 B, 19 748 spare**, same behaviour, not yet on hardware (the
-  steps edit the console and USB files, see `RECOVERY.md`). Compiling at
-  `-Os` would take another 10 112 B off `lean-wpa3` but rewrites every
-  function of a flag-validated image, so it is measured and not proposed.
-- **Phase 9 — gateway-independent resolution (mDNS) — done, Claude live on the
-  recovered rabbit (2026-06-21):** after the un-brick the rabbit booted and
-  reached XMPP, but the home gateway **silently dropped its unicast DNS** — a
-  per-client ACL / DNS-flood guard, *proven* with a control test: the same
-  `A? <name>` query is answered for other hosts and refused only when the source
-  IP is the rabbit's. So it could never resolve its server and stayed all-orange.
-  Rather than touch the firewall, taught the rabbit to resolve over **multicast
-  mDNS**: `firmware/mdnsresolve.mtl` + `patch_dns.py` make the runtime bytecode's
-  `dnsreq` route `.local` names to `224.0.0.251:5353` instead of the gateway —
-  **no flash** (runtime bytecode, served fresh by `bc.jsp`). The rabbit queries
-  from port 1597, so an RFC 6762 §6.7 responder answers it as a legacy unicast
-  query and the existing response path parses it unchanged. `locate` returns
-  `nabaztag.local`; a standard mDNS responder (`nabaztag-violet/tools/nabmdns.py`,
-  no spoofing) answers it. Confirmed live: fresh boot → multicast resolve → full
-  XMPP bind → **the whole Phase 2 voice loop runs on the recovered rabbit**
-  (button → whisper → Claude → Piper TTS, spoken full-voice with ears/LED action
-  tags). No gateway DNS, no reply-spoofing. The unicast fallback (`nabdns.py`,
-  for stock un-patched bytecode) and the deploy steps live in
-  `nabaztag-violet/tools/DNS-HELPER.md`.
+**Later**
 
-- **Phase 10 — the rabbit reconnects instead of rebooting — done
-  (hardware-verified 2026-10-20):** every server restart — a deploy, a crash,
-  a Home Assistant update — left the rabbit orange until someone unplugged it.
-  The cause was not a missing recovery: stock Violet bytecode *does* recover,
-  by rebooting the rabbit when the XMPP socket closes
-  (`main.mtl:XmppGateStreamClosed`), and its own comment says the authors
-  weighed reconnecting gently and chose the reboot as *"le plus efficace"*.
-  Measured on the device: the drop is logged at 17:12:12, the rabbit reboots
-  and re-downloads its 103 KB of bytecode at **17:12:25** — so the reboot path
-  fires — and then stops, never even asking for `locate.jsp`. **A soft reboot
-  does not bring the 2006 rt2501 USB radio back; a power cycle does.** That
-  also kills the "watchdog that reboots" idea we had queued since June: it
-  would have failed the same way.
-  So take the branch Violet declined — `firmware/patch_reconnect.py` routes the
-  closed socket to `XmppSessionIsDisconnected`: stop, reset to idle, base LED
-  violet, wait 5 s plus a random 0-30 s (so a whole warren does not stampede
-  back at once), then `XmppGateReconnect`. The network stack is never torn
-  down, so there is nothing to bring back. It ships in the **runtime bytecode**,
-  downloaded at every boot — **no flashing, no brick risk**, and the firmware
-  image is untouched. A control build without the patch comes out at 104 827 B,
-  exactly the size documented here, against 104 824 B with it: three bytes.
-  **Proven live:** disconnect 19:41:12 → connect 19:41:25 → operational
-  19:41:26 → probe 254 ms, with **no boot event in between**.
-  Found on the way: the bytecode being served had 459 functions instead of 468
-  — it had been built **without the mDNS resolver** of Phase 9. The rebuild
-  restores it.
-  *Still open:* a rabbit that loses its Wi-Fi **association** is a different
-  failure, and this does not cover it. `wifi.mtl`'s `reconnectW` only calls
-  `wifiAuth`, which authenticates against the scan **cached at boot** and never
-  re-scans — only a cold start does. That is why an AP deauth strands the
-  rabbit with amber LEDs until it is unplugged. Diagnosed, not yet patched: it
-  cannot be tested without hardware that reproduces it.
+- **H2E** (hash-to-element) for SAE — for access points set to H2E-only, and
+  the timing half of Dragonblood.
+- **A CVE scan** of what the image and the warren carry.
+- **Reclaim flash** — 8 632 bytes are spare today; the measured savings are
+  in the history (Phase 8).
+- **`mtl_pyc` typing** — the Python-to-Metal compiler shares `mtl_comp`'s
+  code generation but not yet its type checker.
 
 ## Hardware
 
 - Tested on the **Nabaztag:tag** (v2, 2006 — mic + RFID). The v1 (2005) likely
   works (same Violet protocol) but is **untested**. The Violet add-on drives a
   **stock** rabbit with no hardware mod and **no flashing required** — but the
-  optional **Naboot** custom firmware (Phase 4) *is* flashed (over the air or
-  the config-mode upload page) for signed OTA + a modern config UI.
+  optional **Naboot** custom firmware *is* flashed (once from the config-mode
+  upload page, then over the air) for WPA3, the adoption key, TLS, signed OTA
+  and a modern config UI.
 - Host architecture: **amd64**. **arm64/aarch64** (Raspberry Pi 4/5) is
   provisional — the add-on declares it, but nobody has built or run it on
   real arm hardware yet. Reports welcome in
@@ -611,15 +427,27 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 
 **No — don't panic.** Orange (blinking or solid) means the rabbit is *awake and
 looking for its Wi-Fi / server*, not dead. A bricked rabbit shows **no** boot
-animation at all. These 2006 radios are simply **flaky at re-associating Wi-Fi on
-boot** — after a power-cycle, a firmware OTA, an add-on restart, or any reboot, the
-rabbit often comes up orange and just sits there with no network traffic for a
-minute or more.
+animation at all.
 
-**The fix is almost always a clean power-cycle:** unplug the power, wait ~10
-seconds (so it fully discharges), plug it back in. It then boots → fetches its
-bytecode → `locate` → connects → **breathes**. If the first try doesn't catch,
-do it once more — it's normal, not a fault.
+**On Naboot 1.0.0.0, give it a minute or two.** The rabbit comes back on its
+own: after a flash or an OTA (measured: 54 s from download to boot URL), after
+a server restart (it reconnects, base LED violet, no reboot), and after an
+access point that dropped or forgot it (it notices within a few minutes and
+rejoins). If it is *still* orange after that, look at the network before the
+rabbit: 2.4 GHz with 802.11b rates allowed, DNS for the server name, and on
+WPA3 an access point that allows SAE hunting-and-pecking (H2E-only is not
+supported yet).
+
+**Five colours on the belly for a minute** is not a fault either: that is the
+adoption exchange waiting for you to confirm the colours on the warren's page
+(see *Flash Naboot & adopt*). Until you do, it repeats at every boot.
+
+**On a stock rabbit, or a Naboot build from before 2026-11-08,** the old advice
+stands: these 2006 radios are flaky at re-associating on boot, and a software
+reset leaves the USB radio asleep. Unplug the power, wait ~10 seconds (so it
+fully discharges), plug it back in. It then boots → fetches its bytecode →
+`locate` → connects → **breathes**. If the first try doesn't catch, do it once
+more — it's normal, not a fault.
 
 Tips: it's the Wi-Fi association that's flaky, so a strong signal / 2.4 GHz / a
 less crowded channel helps. Don't restart the add-on repeatedly in a short window
@@ -631,8 +459,9 @@ HA failing is **not** a sign of trouble if the rabbit is on a different VLAN
 
 | Symptom | Meaning | Fix |
 |---|---|---|
-| Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | Power-cycle (unplug ~10 s) |
-| **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); JTAG as last resort |
+| Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | On 1.0.0.0: wait a minute or two, then check the network. Stock or older builds: power-cycle (unplug ~10 s) |
+| **Five colours** on the belly for a minute, then a normal boot | Adoption key waiting to be confirmed | Confirm the colours on the warren's page |
+| **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); otherwise the JTAG station: `firmware-arm/jtag/station.sh flash` |
 
 ## Voice / TTS — make Nabi sound as natural as you like
 
