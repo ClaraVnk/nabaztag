@@ -1452,6 +1452,188 @@ def patch_wpa3_timing(root: Path) -> None:
     print(f"[ok]   {q}: boot_url reports the commit cost as &t=")
 
 
+def patch_eapol_msg2_ie(root: Path) -> None:
+    """Message 2 of the four-way handshake repeats the association's RSN IE.
+
+    hostapd compares the RSN IE it finds in message 2 with the one from the
+    (re)association request, byte for byte (`wpa_compare_rsn_ie`), and
+    disconnects the station with reason 17 on any difference. The stock
+    supplicant writes the *pairwise* cipher into the group-cipher slot of
+    that IE, because by then `ieee80211_associate()` has thrown the group
+    cipher away (patch_group_cipher tells that story). On a CCMP-only
+    network the two happen to be equal and nobody notices. On a mixed-mode
+    network the association says group TKIP and message 2 says group CCMP:
+
+        association: 30140100000fac02 0100000fac04 0100000fac02 0000
+        message 2:   30140100000fac04 0100000fac04 0100000fac02 0000
+
+    Measured in the emulator on 2026-11-08, the day its access point
+    started comparing the two the way hostapd does
+    (scenarios/wpa2-mixed-gtk.txt). `ieee80211_group_cipher` already holds
+    the right byte, so this is one assignment.
+    """
+    q = root / "src/net/eapol.c"
+    t = read_src(q)
+    if "key_data+7)  = ieee80211_group_cipher" in t:
+        print(f"[skip] {q}: message 2 already carries the group cipher")
+        return
+    if "ieee80211_group_cipher" not in read_src(root / "inc/net/ieee80211.h"):
+        sys.exit(f"FAIL {q}: ieee80211_group_cipher is missing -- group_cipher must run first")
+    nl = "\r\n" if "\r\n" in t else "\n"
+    a = "    *(fr_out.llc_eapol.key_frame.key_data+7)  = (ieee80211_encryption&0x0F);" + nl
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: the message-2 group-cipher byte is not where expected")
+    b = ("    /* The GROUP cipher, kept by patch_group_cipher: on a mixed-mode AP the" + nl +
+         "       association request says TKIP here and this byte said CCMP, and" + nl +
+         "       hostapd compares the two IEs and disconnects (reason 17). */" + nl +
+         "    *(fr_out.llc_eapol.key_frame.key_data+7)  = ieee80211_group_cipher;" + nl)
+    write_src(q, t.replace(a, b, 1))
+    print(f"[ok]   {q}: message 2 names the group cipher the association named")
+
+
+def patch_wpa3_eapol_akm(root: Path) -> None:
+    """Run the four-way handshake on SAE's key schedule, not WPA2-PSK's.
+
+    802.11-2020 12.7.3 and Tables 12-10/12-11: when the negotiated AKM is
+    00-0F-AC:8 the EAPOL-Key descriptor version is 0, the PTK is
+    KDF-SHA-256(PMK, "Pairwise key expansion", ...) and the MIC is
+    HMAC-SHA-256 truncated to 128 bits. hostapd has done exactly that for
+    every SAE association since it learnt SAE (`wpa_use_akm_defined()`).
+    The stock supplicant knows versions 1 and 2 only -- HMAC-MD5 with the
+    SHA-1 PRF, HMAC-SHA-1 with the SHA-1 PRF -- so after a successful SAE
+    exchange it answered message 1 with a message 2 whose MIC no real
+    access point can verify, and whose RSN IE still said PSK and no MFPC
+    although the association request had said SAE and MFPC. Either one is
+    enough for hostapd to drop the station; the second it even logs.
+
+    The emulator could not see it: its access point answered a SAE
+    authentication with descriptor version 2 and never compared the IEs,
+    so `scenarios/wpa3-sae.txt` reached RUN on WPA2's handshake. Made to
+    behave like hostapd on 2026-11-08, the same scenario stopped at:
+
+        EAPOL 2/4 received, PTK derived (..., descriptor version 0)
+        the RSN IE in 2/4 is not the one from the association request
+          association: 30140100000fac040100000fac040100000fac08 8000
+          message 2:   30140100000fac040100000fac040100000fac02 0000
+
+    and with this step it reaches RUN again, this time on the schedule a
+    real WPA3 access point runs. Everything here keys off
+    `ieee80211_authmode == IEEE80211_AUTH_SAE`, which rt2501_auth sets when
+    it starts SAE and resets on the next association, so a WPA2 network
+    gets exactly the bytes it got before.
+    """
+    q = root / "src/net/eapol.c"
+    t = read_src(q)
+    if "eapol_akm_sae" in t:
+        print(f"[skip] {q}: the AKM-defined schedule is already there")
+        return
+    if "IEEE80211_AUTH_SAE" not in read_src(root / "inc/net/ieee80211.h"):
+        sys.exit(f"FAIL {q}: IEEE80211_AUTH_SAE is missing -- wpa3_sae must run first")
+    nl = "\r\n" if "\r\n" in t else "\n"
+
+    def need(anchor, what, count=1):
+        a = anchor.replace("\n", nl)
+        if t.count(a) != count:
+            sys.exit(f"FAIL {q}: expected {count} of {what}, found {t.count(a)}")
+        return a
+
+    # 1. SHA-256, which the wpa3_sae step put in inc/net.
+    a = need('#include "net/aes128.h"\n', "the aes128 include")
+    t = t.replace(a, a + '#include "net/sha256.h"'.replace("\n", nl) + nl, 1)
+
+    # 2. The three decisions, in one place, before compute_ptk() needs them.
+    a = need("static const uint8_t ptk_prefix[] = {\n", "the PTK label")
+    helpers = (
+        "/* 802.11-2020 12.7.3, Tables 12-10 and 12-11. With AKM 00-0F-AC:8 the\n"
+        "   EAPOL-Key descriptor version is 0 and the schedule is the AKM's own:\n"
+        "   KDF-SHA-256 for the PTK, HMAC-SHA-256 cut to 128 bits for the MIC.\n"
+        "   Versions 1 and 2 stay what they were for every other network. */\n"
+        "static int eapol_akm_sae(void)\n"
+        "{\n"
+        "  return ieee80211_authmode == IEEE80211_AUTH_SAE;\n"
+        "}\n"
+        "\n"
+        "static uint8_t eapol_desc_ver(void)\n"
+        "{\n"
+        "  return eapol_akm_sae() ? 0 : 2;\n"
+        "}\n"
+        "\n"
+        "/* In place of hmac_sha1 at every MIC site: the callers keep 16 of the\n"
+        "   20 bytes they are handed, so the first 20 of either digest. */\n"
+        "static void eapol_mic_sha(const uint8_t *key, uint32_t key_len,\n"
+        "                          const uint8_t *data, uint32_t data_len,\n"
+        "                          uint8_t *mac)\n"
+        "{\n"
+        "  if(eapol_akm_sae()) {\n"
+        "    uint8_t full[SHA256_DIGEST];\n"
+        "    hmac_sha256(full, key, key_len, data, data_len);\n"
+        "    memcpy(mac, full, 20);\n"
+        "    return;\n"
+        "  }\n"
+        "  hmac_sha1(key, key_len, data, data_len, mac);\n"
+        "}\n"
+        "\n"
+    ).replace("\n", nl)
+    t = t.replace(a, helpers + a, 1)
+
+    # 3. The PTK.
+    a = need(
+        "  prf(pmk, EAPOL_MASTER_KEY_LENGTH,\n"
+        "      ptk_prefix, sizeof(ptk_prefix),\n"
+        "      concatenation, position,\n"
+        "      ptk, length);\n"
+        "}\n", "the PTK derivation")
+    b = (
+        "  if(eapol_akm_sae()) {\n"
+        "    /* Same concatenation, the AKM's KDF over it -- and no NUL after the\n"
+        "       label: that byte belongs to the SHA-1 PRF alone. */\n"
+        "    sha256_kdf(ptk, length, pmk, EAPOL_MASTER_KEY_LENGTH,\n"
+        "               \"Pairwise key expansion\", concatenation, position);\n"
+        "    return;\n"
+        "  }\n"
+        "  prf(pmk, EAPOL_MASTER_KEY_LENGTH,\n"
+        "      ptk_prefix, sizeof(ptk_prefix),\n"
+        "      concatenation, position,\n"
+        "      ptk, length);\n"
+        "}\n").replace("\n", nl)
+    t = t.replace(a, b, 1)
+
+    # 4. The MICs: five sites, all keyed on the KCK.
+    a = need("hmac_sha1(ptk.s.kck, EAPOL_MICK_LENGTH,", "the KCK MIC call", 5)
+    t = t.replace(a, "eapol_mic_sha(ptk.s.kck, EAPOL_MICK_LENGTH,")
+
+    # 5. The descriptor version we put on the wire: three sites.
+    a = need("key_info.key_desc_ver = 2;", "the transmitted descriptor version", 3)
+    t = t.replace(a, "key_info.key_desc_ver = eapol_desc_ver();")
+
+    # 6. ...and the one the AP puts on message 1.
+    a = need(
+        "      case 0x02:\n"
+        "        ieee80211_encryption |= IEEE80211_CIPHER_CCMP;\n", "the message-1 version switch")
+    b = (
+        "      case 0x00:\n"
+        "        /* AKM-defined (SAE): CCMP, on the schedule eapol_akm_sae()\n"
+        "           selects. */\n"
+        "        ieee80211_encryption |= IEEE80211_CIPHER_CCMP;\n"
+        "        break;\n").replace("\n", nl) + a
+    t = t.replace(a, b, 1)
+
+    # 7. Message 2's RSN IE says what the association request said.
+    a = need("    *(fr_out.llc_eapol.key_frame.key_data+13) = (ieee80211_encryption&0x0F);\n",
+             "the message-2 pairwise byte")
+    b = a + (
+        "    if(eapol_akm_sae()) {\n"
+        "      /* AKM 8 and MFPC, as the association request has them: hostapd\n"
+        "         compares the two IEs and disconnects on any difference. */\n"
+        "      *(fr_out.llc_eapol.key_frame.key_data+19) = IEEE80211_AUTH_AKM_SAE;\n"
+        "      *(fr_out.llc_eapol.key_frame.key_data+20) = 0x80;\n"
+        "    }\n").replace("\n", nl)
+    t = t.replace(a, b, 1)
+
+    write_src(q, t)
+    print(f"[ok]   {q}: the handshake runs on SAE's own key schedule")
+
+
 def patch_boot_marker(root: Path) -> None:
     """Make the running build say so in its own boot URL, with no opcode.
 
@@ -4517,47 +4699,47 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,wpa3_timing,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -4616,6 +4798,18 @@ def main() -> int:
                  "commit built from the config sector's passphrase.")
     if "wpa3_boot_pw" in steps and "wpa3_sae" not in steps:
         sys.exit("FAIL step list: wpa3_boot_pw is useless without wpa3_sae.")
+    if "wpa3_eapol_akm" in steps and "wpa3_sae" not in steps:
+        sys.exit("FAIL step list: wpa3_eapol_akm is useless without wpa3_sae.")
+    # A SAE exchange that succeeds and is then followed by WPA2-PSK's
+    # handshake is refused by every real access point at message 2
+    # (patch_wpa3_eapol_akm). The emulator's AP did that for ten days.
+    if "wpa3_sae" in steps and "wpa3_eapol_akm" not in steps:
+        sys.exit("FAIL step list: wpa3_sae without wpa3_eapol_akm authenticates "
+                 "with SAE and then runs the four-way handshake on WPA2's key "
+                 "schedule, which no real AP accepts. Add wpa3_eapol_akm.")
+    if "eapol_msg2_ie" in steps and "group_cipher" not in steps:
+        sys.exit("FAIL step list: eapol_msg2_ie reads ieee80211_group_cipher, "
+                 "which group_cipher provides.")
     # ...but only for a real image. An emulator build has no Metal VM and no
     # bootloader, so it omits vbc/vinterp/stdlib and models wifiAuth in C
     # instead; requiring the opcode there would just stop it compiling.
@@ -4692,6 +4886,8 @@ def main() -> int:
         "wpa3_sae": patch_wpa3_sae,
         "wpa3_boot_pw": patch_wpa3_boot_password,
         "wpa3_timing": patch_wpa3_timing,
+        "wpa3_eapol_akm": patch_wpa3_eapol_akm,
+        "eapol_msg2_ie": patch_eapol_msg2_ie,
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,
         "usb_robustness": patch_usb_robustness,
