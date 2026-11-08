@@ -56,6 +56,14 @@ echo "==> patch_reconnect_followup.py softreboot  (no reboot left on the locate.
 python3 "$HERE/patch_reconnect_followup.py" "$BC/sources" softreboot
 echo "==> patch_wifi_reconnect.py  (rejoin WPA/WPA2 after a link loss)"
 python3 "$HERE/patch_wifi_reconnect.py" "$BC/sources"
+# TLS 1.3 on the XMPP socket when the rabbit has an adoption key and the
+# warren's locate.jsp names a TLS port; plain otherwise. The opcodes it
+# calls (tlsStart..tlsClose) exist from firmware mode lean-wpa3-tls on;
+# on an older firmware the bytecode never reaches them, because locate
+# only offers TLS to rabbits whose owner confirmed a key, and a key
+# needs that firmware's bootloader.
+echo "==> patch_tls.py  (TLS 1.3 PSK on the XMPP connection)"
+python3 "$HERE/patch_tls.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )

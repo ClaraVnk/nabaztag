@@ -17,12 +17,12 @@ INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
 # Defined before any rule that uses it: a prerequisite list is
 # expanded when the rule is read, not when it runs.
-CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h
+CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h net/nab_tls.h
 
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx
+.PHONY: all vectors clean arm sign_open kx tls tls-interop
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -105,7 +105,22 @@ kx: $(TNKX_DIR)/tweetnacl.c $(CRYPTO_H)
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -I$(TNKX_DIR) -o /tmp/t_kx test_kx.c \
 		../crypto/nab_kx.c ../crypto/sha256.c /tmp/tn_kx.o && /tmp/t_kx
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox kx
+# TLS 1.3 PSK. `tls` replays the recorded OpenSSL session offline
+# (test_tls.c) and needs nothing; `tls-interop` runs the live client against
+# `openssl s_server` and Python's ssl (tls_interop.py), which needs an
+# openssl on PATH and Python 3.13+ (SSLContext.set_psk_server_callback).
+tls: $(CRYPTO_H)
+	@echo "== TLS 1.3 PSK: the recorded OpenSSL session, replayed and damaged"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls test_tls.c \
+		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c && /tmp/t_tls
+
+tls-interop: $(CRYPTO_H)
+	@echo "== TLS 1.3 PSK: live, against OpenSSL and Python"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls_client tls_client.c \
+		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c
+	@python3 tls_interop.py --client /tmp/t_tls_client
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
@@ -140,6 +155,7 @@ vectors:
 	python3 vectors_p256.py > vectors_p256.h
 	python3 vectors_sha256.py > vectors_sha256.h
 	python3 vectors_cmac.py > vectors_cmac.h
+	python3 vectors_tls.py session_openssl.dump > vectors_tls.h
 
 # The flash budget is the reason WPA3 was "not impossible, just unimplemented"
 # for so long, so the size is part of the test, not a footnote.
@@ -154,6 +170,8 @@ arm:
 	@arm-none-eabi-size /tmp/cmac.o
 	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/sae.c -o /tmp/sae.o
 	@arm-none-eabi-size /tmp/sae.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/nab_tls.c -o /tmp/nab_tls.o
+	@arm-none-eabi-size /tmp/nab_tls.o
 
 clean:
 	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz /tmp/t_p256 \

@@ -23,7 +23,7 @@ ARG MTL_LINUX_COMMIT=7e557a15373523f819e49d57e7a9c5419327b651
 # fix to crypto_sign_open that every flashed mode carries; vm_bounds likewise.
 # Without them a whole-rabbit run cannot reach an OTA's signature gate at all,
 # and what it tests upstream of the gate is not the VM the rabbit runs.
-ARG MOD_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx
+ARG MOD_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,tls_psk
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git python3 ca-certificates \
@@ -52,6 +52,8 @@ COPY firmware-arm/crypto/p256.c firmware-arm/crypto/p256.h \
      firmware-arm/crypto/sae.c firmware-arm/crypto/sae.h \
      firmware-arm/crypto/nab_kx.c firmware-arm/crypto/nab_kx.h \
      firmware-arm/crypto/nab_kx_vm.c \
+     firmware-arm/crypto/nab_tls.c firmware-arm/crypto/nab_tls.h \
+     firmware-arm/crypto/nab_tls_vm.c \
      /build/sae-crypto/
 
 # TweetNaCl goes where the firmware Dockerfile puts it, so sign_open_alias

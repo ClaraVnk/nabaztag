@@ -267,6 +267,12 @@ make NABGCC=<tree> vm
 tools/vm-check.sh --boot-vm ./rabbit-vm-boot
 ```
 
+`scenarios/vm/xmpp-tls.txt` is run by hand, against a real Terrier on the
+host with `--realtime` (its header says how): three boots of the
+`lean-wpa3-tls` bootloader, the runtime bytecode fetched from the Terrier,
+plain XMPP while the key is pending, TLS 1.3 PSK once the owner confirmed,
+plain again for a reflashed rabbit with no key. See `../ADOPTION-KEY.md`.
+
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
 (`OPnetAuth ... encrypt=0 -> SKIPPED`); with the bytecode

@@ -39,6 +39,14 @@ jobs:
           diff -u vectors.h vectors.generated.h
       - name: Run every suite under ASan and UBSan
         run: make -C firmware-arm/tests
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: TLS against OpenSSL and Python ssl, live
+        # 3.13 is the first Python with SSLContext.set_psk_server_callback.
+        run: |
+          openssl version
+          make -C firmware-arm/tests tls-interop
       - name: Cross-compile for the ARM7TDMI
         run: |
           sudo apt-get update -qq

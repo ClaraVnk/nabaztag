@@ -81,6 +81,10 @@ OPCODES: dict[int, str] = {
     # since it's the live VM case in our patched vinterp.c. The compiler-side
     # `strright/strcrypt8/loadf/savef` builtins all share opcode 152.
     153: "OPpageRender",  # Phase 8: render ROM page with marker substitution
+    # apply-mods.py adoption_kx / tls_psk, as numbered in lean-wpa3-kx/-tls
+    154: "OPkxBegin", 155: "OPkxFinish", 156: "OPkxUse", 157: "OPkxCheck",
+    158: "OPtlsStart", 159: "OPtlsIn", 160: "OPtlsOut", 161: "OPtlsState",
+    162: "OPtlsClose",
 }
 
 
@@ -159,6 +163,8 @@ BUILTIN_NAMES: dict[int, str] = {
     146: "netRssi", 147: "rfidGetList", 148: "rfidRead", 149: "rfidWrite",
     150: "i2cRead", 151: "i2cWrite", 152: "verifySig",
     153: "pageRender",
+    154: "kxBegin", 155: "kxFinish", 156: "kxUse", 157: "kxCheck",
+    158: "tlsStart", 159: "tlsIn", 160: "tlsOut", 161: "tlsState", 162: "tlsClose",
     55: "fixarg",
 }
 

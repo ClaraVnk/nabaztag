@@ -30,7 +30,8 @@ FW += $(NABGCC)/src/net/rc4.c
 FW += $(NABGCC)/src/usb/rt2501usb_buffer.c
 CRYPTO_H := obj/include/net/aes128.h obj/include/net/p256.h \
             obj/include/net/sha256.h obj/include/net/cmac.h \
-            obj/include/net/sae.h obj/include/net/nab_kx.h
+            obj/include/net/sae.h obj/include/net/nab_kx.h \
+            obj/include/net/nab_tls.h
 
 FW += ../crypto/aes128.c
 # WPA3-SAE. apply-mods' wpa3_sae step also drops these into the nabgcc
@@ -67,6 +68,10 @@ VM += ../crypto/nab_sig.c
 # The adoption opcodes (kxBegin, kxFinish, kxUse), for a VM running the
 # bootloader of a mode with adoption_kx; the Containerfile's step list has it.
 VM += ../crypto/nab_kx.c ../crypto/nab_kx_vm.c
+# TLS on the XMPP connection (tlsStart..tlsClose), for a VM running a
+# runtime bytecode built with firmware/patch_tls.py against a step list
+# with tls_psk; the opcodes are numbered after adoption_kx's.
+VM += ../crypto/nab_tls.c ../crypto/nab_tls_vm.c
 # The tree's own copy when the container staged one (and sign_open_alias
 # patched it), the vendored one otherwise.
 TWEETNACL ?= $(firstword $(wildcard $(NABGCC)/src/crypto/tweetnacl.c) ../upstream/tweetnacl/tweetnacl.c)
