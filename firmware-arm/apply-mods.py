@@ -2388,6 +2388,106 @@ def patch_dcc_console(root: Path) -> None:
     print(f"[ok]   src/hal/uart.c: putch_uart mirrors every byte onto the DCC")
 
 
+def patch_dcc_telemetry(root: Path) -> None:
+    """A status line on the JTAG debug channel, never waiting for anyone.
+
+    NOT IN ANY SHIPPED MODE; `lean-wpa3-tel` is lean-wpa3 plus this.
+
+    Reading the rabbit's state over JTAG meant halting it, and on 2026-11-08
+    a radio went deaf after a series of short halts -- which left a test
+    unreadable: the bug under test, or the probe? The DCC console
+    (patch_dcc_console) read without halting but killed Wi-Fi association;
+    the suspect is its wait: up to DCC_SPIN status reads per character, for
+    every byte of the console, whenever the host had not drained the last
+    word yet. This does the opposite on every count:
+
+    - one character per rt2501_timer() tick, and only if the channel is
+      free: one status read, no loop. Busy, the same character is offered
+      again next tick; nothing is lost, nothing waits;
+    - a short line, `W5 A2 S0 C8 E2 X0 K1 T258 R0/0`, snapshotted at its first
+      character: ieee80211_state, authmode, SAE state, SAE cache entries,
+      eapol_state, USB receive errors, rt2501_connected, ieee80211_timeout,
+      reset reason/count;
+    - from the top of rt2501_timer(), before its `if(!rt2501_connected)
+      return`, so a radio that has given up still reports that it has.
+
+    OpenOCD's `target_request debugmsgs enable` (jtag/listen.sh) prints it.
+    mcr/mrc p14 are ARM-mode only, hence target("arm"). rt2501usb.c is not
+    compiled into the emulator, so it is untouched.
+    """
+    src = root / "src/utils/dcctel.c"
+    if src.exists():
+        print(f"[skip] dcc_telemetry: {src} already present")
+        return
+    ie = root / "src/net/ieee80211.c"
+    t = read_src(ie)
+    if "ieee80211_sae_count" not in t:
+        sys.exit(f"FAIL {ie}: dcc_telemetry needs wpa3_sae first")
+    nl = "\r\n" if "\r\n" in t else "\n"
+    # Appended at the end, as patch_wpa3_timing does: wpa2-scanned-ciphers.patch
+    # anchors near the top and must keep applying.
+    t = t + (nl + "/* For dcc_telemetry: SAE state low nibble, cache entries high. */" + nl
+             + "uint8_t ieee80211_sae_diag(void)" + nl + "{" + nl
+             + "  return (uint8_t)((ieee80211_sae.state & 0x0F)"
+             + " | (ieee80211_sae_count << 4));" + nl + "}" + nl)
+    write_src(ie, t)
+    src.write_text(
+        "#include <stdint.h>\n\n"
+        "/* See patch_dcc_telemetry in apply-mods.py. */\n"
+        "extern uint32_t ieee80211_state, ieee80211_timeout;\n"
+        "extern uint8_t ieee80211_authmode;\n"
+        "extern uint8_t eapol_state;\n"
+        "extern int32_t nab_reset_reason, nab_reset_count;\n"
+        "uint8_t ieee80211_sae_diag(void);\n\n"
+        "#define TARGET_REQ_DEBUGCHAR 0x02\n\n"
+        "static char dcctel_line[40];\n"
+        "static uint8_t dcctel_pos, dcctel_len;\n\n"
+        "__attribute__((target(\"arm\"), noinline))\n"
+        "static int dcctel_try(uint32_t w)\n{\n"
+        "  uint32_t st;\n"
+        "  asm volatile(\"mrc p14, 0, %0, c0, c0\" : \"=r\"(st));\n"
+        "  if(st & 2) return 0;   /* the host has not read the last word */\n"
+        "  asm volatile(\"mcr p14, 0, %0, c1, c0\" : : \"r\"(w));\n"
+        "  return 1;\n}\n\n"
+        "static char *dcctel_hex(char *p, uint32_t v)\n{\n"
+        "  char tmp[8]; int n = 0;\n"
+        "  do { tmp[n++] = \"0123456789abcdef\"[v & 15]; v >>= 4; } while(v && n < 8);\n"
+        "  while(n) *p++ = tmp[--n];\n"
+        "  return p;\n}\n\n"
+        "static void dcctel_snapshot(uint8_t rx_errors, uint8_t connected)\n{\n"
+        "  char *p = dcctel_line;\n"
+        "  uint8_t sae = ieee80211_sae_diag();\n"
+        "  *p++ = 'W'; p = dcctel_hex(p, ieee80211_state);\n"
+        "  *p++ = ' '; *p++ = 'A'; p = dcctel_hex(p, ieee80211_authmode);\n"
+        "  *p++ = ' '; *p++ = 'S'; p = dcctel_hex(p, sae & 15);\n"
+        "  *p++ = ' '; *p++ = 'C'; p = dcctel_hex(p, sae >> 4);\n"
+        "  *p++ = ' '; *p++ = 'E'; p = dcctel_hex(p, eapol_state);\n"
+        "  *p++ = ' '; *p++ = 'X'; p = dcctel_hex(p, rx_errors);\n"
+        "  *p++ = ' '; *p++ = 'K'; p = dcctel_hex(p, connected);\n"
+        "  *p++ = ' '; *p++ = 'T'; p = dcctel_hex(p, ieee80211_timeout);\n"
+        "  *p++ = ' '; *p++ = 'R'; p = dcctel_hex(p, (uint32_t)nab_reset_reason);\n"
+        "  *p++ = '/'; p = dcctel_hex(p, (uint32_t)nab_reset_count);\n"
+        "  *p++ = '\\n';\n"
+        "  dcctel_len = (uint8_t)(p - dcctel_line);\n"
+        "  dcctel_pos = 0;\n}\n\n"
+        "void dcctel_tick(uint8_t rx_errors, uint8_t connected)\n{\n"
+        "  if(dcctel_pos >= dcctel_len) dcctel_snapshot(rx_errors, connected);\n"
+        "  if(dcctel_try(TARGET_REQ_DEBUGCHAR\n"
+        "                | ((uint32_t)(uint8_t)dcctel_line[dcctel_pos] << 16)))\n"
+        "    dcctel_pos++;\n}\n")
+    q = root / "src/usb/rt2501usb.c"
+    t, nl2 = read_flat(q)
+    a = "void rt2501_timer(void)\n{\n  if(!rt2501_connected) return;\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: rt2501_timer is not the shape dcc_telemetry expects")
+    t = t.replace(a, "void dcctel_tick(uint8_t rx_errors, uint8_t connected);\n\n"
+                  "void rt2501_timer(void)\n{\n"
+                  "  dcctel_tick(rt2501_rx_errors, (uint8_t)rt2501_connected);  /* dcc_telemetry */\n"
+                  "  if(!rt2501_connected) return;\n", 1)
+    write_flat(q, t, nl2)
+    print(f"[ok]   dcc_telemetry: a status line on the debug channel, one char per tick")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -4726,7 +4826,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -4792,6 +4892,7 @@ def main() -> int:
         "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
@@ -4971,6 +5072,7 @@ def main() -> int:
         "firmware_version": patch_firmware_version,
         "reset_reason": patch_reset_reason,
         "dcc_console": patch_dcc_console,
+        "dcc_telemetry": patch_dcc_telemetry,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
