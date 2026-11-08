@@ -404,6 +404,158 @@ def patch_x25519_wdt(root: Path) -> None:
     print(f"[ok]   {p}: X25519 kept, its ladder feeds the watchdog; nab_kx added")
 
 
+def add_core_opcode(root: Path, name: str, sig: str, nargs: int, case: str) -> None:
+    """Register one more core opcode, numbered after whatever is there.
+
+    The earlier opcode steps hard-code their number and their /*N*/ slot,
+    which is why rom_pages and wpa3_boot_pw both claimed 153. This takes
+    the next free number in vbc.h and the next slot in each of the four
+    stdlib_core.cpp arrays, so steps can stack in any mode.
+    """
+    op = "OP" + name
+    nums = []
+    for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
+        t = q.read_text()
+        if f"#define {op} " in t:
+            nums.append(int(re.search(rf"#define {op} (\d+)", t).group(1)))
+            continue
+        n = max(int(m) for m in re.findall(r"#define OP\w+ (\d+)", t)) + 1
+        last = list(re.finditer(r"#define OP\w+ \d+\n", t))[-1]
+        t = t[:last.end()] + f"#define {op} {n}\n" + t[last.end():]
+        q.write_text(t)
+        nums.append(n)
+    if nums[0] != nums[1]:
+        sys.exit(f"FAIL vbc.h: the two copies disagree on {op} ({nums})")
+
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if f"case {op}:" not in t:
+        needle = "      case OPverifySig:\n"
+        if needle not in t:
+            sys.exit(f"FAIL {q}: OPverifySig case missing -- run the vinterp step first")
+        t = t.replace(needle, case + needle, 1)
+        q.write_text(t)
+
+    q = root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp"
+    t = q.read_text()
+    if f'"{name}"' not in t:
+        nb = re.search(r"#define NBcore (\d+)", t)
+        t = t[:nb.start(1)] + str(int(nb.group(1)) + 1) + t[nb.end(1):]
+        tails = list(re.finditer(r"/\*(\d+)\*/([^\n]*)\n\};", t))
+        top = max(int(m.group(1)) for m in tails)
+        tails = [m for m in tails if int(m.group(1)) == top]
+        if len(tails) != 4:
+            sys.exit(f"FAIL {q}: expected four arrays ending at /*{top}*/, found {len(tails)}")
+        values = [f'"{name}"', f"{op},", str(nargs), f'"{sig}"']
+        for m, v in sorted(zip(tails, values), key=lambda mv: -mv[0].start()):
+            last = m.group(2)
+            joined = last if last.endswith(",") else last + ","
+            t = (t[:m.start(2)] + joined + f"\n/*{top + 1}*/{v}\n" + "};" + t[m.end():])
+        q.write_text(t)
+    print(f"[ok]   core opcode {name} = {nums[0]}, {sig}")
+
+
+def patch_adoption_kx(root: Path) -> None:
+    """The bootloader's side of the adoption key exchange: three opcodes.
+
+    See ADOPTION-KEY.md for the protocol and why the bootloader, not the
+    runtime, owns it. Requires x25519_wdt (nab_kx.c) and wpa3_sae (SHA-256,
+    and the random stream ieee80211_rng_bytes exposes).
+
+      kxBegin            -> the rabbit's public key (32 bytes); the private
+                            key stays in C
+      kxFinish warrenpub -> key (32) followed by the five colours (5), or nil
+      kxUse key          -> 1: the key the HMAC and TLS opcodes will use
+
+    All three refuse once OPbytecode has run -- the bootloader has handed
+    over to the warren's runtime -- and from then on `load` of conf.bin
+    returns zeros where the key is stored (bytes 208 to 240).
+    """
+    if not (root / "src/net/nab_kx.c").exists():
+        sys.exit("FAIL adoption_kx: nab_kx.c missing -- x25519_wdt must run first")
+    ie = root / "src/net/ieee80211.c"
+    t = read_src(ie)
+    if "ieee80211_sae_rng" not in t:
+        sys.exit(f"FAIL {ie}: adoption_kx needs wpa3_sae's random stream")
+    if "ieee80211_rng_bytes" not in t:
+        nl = "\r\n" if "\r\n" in t else "\n"
+        t += (nl + "/* adoption_kx: the same stream for the adoption key. */" + nl
+              + "void ieee80211_rng_bytes(uint8_t *out, uint32_t len)" + nl
+              + "{" + nl + "  ieee80211_sae_rng(out, len, NULL);" + nl + "}" + nl)
+        write_src(ie, t)
+    here = Path(__file__).resolve().parent / "crypto"
+    (root / "src/net/nab_kx_vm.c").write_text((here / "nab_kx_vm.c").read_text())
+
+    decl = ("int nab_kx_vm_begin(uint8_t *pub);\n"
+            "int nab_kx_vm_finish(const uint8_t *wpub, uint8_t *key, uint8_t *check);\n"
+            "int nab_kx_vm_use(const uint8_t *key);\n"
+            "extern uint8_t nab_kx_latched;\n")
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_kx_vm_begin" not in t:
+        if "#include <string.h>\n" not in t:
+            sys.exit(f"FAIL {q}: no <string.h> include to hang the declarations on")
+        t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
+        q.write_text(t)
+
+    add_core_opcode(root, "kxBegin", "fun[]S", 0,
+        "      case OPkxBegin:\n"
+        "        {\n"
+        "          /* Two to eight seconds of X25519; the ladder feeds the watchdog. */\n"
+        "          uint8_t pub[32];\n"
+        "          if (nab_kx_vm_begin(pub)) VPUSH(PNTTOVAL(VMALLOCSTR((char*)pub,32)));\n"
+        "          else VPUSH(NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "kxFinish", "fun[S]S", 1,
+        "      case OPkxFinish:\n"
+        "        {\n"
+        "          int32_t w=VALTOPNT(VSTACKGET(0));\n"
+        "          uint8_t out[37];\n"
+        "          int32_t r=NIL;\n"
+        "          if (w!=NIL && VSIZEBIN(w)==32)\n"
+        "          {\n"
+        "            uint8_t wpub[32];\n"
+        "            memcpy(wpub,VSTARTBIN(w),32);   /* VMALLOCSTR may move the heap */\n"
+        "            if (nab_kx_vm_finish(wpub,out,out+32)) r=PNTTOVAL(VMALLOCSTR((char*)out,37));\n"
+        "            memset(out,0,sizeof out);\n"
+        "          }\n"
+        "          VSTACKSET(0,r);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "kxUse", "fun[S]I", 1,
+        "      case OPkxUse:\n"
+        "        {\n"
+        "          int32_t k=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t ok=0;\n"
+        "          if (k!=NIL && VSIZEBIN(k)==32) ok=nab_kx_vm_use((const uint8_t*)VSTARTBIN(k));\n"
+        "          VSTACKSET(0,INTTOVAL(ok));\n"
+        "        }\n"
+        "        break;\n")
+
+    # The latch, at the hand-over, and the hiding in `load`.
+    t = q.read_text()
+    a = '        DBG_VM(EOL"#################### OPbytecode"EOL);\n'
+    if "nab_kx_latched=1" not in t:
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: OPbytecode is not the shape adoption_kx expects")
+        t = t.replace(a, a + "        nab_kx_latched=1;   /* adoption_kx: the runtime is the warren's */\n", 1)
+    b = ("            len=sysLoad(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n")
+    if "conf.bin" not in t:
+        if t.count(b) != 1:
+            sys.exit(f"FAIL {q}: OPload is not the shape adoption_kx expects")
+        t = t.replace(b, b + (
+            "            /* adoption_kx: after the hand-over the key is not readable. */\n"
+            "            if (nab_kx_latched && len>0 && !strcmp((char*)VSTARTBIN(q),\"conf.bin\"))\n"
+            "            {\n"
+            "              int32_t i;\n"
+            "              for (i=0;i<len;i++)\n"
+            "                if (start+i>=208 && start+i<241) VSTARTBIN(p)[index+i]=0;\n"
+            "            }\n"), 1)
+    q.write_text(t)
+    print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -5598,6 +5750,7 @@ def main() -> int:
         "stdlib": patch_stdlib_core,
         "strip_tweetnacl": strip_tweetnacl,
         "x25519_wdt": patch_x25519_wdt,
+        "adoption_kx": patch_adoption_kx,
         "sign_open_alias": patch_sign_open_aliasing,
         "verify_wdt": patch_verify_wdt,
         "modernize_pages": modernize_pages,
