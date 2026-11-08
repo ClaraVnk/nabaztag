@@ -1,0 +1,15 @@
+# The SSID goes back from WPA2/WPA3 to WPA2-only while the rabbit is on it.
+#
+# Seen on hardware, 2026-11-08: the rabbit had remembered the BSSID as a
+# SAE one, kept sending commits a WPA2-only AP does not answer, and stayed
+# orange until it was unplugged. Expected now: the refused or unanswered
+# SAE attempt forgets the BSSID, the next scan no longer sees AKM 8, and the
+# rabbit comes back over PSK on its own.
+ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 150000
+at 15000  expect RUN
+at 20000  security 02:00:5e:10:00:01 wpa2-ccmp
+at 140000 expect RUN

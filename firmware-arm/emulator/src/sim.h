@@ -57,6 +57,7 @@ enum {
   SIM_EV_DISASSOC,      /* AP disassociates the rabbit          */
   SIM_EV_AP_DOWN,       /* AP stops answering entirely          */
   SIM_EV_AP_UP,
+  SIM_EV_AP_SECURITY,   /* AP is reconfigured: new security, deauth */
   SIM_EV_DROP_EAPOL,    /* swallow the next N EAPOL frames      */
   SIM_EV_REAUTH,        /* AP re-sends an authentication reply  */
   SIM_EV_REKEY,         /* AP rotates the group key             */

@@ -572,9 +572,15 @@ static const uint8_t vap_gtk[16] = {
   0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc
 };
 
+/* The passphrase's PMK, kept apart from SAE's: hostapd keys every PSK
+   association with the former whatever SAE did before, and a rabbit that
+   falls back from SAE to PSK on the same AP must meet that one. */
+static uint8_t vap_psk_pmk[EAPOL_MASTER_KEY_LENGTH];
+
 void vap_set_pmk(const uint8_t *pmk)
 {
   memcpy(vap_pmk, pmk, EAPOL_MASTER_KEY_LENGTH);
+  memcpy(vap_psk_pmk, pmk, EAPOL_MASTER_KEY_LENGTH);
   vap_pmk_set = 1;
 }
 
@@ -1148,7 +1154,8 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
           queue_frame(out, n, a->rssi, a->channel);
           /* The station is authenticated and the four-way handshake will
              run on the PMK SAE just produced, not on the passphrase. */
-          vap_set_pmk(vap_sae.pmk);
+          memcpy(vap_pmk, vap_sae.pmk, EAPOL_MASTER_KEY_LENGTH);
+          vap_pmk_set = 1;
           a->authenticated = 1;
           a->sae_auth = 1;
           sim_log("AP %s: SAE accepted, PMK installed", macstr(a->bssid));
@@ -1180,6 +1187,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       }
       a->authenticated = 1;
       a->sae_auth = 0;
+      memcpy(vap_pmk, vap_psk_pmk, EAPOL_MASTER_KEY_LENGTH);
       sim_log("AP %s: auth ok (algorithm %u)", macstr(a->bssid), algorithm);
       n = build_auth_resp(out, a, IEEE80211_STATUS_SUCCESS);
       queue_frame(out, n, a->rssi, a->channel);
