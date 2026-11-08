@@ -20,6 +20,10 @@ extern "C" {
 int nab_verify_sig(const uint8_t *payload, size_t payload_len,
                    const uint8_t *sig, void *scratch);
 
+/* Feeds the watchdog. crypto_sign_open calls it from its two long loops
+ * (apply-mods.py, verify_wdt), 1,354 times per image. */
+void nab_verify_tick(void);
+
 #ifdef __cplusplus
 }
 #endif
