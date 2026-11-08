@@ -11,6 +11,14 @@
 
 static int fails;
 
+/* Not inline in the HM() macro: with a length of 0 gcc's -Wtype-limits sees
+   `i < 0` on an unsigned and -Werror stops the build (CI, 2026-11-08). */
+static void fill(uint8_t *data, uint32_t len, uint32_t n)
+{
+  uint32_t i;
+  for(i = 0; i < len; i++) data[i] = (uint8_t)(i * 7 + n);
+}
+
 /* TweetNaCl's key-generation entry points want it; nothing here calls them,
    and the firmware strips them. */
 void randombytes(unsigned char *x, unsigned long long n);
@@ -86,7 +94,7 @@ int main(void)
     uint8_t mac[32];
     unsigned long before;
 #define HM(n) do { \
-      uint32_t i; for(i = 0; i < HM##n##_LEN; i++) data[i] = (uint8_t)(i * 7 + n); \
+      fill(data, HM##n##_LEN, n); \
       before = ticks; nab_hmac_long(mac, hm##n##_key, data, HM##n##_LEN, nab_verify_tick); \
       check("HMAC-SHA-256, " #n, mac, hm##n##_mac, 32); \
       if(!nab_hmac_check(hm##n##_key, data, HM##n##_LEN, hm##n##_mac, 0)) { printf("  FAIL  check " #n "\n"); fails++; } \
