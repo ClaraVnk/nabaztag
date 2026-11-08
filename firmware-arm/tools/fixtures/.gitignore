@@ -1,0 +1,3 @@
+# firmware-arm/.gitignore ignores *.bin; these are the C++ mtl_compiler's
+# reference outputs run-tests.sh compares against, so they are kept.
+!*.bin
