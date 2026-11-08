@@ -7,11 +7,18 @@
                                expects the belly to show
 /vl/bc.jsp                      serves --bytecode, wrapped amber...Mind
 --no-kx                         a warren that predates kx.jsp: 404
+--state FILE                    keep the agreed keys between runs (JSON)
+--hmac none|good|bad            append no HMAC trailer (owner has not
+                                confirmed), the right one, or a wrong one
 
 X25519 and HKDF are OpenSSL's, through `cryptography` -- not the rabbit's
 TweetNaCl and not the Terrier's kx.py -- so agreement means something.
 """
 import argparse
+import hashlib
+import hmac
+import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -30,7 +37,10 @@ def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--bytecode", required=True)
     ap.add_argument("--no-kx", action="store_true")
+    ap.add_argument("--state")
+    ap.add_argument("--hmac", choices=("none", "good", "bad"), default="none")
     a = ap.parse_args()
+    keys = json.load(open(a.state)) if a.state and os.path.exists(a.state) else {}
     runtime = open(a.bytecode, "rb").read()
     if not runtime.startswith(b"amber"):
         runtime = b"amber" + b"%08x" % len(runtime) + runtime + b"Mind"
@@ -65,10 +75,23 @@ def main():
                 print("kx: expected colours " + " ".join(f"#{RGB[c]}" for c in cols)
                       + "  (" + " ".join(NAMES[c] for c in cols) + ")", flush=True)
                 print(f"kx: key {okm[:4].hex()}..", flush=True)
+                keys[q.get("m", ["?"])[0]] = okm[:32].hex()
+                if a.state:
+                    json.dump(keys, open(a.state, "w"))
                 return self.send(200, wpub.hex().encode())
             if u.path.endswith("/bc.jsp"):
-                print(f"bc.jsp asked: {u.query}", flush=True)
-                return self.send(200, runtime)
+                mac = q.get("m", ["?"])[0]
+                body = runtime
+                if a.hmac != "none" and mac in keys:
+                    n = int(runtime[5:13], 16)
+                    tag = hmac.new(bytes.fromhex(keys[mac]), runtime[13:13 + n],
+                                   hashlib.sha256).digest()
+                    if a.hmac == "bad":
+                        tag = bytes([tag[0] ^ 1]) + tag[1:]
+                    body = runtime + b"Hmac" + tag.hex().encode()
+                print(f"bc.jsp asked, HMAC {a.hmac if mac in keys else 'none (no key)'}",
+                      flush=True)
+                return self.send(200, body)
             self.send(404, b"")
 
     print(f"kx_warren on 127.0.0.1:{a.port}", flush=True)

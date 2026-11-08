@@ -100,3 +100,29 @@ fun kx_step url=
 // Ready for the bytecode: the exchange is over and the colours have had
 // their minute.
 fun kx_ready= kxdone!=nil && !kx_showing;;
+
+// The bytecode's HMAC. The warren appends "Hmac" and 64 hex digits after
+// "Mind" for a rabbit whose owner confirmed the colours; older bootloaders
+// stop reading at "Mind". A confirmed rabbit takes nothing without a valid
+// one. A rabbit still waiting that receives a valid one has its proof the
+// owner confirmed: it records it and stops showing the colours.
+fun kx_trailer res bc=
+	let httpgetcontent res -> content in
+	let 13+(strlen bc)+4 -> i in
+	if (strlen content)<i+68 then nil
+	else if strcmp (strsub content i 4) "Hmac" then nil
+	else kx_unhex strsub content i+4 64;;
+
+fun kx_accept res bc=
+	let strget conf CONF_KXFLAG -> f in
+	let kx_trailer res bc -> mac in
+	let if mac==nil then 0 else kxCheck bc mac -> ok in
+	if f==67 then ok
+	else if f==75 && ok then
+	(
+		strset conf CONF_KXFLAG 67;
+		confSave;
+		set kxshow=nil;
+		1
+	)
+	else 1;;

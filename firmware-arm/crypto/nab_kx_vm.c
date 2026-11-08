@@ -51,3 +51,13 @@ int nab_kx_vm_use(const uint8_t key[NAB_KX_KEY])
   nab_kx_key_set = 1;
   return 1;
 }
+
+/* The bytecode's HMAC, with the key kxUse handed over. Usable after the
+   hand-over too: it says yes or no and never gives the key out. */
+extern void nab_verify_tick(void);
+
+int nab_kx_vm_check(const uint8_t *data, uint32_t len, const uint8_t mac[32])
+{
+  if(!nab_kx_key_set) return 0;
+  return nab_hmac_check(nab_kx_key, data, len, mac, nab_verify_tick);
+}

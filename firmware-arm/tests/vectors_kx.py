@@ -43,4 +43,10 @@ for n in range(3):
     key, check = derive(shared, rp, wp)
     out += [c(f"kx{n}_rpriv", seed_r), c(f"kx{n}_wpriv", seed_w), c(f"kx{n}_rpub", rp),
             c(f"kx{n}_wpub", wp), c(f"kx{n}_key", key), c(f"kx{n}_check", bytes(check))]
+import hmac as _hmac, hashlib as _hashlib
+for n, size in enumerate((0, 1, 63, 64, 4095, 4096, 4097, 106508)):
+    key = bytes((3 * n + i) & 0xff for i in range(32))
+    data = bytes((i * 7 + n) & 0xff for i in range(size))
+    out += [f"#define HM{n}_LEN {size}", c(f"hm{n}_key", key),
+            c(f"hm{n}_mac", _hmac.new(key, data, _hashlib.sha256).digest())]
 print("\n".join(out))

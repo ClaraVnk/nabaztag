@@ -80,6 +80,24 @@ int main(void)
     printf("  ok    a low-order public key is refused\n");
   else { printf("  FAIL  a low-order public key was accepted\n"); fails++; }
 
+  /* HMAC-SHA-256 over long buffers, ticking, against Python's hmac. */
+  {
+    static uint8_t data[106508];
+    uint8_t mac[32];
+    unsigned long before;
+#define HM(n) do { \
+      uint32_t i; for(i = 0; i < HM##n##_LEN; i++) data[i] = (uint8_t)(i * 7 + n); \
+      before = ticks; nab_hmac_long(mac, hm##n##_key, data, HM##n##_LEN, nab_verify_tick); \
+      check("HMAC-SHA-256, " #n, mac, hm##n##_mac, 32); \
+      if(!nab_hmac_check(hm##n##_key, data, HM##n##_LEN, hm##n##_mac, 0)) { printf("  FAIL  check " #n "\n"); fails++; } \
+      mac[0] ^= 1; \
+      if(nab_hmac_check(hm##n##_key, data, HM##n##_LEN, mac, 0)) { printf("  FAIL  a wrong MAC passed " #n "\n"); fails++; } \
+    } while(0)
+    HM(0); HM(1); HM(2); HM(3); HM(4); HM(5); HM(6); HM(7);
+    if(ticks - before == 27) printf("  ok    106 508 bytes fed the watchdog 27 times\n");
+    else { printf("  FAIL  %lu ticks over 106 508 bytes\n", ticks - before); fails++; }
+  }
+
   printf(fails ? "%d FAILED\n" : "all passed\n", fails);
   return fails != 0;
 }

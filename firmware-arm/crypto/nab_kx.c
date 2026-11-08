@@ -83,3 +83,44 @@ int nab_kx_derive(uint8_t key[NAB_KX_KEY], uint8_t check[NAB_KX_LEDS],
   memset(okm, 0, sizeof okm);
   return 1;
 }
+
+void nab_hmac_long(uint8_t out[32], const uint8_t key[NAB_KX_KEY],
+                   const uint8_t *data, uint32_t len, void (*tick)(void))
+{
+  uint8_t pad[64], inner[SHA256_DIGEST];
+  sha256_ctx c;
+  uint32_t i, n;
+
+  /* RFC 2104 with a 32-byte key: no pre-hash, zero-padded to the block. */
+  memset(pad, 0x36, sizeof pad);
+  for(i = 0; i < NAB_KX_KEY; i++) pad[i] ^= key[i];
+  sha256_init(&c);
+  sha256_update(&c, pad, sizeof pad);
+  for(i = 0; i < len; i += n) {
+    n = len - i;
+    if(n > 4096) n = 4096;
+    sha256_update(&c, data + i, n);
+    if(tick) tick();
+  }
+  sha256_final(&c, inner);
+
+  memset(pad, 0x5c, sizeof pad);
+  for(i = 0; i < NAB_KX_KEY; i++) pad[i] ^= key[i];
+  sha256_init(&c);
+  sha256_update(&c, pad, sizeof pad);
+  sha256_update(&c, inner, sizeof inner);
+  sha256_final(&c, out);
+  memset(pad, 0, sizeof pad);
+  memset(inner, 0, sizeof inner);
+}
+
+int nab_hmac_check(const uint8_t key[NAB_KX_KEY], const uint8_t *data,
+                   uint32_t len, const uint8_t mac[32], void (*tick)(void))
+{
+  uint8_t want[32], diff = 0;
+  uint32_t i;
+  nab_hmac_long(want, key, data, len, tick);
+  for(i = 0; i < sizeof want; i++) diff |= want[i] ^ mac[i];
+  memset(want, 0, sizeof want);
+  return diff == 0;
+}

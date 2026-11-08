@@ -476,6 +476,7 @@ def patch_adoption_kx(root: Path) -> None:
                             key stays in C
       kxFinish warrenpub -> key (32) followed by the five colours (5), or nil
       kxUse key          -> 1: the key the HMAC and TLS opcodes will use
+      kxCheck data mac   -> 1 if mac is HMAC-SHA-256(key, data)
 
     All three refuse once OPbytecode has run -- the bootloader has handed
     over to the warren's runtime -- and from then on `load` of conf.bin
@@ -499,6 +500,7 @@ def patch_adoption_kx(root: Path) -> None:
     decl = ("int nab_kx_vm_begin(uint8_t *pub);\n"
             "int nab_kx_vm_finish(const uint8_t *wpub, uint8_t *key, uint8_t *check);\n"
             "int nab_kx_vm_use(const uint8_t *key);\n"
+            "int nab_kx_vm_check(const uint8_t *data, uint32_t len, const uint8_t *mac);\n"
             "extern uint8_t nab_kx_latched;\n")
     q = root / "src/vm/vinterp.c"
     t = q.read_text()
@@ -539,6 +541,20 @@ def patch_adoption_kx(root: Path) -> None:
         "          int32_t k=VALTOPNT(VSTACKGET(0));\n"
         "          int32_t ok=0;\n"
         "          if (k!=NIL && VSIZEBIN(k)==32) ok=nab_kx_vm_use((const uint8_t*)VSTARTBIN(k));\n"
+        "          VSTACKSET(0,INTTOVAL(ok));\n"
+        "        }\n"
+        "        break;\n")
+
+    add_core_opcode(root, "kxCheck", "fun[S S]I", 2,
+        "      case OPkxCheck:\n"
+        "        {\n"
+        "          /* HMAC-SHA-256 of the bytecode under the kxUse key; ~1 s,\n"
+        "             ticking the watchdog every 4 KB. Says yes or no only. */\n"
+        "          int32_t m=VALTOPNT(VPULL());\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t ok=0;\n"
+        "          if (d!=NIL && m!=NIL && VSIZEBIN(m)==32)\n"
+        "            ok=nab_kx_vm_check((const uint8_t*)VSTARTBIN(d),VSIZEBIN(d),(const uint8_t*)VSTARTBIN(m));\n"
         "          VSTACKSET(0,INTTOVAL(ok));\n"
         "        }\n"
         "        break;\n")
@@ -585,7 +601,10 @@ def patch_adoption_boot(root: Path) -> None:
     body = (Path(__file__).resolve().parent / "boot-mods" / "adoption.mtl").read_text()
     edits = [
         ("const CONF_LENGTH=208;;", "const CONF_LENGTH=246;;", "CONF_LENGTH"),
-        ("fun boot_loop=" + nl, body.replace("\n", nl) + nl + "fun boot_loop=" + nl, "fun boot_loop"),
+        ("fun getbytecode res=" + nl, body.replace("\n", nl) + nl + "fun getbytecode res=" + nl, "fun getbytecode"),
+        ("\tlet getbytecode res -> bc in" + nl + "\tif bc!=nil then" + nl,
+         "\tlet getbytecode res -> bc in" + nl + "\tif bc!=nil && kx_accept res bc then" + nl,
+         "the bytecode acceptance"),
         ('\t\tif wifiReady then set httpboot=httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,
          "\t\tif wifiReady then kx_step url;" + nl
          + '\t\tif wifiReady && kx_ready then set httpboot=httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,

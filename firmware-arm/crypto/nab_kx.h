@@ -54,4 +54,17 @@ void nab_hkdf(uint8_t *out, uint32_t outlen,
               const uint8_t *ikm, uint32_t ikmlen,
               const uint8_t *info, uint32_t infolen);
 
+/**
+ * @brief HMAC-SHA-256 of a long buffer, calling `tick` every 4 KB.
+ *
+ * The bytecode is ~106 KB: about 14 M instructions of SHA-256, a second or
+ * more on the rabbit, against a 2.09 s watchdog. `tick` may be NULL.
+ */
+void nab_hmac_long(uint8_t out[32], const uint8_t key[NAB_KX_KEY],
+                   const uint8_t *data, uint32_t len, void (*tick)(void));
+
+/** 1 if `mac` is HMAC-SHA-256(key, data), compared in constant time. */
+int nab_hmac_check(const uint8_t key[NAB_KX_KEY], const uint8_t *data,
+                   uint32_t len, const uint8_t mac[32], void (*tick)(void));
+
 #endif
