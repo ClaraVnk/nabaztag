@@ -50,6 +50,8 @@ COPY firmware-arm/crypto/p256.c firmware-arm/crypto/p256.h \
      firmware-arm/crypto/sha256.c firmware-arm/crypto/sha256.h \
      firmware-arm/crypto/cmac.c firmware-arm/crypto/cmac.h \
      firmware-arm/crypto/sae.c firmware-arm/crypto/sae.h \
+     firmware-arm/crypto/nab_kx.c firmware-arm/crypto/nab_kx.h \
+     firmware-arm/crypto/nab_kx_vm.c \
      /build/sae-crypto/
 
 # TweetNaCl goes where the firmware Dockerfile puts it, so sign_open_alias

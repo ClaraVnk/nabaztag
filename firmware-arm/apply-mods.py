@@ -396,12 +396,22 @@ def patch_x25519_wdt(root: Path) -> None:
     t = t.replace(inc, inc + "/* nab: keep crypto_scalarmult */\n"
                              "extern void nab_verify_tick(void);\n", 1)
     p.write_text(t)
-    here = Path(__file__).resolve().parent / "crypto"
+    here = _staged_crypto(root)
     (root / "src/net").mkdir(parents=True, exist_ok=True)
     (root / "inc/net").mkdir(parents=True, exist_ok=True)
     (root / "src/net/nab_kx.c").write_text((here / "nab_kx.c").read_text())
     (root / "inc/net/nab_kx.h").write_text((here / "nab_kx.h").read_text())
     print(f"[ok]   {p}: X25519 kept, its ladder feeds the watchdog; nab_kx added")
+
+
+def _staged_crypto(root: Path) -> Path:
+    """Where the build containers stage our crypto sources (see Dockerfile:
+    /build/sae-crypto, outside the nabgcc tree); the repo's crypto/ when
+    apply-mods runs from a checkout, as tests/Makefile does."""
+    staging = root.parent / "sae-crypto"
+    if (staging / "nab_kx.c").exists():
+        return staging
+    return Path(__file__).resolve().parent / "crypto"
 
 
 def add_core_opcode(root: Path, name: str, sig: str, nargs: int, case: str) -> None:
@@ -483,7 +493,7 @@ def patch_adoption_kx(root: Path) -> None:
               + "void ieee80211_rng_bytes(uint8_t *out, uint32_t len)" + nl
               + "{" + nl + "  ieee80211_sae_rng(out, len, NULL);" + nl + "}" + nl)
         write_src(ie, t)
-    here = Path(__file__).resolve().parent / "crypto"
+    here = _staged_crypto(root)
     (root / "src/net/nab_kx_vm.c").write_text((here / "nab_kx_vm.c").read_text())
 
     decl = ("int nab_kx_vm_begin(uint8_t *pub);\n"
@@ -5513,7 +5523,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -5616,6 +5626,7 @@ def main() -> int:
         # step's docstring with the measurement that justified it.
         "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
         "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")

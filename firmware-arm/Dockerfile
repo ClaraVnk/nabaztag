@@ -51,6 +51,7 @@ COPY crypto/aes128.h                /build/nabgcc/inc/net/aes128.h
 # caught before being written down as fact.
 COPY crypto/p256.c crypto/p256.h crypto/sha256.c crypto/sha256.h \
      crypto/cmac.c crypto/cmac.h crypto/sae.c crypto/sae.h \
+     crypto/nab_kx.c crypto/nab_kx.h crypto/nab_kx_vm.c \
      /build/sae-crypto/
 COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 
