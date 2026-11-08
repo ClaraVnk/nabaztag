@@ -44,6 +44,8 @@ struct vap_stats {
 };
 
 extern struct vap_stats vap_stats;
+/* 1 = the last SAE commit used hash-to-element, 2 = hunting and pecking. */
+extern int vap_last_sae_mode;
 
 void vap_init(void);
 void vap_set_pmk(const uint8_t *pmk);

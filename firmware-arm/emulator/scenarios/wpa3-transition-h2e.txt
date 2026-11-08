@@ -1,0 +1,20 @@
+# WPA2/WPA3 transition mode on an AP that offers hash-to-element.
+#
+# The RSN element offers PSK and SAE, the RSNXE offers H2E (sae_pwe=2), and
+# the config page holds a passphrase, so SAE runs -- as in
+# wpa3-transition-sae.txt -- and the selection logic has to pick H2E even
+# though hunting and pecking would also have worked. This is the setting a
+# current UniFi controller puts a "WPA2/WPA3" SSID in, which makes it the
+# scenario closest to the network the rabbit lives on.
+#
+# Expected outcome: RUN, through SAE hash-to-element, then the four-way
+# handshake on the AKM-8 schedule with the RSNXE repeated in message 2.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52 h2e
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 10000 expect-sae h2e

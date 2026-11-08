@@ -48,7 +48,7 @@ FW += $(NABGCC)/testvm/stubs/usb/rt2501usb_io.c
 FW += $(NABGCC)/testvm/stubs/usb/usbhcore.c
 
 # The emulator itself.
-SIM  = src/sim.c src/vap.c src/vapcrypto.c src/gw.c src/phone.c
+SIM  = src/sim.c src/vap.c src/vapcrypto.c src/vaph2e.c src/gw.c src/phone.c
 SIM += stubs/console.c stubs/delay.c stubs/hcdmem.c stubs/uart.c stubs/hw.c
 
 # The Metal VM and the hardware it expects, for the full-rabbit target.
@@ -88,7 +88,7 @@ OBJ = $(addprefix obj/,$(notdir $(SRC:.c=.o)))
 
 CFLAGS  = -O1 -g -std=gnu99
 CFLAGS += -D_NAB_SIM -DDEBUG -DDEBUG_WIFI
-CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Istubs -Iobj/include -I../crypto -I../keys -I../upstream/tweetnacl
+CFLAGS += -I$(NABGCC)/inc -I$(NABGCC)/sys/inc -Isrc -Istubs -Iobj/include -I../crypto -I../keys -I../upstream/tweetnacl -I../tests
 # Declarations the firmware uses without declaring; see the header.
 CFLAGS += -include src/prelude.h
 # The 2006 sources predate most of these diagnostics and the emulator exists

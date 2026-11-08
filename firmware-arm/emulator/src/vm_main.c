@@ -178,6 +178,30 @@ void sim_run_events(void)
           sim_note_failure(why);
         }
         break;
+      case SIM_EV_REFUSE_STATE:
+        if(ieee80211_state != e->arg)
+          sim_log("ok   state is %s, and not %s, as expected",
+                  sim_state_name(ieee80211_state), sim_state_name(e->arg));
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "state must not be %s, but it is",
+                   sim_state_name(e->arg));
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_EXPECT_SAE:
+        if(vap_last_sae_mode == e->arg)
+          sim_log("ok   the last SAE commit used %s, as expected",
+                  e->arg == 1 ? "hash-to-element" : "hunting and pecking");
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected SAE %s, the AP saw %s",
+                   e->arg == 1 ? "hash-to-element" : "hunting and pecking",
+                   vap_last_sae_mode == 1 ? "hash-to-element"
+                   : vap_last_sae_mode == 2 ? "hunting and pecking" : "no SAE commit at all");
+          sim_note_failure(why);
+        }
+        break;
       default: break;
     }
   }

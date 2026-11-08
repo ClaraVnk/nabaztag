@@ -1,0 +1,18 @@
+# An H2E-only access point under load: anti-clogging token, then H2E.
+#
+# With hash-to-element the token does not sit between the group and the
+# scalar: the AP sends it inside an Anti-Clogging Token Container element
+# (255, length, 93) after the group, and the station echoes it in the same
+# container after its commit element (802.11-2020 9.4.2.244; hostapd's
+# auth_build_token_req() and sae_write_commit()). The AP here checks that
+# the echoed token is the one it sent. wpa3-sae-token.txt covers the
+# hunting-and-pecking framing.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 h2e-only sae-token
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 30000
+
+at 20000 expect RUN
+at 20000 expect-sae h2e

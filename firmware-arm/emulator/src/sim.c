@@ -232,7 +232,11 @@ void sim_note_fetch(void)
  *                                  something outside has its own timers
  *   stop <ms>
  *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf] [sae-token]
- *                                 [h2e-only]
+ *                                 [h2e-only] [h2e]
+ *                                 h2e-only: hostapd's sae_pwe=1, the AP
+ *                                 advertises SAE hash-to-element and takes
+ *                                 nothing else; h2e: sae_pwe=2, advertises
+ *                                 it and takes both; neither: sae_pwe=0
  *   at <ms> deauth [<bssid>] [reason <n>]
  *   at <ms> disassoc [<bssid>] [reason <n>]
  *   at <ms> down <bssid>
@@ -255,6 +259,12 @@ void sim_note_fetch(void)
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
+ *   at <ms> expect-sae h2e|hnp     assert which password element derivation
+ *                                 the AP saw in the last SAE commit:
+ *                                 hash-to-element or hunting and pecking.
+ *                                 A transition-mode AP that offers H2E and
+ *                                 reaches RUN is not proof the station chose
+ *                                 it; this is
  *   at <ms> expect-not <state>     the opposite, for when what matters is
  *                                 that something did NOT happen. `expect RUN`
  *                                 pins one state out of six; `expect-not RUN`
@@ -345,6 +355,7 @@ int sim_load(const char *path)
       for(int i = 5; i < n; i++) {
         if(!strcmp(tok[i], "pmf")) a->pmf = 1;
         if(!strcmp(tok[i], "h2e-only")) a->sae_h2e_only = 1;
+        if(!strcmp(tok[i], "h2e")) a->sae_h2e = 1;
         /* Make the AP answer the first SAE commit with status 76 and a
            token, the way a loaded access point does. Without this the
            rabbit never exercises that path, and the path is the most
@@ -490,6 +501,14 @@ int sim_load(const char *path)
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
+      } else if(!strcmp(tok[2], "expect-sae") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_SAE;
+        if(!strcmp(tok[3], "h2e")) e->arg = 1;
+        else if(!strcmp(tok[3], "hnp")) e->arg = 2;
+        else {
+          fprintf(stderr, "%s:%d: expect-sae takes h2e or hnp, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "expect-not") && n >= 4) {
         e->kind = SIM_EV_REFUSE_STATE;
         e->arg = parse_state(tok[3]);

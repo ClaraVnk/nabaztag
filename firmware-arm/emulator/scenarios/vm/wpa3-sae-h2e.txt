@@ -1,0 +1,24 @@
+# A whole rabbit, driven by its own bootloader bytecode, onto a WPA3-only AP
+# that will only do SAE hash-to-element.
+#
+# vm/wpa3-sae.txt is this with hunting and pecking; everything it says about
+# the bootloader bytecode, netSaePw and the EEPROM saying wpa2 holds here.
+# What this adds: the RSNXE in the beacon is read by the real scan path, PT
+# is derived once with the watchdog tick the real driver passes, the commit
+# goes out with status 126, the association request and message 2 carry
+# the RSNXE, and the AP -- which drops a hunted-and-pecked commit without a
+# reply, as hostapd does -- lets the rabbit through to RUN.
+#
+#   python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 \
+#     --server localhost:18080/vl -o rabbit.eeprom
+#   ./rabbit-vm scenarios/vm/wpa3-sae-h2e.txt --eeprom rabbit.eeprom --warren localhost
+#
+# bytecode: bootloader
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 h2e-only
+psk nabaztag
+tick 50
+stop 120000
+
+at 20000 expect RUN
+at 20000 expect-sae h2e
