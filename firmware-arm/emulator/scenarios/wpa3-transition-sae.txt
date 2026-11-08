@@ -1,0 +1,23 @@
+# WPA2/WPA3 transition mode, with a passphrase in the config page.
+#
+# wpa3-transition.txt boots without one, so SAE cannot start there and the
+# association is PSK: that scenario proves the fallback. This one gives the
+# driver what the bootloader's wifiAuth gives it -- offset 92 of the config
+# page -- and the scan has seen AKM suite 8 on this BSSID, so rt2501_auth
+# starts SAE, exactly as it does on a WPA3-only network. The AP here then
+# does what hostapd does for every SAE association: descriptor version 0,
+# KDF-SHA-256 for the PTK, HMAC-SHA-256 for the MIC, and message 2 must
+# repeat the association's RSN IE byte for byte.
+#
+# Until 2026-11-08 the transition case was never exercised with SAE at
+# all, and the SAE-only one passed on WPA2's key schedule because the
+# virtual AP ran that schedule too. A rabbit that joins a transition-mode
+# UniFi is not evidence that its SAE works unless it joined this way.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 60000
+
+at 10000 expect RUN

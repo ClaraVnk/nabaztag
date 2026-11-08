@@ -148,7 +148,10 @@ int main(int argc, char **argv)
    * stops in IEEE80211_S_EAPOL with the association already done, which looks
    * like a firmware fault and is not one. */
   if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
-    uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
+    /* 40, not 32: mypassword_to_pmk() writes two whole SHA-1 blocks
+     * and the firmware's own callers give it 40. ASan found the
+     * overrun on 2026-11-08; on macOS it was the abort at exit. */
+    uint8_t pmk[40];
     mypassword_to_pmk((const uint8_t *)sim.psk, (uint8_t *)sim.aps[0].ssid,
                       (uint16_t)strlen(sim.aps[0].ssid), pmk);
     vap_set_pmk(pmk);

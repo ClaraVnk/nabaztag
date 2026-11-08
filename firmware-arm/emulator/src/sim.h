@@ -43,6 +43,11 @@ struct sim_ap {
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
+  int      sae_auth;        /* ...and it was SAE, so the AKM-defined key
+                               schedule applies to the handshake         */
+  uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */
+  uint8_t  sta_rsn_len;     /* which message 2 must repeat byte for byte */
+  uint8_t  sta_akm;         /* its AKM suite type                        */
 };
 
 enum {

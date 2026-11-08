@@ -13,6 +13,12 @@ void vap_compute_ptk(const uint8_t *pmk,
                      const uint8_t *anonce, const uint8_t *aa,
                      const uint8_t *snonce, const uint8_t *sa,
                      uint8_t *ptk, uint32_t length);
+/* The same derivation under an AKM that defines its own key schedule
+ * (SAE, 00-0F-AC:8): KDF-SHA-256 instead of the SHA-1 PRF. */
+void vap_compute_ptk_akm(const uint8_t *pmk,
+                         const uint8_t *anonce, const uint8_t *aa,
+                         const uint8_t *snonce, const uint8_t *sa,
+                         uint8_t *ptk, uint32_t length);
 int  vap_crypto_selftest(void);
 
 #endif /* _VAPCRYPTO_H_ */

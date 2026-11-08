@@ -229,10 +229,66 @@ it 1,860 times. Until an image with that step is flashed, the bytecode fix
 moves the reset from "inside a bad memcpy" to "2 s into a good verification",
 and the belly cannot tell the two apart.
 
-Whole-rabbit scenarios have a loop now: `tools/vm-check.sh`. On the same day,
+Whole-rabbit scenarios have a loop now: `tools/vm-check.sh`, and from
+2026-11-08 a second binary for the scenarios whose header says
+`bytecode: bootloader`:
+
+```sh
+tools/bootbc.py ../bin/lean-wpa3/Nab.elf -o obj/boot.bc
+make NABGCC=<tree> BYTECODE=obj/boot.bc vm && cp rabbit-vm rabbit-vm-boot
+make NABGCC=<tree> vm
+tools/vm-check.sh --boot-vm ./rabbit-vm-boot
+```
+
+On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
 (`OPnetAuth ... encrypt=0 -> SKIPPED`); with the bytecode
 `firmware/build-bytecode.sh` produces from the stock tree, they pass.
+
+**The four-way handshake after SAE ran on WPA2's key schedule, 2026-11-08.**
+The whole-rabbit scenario `scenarios/vm/wpa3-sae.txt` was said to end in
+IDLE. Under a VM linked with the bootloader bytecode (`tools/bootbc.py` out
+of a built `Nab.elf`) it did not: the rabbit hunted and pecked, the AP
+accepted, the handshake ran, RUN at 4.95 s. The IDLE came from running it
+under the warren's `.hybrid`, whose `wifiAuth` has no `netSaePw` -- no
+password, no SAE, open authentication, status 13. `tools/vm-check.sh` now
+takes `--boot-vm` and says SKIP rather than running that scenario under the
+wrong bytecode.
+
+What the pass was actually exercising was the question. The virtual AP
+answered a SAE authentication with EAPOL-Key descriptor version 2 and
+checked nothing about message 2 beyond its MIC -- and sent message 3 even
+when that failed. hostapd does none of that: with AKM 00-0F-AC:8 the
+descriptor version is 0, the PTK is KDF-SHA-256, the MIC is HMAC-SHA-256
+cut to 128 bits (802.11-2020 12.7.3, Tables 12-10 and 12-11), message 2 is
+discarded if its MIC does not verify, and its RSN IE must be the
+association request's byte for byte or the station is disconnected with
+reason 17. Made to behave that way, the same scenario stopped here:
+
+```
+EAPOL 2/4 received, PTK derived (..., descriptor version 0)
+the RSN IE in 2/4 is not the one from the association request
+  association: 30140100000fac040100000fac040100000fac08 8000
+  message 2:   30140100000fac040100000fac040100000fac02 0000
+```
+
+The supplicant knew versions 1 and 2 only, so after a correct SAE exchange
+it signed message 2 with HMAC-SHA-1 over a SHA-1-derived PTK and said PSK
+and no MFPC in an IE that had said SAE and MFPC at association. A real
+WPA3 access point could never have finished that handshake, whatever the
+SAE exchange before it did. `wpa3_eapol_akm` in `apply-mods.py` is the
+fix, keyed on `ieee80211_authmode == IEEE80211_AUTH_SAE`; 88 bytes of
+flash. The same stricter AP also found `eapol_msg2_ie`: message 2 named
+the pairwise cipher as the group cipher, which on a mixed-mode network is
+a disconnect from any hostapd (`scenarios/wpa2-mixed-gtk.txt`). The AP now
+also sends its SAE confirm only after the station's, which is hostapd's
+order in an infrastructure BSS; both at once is the mesh behaviour.
+
+`scenarios/wpa3-transition-sae.txt` boots with a passphrase on a
+transition-mode AP, so SAE runs there too: a rabbit that joins a
+WPA2/WPA3 SSID is not evidence that its SAE works unless it joined that
+way. Still not modelled: whether the access point insists on
+hash-to-element (`wpa3-sae-h2e-only.txt` says what happens if it does).
 
 **WPA3 personal, SAE only: it associates, as of 2026-10-27 — and it did not
 on real hardware until 2026-11-07, which is worth more than the pass.** The

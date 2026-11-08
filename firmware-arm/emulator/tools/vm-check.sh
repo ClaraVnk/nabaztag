@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Run every whole-rabbit scenario under ./rabbit-vm, pass or fail.
 #
-#   tools/vm-check.sh [--warren <host>] [--vm ./rabbit-vm]
+#   tools/vm-check.sh [--warren <host>] [--vm ./rabbit-vm] [--boot-vm <vm>]
+#
+# --boot-vm names a rabbit-vm linked with the bootloader bytecode
+# (tools/bootbc.py lifts it out of a built Nab.elf); the scenarios whose
+# header says `bytecode: bootloader` run under it and are SKIPped without
+# it. Everything else runs under --vm, which is linked with a warren's
+# .hybrid -- the two bytecodes drive different code, and a WPA3 scenario
+# under the wrong one fails for a reason that is not the firmware's.
 #
 # `make check` covers scenarios/*.txt with ./rabbit; nothing ran scenarios/vm/
 # as a set, so a bytecode or VM change had no before/after. Each scenario
@@ -10,12 +17,17 @@
 # passphrase the WPA2/WPA3 ones derive their PMK from. Two of them say
 # `realtime` and take as long as they say.
 set -u
+# The transcripts carry the rabbit's raw frame dumps; BSD sed calls those an
+# illegal byte sequence unless told to stop interpreting them.
+export LC_ALL=C
 WARREN=127.0.0.1
 VM=./rabbit-vm
+BOOT_VM=
 while [ $# -gt 0 ]; do
   case "$1" in
     --warren) WARREN="$2"; shift 2 ;;
     --vm)     VM="$2"; shift 2 ;;
+    --boot-vm) BOOT_VM="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -33,7 +45,15 @@ for s in scenarios/vm/*.txt; do
     *)             ee=obj/conf/vm-open.eeprom ;;
   esac
   log=obj/logs/vm-$name.log
-  if "$VM" "$s" --eeprom "$ee" --warren "$WARREN" > "$log" 2>&1; then
+  vm=$VM
+  if grep -q '^# bytecode: bootloader' "$s"; then
+    if [ -z "$BOOT_VM" ]; then
+      printf 'SKIP  %-34s needs --boot-vm (bootloader bytecode)\n' "$s"
+      continue
+    fi
+    vm=$BOOT_VM
+  fi
+  if "$vm" "$s" --eeprom "$ee" --warren "$WARREN" > "$log" 2>&1; then
     printf 'PASS  %-34s %s\n' "$s" "$(sed -n 's/^final state *//p' "$log")"
   else
     printf 'FAIL  %-34s %s\n' "$s" "$(sed -n 's/^final state *//p' "$log")"

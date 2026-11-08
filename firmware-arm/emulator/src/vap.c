@@ -467,7 +467,7 @@ static const char *cipher_name(uint8_t suite)
  * between a rabbit that rejoins and one that goes amber until it is unplugged
  * is exactly one association too many.
  */
-static void vap_report_rsn(const struct sim_ap *a, const uint8_t *frame,
+static void vap_report_rsn(struct sim_ap *a, const uint8_t *frame,
                            uint32_t length)
 {
   const uint8_t *ie = frame + sizeof(struct ieee80211_frame) + 4;
@@ -480,9 +480,25 @@ static void vap_report_rsn(const struct sim_ap *a, const uint8_t *frame,
       uint8_t group = p[5];
       uint16_t nb_pairwise = (uint16_t)(p[6] | (p[7] << 8));
       uint8_t pairwise = (nb_pairwise > 0) ? p[11] : 0;
+      /* After the pairwise list: the AKM count, the AKM suites, and the
+       * RSN capabilities, which is where MFPC lives. hostapd keeps this IE
+       * and insists that message 2 of the handshake repeats it exactly
+       * (wpa_compare_rsn_ie); so does this AP, from 2026-11-08. */
+      uint32_t akm_off = 8 + 4 * nb_pairwise;
+      uint16_t nb_akm = (ie[1] >= akm_off + 2)
+                        ? (uint16_t)(p[akm_off] | (p[akm_off + 1] << 8)) : 0;
+      uint8_t akm = (nb_akm > 0 && ie[1] >= akm_off + 6) ? p[akm_off + 5] : 0;
+      uint32_t caps_off = akm_off + 2 + 4 * nb_akm;
+      uint16_t caps = (ie[1] >= caps_off + 2)
+                      ? (uint16_t)(p[caps_off] | (p[caps_off + 1] << 8)) : 0;
       sim_log("AP %s: the rabbit asks for RSN version %u, group %s, "
-              "%u pairwise, first %s", macstr(a->bssid), version,
-              cipher_name(group), nb_pairwise, cipher_name(pairwise));
+              "%u pairwise, first %s, AKM %s, capabilities 0x%04x%s",
+              macstr(a->bssid), version, cipher_name(group), nb_pairwise,
+              cipher_name(pairwise), akm == 8 ? "SAE" : akm == 2 ? "PSK" : "?",
+              caps, (caps & 0x0080) ? " (MFPC)" : "");
+      a->sta_akm = akm;
+      a->sta_rsn_len = (uint8_t)((2 + ie[1] <= sizeof a->sta_rsn) ? 2 + ie[1] : 0);
+      if(a->sta_rsn_len) memcpy(a->sta_rsn, ie, a->sta_rsn_len);
       vap_stats.assoc_requests++;
       if(group == 0 || pairwise == 0)
         sim_note_failure("an association request advertising cipher suite 0, "
@@ -571,7 +587,17 @@ static int vap_desc_ver(const struct sim_ap *a)
 {
   /* 2 when the pairwise cipher is CCMP, so the MIC is HMAC-SHA1; 1 for TKIP,
    * where it is HMAC-MD5. eapol_input_msg1() reads this field to decide which
-   * cipher the AP is actually using, so it has to be right. */
+   * cipher the AP is actually using, so it has to be right.
+   *
+   * And 0 after SAE. 802.11-2020 12.7.3 reserves versions 1 and 2 for the
+   * AKMs that predate it; for 00-0F-AC:8 the field is 0 and Table 12-10
+   * gives the schedule: KDF-SHA-256 for the PTK, HMAC-SHA-256 truncated to
+   * 128 bits for the MIC (hostapd: wpa_use_akm_defined()). Until 2026-11-08
+   * this AP answered a SAE authentication with version 2, so every WPA3
+   * scenario proved the handshake on WPA2's schedule -- which a real access
+   * point does not run, and which is why the hardware could never have
+   * finished what the emulator finished. */
+  if(a->sae_auth) return 0;
   switch(a->security) {
     case SIM_SEC_WPA_TKIP:
     case SIM_SEC_WPA2_TKIP:
@@ -606,7 +632,11 @@ static void vap_sign(struct eapol_frame *fr, uint32_t body_length,
   uint8_t *eapol = (uint8_t *)fr + LLC_LENGTH;
 
   memset(fr->key_frame.key_mic, 0, EAPOL_KEYMIC_LENGTH);
-  if(desc_ver == 2) {
+  if(desc_ver == 0) {
+    uint8_t full[SHA256_DIGEST];
+    hmac_sha256(full, kck, EAPOL_MICK_LENGTH, eapol, body_length + 4);
+    memcpy(fr->key_frame.key_mic, full, EAPOL_KEYMIC_LENGTH);
+  } else if(desc_ver == 2) {
     uint8_t full[20];
     hmac_sha1(kck, EAPOL_MICK_LENGTH, eapol, body_length + 4, full);
     memcpy(fr->key_frame.key_mic, full, EAPOL_KEYMIC_LENGTH);
@@ -844,11 +874,49 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
     uint8_t copy[512];
     struct eapol_frame *scratch;
 
+    int mic_ok = 0;
+
     memcpy(hs->snonce, fr->key_frame.key_nonce, EAPOL_NONCE_LENGTH);
-    vap_compute_ptk(vap_pmk, hs->anonce, a->bssid, hs->snonce, rt2501_mac,
-                    hs->ptk, EAPOL_PTK_LENGTH);
-    sim_log("AP %s: EAPOL 2/4 received, PTK derived (KCK %02x%02x%02x%02x...)",
-            macstr(a->bssid), hs->ptk[0], hs->ptk[1], hs->ptk[2], hs->ptk[3]);
+    if(vap_desc_ver(a) == 0)
+      vap_compute_ptk_akm(vap_pmk, hs->anonce, a->bssid, hs->snonce,
+                          rt2501_mac, hs->ptk, EAPOL_PTK_LENGTH);
+    else
+      vap_compute_ptk(vap_pmk, hs->anonce, a->bssid, hs->snonce, rt2501_mac,
+                      hs->ptk, EAPOL_PTK_LENGTH);
+    sim_log("AP %s: EAPOL 2/4 received, PTK derived (KCK %02x%02x%02x%02x..., "
+            "descriptor version %d)",
+            macstr(a->bssid), hs->ptk[0], hs->ptk[1], hs->ptk[2], hs->ptk[3],
+            vap_desc_ver(a));
+
+    /* hostapd (wpa_receive, msg 2/4): the RSN IE in the key data must be
+     * the one from the association request, byte for byte, or the station
+     * is disconnected with reason 17. A rabbit that associates with AKM 8
+     * and MFPC and then puts PSK and no capabilities in message 2 is
+     * exactly what that check exists for. */
+    if(a->sta_rsn_len) {
+      uint32_t kdl = ((uint32_t)fr->key_frame.key_data_length[0] << 8)
+                     | fr->key_frame.key_data_length[1];
+      const uint8_t *kd = (const uint8_t *)fr + LLC_LENGTH + 4
+                          + EAPOL_KEY_BODY_LENGTH;
+      if(LLC_LENGTH + 4 + EAPOL_KEY_BODY_LENGTH + kdl > length) kdl = 0;
+      if(kdl != a->sta_rsn_len || memcmp(kd, a->sta_rsn, kdl) != 0) {
+        char want[96], got[96];
+        uint32_t i, n;
+        for(i = 0, n = 0; i < a->sta_rsn_len && n + 3 < sizeof want; i++)
+          n += (uint32_t)snprintf(want + n, sizeof want - n, "%02x", a->sta_rsn[i]);
+        for(i = 0, n = 0; i < kdl && n + 3 < sizeof got; i++)
+          n += (uint32_t)snprintf(got + n, sizeof got - n, "%02x", kd[i]);
+        sim_log("AP %s: the RSN IE in 2/4 is not the one from the association "
+                "request - a real AP disconnects here (reason 17)",
+                macstr(a->bssid));
+        sim_log("AP %s:   association: %s", macstr(a->bssid), want);
+        sim_log("AP %s:   message 2:   %s", macstr(a->bssid), got);
+        sim_note_failure("the RSN IE in message 2 differs from the "
+                         "association request's; hostapd deauthenticates");
+        vap_deauth(ap, 0, 17);
+        return;
+      }
+    }
 
     /* Verify the rabbit's MIC over its own frame, with the MIC zeroed. The
      * span is body_length + 4, which the firmware computes from the length
@@ -867,7 +935,12 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
                 "not verifying", macstr(a->bssid), body_length,
                 length - LLC_LENGTH - 4);
       } else {
-        if(vap_desc_ver(a) == 2) {
+        if(vap_desc_ver(a) == 0) {
+          uint8_t full[SHA256_DIGEST];
+          hmac_sha256(full, hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
+                      body_length + 4);
+          memcpy(mine, full, EAPOL_KEYMIC_LENGTH);
+        } else if(vap_desc_ver(a) == 2) {
           hmac_sha1(hs->ptk, EAPOL_MICK_LENGTH, copy + LLC_LENGTH,
                     body_length + 4, mine);
         } else {
@@ -877,11 +950,21 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
         if(memcmp(mine, received, EAPOL_KEYMIC_LENGTH) == 0) {
           sim_log("AP %s: the rabbit's MIC on 2/4 is correct", macstr(a->bssid));
           vap_stats.mics_verified++;
+          mic_ok = 1;
         } else {
           sim_log("AP %s: the rabbit's MIC on 2/4 does not match", macstr(a->bssid));
           vap_stats.mics_failed++;
         }
       }
+    }
+
+    /* A message 2 whose MIC does not verify is silently discarded by every
+     * real authenticator; the station then sits in EAPOL until its own
+     * timer gives up. Sending message 3 anyway, as this AP did until
+     * 2026-11-08, turned a wrong key schedule into a green run. */
+    if(!mic_ok) {
+      sim_log("AP %s: 2/4 discarded, no message 3", macstr(a->bssid));
+      return;
     }
 
     if(vap_stats.ptk_rekeys_sent > vap_stats.ptk_rekeys_answered
@@ -1040,15 +1123,21 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
           sae_commit_bytes(&vap_sae, commit);
           n = build_auth_sae(out, a, 1, commit, sizeof commit);
           queue_frame(out, n, a->rssi, a->channel);
-          sae_confirm_bytes(&vap_sae, confirm);
-          n = build_auth_sae(out, a, 2, confirm, sizeof confirm);
-          queue_frame(out, n, a->rssi, a->channel);
-          sim_log("AP %s: SAE commit and confirm sent", macstr(a->bssid));
+          /* The commit alone. hostapd's sae_sm_step(): in an infrastructure
+           * BSS the AP sends its confirm only after the station's confirm
+           * has verified; both at once is the mesh behaviour, and it was
+           * this AP's until 2026-11-08. The rabbit therefore now has to
+           * send its confirm into silence and wait, as it will on a real
+           * network. */
+          (void)confirm;
+          sim_log("AP %s: SAE commit sent, waiting for the station's confirm",
+                  macstr(a->bssid));
           vap_stats.auth_responses++;
           return;
         }
 
         if(seq == 2) {
+          uint8_t confirm[SAE_CONFIRM_LEN];
           if(!vap_sae_live) return;
           if(!sae_peer_confirm(&vap_sae, sae_body, sae_len)) {
             sim_log("AP %s: SAE confirm did not verify", macstr(a->bssid));
@@ -1056,10 +1145,14 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
             vap_sae_live = 0;
             return;
           }
+          sae_confirm_bytes(&vap_sae, confirm);
+          n = build_auth_sae(out, a, 2, confirm, sizeof confirm);
+          queue_frame(out, n, a->rssi, a->channel);
           /* The station is authenticated and the four-way handshake will
              run on the PMK SAE just produced, not on the passphrase. */
           vap_set_pmk(vap_sae.pmk);
           a->authenticated = 1;
+          a->sae_auth = 1;
           sim_log("AP %s: SAE accepted, PMK installed", macstr(a->bssid));
           sae_clear(&vap_sae);
           vap_sae_live = 0;
@@ -1088,6 +1181,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
         return;
       }
       a->authenticated = 1;
+      a->sae_auth = 0;
       sim_log("AP %s: auth ok (algorithm %u)", macstr(a->bssid), algorithm);
       n = build_auth_resp(out, a, IEEE80211_STATUS_SUCCESS);
       queue_frame(out, n, a->rssi, a->channel);

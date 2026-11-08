@@ -16,7 +16,18 @@
 #     --server localhost:18080/vl -o rabbit.eeprom
 #   ./rabbit-vm scenarios/vm/wpa3-sae.txt --eeprom rabbit.eeprom --warren localhost
 
+# `bytecode: bootloader` below is read by tools/vm-check.sh: this scenario
+# runs under the VM given with --boot-vm, and is reported SKIP without one.
+# Under a VM linked with a warren's .hybrid it ends in IDLE -- that
+# bytecode's wifiAuth has no netSaePw, so SAE has no password and the
+# driver falls back to open authentication, which a WPA3-only AP refuses
+# (status 13). Measured 2026-11-08; it is not a firmware fault.
+#
+# bytecode: bootloader
+
 ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
 psk nabaztag
 tick 50
 stop 120000
+
+at 20000 expect RUN
