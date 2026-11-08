@@ -13,9 +13,12 @@ walled in, and the config-page path uses the same verifier.
 The runtime bytecode is not: the warren serves it fresh at every boot, with no
 flash and no brick risk. So the way out is here. This step makes the OTA path
 flash an image the **warren** has verified — `simsig.verify_file` runs before
-any `FW` command is sent — instead of one the rabbit has verified. The check
-still runs and still reports, as `e=000000E3`, so the warren learns which
-rabbits are in this state; it just no longer refuses.
+any `FW` command is sent — instead of one the rabbit has verified. The
+rabbit's own check is not called at all: on every build before 2026-11-08
+the Ed25519 verification (~248 million instructions, one opcode) outlasts
+the 2.09 s watchdog, so calling it is what resets the rabbit. A first
+version called it "to report" and died the same way. The middle belly
+light goes yellow here, not white, so the owner can see which path ran.
 
 That is a real reduction in defence: the rabbit's own check was the one thing
 that did not depend on the transport, and the transport is plain HTTP, so the
@@ -33,27 +36,39 @@ from pathlib import Path
 
 MARKER = "/* ota-recovery */"
 
-OLD = '''	else if (verifySig firm sig)==0 then (ota_fail_report 0xF3; 0)
-	else
-	let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-	(
-		ota_fail_report if bad==nil then 0xF4 else bad;
-		0
-	);;'''
+# The gated branch as the belly-lit ota_cb writes it (2026-11-08). The
+# previous anchor was the un-instrumented one and matched nothing after the
+# lights went in, so the recovery build refused to build at all.
+OLD = '''				if (verifySig firm sig)==0 then
+					(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
+				else
+				(
+					led 2 OTA_STEP_SIG;
+					led 3 OTA_STEP_RUN;
+					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+					(
+						led 3 OTA_STEP_BAD;
+						ota_fail_report if bad==nil then 0xF4 else bad;
+						0
+					)
+				)'''
 
-NEW = '''	else
-	(
-		// ota-recovery: the check runs and reports, and does not refuse.
-		// This rabbit cannot verify a signature at all, so refusing on its
-		// verdict means refusing everything for ever. The warren verified
-		// this image before sending it.
-		if (verifySig firm sig)==0 then ota_fail_report 0xE3 else nil;
-		let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-		(
-			ota_fail_report if bad==nil then 0xF4 else bad;
-			0
-		)
-	);;'''
+NEW = '''				(
+					// ota-recovery: no verifySig here, on purpose. Measured 2026-11-08:
+					// on every build before that day the call itself is what kills the
+					// rabbit -- ~248 million instructions in one opcode against a 2.09 s
+					// watchdog -- so "call it and only report" dies exactly like
+					// "call it and refuse". The warren verified this image before it
+					// offered it; the belly says so in yellow, not white.
+					led 2 0xffff00;
+					led 3 OTA_STEP_RUN;
+					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+					(
+						led 3 OTA_STEP_BAD;
+						ota_fail_report if bad==nil then 0xF4 else bad;
+						0
+					)
+				)'''
 
 
 def main() -> int:

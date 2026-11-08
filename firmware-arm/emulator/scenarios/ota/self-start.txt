@@ -1,0 +1,36 @@
+# An over-the-air update, started by the bytecode itself.
+#
+# Not under scenarios/vm/: it needs a bytecode that calls flashFromUrl, and a
+# server with the .sim on it. On a rabbit the call comes from `FW <url>` over
+# XMPP; here tools/patch_ota_test.py puts it where locate.jsp would be fetched,
+# so the first thing a connected rabbit does is download the image. Then the
+# real path runs: http.mtl, ota_cb, parsefirm_fw, parsesig_fw, verifySig,
+# flashFirmware -- the last one is a stub here and says so.
+#
+# Build the bytecode on the dev VM, in the firmware build container:
+#
+#   bash firmware/build-bytecode.sh <tree> <mtl_compiler> out.bin   # patches <tree>/sources
+#   python3 tools/patch_ota_test.py <tree>/sources http://10.0.0.1:8000/naboot-stable.signed.sim
+#   ( cd <tree>/sources && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
+#   <mtl_compiler> -s <tree>/bootcode.mtl ota-test.bin
+#
+# Serve the image and run, with the host's network so the gateway can reach it:
+#
+#   ( cd firmware-arm/releases && python3 -m http.server 8000 --bind 127.0.0.1 )
+#   python3 mkconf.py --ssid Terrier --security open --server 10.0.0.1:8080/vl \
+#       --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o open.eeprom
+#   make NABGCC=<tree> BYTECODE=ota-test.bin vm
+#   ./rabbit-vm scenarios/ota/self-start.txt --eeprom open.eeprom --warren 127.0.0.1
+#
+# What it showed on 2026-11-08, before the gc in ota_cb: nose blue, nose green,
+# left green, middle blue, then a segfault in nab_verify_sig -- memcpy with a
+# size of -1,728,528, the payload's heap index gone stale across the GC that
+# verifySig's own scratch allocation ran. The same four lights, in the same
+# order, are what the hardware showed before it reset. After the fix: middle
+# white, right blue, "asked to flash itself with a 107704-byte image".
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 60000
+
+at 20000 expect RUN

@@ -13,12 +13,17 @@
 FROM debian:bookworm-slim
 
 ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
+ARG MTL_LINUX_COMMIT=7e557a15373523f819e49d57e7a9c5419327b651
 # Which apply-mods.py steps to apply. The default is every network-stack fix
 # that is merged, so `./run.sh` is green on a fresh clone; drop steps to
 # measure one in isolation -- that is the whole point of naming them, and
 # dropping these four is how wpa2-mixed-gtk, wpa2-rekey and wpa2-ptk-rekey
 # fail, which is what they were written to show.
-ARG MOD_STEPS=wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae
+# vbc, vinterp and sign_open_alias are the verifySig opcode and the one-buffer
+# fix to crypto_sign_open that every flashed mode carries; vm_bounds likewise.
+# Without them a whole-rabbit run cannot reach an OTA's signature gate at all,
+# and what it tests upstream of the gate is not the VM the rabbit runs.
+ARG MOD_STEPS=vbc,vinterp,stdlib,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git python3 ca-certificates \
@@ -27,7 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 RUN git clone https://github.com/RedoXyde/nabgcc.git \
  && cd nabgcc \
- && git checkout "$NABGCC_COMMIT"
+ && git checkout "$NABGCC_COMMIT" \
+ && git clone https://github.com/RedoXyde/mtl_linux.git mtl/mtl_linux \
+ && cd mtl/mtl_linux && git checkout "$MTL_LINUX_COMMIT"
 
 # nabgcc's src/net/aes128.c is a stub: every function is empty, while
 # eapol.c calls it to unwrap the WPA2 group key. The emulator must use the
@@ -45,9 +52,10 @@ COPY firmware-arm/crypto/p256.c firmware-arm/crypto/p256.h \
      firmware-arm/crypto/sae.c firmware-arm/crypto/sae.h \
      /build/sae-crypto/
 
-COPY firmware-arm/apply-mods.py /build/apply-mods.py
-RUN python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
-
+# TweetNaCl goes where the firmware Dockerfile puts it, so sign_open_alias
+# patches the copy this build compiles and not a vendored one it never sees.
+COPY firmware-arm/upstream/tweetnacl/tweetnacl.c /build/nabgcc/src/crypto/tweetnacl.c
+COPY firmware-arm/upstream/tweetnacl/tweetnacl.h /build/nabgcc/inc/tweetnacl.h
 # Two changes the emulator needs and the hardware does not: a simulated
 # register window, because a host cannot write to 0xB8000000, and one trace in
 # the interpreter. Both are compiled out when _NAB_SIM is absent.
@@ -56,7 +64,18 @@ RUN cd /build/nabgcc \
  && git apply /build/patches/sim-mmio.patch \
  && git apply /build/patches/opnetauth-trace.patch
 
+# After the two patches above, not before: the vinterp and vm_bounds steps
+# rewrite vinterp.c with one line ending, and a diff taken against the
+# original no longer applies to the rewritten file.
+COPY firmware-arm/apply-mods.py /build/apply-mods.py
+RUN NAB_SIM=1 python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
+
 COPY firmware-arm/crypto             /build/crypto
+# The VM target compiles crypto/nab_sig.c, which includes tweetnacl.h, and the
+# public key the verifier is built around. Neither was copied in, so the
+# documented `./run.sh --vm` could not build in a clean container.
+COPY firmware-arm/upstream           /build/upstream
+COPY firmware-arm/keys               /build/keys
 COPY firmware-arm/emulator           /build/emulator
 COPY nabaztag-violet/bootcode.hybrid /build/bootcode.hybrid
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.4
+
+- **An OTA no longer resets the rabbit inside the signature check.** The
+  runtime bytecode now collects garbage before calling `verifySig`. The
+  opcode allocates its scratch after taking its operands' heap indices, and
+  when that allocation ran the collector the compaction moved both; the
+  length it then read was garbage and the memcpy that followed was a data
+  abort -- nose green, one belly light blue, then the boot colours, nothing
+  written. Reproduced in the emulator with the real 215 KB image and fixed
+  there; the same run now reaches white and `flashFirmware`. The firmware
+  side of the fix (the opcode re-reading its operands) ships with the next
+  image; the bytecode works around it on the firmware already flashed.
+
 ## 0.16.3
 
 - **A neural voice is now re-encoded for the rabbit's decoder, so it is

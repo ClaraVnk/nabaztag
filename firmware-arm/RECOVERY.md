@@ -69,7 +69,17 @@ never changed. Fixed in `b8f6dd1`; the regression test is
 **What that means for you.** The broken verifier is in the firmware your
 rabbit is *running*, not in the image being sent, so it refuses the very
 image that fixes the refusal. The config-page upload path uses the same
-verifier. Over the air, that rabbit cannot be updated at all.
+verifier. Over the air, that rabbit cannot be updated at all — and not only
+because of the verifier: on every build before 2026-11-08 the Ed25519 check
+itself (~248 million instructions, one opcode) outlasts the 2.09 s watchdog,
+so an OTA that reached it would reset the rabbit mid-check. Measured
+2026-11-08: belly green, green, blue, then the bootloader's colours, nothing
+written. Fixed in the same day's builds (`verify_wdt`).
+
+**Which is why the recovery bytecode must not call `verifySig` at all** —
+not "call it and only report": the call is what kills the rabbit. It parses
+the image and flashes it; the warren checked the signature before offering
+it. That is the trade described below, and it lasts one update.
 
 **You almost certainly do not need JTAG.** Le Terrier serves the runtime
 bytecode fresh at every boot, and for a rabbit that cannot verify a signature

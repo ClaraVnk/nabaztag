@@ -199,6 +199,41 @@ it has to agree with.
 
 ## What it already answers
 
+**Why no OTA ever installed, 2026-11-08.** A rabbit downloads the 215 KB
+signed `.sim`, lights nose blue, nose green, one belly light blue, and
+resets. `scenarios/ota/self-start.txt` runs the same path here, with the real
+`fwota.mtl` and the real `naboot-stable.signed.sim`, and showed the same four
+lights in the same order, then:
+
+```
+==ERROR: AddressSanitizer: negative-size-param: (size=-1728528)
+    #1 nab_verify_sig ../crypto/nab_sig.c:33
+    #2 interpGo /build/nabgcc/src/vm/vinterp.c:873
+```
+
+`verifySig` allocates payload+64 bytes of scratch after taking its operands'
+heap indices. `getbinary_fw` has just left 107,704 two-byte strings behind, so
+that allocation runs the collector, the compaction slides the payload down
+over them, and the length read through the old index is garbage. On the host
+that is a segfault; on the ARM7 a data abort, then the watchdog, then the
+boot colours -- no red, nothing written. Two fixes, both measured here: the
+bytecode calls `gc` before `verifySig` (works on the firmware already
+flashed; the run then reaches white and `flashFirmware`), and the opcode
+re-reads its operands after the allocation (`apply-mods.py`, `vinterp`;
+the unfixed bytecode passes on a VM built with it).
+
+What this emulator could not see, and qemu-arm could: the check itself is
+247,618,040 instructions with the firmware's own flags, against a 2.09 s
+watchdog fed once per opcode. The `verify_wdt` step makes the verifier feed
+it 1,860 times. Until an image with that step is flashed, the bytecode fix
+moves the reset from "inside a bad memcpy" to "2 s into a good verification",
+and the belly cannot tell the two apart.
+
+Whole-rabbit scenarios have a loop now: `tools/vm-check.sh`. On the same day,
+with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
+(`OPnetAuth ... encrypt=0 -> SKIPPED`); with the bytecode
+`firmware/build-bytecode.sh` produces from the stock tree, they pass.
+
 **WPA3 personal, SAE only: it associates, as of 2026-10-27 — and it did not
 on real hardware until 2026-11-07, which is worth more than the pass.** The
 scenario passed because this harness called `ieee80211_sae_password()` itself,

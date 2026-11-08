@@ -45,7 +45,7 @@ So running it outside Home Assistant takes nothing special:
 python3 nabaztag-violet/server.py          # from a checkout, just works
 # or, from anywhere:
 BOOTCODE_FILE=/path/to/repo/nabaztag-violet/bootcode.hybrid python3 server.py
-# sha256 59bc7bbbd1bdb412eaa1391c246010d83d1369830ab386a673e4e0fc76cc8334
+# sha256 c0ac2ecfb9942fcb4d451f2019bb162dcde76870ad7eb64bf9e8a3ba9c501f80
 ```
 
 That is the build you want: stock Violet runtime **plus** the mic stream, the

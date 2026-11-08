@@ -55,7 +55,7 @@ COPY --from=whisper /out/models /app/models
 # checksum is verified at build so the file can never drift unnoticed. Without
 # it a fresh install has no bytecode at all and every boot 500s (issue #2).
 COPY bootcode.hybrid /app/bootcode.hybrid
-RUN echo "59bc7bbbd1bdb412eaa1391c246010d83d1369830ab386a673e4e0fc76cc8334  /app/bootcode.hybrid" \
+RUN echo "c0ac2ecfb9942fcb4d451f2019bb162dcde76870ad7eb64bf9e8a3ba9c501f80  /app/bootcode.hybrid" \
     | sha256sum -c -
 
 # Dependency-free server (Python stdlib only); reads /data/options.json at runtime.

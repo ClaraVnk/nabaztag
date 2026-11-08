@@ -27,11 +27,26 @@ experimental builds stay out of git (see `../.gitignore`).
 | **Build mode** | `lean` (modernized config UI + Ed25519-gated OTA + mDNS announcer **and resolver** + `--gc-sections`, with the surgical `.bss`/audio-FIFO fix) |
 | **Firmware version** | `0.0.0.13` |
 | **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
-| **sha256** | `c66efc960d24b153f33abd602c8c3ab2a7aa0f5fc131d2cae87039604f09ec50` |
+| **sha256** | `84db2654df7efd17e4620183f0a761e19dfe96416a4b819f34c225601d63a3fb` |
 
-**Verified live (2026-11-08):** boots, loads its bytecode, resolves its
-server, completes the XMPP handshake, and reports its own build in its boot
-URL (`&z=2611072242&s=1`) — written over JTAG and read back byte-exact.
+**Installed over the air (2026-11-08 14:09):** this exact file was sent by
+the warren to a rabbit running the previous lean build, downloaded in a
+second, verified, written, and the rabbit came back 54 s later announcing
+`&z=2611081305&s=1` — the mark of *this* image, not of the one that had been
+in flash. The warren logged `boot URL changed across the flash … confirmed
+running`. First OTA to install in five months.
+
+**Which images it can be installed from.** Only from a build dated
+2026-11-08 or later. Every earlier `lean`/`full` resets inside `verifySig`:
+the Ed25519 check of a 107 KB image is ~248 million instructions, one
+opcode, and the 2.09 s watchdog is fed only between opcodes. Earlier
+images also refuse signed uploads from the config page (the
+`crypto_sign_open` alias bug). A rabbit on one of those leaves it through
+the recovery bytecode the warren serves it, or over JTAG — see
+`../RECOVERY.md`. Three firmware fixes make this build installable *from*:
+`verify_wdt` (the signature check feeds the watchdog), the `OPverifySig`
+operands re-read after the allocation that can move them, and
+`sign_open_alias`.
 
 **Correction to what this section used to claim.** It said a signed OTA had
 been flashed over the air and recovered cleanly, on 2026-06-21. That was not
@@ -54,8 +69,8 @@ leaves the 2006 radio asleep and the belly orange until it does.
 
 | | |
 |---|---|
-| **Size** | 215 570 bytes (`Nab.bin` 107 704) |
-| **sha256** | `c66efc960d24b153f33abd602c8c3ab2a7aa0f5fc131d2cae87039604f09ec50` |
+| **Size** | 215 970 bytes (`Nab.bin` 107 904) |
+| **sha256** | `84db2654df7efd17e4620183f0a761e19dfe96416a4b819f34c225601d63a3fb` |
 | **Build mode** | `lean` (`apply-mods.py`) + `firmware-arm/patches/wpa2-scanned-ciphers.patch` |
 | **Built from** | nabgcc `2c05b53f` (wpa2 HEAD) + uplg/nabgcc's `aes128.c` and `eapol_install_msg3_gtk` (MIT, `upstream/UPLG-LICENSE`) |
 
@@ -187,7 +202,7 @@ your bytecode.
 | **Build mode** | `minimal` (rescue / rollback: C side only — TweetNaCl + `nab_sig` + the `OPverifySig` opcode, with `linker_keep`, `audio_fifo_data`, `cold_state`, the EAPOL and interpreter fixes, and `--gc-sections`). `boot.0.0.0.13.mtl` is **byte-identical to vanilla wpa2 HEAD** (`2c05b53f`), so the bootloader UI and the `httpflash` upload flow behave exactly like the stock 2006 firmware. No modernized pages, no signature-gated `httpflash`, no mDNS. |
 | **Firmware version** | `0.0.0.13` |
 | **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
-| **sha256** | `74c23d2de12d6ba4c45c23e19f07166e80491317ab5ea1ce9ad3d4bfbf0f412a` |
+| **sha256** | `7d0f9be60c40ae0f6a09a532e3d50f982b8b85ee09ad9397beec3756a7c6e101` |
 | **Built** | 2026-11-08, and it passes `preflight.py` — see below |
 
 **When to use it:** flash this when a build (`lean`/`full`) left the rabbit in a

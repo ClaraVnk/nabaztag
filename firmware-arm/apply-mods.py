@@ -96,8 +96,19 @@ def patch_vinterp_c(root: Path) -> None:
     addition = (
         '      case OPverifySig:\n'
         '        {\n'
-        '          int32_t sig=VALTOPNT(VPULL());\n'
-        '          int32_t payload=VALTOPNT(VSTACKGET(0));\n'
+        '          /* Both operands stay on the stack until the verifier has\n'
+        '           * run. The scratch allocation below can run the GC, and the\n'
+        '           * GC compacts: every index taken before it is stale after\n'
+        '           * it. The first version pulled sig off the stack and read\n'
+        '           * payload through its old index, and the emulator showed\n'
+        '           * what that does (2026-11-08, naboot-stable.signed.sim,\n'
+        '           * 107,704-byte payload): the third collection of the OTA\n'
+        '           * callback ran inside this allocation, VSIZEBIN(payload)\n'
+        '           * then read -1,728,528, and nab_verify_sig called memcpy\n'
+        '           * with it -- a segfault there, a data abort and a reset on\n'
+        '           * the ARM7, with nothing written and no red light. */\n'
+        '          int32_t sig=VALTOPNT(VSTACKGET(0));\n'
+        '          int32_t payload=VALTOPNT(VSTACKGET(1));\n'
         '          int32_t ok=0;\n'
         '          nab_verify_calls++;\n'
         '          if ((payload!=NIL) && (sig!=NIL) && (VSIZEBIN(sig)==64))\n'
@@ -111,15 +122,21 @@ def patch_vinterp_c(root: Path) -> None:
         '             * question and nothing could answer it. */\n'
         '            int32_t scratch=VMALLOCBIN(VSIZEBIN(payload)+64);\n'
         '            if (scratch>=0)\n'
+        '            {\n'
+        '              /* Re-read after the allocation: see above. */\n'
+        '              sig=VALTOPNT(VSTACKGET(0));\n'
+        '              payload=VALTOPNT(VSTACKGET(1));\n'
         '              ok = nab_verify_sig(\n'
         '                  (const uint8_t*)VSTARTBIN(payload), VSIZEBIN(payload),\n'
         '                  (const uint8_t*)VSTARTBIN(sig),\n'
         '                  (void*)VSTARTBIN(scratch));\n'
+        '            }\n'
         '            else\n'
         '              nab_verify_nomem++;\n'
         '          }\n'
         '          else nab_verify_badargs++;\n'
         '          if (ok) nab_verify_ok++;\n'
+        '          (void)VPULL();\n'
         '          VSTACKSET(0, INTTOVAL(ok));\n'
         '        }\n'
         '        break;\n'
@@ -277,6 +294,70 @@ def patch_sign_open_aliasing(root: Path) -> None:
     p.write_text(t)
     print(f"[ok]   {p}: crypto_sign_open survives m == sm")
 
+
+
+def patch_verify_wdt(root: Path) -> None:
+    """Feed the watchdog from inside the signature check.
+
+    verifySig is one opcode, and the interpreter's CLR_WDT runs once per
+    opcode (vinterp.c:86). Nothing else feeds the watchdog -- no interrupt
+    handler does -- so the whole of crypto_sign_open has to finish inside one
+    2.09 s window, or the chip resets with the middle belly light still blue.
+
+    It cannot. Measured 2026-11-08 under qemu-arm, with nab_sig.c and this
+    tweetnacl.c compiled with the firmware's own flags (-O1 -mthumb
+    -mcpu=arm7tdmi) and given naboot-stable's 107,704-byte image: the
+    verification executes 247,618,040 instructions. At the APB clock the
+    watchdog is derived from (32 MHz, main.c wdt_start), that is 7.7 s even
+    at one cycle per instruction, which an ARM7TDMI running from flash does
+    not get near. So an OTA on any image without this patch dies in
+    verifySig a little over two seconds after the middle light turns blue,
+    exactly as a stale heap index does (see the vinterp step), and the two
+    cannot be told apart from the belly.
+
+    The work is in four loops: SHA-512 over the image, 842 blocks of 128
+    bytes; two scalar multiplications of 256 steps each; and the two field
+    inversions around them, 254 and 251 steps. One tick per iteration is
+    1,860 ticks; the longest stretch without one is 812,960 instructions,
+    the two 107 KB copies before the first (qemu-arm, same build) -- 25 ms
+    at 32 MHz and one cycle per instruction, 0.1 s at four. The tick is nab_verify_tick() in nab_sig.c, which is
+    CLR_WDT on the hardware and nothing in the emulator.
+    """
+    p = root / "src/crypto/tweetnacl.c"
+    t = p.read_text()
+    if "nab_verify_tick" in t:
+        print(f"[skip] {p}: the verifier already feeds the watchdog")
+        return
+
+    a = "  while (n >= 128) {\n    FOR(i,16) w[i] = dl64(m + 8 * i);\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {p}: crypto_hashblocks' block loop is not the shape this patch expects")
+    t = t.replace(a, "  while (n >= 128) {\n    nab_verify_tick();\n"
+                     "    FOR(i,16) w[i] = dl64(m + 8 * i);\n", 1)
+
+    b = "  for (i = 255;i >= 0;--i) {\n    u8 b = (s[i/8]>>(i&7))&1;\n"
+    if t.count(b) != 1:
+        sys.exit(f"FAIL {p}: scalarmult's bit loop is not the shape this patch expects")
+    t = t.replace(b, "  for (i = 255;i >= 0;--i) {\n    nab_verify_tick();\n"
+                     "    u8 b = (s[i/8]>>(i&7))&1;\n", 1)
+
+    # The two field inversions: unpackneg's pow2523 before the first hash
+    # block and pack's inv25519 after the last scalar step. Measured the same
+    # way, without these two: 11,715,152 instructions before the first tick.
+    for name, loop in (("inv25519", "  for(a=253;a>=0;a--) {\n    S(c,c);\n"),
+                       ("pow2523",  "  for(a=250;a>=0;a--) {\n    S(c,c);\n")):
+        if t.count(loop) != 1:
+            sys.exit(f"FAIL {p}: {name}'s loop is not the shape this patch expects")
+        head, tail = loop.split("\n", 1)
+        t = t.replace(loop, head + "\n    nab_verify_tick();\n" + tail, 1)
+
+    inc = '#include "tweetnacl.h"\n'
+    if inc not in t:
+        sys.exit(f"FAIL {p}: no tweetnacl.h include to hang the declaration on")
+    t = t.replace(inc, inc + "/* The watchdog, from nab_sig.c; see patch_verify_wdt. */\n"
+                             "extern void nab_verify_tick(void);\n", 1)
+    p.write_text(t)
+    print(f"[ok]   {p}: the signature check feeds the watchdog 1,860 times")
 
 
 def strip_tweetnacl(root: Path) -> None:
@@ -1784,6 +1865,272 @@ def patch_rx_recovery(root: Path) -> None:
 
     write_flat(f, t, nl)
     print(f"[ok]   {f}: a receive-error burst no longer costs the radio until the mains")
+
+
+def patch_persist_counters(root: Path) -> None:
+    """Put the six diagnostic counters where a reset cannot erase them.
+
+    On 2026-11-08 an OTA downloaded, rebooted, and wrote nothing. Every
+    counter that would have said how far it got reads 0 afterwards -- not
+    because nothing happened, but because they live in .bss and the startup
+    zero-loop clears 0x100003c0..0x1000129c on the way back up. The reboot
+    destroys the evidence of what caused it.
+
+    Reporting it over HTTP instead does not work: an httprequest issued from
+    inside an HTTP_NORMAL callback, while that callback still holds the
+    215 KB body, wedges the rabbit -- measured the same morning, and it
+    stopped answering XMPP altogether.
+
+    `.extbss` is NOLOAD and nothing clears it, so these survive a soft reset
+    and stay readable over JTAG afterwards. They are NOT initialised, so the
+    first values after a power cycle are whatever was in external RAM: read
+    them once as a baseline, then again after the attempt, and compare. The
+    delta is the measurement.
+    """
+    attr = ' __attribute__((section(".extbss")))'
+    sites = (
+        ("src/vm/vinterp.c", ("nab_verify_calls", "nab_verify_ok",
+                              "nab_verify_nomem", "nab_verify_badargs")),
+        ("src/vm/vlog.c",    ("nab_flash_error", "nab_flash_calls")),
+    )
+    for rel, names in sites:
+        q = root / rel
+        t, nl = read_flat(q)
+        for n in names:
+            decl = f"int32_t {n};"
+            if f"int32_t {n}{attr};" in t:
+                print(f"[skip] persist_counters: {rel}:{n} already in .extbss")
+                continue
+            if decl not in t:
+                sys.exit(f"FAIL {q}: no `{decl}` to move to .extbss "
+                         "(run this step after the one that declares it)")
+            t = t.replace(decl, f"int32_t {n}{attr};", 1)
+            print(f"[ok]   {rel}: {n} -> .extbss (survives a soft reset)")
+        write_flat(q, t, nl)
+
+    # The magic word, and the one place that clears the set.
+    #
+    # Surviving a reset is only half of it: NOLOAD means nothing initialises
+    # these, so after a power cycle they hold whatever external RAM came up
+    # with -- and "0x42015c70" is indistinguishable from "never written".
+    # Measured 2026-11-08: the first read after a power cycle returned six
+    # plausible-looking words, none of them a count.
+    #
+    # So main() clears the set exactly once per power-up, keyed on a magic
+    # word that lives in the same section. A soft reset finds the magic
+    # intact and leaves the counters alone, which is the whole point; a
+    # power cycle almost certainly does not, and starts them at zero. The
+    # residual risk is that external RAM comes up holding 0x4E414231 at that
+    # one address, in which case a boot's counters read as the previous
+    # boot's -- one chance in 2^32, against a diagnostic, and worth it to
+    # stop reading noise as evidence.
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    magic_decl = f"int32_t nab_diag_magic{attr};"
+    if magic_decl not in t:
+        anchor = f"int32_t nab_flash_error{attr};"
+        if anchor not in t:
+            sys.exit(f"FAIL {q}: no .extbss nab_flash_error to declare the "
+                     "magic word beside")
+        t = t.replace(anchor, magic_decl + "\n" + anchor, 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/vm/vlog.c: nab_diag_magic -> .extbss")
+
+    q = root / "src/main.c"
+    t, nl = read_flat(q)
+    if "nab_diag_magic" in t:
+        print(f"[skip] persist_counters: src/main.c already clears the set")
+        return
+    anchor = '  DBG_MAIN("vmemInit"EOL);'
+    if anchor not in t:
+        sys.exit(f"FAIL {q}: no vmemInit call to clear the counters before")
+    init = (
+        "  /* Clear the diagnostic counters once per power-up. They live in\n"
+        "   * .extbss so a soft reset -- the one flashFirmware ends with --\n"
+        "   * keeps them, and this runs after the hardware is up, so external\n"
+        "   * RAM is addressable. See patch_persist_counters. */\n"
+        "  {\n"
+        "    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n"
+        "                   nab_verify_nomem, nab_verify_badargs,\n"
+        "                   nab_flash_calls, nab_flash_error;\n"
+        "    if(nab_diag_magic != 0x4E414231)\n"
+        "    {\n"
+        "      nab_diag_magic = 0x4E414231;\n"
+        "      nab_verify_calls = nab_verify_ok = 0;\n"
+        "      nab_verify_nomem = nab_verify_badargs = 0;\n"
+        "      nab_flash_calls = nab_flash_error = 0;\n"
+        "    }\n"
+        "  }\n\n"
+    )
+    t = t.replace(anchor, init + anchor, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   src/main.c: the counters start at zero once per power-up")
+
+
+def patch_reset_reason(root: Path) -> None:
+    """Record WHO reset the chip, where a reset cannot erase it.
+
+    On 2026-11-08 an OTA got as far as a belly light past parsefirm_fw and
+    then the chip reset -- no stage reported a refusal, nothing was written,
+    and four explanations (truncated body, recursion depth, VM memory, the
+    watchdog) had each been measured away. What was left was a reset with
+    no author.
+
+    Every software reset on this part goes through reset_uc(); the callers
+    are the VM's out-of-memory path (vmem.c), the bytecode's own `reboot`
+    opcode (vinterp.c) and the flash writer's end (mem.c). Each now leaves a
+    reason word in .extbss first, next to the diagnostic counters, so one
+    JTAG read after the attempt names the author:
+
+        0  no software reset since power-up: the hardware watchdog, or none
+        1  VM out of memory ("?OM Error" path, vmem.c)
+        2  the bytecode asked for it (OPreboot with the two keys)
+        3  flash_uc finished writing and reset on purpose
+        4  sysReboot() from a caller not listed above
+
+    nab_reset_count counts reset_uc() entries. Both are cleared with the
+    counters once per power-up, by the magic-word block in main().
+    """
+    attr = ' __attribute__((section(".extbss")))'
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    anchor = f"int32_t nab_diag_magic{attr};"
+    if anchor not in t:
+        sys.exit(f"FAIL {q}: no nab_diag_magic in .extbss -- run persist_counters first")
+    if "nab_reset_reason" not in t:
+        t = t.replace(anchor,
+                      f"int32_t nab_reset_reason{attr};\n"
+                      f"int32_t nab_reset_count{attr};\n" + anchor, 1)
+        a = "void sysReboot()\n{\n  reset_uc();\n}"
+        if a not in t:
+            sys.exit(f"FAIL {q}: sysReboot is not the shape this patch expects")
+        # The .extbss declarations sit further down the file, beside sysFlash;
+        # sysReboot comes first, so it declares what it touches.
+        t = t.replace(a, "void sysReboot()\n{\n"
+                         "  extern int32_t nab_reset_reason;\n"
+                         "  if(!nab_reset_reason) nab_reset_reason=4;\n"
+                         "  reset_uc();\n}", 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/vm/vlog.c: nab_reset_reason/count -> .extbss, sysReboot tags 4")
+    else:
+        print(f"[skip] reset_reason: vlog.c already patched")
+
+    q = root / "src/main.c"
+    t, nl = read_flat(q)
+    if "nab_reset_count++" not in t:
+        a = "      nab_diag_magic = 0x4E414231;\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: no magic-word block -- run persist_counters first")
+        t = t.replace("    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n",
+                      "    extern int32_t nab_reset_reason, nab_reset_count;\n"
+                      "    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n", 1)
+        t = t.replace(a, a + "      nab_reset_reason = nab_reset_count = 0;\n", 1)
+        a2 = "void reset_uc(void)\n{\n"
+        if a2 not in t:
+            sys.exit(f"FAIL {q}: no reset_uc to count")
+        t = t.replace(a2, a2 + "  { extern int32_t nab_reset_count; nab_reset_count++; }\n", 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/main.c: reason/count cleared at power-up, reset_uc counts")
+    else:
+        print(f"[skip] reset_reason: main.c already patched")
+
+    for rel, old, new in (
+        ("src/vm/vmem.c",
+         "      _vmem_broken=1;\n      sysReboot();",
+         "      _vmem_broken=1;\n      { extern int32_t nab_reset_reason; nab_reset_reason=1; }\n      sysReboot();"),
+        ("src/vm/vinterp.c",
+         '            DBG_VM("************REBOOT NOW");\n            sysReboot();',
+         '            DBG_VM("************REBOOT NOW");\n            { extern int32_t nab_reset_reason; nab_reset_reason=2; }\n            sysReboot();'),
+        ("src/utils/mem.c",
+         "  put_hvalue(WDTCNT,0x5A5A);  //release write protection\n  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us\n  while(1);",
+         "  { extern int32_t nab_reset_reason; nab_reset_reason=3; }\n  put_hvalue(WDTCNT,0x5A5A);  //release write protection\n  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us\n  while(1);"),
+    ):
+        q = root / rel
+        t, nl = read_flat(q)
+        if "nab_reset_reason" in t:
+            print(f"[skip] reset_reason: {rel} already tagged"); continue
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected exactly one reset site, found {t.count(old)}")
+        write_flat(q, t.replace(old, new, 1), nl)
+        print(f"[ok]   {rel}: reset site tagged")
+
+
+def patch_dcc_console(root: Path) -> None:
+    """Mirror the serial console onto the JTAG debug channel.
+
+    NOT IN ANY MODE. Measured 2026-11-08: with this step in, two images
+    (builds 1208 and 1147) booted, scanned, and heard zero access points --
+    orange for ever, ieee80211_state IDLE, scan_cache_len 0 -- while the
+    same image without it (1243) associated in seconds. The radio and USB
+    code is byte-identical between them; the only difference on the running
+    path is this mirror in putch_uart. Mechanism not yet understood: keep
+    the step for the investigation, do not ship it.
+
+    The firmware has written a 115200-baud console since 2006 -- every
+    Secholn in the bytecode ends in putch_uart() -- but the UART is only
+    pads on the PCB, so nobody has ever read it. The ARM7TDMI's Debug
+    Communications Channel is two coprocessor-14 registers the core can
+    write while running and OpenOCD reads while polling, over the five JTAG
+    wires that are already connected. `target_request debugmsgs enable` on
+    the host, no halt, no session lost.
+
+    Two things make this safe on a rabbit nobody is listening to:
+    - every write is bounded (DCC_SPIN status reads, a few ms at 32 MHz),
+      and a timeout mutes the channel for the next 256 characters, so an
+      unattached debugger costs one short stall per 256 bytes of console;
+    - characters go out one per word (TARGET_REQ_DEBUGCHAR), so nothing
+      depends on a multi-word frame surviving a slow bit-banged poll.
+
+    mcr/mrc p14 are ARM-mode only; the two functions that touch them carry
+    target("arm") and are reached through interworking from Thumb code.
+    The emulator is untouched: it links its own stubs/uart.c.
+    """
+    hdr = root / "inc/utils/dcc.h"
+    src = root / "src/utils/dcc.c"
+    if src.exists():
+        print(f"[skip] dcc_console: {src} already present")
+    else:
+        hdr.write_text(
+            "#ifndef _DCC_H_\n#define _DCC_H_\n#include <stdint.h>\n"
+            "/* Best-effort character out on the EmbeddedICE debug comms channel.\n"
+            " * Never blocks for more than a few milliseconds; drops when no\n"
+            " * debugger is draining the channel. See src/utils/dcc.c. */\n"
+            "void dcc_putc(uint8_t c);\n#endif\n")
+        src.write_text(
+            '#include "utils/dcc.h"\n\n'
+            "/* OpenOCD's target_request protocol (contrib/libdcc): one word,\n"
+            " * request type in the low byte, the character in bits 16..23. */\n"
+            "#define TARGET_REQ_DEBUGCHAR 0x02\n"
+            "#define DCC_SPIN  20000   /* status reads before giving up: ~ms */\n"
+            "#define DCC_MUTE  256     /* characters dropped after a timeout */\n\n"
+            "static uint32_t dcc_muted;\n\n"
+            "__attribute__((target(\"arm\"), noinline))\n"
+            "static int dcc_try_write(uint32_t w)\n{\n"
+            "  uint32_t st, n;\n"
+            "  for(n=0;n<DCC_SPIN;n++)\n  {\n"
+            "    asm volatile(\"mrc p14, 0, %0, c0, c0\" : \"=r\"(st));\n"
+            "    if(!(st & 2))\n    {\n"
+            "      asm volatile(\"mcr p14, 0, %0, c1, c0\" : : \"r\"(w));\n"
+            "      return 1;\n    }\n  }\n  return 0;\n}\n\n"
+            "void dcc_putc(uint8_t c)\n{\n"
+            "  if(dcc_muted) { dcc_muted--; return; }\n"
+            "  if(!dcc_try_write(TARGET_REQ_DEBUGCHAR | ((uint32_t)c << 16)))\n"
+            "    dcc_muted = DCC_MUTE;\n}\n")
+        print(f"[ok]   src/utils/dcc.c + inc/utils/dcc.h written")
+
+    q = root / "src/hal/uart.c"
+    t, nl = read_flat(q)
+    if "dcc_putc" in t:
+        print(f"[skip] dcc_console: uart.c already mirrors"); return
+    a = ("  /* write characters to UART Transmitter Holding register */\n"
+         "  put_value(UARTTHR0,c);\n}")
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: putch_uart is not the shape this patch expects")
+    t = t.replace(a, a[:-1] + "  dcc_putc(c);   /* and the JTAG debug channel, see utils/dcc.c */\n}", 1)
+    if '#include "utils/dcc.h"' not in t:
+        t = '#include "utils/dcc.h"\n' + t
+    write_flat(q, t, nl)
+    print(f"[ok]   src/hal/uart.c: putch_uart mirrors every byte onto the DCC")
 
 
 def patch_extbss(root: Path) -> None:
@@ -4165,47 +4512,47 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -4267,8 +4614,13 @@ def main() -> int:
     # ...but only for a real image. An emulator build has no Metal VM and no
     # bootloader, so it omits vbc/vinterp/stdlib and models wifiAuth in C
     # instead; requiring the opcode there would just stop it compiling.
+    # The emulator's rabbit-vm now carries vbc/vinterp too, so its OTA path
+    # has a signature gate; it still reads the passphrase out of the config
+    # page itself and ships no boot bytecode for wpa3_boot_pw to patch. Its
+    # Containerfile says so with NAB_SIM=1.
     if ("wpa3_sae" in steps and "vbc" in steps
-            and "wpa3_boot_pw" not in steps):
+            and "wpa3_boot_pw" not in steps
+            and not os.environ.get("NAB_SIM")):
         sys.exit(
             "FAIL step list: wpa3_sae without wpa3_boot_pw builds a WPA3 "
             "client whose password is never captured, so SAE never starts "
@@ -4286,6 +4638,29 @@ def main() -> int:
             "which places .bss.* explicitly and moves 8 KB of scratch to "
             "external RAM. See patch_no_libc_malloc's docstring."
         )
+    if "persist_counters" in steps and "extbss" not in steps:
+        sys.exit(
+            "FAIL step list: persist_counters puts the diagnostic counters in "
+            ".extbss, and extbss is the step that declares that section. "
+            "Without it they land in .bss and the startup zero-loop erases "
+            "them -- which is the whole thing this step exists to stop."
+        )
+    if "reset_reason" in steps and (
+            "persist_counters" not in steps
+            or steps.index("persist_counters") > steps.index("reset_reason")):
+        sys.exit(
+            "FAIL step list: reset_reason writes next to the .extbss counters "
+            "and into the power-up block that persist_counters creates -- it "
+            "must come after persist_counters."
+        )
+    if "persist_counters" in steps:
+        order = steps.index("persist_counters")
+        for dep in ("stdlib", "flash_verify"):
+            if dep in steps and steps.index(dep) > order:
+                sys.exit(
+                    f"FAIL step list: persist_counters must run after {dep}, "
+                    "which is what declares the counters it moves."
+                )
     fns = {
         "eapol_replay": patch_eapol_replay,
         "cold_state": patch_cold_state,
@@ -4294,6 +4669,7 @@ def main() -> int:
         "stdlib": patch_stdlib_core,
         "strip_tweetnacl": strip_tweetnacl,
         "sign_open_alias": patch_sign_open_aliasing,
+        "verify_wdt": patch_verify_wdt,
         "modernize_pages": modernize_pages,
         "makefile": patch_makefile,
         "bootloader": patch_bootloader,
@@ -4316,6 +4692,9 @@ def main() -> int:
         "usb_robustness": patch_usb_robustness,
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
+        "persist_counters": patch_persist_counters,
+        "reset_reason": patch_reset_reason,
+        "dcc_console": patch_dcc_console,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,

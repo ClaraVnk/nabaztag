@@ -119,17 +119,77 @@ fun ota_fail_report bad=
 // flash resets the chip from inside sysFlash -- and what it returns is the
 // address that would not take. Every refusal now reports itself; the first
 // version of this function dropped all four of them in silence.
+// The belly says how far the OTA got, because nothing else can.
+//
+// Measured 2026-11-08, on a rabbit whose counters a reset can no longer
+// erase: after an OTA that downloaded 215 KB and installed nothing,
+// nab_verify_calls was 0. So the path dies BEFORE the signature gate, and
+// every other way of asking has already been tried and does not work --
+// the counters cannot see upstream of verifySig, a reboot is not guaranteed
+// to happen, and an httprequest issued from inside this callback wedges the
+// rabbit outright (that attempt cost two power cycles the same morning).
+//
+// Four lights, left to right, one per step survived; red where it stopped.
+// No network, no reset, no probe, and an owner can read it across the room.
+const OTA_STEP_OK  = 0x00ff00;;   // green: this step passed
+const OTA_STEP_RUN = 0x0000ff;;   // blue: in the callback at all
+const OTA_STEP_SIG = 0xffffff;;   // white: signature verified
+const OTA_STEP_BAD = 0xff0000;;   // red: it stopped here
+
 fun ota_cb httpreq body=
-	let parsefirm_fw body -> firm in
-	let parsesig_fw body -> sig in
-	if firm==nil then (ota_fail_report 0xF1; 0)
-	else if sig==nil then (ota_fail_report 0xF2; 0)
-	else if (verifySig firm sig)==0 then (ota_fail_report 0xF3; 0)
-	else
-	let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
 	(
-		ota_fail_report if bad==nil then 0xF4 else bad;
-		0
+		led 0 OTA_STEP_RUN;
+		let parsefirm_fw body -> firm in
+		if firm==nil then (led 0 OTA_STEP_BAD; ota_fail_report 0xF1; 0)
+		else
+		(
+			led 0 OTA_STEP_OK;
+			led 1 OTA_STEP_RUN;
+			let parsesig_fw body -> sig in
+			if sig==nil then (led 1 OTA_STEP_BAD; ota_fail_report 0xF2; 0)
+			else
+			(
+				led 1 OTA_STEP_OK;
+				led 2 OTA_STEP_RUN;
+				// Collect BEFORE verifySig, never let verifySig collect.
+				//
+				// The opcode allocates payload+64 bytes of scratch, then
+				// reads firm and sig through the heap indices it took
+				// before the allocation. When that allocation triggers
+				// the GC, the compaction slides both over the garbage
+				// getbinary_fw left behind (107,704 two-byte strings), the
+				// indices point into the middle of something else, and
+				// the length word read there is whatever it is. Measured
+				// in the emulator 2026-11-08 with this very image: the
+				// third GC of the callback ran inside verifySig and the
+				// opcode then called memcpy with a size of -1,728,528. On
+				// the host that is a segfault; on the ARM7 it is a data
+				// abort, a reset, and a rabbit that boots the firmware it
+				// already had -- nose green, one belly light blue, no red.
+				//
+				// `gc` runs the same compaction with the interpreter's own
+				// roots, so firm and sig come out of it correct, and the
+				// heap it leaves (166,946 words live of 204,800, so 36,267
+				// free against the 26,942 the scratch needs, same run) has
+				// room for the opcode's allocation without a second
+				// collection. With it the same run reaches white, then
+				// flashFirmware with the 107,704-byte image.
+				gc;
+				if (verifySig firm sig)==0 then
+					(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
+				else
+				(
+					led 2 OTA_STEP_SIG;
+					led 3 OTA_STEP_RUN;
+					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+					(
+						led 3 OTA_STEP_BAD;
+						ota_fail_report if bad==nil then 0xF4 else bad;
+						0
+					)
+				)
+			)
+		)
 	);;
 
 
