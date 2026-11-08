@@ -22,7 +22,7 @@ CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls
+.PHONY: all vectors clean arm sign_open kx tls tls-interop
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -105,13 +105,16 @@ kx: $(TNKX_DIR)/tweetnacl.c $(CRYPTO_H)
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -I$(TNKX_DIR) -o /tmp/t_kx test_kx.c \
 		../crypto/nab_kx.c ../crypto/sha256.c /tmp/tn_kx.o && /tmp/t_kx
 
-# TLS 1.3 PSK: the recorded OpenSSL session replayed offline (test_tls.c),
-# then the live client against `openssl s_server` and Python's ssl
-# (tls_interop.py). The second needs an `openssl` on PATH and Python 3.13+.
+# TLS 1.3 PSK. `tls` replays the recorded OpenSSL session offline
+# (test_tls.c) and needs nothing; `tls-interop` runs the live client against
+# `openssl s_server` and Python's ssl (tls_interop.py), which needs an
+# openssl on PATH and Python 3.13+ (SSLContext.set_psk_server_callback).
 tls: $(CRYPTO_H)
 	@echo "== TLS 1.3 PSK: the recorded OpenSSL session, replayed and damaged"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls test_tls.c \
 		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c && /tmp/t_tls
+
+tls-interop: $(CRYPTO_H)
 	@echo "== TLS 1.3 PSK: live, against OpenSSL and Python"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls_client tls_client.c \
 		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c
