@@ -458,23 +458,45 @@ Don't want to run a server at home? Put your rabbit on the public warren —
       `mtl_compiler` for the supported subset (proto / var / const /
       fun, integers, strings, builtins, user-fun calls, arithmetic
       and comparison, if/then/else, let-in, set, sequencing). Tested
-      byte-for-byte on five progressively richer programs up to a
-      182-byte real program with 4-level nested let, recursion, and
-      chained ifs. The C++ toolchain is no longer the only way to
-      compile Metal source on this stack.
-    1. **Phase 7a — Python MTL compiler (pending):** rewrite the existing
-       C++ `mtl_compiler` in Python. Same input (`.mtl` source), same
-       output (the rabbit's bytecode), zero behavioral change for the
-       device. Win: no more aging C++ toolchain (g++-multilib, build
-       dance), one fewer barrier for contributors, easier to add new
-       opcodes / sanity checks / linting. Grammar is small (see
-       `DT_metal_03_01_13_grammaire.pdf`). Estimated 2-4 weeks of
-       focused work.
-    2. **Phase 7b — "view as Python" layer (pending):** on top of 7a, add a bidirectional
-       MTL ↔ Python source mapper so people can read, write and review bytecode
-       logic in familiar Python syntax. The rabbit still executes MTL bytecode;
-       the Python is purely a contributor-facing surface. Doable mechanically,
-       not research.
+      byte-for-byte on 23 progressively richer programs, the largest
+      344 bytes. It has never compiled a real Violet source — see
+      Phase 7a below for where it stops and what closing the gap
+      would buy.
+    1. **Phase 7a — Python MTL compiler (code landed, not yet able to
+       build the real thing):** `mtl_comp.py` exists and emits
+       byte-identical bytecode to the C++ `mtl_compiler` on 23 test
+       programs — the largest of which is 344 bytes. On 2026-11-08 it
+       was pointed at the real preprocessed `bootcode.mtl` (10 677
+       lines, the exact input the C++ compiler had just turned into a
+       105 KB image) and stopped twice in two minutes:
+
+       - `i32 operand out of range: 281474959933440` — `0xFFFFFF000000`,
+         one of MD5's 48-bit masks. The C++ compiler truncates to 32
+         bits; this one raises.
+       - `line 466: unknown field '('` — `set md5bloc.(j*2) = …`,
+         computed array indexing. `.field` on a struct is supported,
+         `.(EXPR)` is not.
+
+       Neither is research; both are constructs the 2006 sources use and
+       the Python compiler has never seen, because it has only ever been
+       run on its own tests. **The milestone that retires the C++ binary
+       is one command**: compile the real `bootcode.mtl` and have `cmp`
+       report byte-identical against the reference image. Until then the
+       32-bit `mtl_compiler` is still the only thing that can build a
+       bytecode, inside a Debian container with `libc6:i386`.
+    2. **Phase 7b — "view as Python" layer (code landed, blocked on 7a):**
+       `mtl_pyc.py` compiles a Python subset straight to Metal bytecode via
+       the stdlib `ast` module, and `mtl_depyc.py` renders bytecode back as
+       Python. So the contributor-facing surface already is Python. It is
+       only worth relying on once 7a can build the real sources, since
+       `mtl_pyc` shares `mtl_comp`'s codegen and therefore its gaps.
+    3. **Phase 7c — put the toolchain under test (not started):** these
+       four tools are 4 500 lines and **nothing in CI runs any of them**.
+       `mtl_asm`/`mtl_dis` round-trip the real 103 KB bytecode
+       byte-identically, which is the strongest guarantee in the set and is
+       checked by hand. The regression test that matters is the 7a
+       milestone itself — compile the real source, compare to the
+       reference image — so 7c is mostly 7a's test, wired up.
 - **Phase 8 — shrink the firmware by moving boot-bytecode logic to C
   (prototype landed):** the rabbit's bootloader is ~3000 lines of Metal
   bytecode (`mtl/boot/boot.0.0.0.13.mtl`) running on top of a tiny stack VM.
