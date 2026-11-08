@@ -1,0 +1,102 @@
+// adoption.mtl — the per-rabbit key, bootloader side. See ADOPTION-KEY.md.
+//
+// On a boot with no key in the configuration sector: kxBegin (2-8 s of
+// X25519), send the public key to <server>/kx.jsp, read the warren's back,
+// kxFinish, store key + colours, light the colours. On a boot with a key not
+// yet confirmed: light the colours for KX_SHOW seconds before fetching the
+// bytecode, so the owner can compare them with the warren's page. A warren
+// that does not know kx.jsp, or answers anything but 64 hex digits, changes
+// nothing: the rabbit boots as it did, without a key.
+
+const CONF_KXKEY=208;;		//32
+const CONF_KXFLAG=240;;		//1  'K' key, 'C' confirmed
+const CONF_KXCOLORS=241;;	//5
+const KX_SHOW=60;;
+
+var kxdone;;
+var kxhttp;;
+var kxshow;;
+
+fun kx_hexdigit c= if c>=97 then c-87 else c-48;;
+
+fun kx_ishex s i=
+	if i>=64 then 1
+	else let strget s i -> c in
+	if (c>=48 && c<=57) || (c>=97 && c<=102) then kx_ishex s i+1 else 0;;
+
+fun kx_unhex s=
+	if s==nil then nil
+	else if (strlen s)<64 then nil
+	else if !kx_ishex s 0 then nil
+	else let strnew 32 -> b in
+	(
+		for i=0;i<32 do strset b i ((kx_hexdigit strget s 2*i)<<4)+(kx_hexdigit strget s 2*i+1);
+		b
+	);;
+
+fun _kx_hex s i= if i<strlen s then (ctoh strget s i)::_kx_hex s i+1;;
+fun kx_hex s=strcatlist _kx_hex s 0;;
+
+// The warren's page draws the same eight. LED i shows colour i, in the
+// Terrier API's naming: 0 bottom (base), 1 left, 2 middle, 3 right, 4 top.
+fun kx_color v=
+	if v==0 then 0xff0000 else if v==1 then 0x00ff00 else if v==2 then 0x0000ff
+	else if v==3 then 0xffff00 else if v==4 then 0x00ffff else if v==5 then 0xff00ff
+	else if v==6 then 0xffffff else 0xff8000;;
+
+fun kx_leds= for i=0;i<5 do led i kx_color strget conf CONF_KXCOLORS+i;;
+
+fun kx_showing= kxshow!=nil && time<=kxshow;;
+
+// The boot loop gives up on a network that has not let it fetch its
+// bytecode in BOOT_WIFITIMEOUT seconds -- which the exchange in flight and
+// the colours' minute both look like. Measured in the emulator: at 20 s it
+// re-initialised the radio and wiped the colours.
+fun kx_busy= (kxhttp!=nil && kxdone==nil) || kx_showing;;
+
+fun _kxcbhttp httpreq res=
+	let kx_unhex httpgetcontent res -> w in
+	let if w!=nil then kxFinish w -> r in
+	if r!=nil then
+	(
+		strcpy conf CONF_KXKEY r 0 32;
+		strset conf CONF_KXFLAG 75;
+		strcpy conf CONF_KXCOLORS r 32 5;
+		confSave;
+		kxUse strsub r 0 32;
+		set kxshow=time+KX_SHOW;
+		0
+	);
+	set kxdone=1;
+	0;;
+
+fun kx_url url pub=strcatlist url::"/kx.jsp?m="::(webmac netMac)::"&p="::(kx_hex pub)::nil;;
+
+fun kx_step url=
+	if kxdone!=nil then 0
+	else let strget conf CONF_KXFLAG -> f in
+	if f==75 || f==67 then
+	(
+		kxUse strsub conf CONF_KXKEY 32;
+		if f==75 then set kxshow=time+KX_SHOW;
+		set kxdone=1;
+		0
+	)
+	else if kxhttp==nil then
+	(
+		let kxBegin -> pub in
+		if pub==nil then (set kxdone=1; 0)
+		else (set kxhttp=httprequest "GET" (kx_url url pub) nil #_kxcbhttp HTTP_NORMAL; 0);
+		0
+	)
+	else let httpstart kxhttp -> t0 in
+	if time-t0>BOOT_HTTPTIMEOUT then
+	(
+		httpabort kxhttp;
+		set kxdone=1;
+		0
+	);;
+
+// Ready for the bytecode: the exchange is over and the colours have had
+// their minute.
+fun kx_ready= kxdone!=nil && !kx_showing;;

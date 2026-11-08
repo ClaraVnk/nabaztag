@@ -48,6 +48,27 @@ the key and one byte marking it present. The runtime bytecode can `load`
 those bytes from it: the key can be used through the HMAC opcode but never
 read.
 
+## Proven in the emulator (2026-11-08)
+
+`emulator/tools/kx_warren.py` answers kx.jsp with OpenSSL's X25519 and HKDF
+(neither the rabbit's TweetNaCl nor the Terrier's kx.py) and prints the five
+colours it expects; `scenarios/vm/adoption-kx.txt` boots the bootloader of
+`lean-wpa3-kx` against it, `--realtime`:
+
+- no key: kx.jsp asked at 5 s; LEDs 0-4 show the warren's five colours from
+  5.25 s to 66 s; bytecode fetched after; RUN.
+- second boot, same eeprom: no kx.jsp; the stored colours for a minute again
+  (not yet confirmed); RUN.
+- a warren answering 404: bytecode fetched at once, no colours, no key; RUN.
+
+The run also caught a real bug: the boot loop's "this network does not work"
+test fired at 20 s during the minute and re-initialised the radio
+(`kx_busy` now holds it off).
+
+Open: in the emulator the rabbit's key pair is the same on every run -- the
+random stream is timer, RSSI and MAC, all deterministic there. On hardware
+they vary; how much is to be measured before shipping.
+
 ## Code
 
 | piece | where | state |
@@ -55,8 +76,8 @@ read.
 | X25519 + HKDF + colours | `crypto/nab_kx.c`, tests `make kx` | done, against OpenSSL |
 | X25519 watchdog | step `x25519_wdt` | done, 509 ticks per multiplication |
 | warren side | Terrier: kx.py and its tests | done, same vectors |
-| opcodes, key storage, hiding | `apply-mods.py` | next |
-| bootloader flow and belly colours | `boot.0.0.0.13.mtl` | |
+| opcodes, key storage, hiding | steps `adoption_kx` | done |
+| bootloader flow and belly colours | step `adoption_boot`, `boot-mods/adoption.mtl` | done, emulator |
 | warren endpoint and confirmation page | Terrier | |
 | bytecode HMAC | both | |
 | TLS 1.3 PSK records | both | |

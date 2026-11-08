@@ -566,6 +566,43 @@ def patch_adoption_kx(root: Path) -> None:
     print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
 
 
+def patch_adoption_boot(root: Path) -> None:
+    """The adoption flow in the bootloader: boot-mods/adoption.mtl.
+
+    Requires adoption_kx (the opcodes) and bootloader. The configuration
+    sector grows from 208 to 246 bytes: key at 208, flag at 240 ('K' key,
+    'C' confirmed), five colours at 241. The bytecode fetch waits for
+    kx_ready; the boot LEDs give way to the colours while they are shown.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if "kx_step" in t:
+        print(f"[skip] {q}: adoption flow already there")
+        return
+    if "kxBegin" not in (root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp").read_text():
+        sys.exit(f"FAIL {q}: adoption_kx must run first")
+    nl = "\r\n" if "\r\n" in t else "\n"
+    body = (Path(__file__).resolve().parent / "boot-mods" / "adoption.mtl").read_text()
+    edits = [
+        ("const CONF_LENGTH=208;;", "const CONF_LENGTH=246;;", "CONF_LENGTH"),
+        ("fun boot_loop=" + nl, body.replace("\n", nl) + nl + "fun boot_loop=" + nl, "fun boot_loop"),
+        ('\t\tif wifiReady then set httpboot=httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,
+         "\t\tif wifiReady then kx_step url;" + nl
+         + '\t\tif wifiReady && kx_ready then set httpboot=httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,
+         "the bytecode request"),
+        ("\t\t\tboot_leds;" + nl, "\t\t\tif kx_showing then kx_leds else boot_leds;" + nl, "boot_leds in loop"),
+        ("\tif wifitry!=nil && time-wifitry>BOOT_WIFITIMEOUT && httpboot==nil then",
+         "\tif wifitry!=nil && time-wifitry>BOOT_WIFITIMEOUT && httpboot==nil && !kx_busy then",
+         "the Wi-Fi give-up test"),
+    ]
+    for a, b, what in edits:
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(a)}")
+        t = t.replace(a, b, 1)
+    write_src(q, t)
+    print(f"[ok]   {q}: adoption flow in boot_loop, conf 246 bytes")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -5626,7 +5663,7 @@ def main() -> int:
         # step's docstring with the measurement that justified it.
         "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
         "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -5762,6 +5799,7 @@ def main() -> int:
         "strip_tweetnacl": strip_tweetnacl,
         "x25519_wdt": patch_x25519_wdt,
         "adoption_kx": patch_adoption_kx,
+        "adoption_boot": patch_adoption_boot,
         "sign_open_alias": patch_sign_open_aliasing,
         "verify_wdt": patch_verify_wdt,
         "modernize_pages": modernize_pages,
