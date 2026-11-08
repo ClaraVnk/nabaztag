@@ -530,6 +530,28 @@ KEK into message 3 and the rabbit logs `GTK installed`. That is the path
 could only be checked by flashing a rabbit and watching whether broadcast
 traffic ever arrived.
 
+## Config mode, and a phone
+
+Hold the head button at power-on and the bootloader does not join a network:
+it becomes one, open, on 192.168.0.1, and serves its configuration pages --
+among them the upgrade page that takes a `.sim`. `src/phone.c` is the phone
+that joins it: authentication, association, then a browser's multipart POST
+of the file to `/c`, cut into the 800-byte segments the rabbit's own TCP
+window allows. `scenarios/vm/config-upload.txt` runs it, and
+`tools/config-upload.sh` builds the VM against a given image's bootloader
+(lifted from its `Nab.elf` with `tools/bootbc.py`) and uploads a given
+`.sim`:
+
+```sh
+tools/config-upload.sh ../bin/lean/Nab.elf ../bin/naboot-1.0.0.0/firmware0.0.0.13.signed.sim
+```
+
+The transcript then shows the heap at the signature gate (`verifySig
+gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
+`resets asked` in the summary says whether the VM ran out of memory on the
+way, as the runtime OTA's hex path does for images of 117 KB and up. The
+config page does not: see the scenario's header for the figures.
+
 ## What it does not do yet
 
 **DHCP under `./rabbit-vm`.** The rabbit ARPs for `0.0.0.0` for ever and never

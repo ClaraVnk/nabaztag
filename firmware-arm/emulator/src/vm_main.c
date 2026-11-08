@@ -42,7 +42,18 @@ extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
 #include "vap.h"
 #include "hw.h"
 #include "gw.h"
+#include "phone.h"
 #include "vapcrypto.h"
+
+/* The reset counters crash_report keeps; stubs/counters.c defines them weak
+ * for a step list without it. The VM sets nab_reset_reason=1 when it runs
+ * out of memory, just before it asks for the reset. */
+extern int32_t nab_reset_reason;
+/* The verifySig opcode's own tally (apply-mods' vinterp step). Weak, so a
+ * VM built without the opcode still links. */
+extern int32_t nab_verify_calls __attribute__((weak));
+extern int32_t nab_verify_ok __attribute__((weak));
+extern int32_t nab_verify_nomem __attribute__((weak));
 
 uint32_t counter_timer, counter_timer_s;
 volatile uint8_t sim_mmio[1u << 20];
@@ -104,6 +115,32 @@ void sim_run_events(void)
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL: vap_drop_eapol(e->arg); break;
+      case SIM_EV_UPLOAD:
+        phone_start_upload();
+        break;
+      case SIM_EV_EXPECT_FLASH:
+        if((int)hw_flash_writes() >= e->arg)
+          sim_log("ok   flashFirmware reached %u time%s with a %d-byte image, at least %d expected",
+                  hw_flash_writes(), hw_flash_writes() == 1 ? "" : "s",
+                  hw_flash_last_size(), e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected flashFirmware to be reached %d time%s, it was %u",
+                   e->arg, e->arg == 1 ? "" : "s", hw_flash_writes());
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_EXPECT_NO_RESET:
+        if(sim.resets == 0)
+          sim_log("ok   the firmware never asked for a reset");
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "the firmware asked for a reset %d time%s (last reason %d%s)",
+                   sim.resets, sim.resets == 1 ? "" : "s", sim.last_reset_reason,
+                   sim.last_reset_reason == 1 ? ", the VM ran out of memory" : "");
+          sim_note_failure(why);
+        }
+        break;
       case SIM_EV_EXPECT_STATE:
         if(ieee80211_state == e->arg)
           sim_log("ok   state is %s, as expected", sim_state_name(e->arg));
@@ -141,6 +178,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
+    else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
@@ -155,6 +193,8 @@ int main(int argc, char **argv)
         "  --lease-ip    the address DHCP offers the rabbit (default 10.0.0.42)\n"
         "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
         "                bookkeeping and expect-xmpp-opens\n"
+        "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
+        "                rabbit in config mode (scenario: config-mode, upload)\n"
         "  --trace-net   log every packet, not just what happened to it\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
@@ -177,6 +217,11 @@ int main(int argc, char **argv)
    * rabbit's 10 s of virtual time. */
   if(realtime) sim.realtime = 1;
   if(vap_crypto_selftest() != 0) return 2;
+  if(sim.segment) phone_set_segment(sim.segment);
+  /* Held before the bytecode's main() reads it: `set master=button2` is the
+   * first thing it does, and that one read decides between a station and
+   * an access point for the rest of the run. */
+  if(sim.config_mode) hw_press(2, 1);
 
   sim_log("scenario %s, tick %u ms, stop at %u ms",
           scenario ? scenario : "(default)", sim.tick_ms, sim.stop_ms);
@@ -229,7 +274,17 @@ int main(int argc, char **argv)
       interpGo();
     (void)VPULL();
 
+    /* Config mode is a press, not a hold: the bootloader reads the button
+     * once in main() and then waits for it to be let go, and a button still
+     * down 7 s later (TESTDELAY) means the factory test mode instead -- all
+     * five lights white, no network. A person lets go when the lights
+     * change; this does it a second in. */
+    if(sim.config_mode == 1 && sim_now() >= 1000) {
+      hw_press(2, 0);
+      sim.config_mode = 2;
+    }
     vap_poll();
+    phone_poll();
     gw_poll();
     hw_tick();
 
@@ -281,6 +336,25 @@ int main(int argc, char **argv)
   printf("tcp open/refused    %u / %u (closed %u, xmpp %u)\n", gw_stats.tcp_opened,
          gw_stats.tcp_refused, gw_stats.tcp_closed, gw_stats.xmpp_opened);
   printf("times in RUN        %d\n", sim.run_entries);
+  printf("flash writes        %u%s\n", hw_flash_writes(),
+         hw_flash_writes() ? "" : " (flashFirmware never reached)");
+  if(hw_flash_writes())
+    printf("  last image        %d bytes\n", hw_flash_last_size());
+  printf("resets asked        %d%s\n", sim.resets,
+         sim.resets == 0 ? "" :
+         sim.last_reset_reason == 1 ? " (reason 1: the VM ran out of memory)" :
+         sim.last_reset_reason == 2 ? " (reason 2: the radio was lost)" :
+         sim.last_reset_reason == 3 ? " (reason 3: watchdog)" :
+         sim.last_reset_reason == 4 ? " (reason 4: the bytecode asked)" : "");
+  if(&nab_verify_calls != NULL)
+    printf("verifySig           %d call%s, %d ok, %d out of memory\n",
+           nab_verify_calls, nab_verify_calls == 1 ? "" : "s",
+           nab_verify_ok, nab_verify_nomem);
+  if(phone_stats.uploads_started)
+    printf("phone upload        %u bytes in %u segments, answer %d%s\n",
+           phone_stats.bytes_sent, phone_stats.segments_sent,
+           phone_stats.response_status,
+           phone_stats.uploads_finished ? "" : " (not finished)");
   printf("tcp bytes up/down   %u / %u\n", gw_stats.bytes_from_rabbit,
          gw_stats.bytes_to_rabbit);
   printf("audio clips played  %u (%u bytes)\n", hw_audio_clips(), hw_audio_bytes());
@@ -298,6 +372,38 @@ int main(int argc, char **argv)
  * asleep, which is why "reboot" on a Nabaztag means pulling the plug. */
 void reset_uc(void)
 {
-  sim_log("the firmware asked for a processor reset");
+  sim.resets++;
+  sim.last_reset_reason = nab_reset_reason;
+  sim_log("the firmware asked for a processor reset (reason %d%s; heap hp=%d sp=%d, %d of %d words free)",
+          nab_reset_reason,
+          nab_reset_reason == 1 ? ": the VM ran out of memory" : "",
+          _vmem_heapindex, -_vmem_stack,
+          VMEM_LENGTH + _vmem_stack - _vmem_heapindex, VMEM_LENGTH);
   hw_eeprom_flush();
+  /* A VM that ran out of memory has nothing left to run on: vmemAlloc
+   * returns -1 from here on and the bytecode dereferences it. The rabbit
+   * reboots at this point; the run stops here, with its summary. */
+  if(_vmem_broken) sim.stop_ms = sim_now();
+}
+
+/*
+ * The signature gate, watched from outside. The Makefile links the VM with
+ * -Wl,--wrap=nab_verify_sig (GNU ld only), so every call the OPverifySig
+ * case makes lands here first. The scratch buffer -- payload + 64 -- has
+ * been allocated by then, so the heap this prints is the most the gate
+ * ever holds: what has to fit for an image to be verified at all.
+ */
+int __real_nab_verify_sig(const uint8_t *payload, size_t payload_len,
+                          const uint8_t *sig, void *scratch);
+int __wrap_nab_verify_sig(const uint8_t *payload, size_t payload_len,
+                          const uint8_t *sig, void *scratch)
+{
+  int ok;
+  sim_log("verifySig gate: %zu-byte payload; heap hp=%d sp=%d, used %d%%, %d of %d words free",
+          payload_len, _vmem_heapindex, -_vmem_stack,
+          (_vmem_heapindex - _vmem_stack) * 100 / VMEM_LENGTH,
+          VMEM_LENGTH + _vmem_stack - _vmem_heapindex, VMEM_LENGTH);
+  ok = __real_nab_verify_sig(payload, payload_len, sig, scratch);
+  sim_log("verifySig gate: %s", ok ? "signature OK" : "signature refused");
+  return ok;
 }

@@ -28,6 +28,11 @@ uint32_t hw_audio_clips(void);
 uint32_t hw_audio_bytes(void);
 
 void hw_press(int which, int down);
+/* How often the firmware reached flashFirmware, and with what. The flash is
+ * never written here; the call is the proof that everything before it --
+ * the upload, the hex decoding, the signature -- was accepted. */
+uint32_t hw_flash_writes(void);
+int32_t  hw_flash_last_size(void);
 void hw_present_tag(const uint8_t *id);
 void hw_clear_tags(void);
 

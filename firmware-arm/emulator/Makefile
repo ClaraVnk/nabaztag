@@ -46,7 +46,7 @@ FW += $(NABGCC)/testvm/stubs/usb/rt2501usb_io.c
 FW += $(NABGCC)/testvm/stubs/usb/usbhcore.c
 
 # The emulator itself.
-SIM  = src/sim.c src/vap.c src/vapcrypto.c src/gw.c
+SIM  = src/sim.c src/vap.c src/vapcrypto.c src/gw.c src/phone.c
 SIM += stubs/console.c stubs/delay.c stubs/hcdmem.c stubs/uart.c stubs/hw.c
 
 # The Metal VM and the hardware it expects, for the full-rabbit target.
@@ -131,8 +131,16 @@ VM_OBJ   = $(addprefix obj/,$(notdir $(FW:.c=.o) $(SIM:.c=.o) $(VM:.c=.o)))
 $(TARGET): $(WIFI_OBJ)
 	$(CC) $(SAN) -o $@ $(WIFI_OBJ) -lm
 
+# The signature gate is watched from vm_main.c through a linker wrap, so the
+# heap at the moment verifySig runs is in the transcript without touching
+# the firmware's own sources. GNU ld only; macOS's linker has no --wrap and
+# the wrapper then simply goes unused.
+ifeq ($(shell uname -s),Linux)
+VM_LDFLAGS = -Wl,--wrap=nab_verify_sig
+endif
+
 $(VM_TARGET): $(VM_OBJ)
-	$(CC) $(SAN) -o $@ $(VM_OBJ) -lm
+	$(CC) $(SAN) $(VM_LDFLAGS) -o $@ $(VM_OBJ) -lm
 
 # The bytecode as a C array. Regenerated whenever the image changes *or the
 # path does*: the stamp holds the last BYTECODE compiled in, because without
