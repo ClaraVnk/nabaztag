@@ -1,0 +1,4 @@
+// add3 takes three arguments; the call gives two.
+proto main 0;;
+fun add3 a b c = a + b + c;;
+fun main = add3 1 2;;

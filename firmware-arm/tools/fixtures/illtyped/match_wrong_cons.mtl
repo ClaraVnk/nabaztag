@@ -1,0 +1,9 @@
+// A Msg matched against a Wifi constructor.
+proto main 0;;
+type Msg = Ping | Pong _;;
+type Wifi = initW | stationW _;;
+fun handle x =
+	match x with
+	  (Ping -> 0)
+	| (stationW n -> n);;
+fun main = handle Ping;;

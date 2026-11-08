@@ -1,0 +1,12 @@
+// The first draft of statemachine.mtl: a State stored in a global that was
+// initialised to 0.
+proto main 0;;
+type State = idle | connecting _ | connected _ | failed _;;
+var current = 0;;
+fun step s =
+	match s with
+	  (idle -> connecting 0)
+	| (connecting n -> if n < 3 then connecting (n + 1) else failed n)
+	| (connected n -> connected n)
+	| (failed n -> idle);;
+fun main = set current = step idle;;

@@ -1,0 +1,4 @@
+// A recursive function whose two returns disagree.
+proto main 0;;
+fun f n = if n then f (n - 1) else "done";;
+fun main = f 3 + 1;;

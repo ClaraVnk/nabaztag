@@ -1,0 +1,8 @@
+Compiler : proto main : fun [] w0
+Compiler : proto twice : fun [w0 w1] w2
+Compiler :
+ fun [I] I
+does not match with or is smaller than
+ fun [w0 w1] w2
+Compiler : prototype does not match
+Compiler : error compiling function 'twice'

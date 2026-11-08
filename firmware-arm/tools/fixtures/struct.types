@@ -1,0 +1,6 @@
+Compiler : proto main : fun [] w0
+Compiler : x : fun [Point] w0
+Compiler : y : fun [Point] w0
+Compiler : z : fun [Point] w0
+Compiler : Point : struct (3)
+Compiler : main : fun [] I

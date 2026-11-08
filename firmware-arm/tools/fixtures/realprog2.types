@@ -1,0 +1,12 @@
+Compiler : proto main : fun [] w0
+Compiler : tnum : fun [w0] Tok
+Compiler : tsym : fun [w0] Tok
+Compiler : tend : fun [] Tok
+Compiler : Tok : constructor
+Compiler : var total : I
+Compiler : const LIMIT : I
+Compiler : classify : fun [I] I
+Compiler : weigh : fun [Tok] I
+Compiler : accumulate : fun [I] I
+Compiler : capped : fun [I] I
+Compiler : main : fun [] I

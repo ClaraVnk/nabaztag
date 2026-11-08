@@ -1,0 +1,5 @@
+// The proto promises two arguments, the fun takes one.
+proto main 0;;
+proto twice 2;;
+fun twice a = a + a;;
+fun main = twice 1 2;;

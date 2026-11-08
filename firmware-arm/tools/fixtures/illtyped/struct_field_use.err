@@ -1,0 +1,10 @@
+Compiler : proto main : fun [] w0
+Compiler : x : fun [Point] w0
+Compiler : y : fun [Point] w0
+Compiler : Point : struct (2)
+Compiler : S cannot be unified with I
+Compiler :
+ S
+does not match with
+ I
+Compiler : error compiling function 'main'

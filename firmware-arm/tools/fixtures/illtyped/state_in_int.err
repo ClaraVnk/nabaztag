@@ -1,0 +1,14 @@
+Compiler : proto main : fun [] w0
+Compiler : idle : fun [] State
+Compiler : connecting : fun [w0] State
+Compiler : connected : fun [w0] State
+Compiler : failed : fun [w0] State
+Compiler : State : constructor
+Compiler : var current : I
+Compiler : step : fun [State] State
+Compiler : State cannot be unified with I
+Compiler :
+ State
+does not match with
+ I
+Compiler : error compiling function 'main'

@@ -1,0 +1,3 @@
+// `if` wants an I, gets a S.
+proto main 0;;
+fun main = if "yes" then 1 else 2;;

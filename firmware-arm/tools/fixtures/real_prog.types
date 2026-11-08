@@ -1,0 +1,5 @@
+Compiler : proto main : fun [] w0
+Compiler : proto fact : fun [w0] w1
+Compiler : fact : fun [I] I
+Compiler : classify : fun [I] I
+Compiler : main : fun [] I
