@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every whole-rabbit scenario under ./rabbit-vm, pass or fail.
 #
-#   tools/vm-check.sh [--warren <host>] [--port <http port>] [--vm ./rabbit-vm] [--boot-vm <vm>]
+#   tools/vm-check.sh [--warren <host>] [--port <http port>] [--xmpp-port <port>] [--vm ./rabbit-vm] [--boot-vm <vm>]
 #
 # --boot-vm names a rabbit-vm linked with the bootloader bytecode
 # (tools/bootbc.py lifts it out of a built Nab.elf); the scenarios whose
@@ -22,12 +22,14 @@ set -u
 export LC_ALL=C
 WARREN=127.0.0.1
 PORT=8080
+XMPP_PORT=5222
 VM=./rabbit-vm
 BOOT_VM=
 while [ $# -gt 0 ]; do
   case "$1" in
     --warren) WARREN="$2"; shift 2 ;;
     --port)   PORT="$2"; shift 2 ;;
+    --xmpp-port) XMPP_PORT="$2"; shift 2 ;;
     --vm)     VM="$2"; shift 2 ;;
     --boot-vm) BOOT_VM="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -61,7 +63,7 @@ for s in scenarios/vm/*.txt; do
     fi
     vm=$BOOT_VM
   fi
-  if "$vm" "$s" --eeprom "$ee" --warren "$WARREN" > "$log" 2>&1; then
+  if "$vm" "$s" --eeprom "$ee" --warren "$WARREN" --xmpp-port "$XMPP_PORT" > "$log" 2>&1; then
     printf 'PASS  %-34s %s\n' "$s" "$(sed -n 's/^final state *//p' "$log")"
   else
     printf 'FAIL  %-34s %s\n' "$s" "$(sed -n 's/^final state *//p' "$log")"

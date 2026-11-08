@@ -38,6 +38,10 @@ void gw_init(const char *warren_host);
 void gw_set_subnet(const char *gateway_ip, const char *rabbit_ip);
 void gw_set_trace(int on);
 void gw_set_arp(int on);
+/* The port the warren's XMPP listens on (5222 unless the scenario says
+ * otherwise): what tells a session from a resource fetch, and what
+ * expect-xmpp-opens counts. */
+void gw_set_xmpp_port(uint16_t port);
 
 /** @brief An Ethernet payload from the rabbit: LLC/SNAP, then the packet. */
 void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);

@@ -55,6 +55,9 @@ static uint32_t gw_mask   = 0xffffff00;
 static uint32_t rabbit_ip = 0x0a00002a;   /* 10.0.0.42 */
 
 static char warren_host[256];
+static uint16_t gw_xmpp_port = 5222;
+
+void gw_set_xmpp_port(uint16_t port) { gw_xmpp_port = port; }
 
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
@@ -434,7 +437,7 @@ static int xmpp_conn_count(void)
 {
   int n = 0;
   for(int i = 0; i < GW_MAX_CONNECTIONS; i++)
-    if(conns[i].state == TCP_OPEN && conns[i].dest_port == 5222) n++;
+    if(conns[i].state == TCP_OPEN && conns[i].dest_port == gw_xmpp_port) n++;
   return n;
 }
 
@@ -576,7 +579,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     }
     c->state = TCP_OPEN;
     gw_stats.tcp_opened++;
-    if(dport == 5222) gw_stats.xmpp_opened++;
+    if(dport == gw_xmpp_port) gw_stats.xmpp_opened++;
     sim_log("gw: the rabbit opened %s:%u -> %s:%u", ipstr(src), sport,
             warren_host, dport);
     /* A connection to anything but the XMPP port, while a session is up, is
@@ -584,7 +587,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
      * commands' download. That is the moment a "fetch <ms>" event counts
      * from. The boot server's own bc.jsp and locate.jsp happen before there
      * is a session, so they do not count. */
-    if(dport != 5222 && xmpp_conn_count() > 0) sim_note_fetch();
+    if(dport != gw_xmpp_port && xmpp_conn_count() > 0) sim_note_fetch();
     tcp_send(c, 0x02 | 0x10, NULL, 0);     /* SYN-ACK */
     return;
   }
@@ -866,7 +869,7 @@ void gw_server_close(int graceful)
   for(int i = 0; i < GW_MAX_CONNECTIONS; i++) {
     struct gw_conn *c = &conns[i];
     if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
-    if(graceful && c->dest_port == 5222 && !c->fin_sent) {
+    if(graceful && c->dest_port == gw_xmpp_port && !c->fin_sent) {
       tcp_send(c, 0x10 | 0x08, (const uint8_t *)stream_close,
                (uint32_t)(sizeof(stream_close) - 1));
       announced++;

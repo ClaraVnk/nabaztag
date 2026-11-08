@@ -140,6 +140,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--warren") && i + 1 < argc) warren = argv[++i];
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
+    else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
@@ -152,6 +153,8 @@ int main(int argc, char **argv)
         "  --warren      host to send every TCP connection to, port preserved\n"
         "  --gateway-ip  the gateway's address (default 10.0.0.1)\n"
         "  --lease-ip    the address DHCP offers the rabbit (default 10.0.0.42)\n"
+        "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
+        "                bookkeeping and expect-xmpp-opens\n"
         "  --trace-net   log every packet, not just what happened to it\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
