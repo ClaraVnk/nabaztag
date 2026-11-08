@@ -346,6 +346,16 @@ int sim_load(const char *path)
           fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
+      } else if(!strcmp(tok[2], "security") && n >= 5) {
+        /* An admin changing the SSID's security, as a UniFi controller
+           does: the AP reprovisions and every station is sent away. */
+        e->kind = SIM_EV_AP_SECURITY;
+        e->ap = ap_by_bssid(tok[3]);
+        e->arg = parse_security(tok[4]);
+        if(e->ap < 0 || e->arg < 0) {
+          fprintf(stderr, "%s:%d: security needs a known BSSID and a security\n", path, lineno);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "arp") && n >= 4) {
         e->kind = SIM_EV_ARP;
         e->arg = !strcmp(tok[3], "on");
