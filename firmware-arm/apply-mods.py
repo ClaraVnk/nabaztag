@@ -1256,7 +1256,12 @@ def patch_wpa3_boot_password(root: Path) -> None:
     if "netSaePw" in t:
         print(f"[skip] {q}: wifiAuth already hands the passphrase over")
         return
-    a = "\t\t\tnetAuth hd wifiscans Iecholn auth crypt key;\n"
+    # The pristine file is CRLF; patch_bootloader flattens it to LF through
+    # write_text, which is the only reason an LF anchor ever matched. The
+    # emulator's step list has no bootloader step, and there this exited
+    # with "found 0" on 2026-11-08.
+    nl = "\r\n" if "\r\n" in t else "\n"
+    a = "\t\t\tnetAuth hd wifiscans Iecholn auth crypt key;" + nl
     if t.count(a) != 1:
         sys.exit(f"FAIL {q}: expected exactly one netAuth call in wifiAuth, found {t.count(a)}")
     call = (
@@ -1265,7 +1270,7 @@ def patch_wpa3_boot_password(root: Path) -> None:
         "\t\t\t// saw AKM suite 8 on this BSSID.\n"
         "\t\t\tif crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2\n"
         "\t\t\tthen netSaePw confGetWifikey0;\n"
-    )
+    ).replace("\n", nl)
     write_src(q, t.replace(a, call + a, 1))
     print(f"[ok]   {q}: wifiAuth hands the stored passphrase to SAE")
 

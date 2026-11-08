@@ -264,7 +264,10 @@ int main(int argc, char **argv)
   /* Derive the PMK once, with the firmware's own PBKDF2, and give it to both
    * ends: the rabbit through rt2501_auth(), the AP through vap_set_pmk(). */
   if(sim.aps[0].security >= SIM_SEC_WPA_TKIP) {
-    uint8_t pmk[EAPOL_MASTER_KEY_LENGTH];
+    /* 40, not 32: mypassword_to_pmk() writes two whole SHA-1 blocks
+     * and the firmware's own callers give it 40. ASan found the
+     * overrun on 2026-11-08; on macOS it was the abort at exit. */
+    uint8_t pmk[40];
     /* SAE needs the password itself, not the PMK, and where it comes from
      * is the whole point.
      *
