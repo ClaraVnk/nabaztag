@@ -480,7 +480,9 @@ def patch_adoption_kx(root: Path) -> None:
 
     All three refuse once OPbytecode has run -- the bootloader has handed
     over to the warren's runtime -- and from then on `load` of conf.bin
-    returns zeros where the key is stored (bytes 208 to 240).
+    returns zeros where the key is stored (bytes 224 to 256). Not 208: the
+    runtime keeps its XMPP password there (main.mtl, 208-220), and hiding
+    or overwriting it made a rabbit re-register on hardware, 2026-11-08.
     """
     if not (root / "src/net/nab_kx.c").exists():
         sys.exit("FAIL adoption_kx: nab_kx.c missing -- x25519_wdt must run first")
@@ -576,7 +578,7 @@ def patch_adoption_kx(root: Path) -> None:
             "            {\n"
             "              int32_t i;\n"
             "              for (i=0;i<len;i++)\n"
-            "                if (start+i>=208 && start+i<241) VSTARTBIN(p)[index+i]=0;\n"
+            "                if (start+i>=224 && start+i<257) VSTARTBIN(p)[index+i]=0;\n"
             "            }\n"), 1)
     q.write_text(t)
     print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
@@ -586,8 +588,9 @@ def patch_adoption_boot(root: Path) -> None:
     """The adoption flow in the bootloader: boot-mods/adoption.mtl.
 
     Requires adoption_kx (the opcodes) and bootloader. The configuration
-    sector grows from 208 to 246 bytes: key at 208, flag at 240 ('K' key,
-    'C' confirmed), five colours at 241. The bytecode fetch waits for
+    sector grows from 208 to 262 bytes: key at 224, flag at 256 ('K' key,
+    'C' confirmed), five colours at 257 -- past the runtime's XMPP password
+    at 208-220. The bytecode fetch waits for
     kx_ready; the boot LEDs give way to the colours while they are shown.
     """
     q = root / "mtl/boot/boot.0.0.0.13.mtl"
@@ -600,7 +603,7 @@ def patch_adoption_boot(root: Path) -> None:
     nl = "\r\n" if "\r\n" in t else "\n"
     body = (Path(__file__).resolve().parent / "boot-mods" / "adoption.mtl").read_text()
     edits = [
-        ("const CONF_LENGTH=208;;", "const CONF_LENGTH=246;;", "CONF_LENGTH"),
+        ("const CONF_LENGTH=208;;", "const CONF_LENGTH=262;;", "CONF_LENGTH"),
         ("fun getbytecode res=" + nl, body.replace("\n", nl) + nl + "fun getbytecode res=" + nl, "fun getbytecode"),
         ("\tlet getbytecode res -> bc in" + nl + "\tif bc!=nil then" + nl,
          "\tlet getbytecode res -> bc in" + nl + "\tif bc!=nil && kx_accept res bc then" + nl,

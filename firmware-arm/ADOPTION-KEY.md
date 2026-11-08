@@ -42,43 +42,17 @@ a key; the announcement mail explains what to do.
 
 ## Where the key lives
 
-The configuration sector (`conf.bin`, 208 bytes today) grows by 32 bytes for
-the key and one byte marking it present. The runtime bytecode can `load`
-`conf.bin` too, so once the bootloader has handed over, the interpreter hides
-those bytes from it: the key can be used through the HMAC opcode but never
-read.
+The configuration sector (`conf.bin`) is 208 bytes for the bootloader, and
+the runtime keeps its XMPP password right after it, at 208 ("d" and 12
+characters, to 220; `main.mtl`). The key goes past that: key at 224 (32
+bytes), flag at 256 ('K' agreed, 'C' confirmed), colours at 257 (5). Once
+the bootloader has handed over, the interpreter returns zeros for bytes 224
+to 256 to `load`: the key can be used through the HMAC opcode but never read.
 
-## Proven in the emulator (2026-11-08)
-
-`emulator/tools/kx_warren.py` answers kx.jsp with OpenSSL's X25519 and HKDF
-(neither the rabbit's TweetNaCl nor the Terrier's kx.py) and prints the five
-colours it expects; `emulator/scenarios/vm/adoption-kx.txt` boots the bootloader of
-`lean-wpa3-kx` against it, `--realtime`:
-
-- no key: kx.jsp asked at 5 s; LEDs 0-4 show the warren's five colours from
-  5.25 s to 66 s; bytecode fetched after; RUN.
-- second boot, same eeprom: no kx.jsp; the stored colours for a minute again
-  (not yet confirmed); RUN.
-- a warren answering 404: bytecode fetched at once, no colours, no key; RUN.
-
-The bytecode HMAC, five boots of the same virtual rabbit against
-`kx_warren.py --state … --hmac none|good|bad`:
-
-| boot | warren | rabbit |
-|---|---|---|
-| 1, no key | no HMAC (owner has not confirmed) | exchange, colours a minute, boots |
-| 2, owner confirmed | valid HMAC | colours a last time, takes the signed bytecode, records 'C', boots |
-| 3, confirmed | valid HMAC | no colours, boots at once |
-| 4, confirmed | wrong HMAC | refuses the bytecode, asks again, never hands over |
-| 5, confirmed | no HMAC | refuses too |
-
-The run also caught a real bug: the boot loop's "this network does not work"
-test fired at 20 s during the minute and re-initialised the radio
-(`kx_busy` now holds it off).
-
-Open: in the emulator the rabbit's key pair is the same on every run -- the
-random stream is timer, RSSI and MAC, all deterministic there. On hardware
-they vary; how much is to be measured before shipping.
+The first layout put the key at 208. On Nabazprout, 2026-11-08, the rabbit
+then had no password, asked the warren to register, got no answer, and sat
+with its belly blue; the emulator's warren speaks no XMPP and could not have
+shown it. The warren now answers registration (Terrier), and the key moved.
 
 ## Code
 
