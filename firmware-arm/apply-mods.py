@@ -1886,6 +1886,164 @@ def patch_persist_counters(root: Path) -> None:
     print(f"[ok]   src/main.c: the counters start at zero once per power-up")
 
 
+def patch_reset_reason(root: Path) -> None:
+    """Record WHO reset the chip, where a reset cannot erase it.
+
+    On 2026-11-08 an OTA got as far as a belly light past parsefirm_fw and
+    then the chip reset -- no stage reported a refusal, nothing was written,
+    and four explanations (truncated body, recursion depth, VM memory, the
+    watchdog) had each been measured away. What was left was a reset with
+    no author.
+
+    Every software reset on this part goes through reset_uc(); the callers
+    are the VM's out-of-memory path (vmem.c), the bytecode's own `reboot`
+    opcode (vinterp.c) and the flash writer's end (mem.c). Each now leaves a
+    reason word in .extbss first, next to the diagnostic counters, so one
+    JTAG read after the attempt names the author:
+
+        0  no software reset since power-up: the hardware watchdog, or none
+        1  VM out of memory ("?OM Error" path, vmem.c)
+        2  the bytecode asked for it (OPreboot with the two keys)
+        3  flash_uc finished writing and reset on purpose
+        4  sysReboot() from a caller not listed above
+
+    nab_reset_count counts reset_uc() entries. Both are cleared with the
+    counters once per power-up, by the magic-word block in main().
+    """
+    attr = ' __attribute__((section(".extbss")))'
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    anchor = f"int32_t nab_diag_magic{attr};"
+    if anchor not in t:
+        sys.exit(f"FAIL {q}: no nab_diag_magic in .extbss -- run persist_counters first")
+    if "nab_reset_reason" not in t:
+        t = t.replace(anchor,
+                      f"int32_t nab_reset_reason{attr};\n"
+                      f"int32_t nab_reset_count{attr};\n" + anchor, 1)
+        a = "void sysReboot()\n{\n  reset_uc();\n}"
+        if a not in t:
+            sys.exit(f"FAIL {q}: sysReboot is not the shape this patch expects")
+        # The .extbss declarations sit further down the file, beside sysFlash;
+        # sysReboot comes first, so it declares what it touches.
+        t = t.replace(a, "void sysReboot()\n{\n"
+                         "  extern int32_t nab_reset_reason;\n"
+                         "  if(!nab_reset_reason) nab_reset_reason=4;\n"
+                         "  reset_uc();\n}", 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/vm/vlog.c: nab_reset_reason/count -> .extbss, sysReboot tags 4")
+    else:
+        print(f"[skip] reset_reason: vlog.c already patched")
+
+    q = root / "src/main.c"
+    t, nl = read_flat(q)
+    if "nab_reset_count++" not in t:
+        a = "      nab_diag_magic = 0x4E414231;\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: no magic-word block -- run persist_counters first")
+        t = t.replace("    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n",
+                      "    extern int32_t nab_reset_reason, nab_reset_count;\n"
+                      "    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n", 1)
+        t = t.replace(a, a + "      nab_reset_reason = nab_reset_count = 0;\n", 1)
+        a2 = "void reset_uc(void)\n{\n"
+        if a2 not in t:
+            sys.exit(f"FAIL {q}: no reset_uc to count")
+        t = t.replace(a2, a2 + "  { extern int32_t nab_reset_count; nab_reset_count++; }\n", 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/main.c: reason/count cleared at power-up, reset_uc counts")
+    else:
+        print(f"[skip] reset_reason: main.c already patched")
+
+    for rel, old, new in (
+        ("src/vm/vmem.c",
+         "      _vmem_broken=1;\n      sysReboot();",
+         "      _vmem_broken=1;\n      { extern int32_t nab_reset_reason; nab_reset_reason=1; }\n      sysReboot();"),
+        ("src/vm/vinterp.c",
+         '            DBG_VM("************REBOOT NOW");\n            sysReboot();',
+         '            DBG_VM("************REBOOT NOW");\n            { extern int32_t nab_reset_reason; nab_reset_reason=2; }\n            sysReboot();'),
+        ("src/utils/mem.c",
+         "  put_hvalue(WDTCNT,0x5A5A);  //release write protection\n  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us\n  while(1);",
+         "  { extern int32_t nab_reset_reason; nab_reset_reason=3; }\n  put_hvalue(WDTCNT,0x5A5A);  //release write protection\n  put_hvalue(WDTCNT,0xFF00);  //rewrite counter register to overflow => overflow in 256us\n  while(1);"),
+    ):
+        q = root / rel
+        t, nl = read_flat(q)
+        if "nab_reset_reason" in t:
+            print(f"[skip] reset_reason: {rel} already tagged"); continue
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected exactly one reset site, found {t.count(old)}")
+        write_flat(q, t.replace(old, new, 1), nl)
+        print(f"[ok]   {rel}: reset site tagged")
+
+
+def patch_dcc_console(root: Path) -> None:
+    """Mirror the serial console onto the JTAG debug channel.
+
+    The firmware has written a 115200-baud console since 2006 -- every
+    Secholn in the bytecode ends in putch_uart() -- but the UART is only
+    pads on the PCB, so nobody has ever read it. The ARM7TDMI's Debug
+    Communications Channel is two coprocessor-14 registers the core can
+    write while running and OpenOCD reads while polling, over the five JTAG
+    wires that are already connected. `target_request debugmsgs enable` on
+    the host, no halt, no session lost.
+
+    Two things make this safe on a rabbit nobody is listening to:
+    - every write is bounded (DCC_SPIN status reads, a few ms at 32 MHz),
+      and a timeout mutes the channel for the next 256 characters, so an
+      unattached debugger costs one short stall per 256 bytes of console;
+    - characters go out one per word (TARGET_REQ_DEBUGCHAR), so nothing
+      depends on a multi-word frame surviving a slow bit-banged poll.
+
+    mcr/mrc p14 are ARM-mode only; the two functions that touch them carry
+    target("arm") and are reached through interworking from Thumb code.
+    The emulator is untouched: it links its own stubs/uart.c.
+    """
+    hdr = root / "inc/utils/dcc.h"
+    src = root / "src/utils/dcc.c"
+    if src.exists():
+        print(f"[skip] dcc_console: {src} already present")
+    else:
+        hdr.write_text(
+            "#ifndef _DCC_H_\n#define _DCC_H_\n#include <stdint.h>\n"
+            "/* Best-effort character out on the EmbeddedICE debug comms channel.\n"
+            " * Never blocks for more than a few milliseconds; drops when no\n"
+            " * debugger is draining the channel. See src/utils/dcc.c. */\n"
+            "void dcc_putc(uint8_t c);\n#endif\n")
+        src.write_text(
+            '#include "utils/dcc.h"\n\n'
+            "/* OpenOCD's target_request protocol (contrib/libdcc): one word,\n"
+            " * request type in the low byte, the character in bits 16..23. */\n"
+            "#define TARGET_REQ_DEBUGCHAR 0x02\n"
+            "#define DCC_SPIN  20000   /* status reads before giving up: ~ms */\n"
+            "#define DCC_MUTE  256     /* characters dropped after a timeout */\n\n"
+            "static uint32_t dcc_muted;\n\n"
+            "__attribute__((target(\"arm\"), noinline))\n"
+            "static int dcc_try_write(uint32_t w)\n{\n"
+            "  uint32_t st, n;\n"
+            "  for(n=0;n<DCC_SPIN;n++)\n  {\n"
+            "    asm volatile(\"mrc p14, 0, %0, c0, c0\" : \"=r\"(st));\n"
+            "    if(!(st & 2))\n    {\n"
+            "      asm volatile(\"mcr p14, 0, %0, c1, c0\" : : \"r\"(w));\n"
+            "      return 1;\n    }\n  }\n  return 0;\n}\n\n"
+            "void dcc_putc(uint8_t c)\n{\n"
+            "  if(dcc_muted) { dcc_muted--; return; }\n"
+            "  if(!dcc_try_write(TARGET_REQ_DEBUGCHAR | ((uint32_t)c << 16)))\n"
+            "    dcc_muted = DCC_MUTE;\n}\n")
+        print(f"[ok]   src/utils/dcc.c + inc/utils/dcc.h written")
+
+    q = root / "src/hal/uart.c"
+    t, nl = read_flat(q)
+    if "dcc_putc" in t:
+        print(f"[skip] dcc_console: uart.c already mirrors"); return
+    a = ("  /* write characters to UART Transmitter Holding register */\n"
+         "  put_value(UARTTHR0,c);\n}")
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: putch_uart is not the shape this patch expects")
+    t = t.replace(a, a[:-1] + "  dcc_putc(c);   /* and the JTAG debug channel, see utils/dcc.c */\n}", 1)
+    if '#include "utils/dcc.h"' not in t:
+        t = '#include "utils/dcc.h"\n' + t
+    write_flat(q, t, nl)
+    print(f"[ok]   src/hal/uart.c: putch_uart mirrors every byte onto the DCC")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -4287,14 +4445,14 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,dcc_console,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,dcc_console,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,persist_counters,reset_reason,dcc_console,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,persist_counters,reset_reason,dcc_console,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -4393,6 +4551,14 @@ def main() -> int:
             "Without it they land in .bss and the startup zero-loop erases "
             "them -- which is the whole thing this step exists to stop."
         )
+    if "reset_reason" in steps and (
+            "persist_counters" not in steps
+            or steps.index("persist_counters") > steps.index("reset_reason")):
+        sys.exit(
+            "FAIL step list: reset_reason writes next to the .extbss counters "
+            "and into the power-up block that persist_counters creates -- it "
+            "must come after persist_counters."
+        )
     if "persist_counters" in steps:
         order = steps.index("persist_counters")
         for dep in ("stdlib", "flash_verify"):
@@ -4432,6 +4598,8 @@ def main() -> int:
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
         "persist_counters": patch_persist_counters,
+        "reset_reason": patch_reset_reason,
+        "dcc_console": patch_dcc_console,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
