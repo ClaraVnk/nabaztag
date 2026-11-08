@@ -54,7 +54,7 @@ read.
 |---|---|---|
 | X25519 + HKDF + colours | `crypto/nab_kx.c`, tests `make kx` | done, against OpenSSL |
 | X25519 watchdog | step `x25519_wdt` | done, 509 ticks per multiplication |
-| warren side | Terrier `kx.py`, `tests/test_kx.py` | done, same vectors |
+| warren side | Terrier: kx.py and its tests | done, same vectors |
 | opcodes, key storage, hiding | `apply-mods.py` | next |
 | bootloader flow and belly colours | `boot.0.0.0.13.mtl` | |
 | warren endpoint and confirmation page | Terrier | |
