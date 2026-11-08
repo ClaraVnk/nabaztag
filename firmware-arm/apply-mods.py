@@ -1497,8 +1497,17 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
     802.11-2020 12.7.3 and Tables 12-10/12-11: when the negotiated AKM is
     00-0F-AC:8 the EAPOL-Key descriptor version is 0, the PTK is
     KDF-SHA-256(PMK, "Pairwise key expansion", ...) and the MIC is
-    HMAC-SHA-256 truncated to 128 bits. hostapd has done exactly that for
-    every SAE association since it learnt SAE (`wpa_use_akm_defined()`).
+    AES-128-CMAC under the KCK -- hostapd's wpa_eapol_key_mic(),
+    WPA_KEY_INFO_TYPE_AKM_DEFINED + WPA_KEY_MGMT_SAE: "EAPOL-Key MIC using
+    AES-CMAC (AKM-defined - SAE)". HMAC-SHA-256 is SAE-EXT-KEY's (AKM 24).
+
+    This step first shipped with HMAC-SHA-256-128 for the MIC, and the
+    emulator's access point had been written to agree. On hardware,
+    2026-11-08, Nabazprout on a UniFi WPA2/WPA3 transition network ran SAE
+    to the end, associated, sent message 2 and waited: JTAG read
+    ieee80211_state EAPOL with eapol_state stuck on message 3, then IDLE and
+    a new scan, for ever. The access point drops a message 2 whose MIC it
+    cannot verify without a word.
     The stock supplicant knows versions 1 and 2 only -- HMAC-MD5 with the
     SHA-1 PRF, HMAC-SHA-1 with the SHA-1 PRF -- so after a successful SAE
     exchange it answered message 1 with a message 2 whose MIC no real
@@ -1539,14 +1548,15 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
 
     # 1. SHA-256, which the wpa3_sae step put in inc/net.
     a = need('#include "net/aes128.h"\n', "the aes128 include")
-    t = t.replace(a, a + '#include "net/sha256.h"'.replace("\n", nl) + nl, 1)
+    t = t.replace(a, a + '#include "net/sha256.h"\n#include "net/cmac.h"'.replace("\n", nl) + nl, 1)
 
     # 2. The three decisions, in one place, before compute_ptk() needs them.
     a = need("static const uint8_t ptk_prefix[] = {\n", "the PTK label")
     helpers = (
         "/* 802.11-2020 12.7.3, Tables 12-10 and 12-11. With AKM 00-0F-AC:8 the\n"
         "   EAPOL-Key descriptor version is 0 and the schedule is the AKM's own:\n"
-        "   KDF-SHA-256 for the PTK, HMAC-SHA-256 cut to 128 bits for the MIC.\n"
+        "   KDF-SHA-256 for the PTK, AES-128-CMAC for the MIC (hostapd,\n"
+        "   wpa_eapol_key_mic: AKM-defined, SAE).\n"
         "   Versions 1 and 2 stay what they were for every other network. */\n"
         "static int eapol_akm_sae(void)\n"
         "{\n"
@@ -1558,16 +1568,16 @@ def patch_wpa3_eapol_akm(root: Path) -> None:
         "  return eapol_akm_sae() ? 0 : 2;\n"
         "}\n"
         "\n"
-        "/* In place of hmac_sha1 at every MIC site: the callers keep 16 of the\n"
-        "   20 bytes they are handed, so the first 20 of either digest. */\n"
+        "/* In place of hmac_sha1 at every MIC site: the callers keep the first\n"
+        "   16 of the 20 bytes they are handed, which is the whole CMAC tag. */\n"
         "static void eapol_mic_sha(const uint8_t *key, uint32_t key_len,\n"
         "                          const uint8_t *data, uint32_t data_len,\n"
         "                          uint8_t *mac)\n"
         "{\n"
         "  if(eapol_akm_sae()) {\n"
-        "    uint8_t full[SHA256_DIGEST];\n"
-        "    hmac_sha256(full, key, key_len, data, data_len);\n"
-        "    memcpy(mac, full, 20);\n"
+        "    (void)key_len;\n"
+        "    aes_cmac(mac, key, data, data_len);\n"
+        "    memset(mac + CMAC_TAG, 0, 20 - CMAC_TAG);\n"
         "    return;\n"
         "  }\n"
         "  hmac_sha1(key, key_len, data, data_len, mac);\n"
