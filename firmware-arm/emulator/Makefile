@@ -68,6 +68,8 @@ VM += ../crypto/nab_sig.c
 # The adoption opcodes (kxBegin, kxFinish, kxUse), for a VM running the
 # bootloader of a mode with adoption_kx; the Containerfile's step list has it.
 VM += ../crypto/nab_kx.c ../crypto/nab_kx_vm.c
+# resetInfo (crash_report) reads the reset counters; see stubs/counters.c.
+VM += stubs/counters.c
 # TLS on the XMPP connection (tlsStart..tlsClose), for a VM running a
 # runtime bytecode built with firmware/patch_tls.py against a step list
 # with tls_psk; the opcodes are numbered after adoption_kx's.
