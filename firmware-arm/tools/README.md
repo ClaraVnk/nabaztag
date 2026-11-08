@@ -322,7 +322,7 @@ while it compiles:
   (`fixtures/oracle/bootcode.types`), and the bytes still `cmp` clean;
 - the bootloader `boot.0.0.0.13.mtl`: **427 of 427**
   (`fixtures/oracle/boot.0.0.0.13.types`);
-- the 23 fixtures: **93 of 93** (`fixtures/NAME.types`).
+- the 23 fixtures: **93 of 93** (one `.types` file per fixture, e.g. `fixtures/tiny.types`).
 
 The variable numbering needed no normalising: `recechograph` names a
 variable after the count of variables already named while printing that
