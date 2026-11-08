@@ -33,27 +33,40 @@ from pathlib import Path
 
 MARKER = "/* ota-recovery */"
 
-OLD = '''	else if (verifySig firm sig)==0 then (ota_fail_report 0xF3; 0)
-	else
-	let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-	(
-		ota_fail_report if bad==nil then 0xF4 else bad;
-		0
-	);;'''
+# The gated branch as the belly-lit ota_cb writes it (2026-11-08). The
+# previous anchor was the un-instrumented one and matched nothing after the
+# lights went in, so the recovery build refused to build at all.
+OLD = '''				if (verifySig firm sig)==0 then
+					(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
+				else
+				(
+					led 2 OTA_STEP_SIG;
+					led 3 OTA_STEP_RUN;
+					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+					(
+						led 3 OTA_STEP_BAD;
+						ota_fail_report if bad==nil then 0xF4 else bad;
+						0
+					)
+				)'''
 
-NEW = '''	else
-	(
-		// ota-recovery: the check runs and reports, and does not refuse.
-		// This rabbit cannot verify a signature at all, so refusing on its
-		// verdict means refusing everything for ever. The warren verified
-		// this image before sending it.
-		if (verifySig firm sig)==0 then ota_fail_report 0xE3 else nil;
-		let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-		(
-			ota_fail_report if bad==nil then 0xF4 else bad;
-			0
-		)
-	);;'''
+NEW = '''				(
+					// ota-recovery: the check runs and reports, and does not refuse.
+					// This rabbit cannot verify a signature at all, so refusing on its
+					// verdict means refusing everything for ever. The warren verified
+					// this image before sending it.
+					if (verifySig firm sig)==0 then
+						(led 2 OTA_STEP_BAD; ota_fail_report 0xE3; 0)
+					else
+						(led 2 OTA_STEP_SIG; 0);
+					led 3 OTA_STEP_RUN;
+					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+					(
+						led 3 OTA_STEP_BAD;
+						ota_fail_report if bad==nil then 0xF4 else bad;
+						0
+					)
+				)'''
 
 
 def main() -> int:
