@@ -241,6 +241,17 @@ void sim_note_fetch(void)
  *                                 is the property a negative test is really
  *                                 about and cannot be satisfied by accident
  *
+ *   config-mode                    the head button is held at power-on: the
+ *                                  rabbit becomes an access point and serves
+ *                                  its configuration pages (phone.c joins it)
+ *   segment <bytes>                the TCP segment size the phone uploads
+ *                                  with; 800 is the rabbit's own window
+ *   at <ms> upload                 the phone POSTs --upload <file> to the
+ *                                  upgrade page, as the browser form does
+ *   at <ms> expect-flash [<n>]     assert flashFirmware was reached n times
+ *   at <ms> expect-no-reset        assert the firmware never asked to reset
+ *                                  (a VM out of memory does, reason 1)
+ *
  *   fetch <ms> <event>             the same events, but <ms> after the rabbit
  *                                  starts downloading a sound or a
  *                                  choreography, so "cut it mid-download" is
@@ -278,6 +289,10 @@ int sim_load(const char *path)
       snprintf(sim.conf, sizeof(sim.conf), "%s", tok[1]);
     } else if(!strcmp(tok[0], "realtime")) {
       sim.realtime = 1;
+    } else if(!strcmp(tok[0], "config-mode")) {
+      sim.config_mode = 1;
+    } else if(!strcmp(tok[0], "segment") && n >= 2) {
+      sim.segment = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "tick") && n >= 2) {
       sim.tick_ms = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "stop") && n >= 2) {
@@ -412,6 +427,13 @@ int sim_load(const char *path)
           fprintf(stderr, "%s:%d: unknown state \"%s\"\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
+      } else if(!strcmp(tok[2], "upload")) {
+        e->kind = SIM_EV_UPLOAD;
+      } else if(!strcmp(tok[2], "expect-flash")) {
+        e->kind = SIM_EV_EXPECT_FLASH;
+        e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
+      } else if(!strcmp(tok[2], "expect-no-reset")) {
+        e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "expect-not") && n >= 4) {
         e->kind = SIM_EV_REFUSE_STATE;
         e->arg = parse_state(tok[3]);

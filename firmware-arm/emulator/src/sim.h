@@ -74,6 +74,9 @@ enum {
   SIM_EV_STOP,          /* end the run                          */
   SIM_EV_EXPECT_STATE,  /* assert ieee80211_state at this tick   */
   SIM_EV_REFUSE_STATE,  /* assert it is NOT that state            */
+  SIM_EV_UPLOAD,        /* the phone POSTs --upload to the upgrade page */
+  SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
+  SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
 };
 
 struct sim_event {
@@ -102,6 +105,10 @@ struct sim_scenario {
   uint32_t         tick_ms;      /* how much virtual time one loop costs */
   int              realtime;     /* pace the loop to the wall clock */
   int              run_entries;  /* how many times ieee80211_state reached RUN */
+  int              config_mode;  /* the head button is held at power-on */
+  uint32_t         segment;      /* the phone's TCP segment size, 0 = default */
+  int              resets;       /* how often the firmware asked for a reset */
+  int              last_reset_reason;
 };
 
 extern struct sim_scenario sim;

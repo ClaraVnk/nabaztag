@@ -57,5 +57,7 @@ void vap_ptk_rekey(int ap);
 void vap_rekey_ack(int on);
 void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
+/* A frame from the phone that joined a rabbit in config mode: see phone.c. */
+void vap_inject(const uint8_t *frame, uint32_t length);
 
 #endif /* _VAP_H_ */

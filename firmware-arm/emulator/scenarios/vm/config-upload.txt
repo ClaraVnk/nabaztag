@@ -1,0 +1,64 @@
+# bytecode: bootloader
+#
+# Config mode, and a firmware upload through it.
+#
+# The head button is held at power-on, so the bootloader never looks for a
+# network: it becomes one ("NabaztagXX", open, 192.168.0.1), starts its DHCP
+# and HTTP servers, and waits. The phone in src/phone.c joins it, and at
+# `upload` POSTs --upload <file.sim> to /c the way the upgrade page's form
+# does -- multipart/form-data, 800-byte segments, one in flight -- which is
+# the path a rabbit is flashed by when it has no server to fetch from: the
+# bytecode's own HTTP server collects the body, httpflash hands it to
+# getfirmware, and (on an image with the bootloader step) to verifySig, then
+# flashFirmware. None of that had ever run outside a rabbit.
+#
+# What it measures is memory. The runtime OTA's hex path dies for images of
+# about 117 KB and up (fwota.mtl, "nab_reset_reason=1"); this is the other
+# hex path, in the bootloader, and the question is whether the heap takes a
+# 118 KB image (237 KB as hex) here. Three lines in the transcript answer it:
+#
+#   #GC : sp=... hp=... used=..%        every collection, from the VM itself
+#   verifySig gate: ... heap hp=...     the heap with the scratch allocated
+#   the rabbit asked to flash itself    flashFirmware reached, or not
+#
+# and `resets asked` in the summary, with the reason: 1 is the VM out of
+# memory, the way the OTA dies.
+#
+# Build the VM against the bootloader bytecode of the image the rabbit runs
+# -- bootbc.py lifts it out of a built Nab.elf -- and point --upload at the
+# .sim being installed. tools/config-upload.sh does all of it in the
+# container:
+#
+#   tools/config-upload.sh ../bin/lean/Nab.elf ../bin/naboot-1.0.0.0/firmware0.0.0.13.signed.sim
+#
+# Measured 2026-11-09, 204,800 words of heap, naboot-1.0.0.0's signed .sim
+# (118,344-byte image, 236,850 bytes as a .sim, 237,329 on the wire in 297
+# segments). Every bootloader took it, hex and all:
+#
+#   lean (naboot-stable, 0.0.0.13)   gate hp=135248 (66%), sig OK, flashFirmware 118344 B
+#   naboot-1.0.0.0's own bootloader  gate hp=131018 (64%), sig OK, flashFirmware
+#   signed-stock                     gate hp=141089 (69%), sig OK, flashFirmware
+#   stock boot.0.0.0.13, no gate     peak hp=99411 (48%), flashFirmware
+#   stock boot.0.0.0.10, no gate     peak hp=99218 (48%), flashFirmware
+#
+# and no reset anywhere: six collections over the whole upload. The hex path
+# here is not the OTA's. The bytecode's HTTP server holds the segments once
+# and the joined body once, httpflash holds the body, the image and the
+# verifier's scratch -- about three times the image, not six -- so the heap
+# that kills a 117 KB OTA has room for a 126,976-byte image, the flash's
+# limit, through this page (padded image on stock: peak hp=105708, 52%;
+# on lean: gate hp=136433 and the signature refused, as it should be).
+# Controls: naboot-stable (107,904 B) and naboot-minimal (111,688 B)
+# through the lean bootloader, both to flashFirmware.
+#
+# The AP line is a house network the rabbit, in config mode, never joins;
+# the scenario needs one to parse.
+
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 240000
+
+at 5000   upload
+at 230000 expect-flash
+at 230000 expect-no-reset

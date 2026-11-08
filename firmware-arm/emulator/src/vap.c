@@ -43,6 +43,7 @@
 #include "vap.h"
 #include "vapcrypto.h"
 #include "gw.h"
+#include "phone.h"
 
 uint8_t rt2501_mac[IEEE80211_ADDR_LEN] = {0x00,0x19,0xdb,0x00,0xbe,0xef};
 PDEVINFO rt2501_dev;
@@ -1396,6 +1397,14 @@ int8_t rt2501_tx(void *buffer, uint32_t length)
 
   vap_stats.tx_frames++;
 
+  /* A rabbit in config mode is not a station but an access point, and what
+   * it transmits -- authentication and association replies, data frames To
+   * the phone -- is for the phone that joined it, not for any AP here. */
+  if(ieee80211_mode == IEEE80211_M_MASTER) {
+    phone_from_rabbit(frame, frame_length);
+    return 1;
+  }
+
   /* Which AP, if any, is listening? addr1 is the immediate recipient; a
    * broadcast probe request is heard by every audible AP. */
   if(IEEE80211_IS_MULTICAST(fr->i_addr1)) {
@@ -1432,8 +1441,24 @@ int8_t rt2501_tx(void *buffer, uint32_t length)
 
 uint8_t rt2501_beacon(void *buffer, uint32_t length)
 {
-  (void)buffer; (void)length;
-  return 1;     /* master mode: the rabbit's own beacon goes nowhere useful */
+  /* Master mode: the firmware hands the ASIC one beacon and the ASIC repeats
+   * it every 100 ms. The phone hears it once, which is all it needs to learn
+   * the SSID and the BSSID it is about to join. NULL stops the beacon. */
+  if(buffer != NULL && length > sizeof(TXD_STRUC))
+    phone_from_rabbit((const uint8_t *)buffer + sizeof(TXD_STRUC),
+                      length - (uint32_t)sizeof(TXD_STRUC));
+  return 1;
+}
+
+/**
+ * @brief A frame from the phone, over the air to the rabbit.
+ *
+ * On the rabbit's own channel, since the phone is on its network. What the
+ * receive callback would deliver after the ASIC acknowledged it.
+ */
+void vap_inject(const uint8_t *frame, uint32_t length)
+{
+  queue_frame(frame, length, -40, vap_channel);
 }
 
 /* What the radio's own header calls these. Key slot 0 is the pairwise key;

@@ -126,12 +126,20 @@ void write_uc_flash(uint32_t address, uint8_t *data, uint32_t nb_byte,
 
 void init_uc_flash(void) {}
 
+static uint32_t flash_writes;
+static int32_t  flash_last_size;
+
 void flash_uc(uint8_t *data, int32_t nb_byte, uint8_t *temp)
 {
   (void)data; (void)temp;
+  flash_writes++;
+  flash_last_size = nb_byte;
   sim_log("the rabbit asked to flash itself with a %d-byte image — ignored, "
           "there is no flash here to brick", nb_byte);
 }
+
+uint32_t hw_flash_writes(void) { return flash_writes; }
+int32_t  hw_flash_last_size(void) { return flash_last_size; }
 
 void setup_ext_sram_rom(void) {}
 void setup_malloc(void) {}
