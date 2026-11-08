@@ -30,7 +30,7 @@ FW += $(NABGCC)/src/net/rc4.c
 FW += $(NABGCC)/src/usb/rt2501usb_buffer.c
 CRYPTO_H := obj/include/net/aes128.h obj/include/net/p256.h \
             obj/include/net/sha256.h obj/include/net/cmac.h \
-            obj/include/net/sae.h
+            obj/include/net/sae.h obj/include/net/nab_kx.h
 
 FW += ../crypto/aes128.c
 # WPA3-SAE. apply-mods' wpa3_sae step also drops these into the nabgcc
@@ -64,6 +64,9 @@ VM += $(NABGCC)/testvm/stubs/hal/spi.c
 # VM pointed at boot.0.0.0.13 needs the opcode's implementation. Harmless
 # when the step list leaves verifySig out: nothing then references them.
 VM += ../crypto/nab_sig.c
+# The adoption opcodes (kxBegin, kxFinish, kxUse), for a VM running the
+# bootloader of a mode with adoption_kx; the Containerfile's step list has it.
+VM += ../crypto/nab_kx.c ../crypto/nab_kx_vm.c
 # The tree's own copy when the container staged one (and sign_open_alias
 # patched it), the vendored one otherwise.
 TWEETNACL ?= $(firstword $(wildcard $(NABGCC)/src/crypto/tweetnacl.c) ../upstream/tweetnacl/tweetnacl.c)

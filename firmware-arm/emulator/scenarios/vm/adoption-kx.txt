@@ -1,0 +1,13 @@
+# bytecode: bootloader
+#
+# The adoption key exchange, from a rabbit with no key. Run against
+# tools/kx_warren.py on port 8080: the bootloader computes its X25519 key
+# pair, asks kx.jsp, derives the key and lights five colours for a minute;
+# the warren prints the five it expects. They must be the same, LED for LED.
+# Then the bytecode is fetched and the rabbit carries on.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 150000
+
+at 20000  expect RUN
+at 140000 expect RUN
