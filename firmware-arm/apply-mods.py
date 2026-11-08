@@ -752,6 +752,65 @@ def patch_adoption_boot(root: Path) -> None:
     print(f"[ok]   {q}: adoption flow in boot_loop, conf 246 bytes")
 
 
+def patch_crash_report(root: Path) -> None:
+    """Put the reset counters in the boot URL, so the warren sees them.
+
+    persist_counters and reset_reason keep, in .extbss, who reset the chip
+    and how far the last OTA got -- but only a JTAG read could see them, and
+    owners have no JTAG. On 2026-11-08 an OTA failed twice on hardware
+    ("the flash wrote nothing") while the emulator passed; the counters
+    (verify calls 6, ok 4, reason 0) named the watchdog, read over JTAG.
+    Every rabbit now says it in its boot URL instead:
+
+        &r=<reason>.<resets>.<verify calls>.<verify ok>.<flash calls>.<flash errors>
+
+    reason as in patch_reset_reason (0 none/watchdog, 1 VM out of memory, 2
+    bytecode reboot, 3 flash writer, 4 other). The counters are cleared at
+    power-up, so after a replug it reads r=0.0.0.0.0.0.
+
+    One core opcode, resetInfo -> that string; the bootloader's boot_url
+    appends it. Requires persist_counters and reset_reason.
+    """
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_crash_report" not in t:
+        decl = ("extern int32_t nab_reset_reason, nab_reset_count, nab_verify_calls,\n"
+                "  nab_verify_ok, nab_flash_calls, nab_flash_error;\n"
+                "/* crash_report: r=reason.resets.verify.verify_ok.flash.flash_error */\n"
+                "static int nab_crash_report(char *out)\n{\n"
+                "  int32_t v[6]; int i, n = 0;\n"
+                "  v[0]=nab_reset_reason; v[1]=nab_reset_count; v[2]=nab_verify_calls;\n"
+                "  v[3]=nab_verify_ok; v[4]=nab_flash_calls; v[5]=nab_flash_error;\n"
+                "  for (i = 0; i < 6; i++) {\n"
+                "    uint32_t x = (uint32_t)v[i]; char tmp[10]; int k = 0;\n"
+                "    if (i) out[n++] = '.';\n"
+                "    do { tmp[k++] = (char)('0' + x % 10); x /= 10; } while (x && k < 10);\n"
+                "    while (k) out[n++] = tmp[--k];\n"
+                "  }\n"
+                "  return n;\n}\n")
+        if "#include <string.h>\n" not in t:
+            sys.exit(f"FAIL {q}: no <string.h> include to hang the report on")
+        t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
+        q.write_text(t)
+    add_core_opcode(root, "resetInfo", "fun[]S", 0,
+        "      case OPresetInfo:\n"
+        "        {\n"
+        "          char out[6 * 11];\n"
+        "          int n = nab_crash_report(out);\n"
+        "          VPUSH(PNTTOVAL(VMALLOCSTR(out, n)));\n"
+        "        }\n"
+        "        break;\n")
+    b = root / "mtl/boot/boot.0.0.0.13.mtl"
+    u = read_src(b)
+    if "resetInfo" not in u:
+        m = re.search(r"(fun boot_url url =\r?\n[^\n]*?)::nil;;", u)
+        if not m:
+            sys.exit(f"FAIL {b}: boot_url is not the shape crash_report expects")
+        u = u[:m.end(1)] + '::"&r="::resetInfo' + u[m.end(1):]
+        write_src(b, u)
+    print("[ok]   crash_report: &r=reason.resets.verify.ok.flash.errors in the boot URL")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -5813,7 +5872,7 @@ def main() -> int:
         "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
         "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -5949,6 +6008,7 @@ def main() -> int:
         "strip_tweetnacl": strip_tweetnacl,
         "x25519_wdt": patch_x25519_wdt,
         "adoption_kx": patch_adoption_kx,
+        "crash_report": patch_crash_report,
         "tls_psk": patch_tls_psk,
         "adoption_boot": patch_adoption_boot,
         "sign_open_alias": patch_sign_open_aliasing,
