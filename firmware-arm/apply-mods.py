@@ -1786,6 +1786,106 @@ def patch_rx_recovery(root: Path) -> None:
     print(f"[ok]   {f}: a receive-error burst no longer costs the radio until the mains")
 
 
+def patch_persist_counters(root: Path) -> None:
+    """Put the six diagnostic counters where a reset cannot erase them.
+
+    On 2026-11-08 an OTA downloaded, rebooted, and wrote nothing. Every
+    counter that would have said how far it got reads 0 afterwards -- not
+    because nothing happened, but because they live in .bss and the startup
+    zero-loop clears 0x100003c0..0x1000129c on the way back up. The reboot
+    destroys the evidence of what caused it.
+
+    Reporting it over HTTP instead does not work: an httprequest issued from
+    inside an HTTP_NORMAL callback, while that callback still holds the
+    215 KB body, wedges the rabbit -- measured the same morning, and it
+    stopped answering XMPP altogether.
+
+    `.extbss` is NOLOAD and nothing clears it, so these survive a soft reset
+    and stay readable over JTAG afterwards. They are NOT initialised, so the
+    first values after a power cycle are whatever was in external RAM: read
+    them once as a baseline, then again after the attempt, and compare. The
+    delta is the measurement.
+    """
+    attr = ' __attribute__((section(".extbss")))'
+    sites = (
+        ("src/vm/vinterp.c", ("nab_verify_calls", "nab_verify_ok",
+                              "nab_verify_nomem", "nab_verify_badargs")),
+        ("src/vm/vlog.c",    ("nab_flash_error", "nab_flash_calls")),
+    )
+    for rel, names in sites:
+        q = root / rel
+        t, nl = read_flat(q)
+        for n in names:
+            decl = f"int32_t {n};"
+            if f"int32_t {n}{attr};" in t:
+                print(f"[skip] persist_counters: {rel}:{n} already in .extbss")
+                continue
+            if decl not in t:
+                sys.exit(f"FAIL {q}: no `{decl}` to move to .extbss "
+                         "(run this step after the one that declares it)")
+            t = t.replace(decl, f"int32_t {n}{attr};", 1)
+            print(f"[ok]   {rel}: {n} -> .extbss (survives a soft reset)")
+        write_flat(q, t, nl)
+
+    # The magic word, and the one place that clears the set.
+    #
+    # Surviving a reset is only half of it: NOLOAD means nothing initialises
+    # these, so after a power cycle they hold whatever external RAM came up
+    # with -- and "0x42015c70" is indistinguishable from "never written".
+    # Measured 2026-11-08: the first read after a power cycle returned six
+    # plausible-looking words, none of them a count.
+    #
+    # So main() clears the set exactly once per power-up, keyed on a magic
+    # word that lives in the same section. A soft reset finds the magic
+    # intact and leaves the counters alone, which is the whole point; a
+    # power cycle almost certainly does not, and starts them at zero. The
+    # residual risk is that external RAM comes up holding 0x4E414231 at that
+    # one address, in which case a boot's counters read as the previous
+    # boot's -- one chance in 2^32, against a diagnostic, and worth it to
+    # stop reading noise as evidence.
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    magic_decl = f"int32_t nab_diag_magic{attr};"
+    if magic_decl not in t:
+        anchor = f"int32_t nab_flash_error{attr};"
+        if anchor not in t:
+            sys.exit(f"FAIL {q}: no .extbss nab_flash_error to declare the "
+                     "magic word beside")
+        t = t.replace(anchor, magic_decl + "\n" + anchor, 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   src/vm/vlog.c: nab_diag_magic -> .extbss")
+
+    q = root / "src/main.c"
+    t, nl = read_flat(q)
+    if "nab_diag_magic" in t:
+        print(f"[skip] persist_counters: src/main.c already clears the set")
+        return
+    anchor = '  DBG_MAIN("vmemInit"EOL);'
+    if anchor not in t:
+        sys.exit(f"FAIL {q}: no vmemInit call to clear the counters before")
+    init = (
+        "  /* Clear the diagnostic counters once per power-up. They live in\n"
+        "   * .extbss so a soft reset -- the one flashFirmware ends with --\n"
+        "   * keeps them, and this runs after the hardware is up, so external\n"
+        "   * RAM is addressable. See patch_persist_counters. */\n"
+        "  {\n"
+        "    extern int32_t nab_diag_magic, nab_verify_calls, nab_verify_ok,\n"
+        "                   nab_verify_nomem, nab_verify_badargs,\n"
+        "                   nab_flash_calls, nab_flash_error;\n"
+        "    if(nab_diag_magic != 0x4E414231)\n"
+        "    {\n"
+        "      nab_diag_magic = 0x4E414231;\n"
+        "      nab_verify_calls = nab_verify_ok = 0;\n"
+        "      nab_verify_nomem = nab_verify_badargs = 0;\n"
+        "      nab_flash_calls = nab_flash_error = 0;\n"
+        "    }\n"
+        "  }\n\n"
+    )
+    t = t.replace(anchor, init + anchor, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   src/main.c: the counters start at zero once per power-up")
+
+
 def patch_extbss(root: Path) -> None:
     """Zero every .bss.* and move the two 4 KB scratch buffers to ExtRAM.
 
@@ -4187,14 +4287,14 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_timing,boot_marker,flash_verify,persist_counters,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -4286,6 +4386,21 @@ def main() -> int:
             "which places .bss.* explicitly and moves 8 KB of scratch to "
             "external RAM. See patch_no_libc_malloc's docstring."
         )
+    if "persist_counters" in steps and "extbss" not in steps:
+        sys.exit(
+            "FAIL step list: persist_counters puts the diagnostic counters in "
+            ".extbss, and extbss is the step that declares that section. "
+            "Without it they land in .bss and the startup zero-loop erases "
+            "them -- which is the whole thing this step exists to stop."
+        )
+    if "persist_counters" in steps:
+        order = steps.index("persist_counters")
+        for dep in ("stdlib", "flash_verify"):
+            if dep in steps and steps.index(dep) > order:
+                sys.exit(
+                    f"FAIL step list: persist_counters must run after {dep}, "
+                    "which is what declares the counters it moves."
+                )
     fns = {
         "eapol_replay": patch_eapol_replay,
         "cold_state": patch_cold_state,
@@ -4316,6 +4431,7 @@ def main() -> int:
         "usb_robustness": patch_usb_robustness,
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
+        "persist_counters": patch_persist_counters,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,
