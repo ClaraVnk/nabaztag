@@ -1,0 +1,27 @@
+# bytecode: bootloader
+#
+# XMPP over TLS 1.3 with the adoption key, against a real Terrier on the
+# host (its HTTP boot server and both XMPP ports, --realtime). Three boots
+# of the lean-wpa3-tls bootloader, the runtime bytecode fetched from the
+# Terrier each time (firmware/build-bytecode.sh with patch_tls.py):
+#
+#   1. a fresh eeprom: kx.jsp agrees a key (pending), the colours show for
+#      a minute, the bytecode comes without an HMAC, locate.jsp names no
+#      TLS port -> plain XMPP, registered
+#   2. the owner confirmed (kx_decide on the Terrier's store), same eeprom:
+#      the bytecode carries its HMAC, locate.jsp says `xmpp_tls`, the
+#      runtime opens that port -> TLS 1.3 PSK, identity = MAC, registered
+#   3. a fresh eeprom, same MAC (a reflashed rabbit): kx.jsp refuses a new
+#      exchange (409), no key, locate.jsp still says `xmpp_tls` -> tlsState
+#      is -1 and the runtime opens the plain port, registered
+#
+# The pass/fail of the three is read in the Terrier's log ("TLS TLSv1.3
+# with ... PSK identity", "registered bunny") and in the gateway's lines
+# here (which port the rabbit opened); this file only keeps the rabbit
+# running long enough.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 160000
+
+at 20000  expect RUN
+at 150000 expect RUN

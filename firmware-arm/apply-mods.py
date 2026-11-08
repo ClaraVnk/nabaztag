@@ -584,6 +584,126 @@ def patch_adoption_kx(root: Path) -> None:
     print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
 
 
+def patch_tls_psk(root: Path) -> None:
+    """TLS 1.3 with the adoption key on the XMPP connection: five opcodes.
+
+    See crypto/nab_tls.h and ADOPTION-KEY.md. Requires adoption_kx (the key,
+    nab_kx_vm.c) and wpa3_sae (SHA-256 and cmac.c's AES block, which GCM
+    runs on). The TCP/IP stack and the XMPP client are Metal bytecode, so
+    the seam is where that code reads and writes its socket
+    (firmware/patch_tls.py); records, keys and secrets stay in C.
+
+      tlsStart id   -> the ClientHello record for PSK identity `id` (the
+                       MAC as 12 hex digits), nil without a key
+      tlsIn data    -> feed bytes from the socket (or nil), then the
+                       plaintext of the next decrypted application record,
+                       nil when none is complete; loop until nil
+      tlsOut data   -> records for `data`; with nil, the handshake output
+                       and alerts waiting to be written, or nil
+      tlsState      -> -1 no key, 0 idle, 1 handshake, 2 ready, 3 failed,
+                       4 closed
+      tlsClose      -> the close_notify record, nil unless ready
+
+    Memory: 7 KB of `.extbss` for the receive buffer (one record of
+    max_fragment_length 4096 plus one TCP segment), the handshake
+    reassembly and the state; nothing on the 16 KB internal SRAM. Time:
+    AES-128-GCM at 849 k instructions per KB (tools/cost), so a 4 KB
+    record is ~3.4 M instructions inside one opcode; the GCM loop feeds the
+    watchdog every 16 blocks.
+    """
+    if not (root / "src/net/nab_kx_vm.c").exists():
+        sys.exit("FAIL tls_psk: nab_kx_vm.c missing -- adoption_kx must run first")
+    if not (root / "src/net/cmac.c").exists():
+        sys.exit("FAIL tls_psk: cmac.c missing -- wpa3_sae must run first")
+    here = _staged_crypto(root)
+    (root / "src/net/nab_tls.c").write_text((here / "nab_tls.c").read_text())
+    (root / "src/net/nab_tls_vm.c").write_text((here / "nab_tls_vm.c").read_text())
+    (root / "inc/net/nab_tls.h").write_text((here / "nab_tls.h").read_text())
+
+    decl = ("int nab_tls_vm_state(void);\n"
+            "int nab_tls_vm_start(const uint8_t *id, uint32_t idlen, uint8_t *out, uint32_t cap);\n"
+            "int nab_tls_in(const uint8_t *data, uint32_t len);\n"
+            "int nab_tls_next(void);\n"
+            "void nab_tls_take(uint8_t *dst);\n"
+            "int nab_tls_pending(uint8_t *out, uint32_t cap);\n"
+            "uint32_t nab_tls_out_size(uint32_t len);\n"
+            "int nab_tls_out(const uint8_t *in, uint32_t len, uint8_t *out, uint32_t cap);\n"
+            "int nab_tls_close(uint8_t *out, uint32_t cap);\n")
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_tls_vm_start" not in t:
+        if "#include <string.h>\n" not in t:
+            sys.exit(f"FAIL {q}: no <string.h> include to hang the declarations on")
+        t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
+        q.write_text(t)
+
+    add_core_opcode(root, "tlsStart", "fun[S]S", 1,
+        "      case OPtlsStart:\n"
+        "        {\n"
+        "          /* The ClientHello: 97 bytes plus the identity. */\n"
+        "          int32_t id=VALTOPNT(VSTACKGET(0));\n"
+        "          uint8_t ch[160];\n"
+        "          int32_t n=0;\n"
+        "          if (id!=NIL && VSIZEBIN(id)<=32) n=nab_tls_vm_start((const uint8_t*)VSTARTBIN(id),VSIZEBIN(id),ch,sizeof ch);\n"
+        "          VSTACKSET(0,n>0?PNTTOVAL(VMALLOCSTR((char*)ch,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "tlsIn", "fun[S]S", 1,
+        "      case OPtlsIn:\n"
+        "        {\n"
+        "          /* Feed the segment, then hand back one decrypted record. The\n"
+        "             buffer holds a record and a whole segment, so what a\n"
+        "             drained buffer does not take is a segment larger than the\n"
+        "             MSS, which this stack never produces: dropped. */\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r;\n"
+        "          if (d!=NIL && VSIZEBIN(d)>0) nab_tls_in((const uint8_t*)VSTARTBIN(d),VSIZEBIN(d));\n"
+        "          r=nab_tls_next();\n"
+        "          if (r>=0)\n"
+        "          {\n"
+        "            int32_t p=VMALLOCBIN(r);\n"
+        "            if (p!=NIL) nab_tls_take(VSTARTBIN(p));\n"
+        "            VSTACKSET(0,p!=NIL?PNTTOVAL(p):NIL);\n"
+        "          }\n"
+        "          else VSTACKSET(0,NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "tlsOut", "fun[S]S", 1,
+        "      case OPtlsOut:\n"
+        "        {\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r=NIL;\n"
+        "          if (d==NIL)\n"
+        "          {\n"
+        "            uint8_t pend[64];\n"
+        "            int32_t n=nab_tls_pending(pend,sizeof pend);\n"
+        "            if (n>0) r=PNTTOVAL(VMALLOCSTR((char*)pend,n));\n"
+        "          }\n"
+        "          else\n"
+        "          {\n"
+        "            uint32_t size=nab_tls_out_size(VSIZEBIN(d));\n"
+        "            int32_t p=VMALLOCBIN(size);   /* may move the heap: re-read d */\n"
+        "            d=VALTOPNT(VSTACKGET(0));\n"
+        "            if (p!=NIL && nab_tls_out((const uint8_t*)VSTARTBIN(d),VSIZEBIN(d),VSTARTBIN(p),size)>0) r=PNTTOVAL(p);\n"
+        "          }\n"
+        "          VSTACKSET(0,r);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "tlsState", "fun[]I", 0,
+        "      case OPtlsState:\n"
+        "        VPUSH(INTTOVAL(nab_tls_vm_state()));\n"
+        "        break;\n")
+    add_core_opcode(root, "tlsClose", "fun[]S", 0,
+        "      case OPtlsClose:\n"
+        "        {\n"
+        "          uint8_t a[32];\n"
+        "          int32_t n=nab_tls_close(a,sizeof a);\n"
+        "          VPUSH(n>0?PNTTOVAL(VMALLOCSTR((char*)a,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    print("[ok]   tls_psk: tlsStart/tlsIn/tlsOut/tlsState/tlsClose on the adoption key")
+
+
 def patch_adoption_boot(root: Path) -> None:
     """The adoption flow in the bootloader: boot-mods/adoption.mtl.
 
@@ -5582,7 +5702,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -5686,6 +5806,7 @@ def main() -> int:
         "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
         "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -5821,6 +5942,7 @@ def main() -> int:
         "strip_tweetnacl": strip_tweetnacl,
         "x25519_wdt": patch_x25519_wdt,
         "adoption_kx": patch_adoption_kx,
+        "tls_psk": patch_tls_psk,
         "adoption_boot": patch_adoption_boot,
         "sign_open_alias": patch_sign_open_aliasing,
         "verify_wdt": patch_verify_wdt,

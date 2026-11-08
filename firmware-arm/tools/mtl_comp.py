@@ -211,6 +211,16 @@ NATIVES: list[tuple[str | None, str, int, str]] = [
     ("netSaePw", "OPnetSaePw", 1, "fun[S]I"),
     ("netSaeMs", "OPnetSaeMs", 1, "fun[S]I"),
     ("pageRender", "OPpageRender", 2, "fun[I list[S S]]S"),
+    # apply-mods.py adoption_kx / tls_psk, numbered as in lean-wpa3-tls
+    ("kxBegin", "OPkxBegin", 0, "fun[]S"),
+    ("kxFinish", "OPkxFinish", 1, "fun[S]S"),
+    ("kxUse", "OPkxUse", 1, "fun[S]I"),
+    ("kxCheck", "OPkxCheck", 2, "fun[S S]I"),
+    ("tlsStart", "OPtlsStart", 1, "fun[S]S"),
+    ("tlsIn", "OPtlsIn", 1, "fun[S]S"),
+    ("tlsOut", "OPtlsOut", 1, "fun[S]S"),
+    ("tlsState", "OPtlsState", 0, "fun[]I"),
+    ("tlsClose", "OPtlsClose", 0, "fun[]S"),
 ]
 
 # mnemonic name → (opcode, nargs), for mtl_pyc.py and anything else that
