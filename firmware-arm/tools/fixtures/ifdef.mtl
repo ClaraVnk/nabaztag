@@ -1,0 +1,15 @@
+var FEATURE = 1;;
+proto main 0;;
+
+ifdef FEATURE {
+	fun flavour = 1;;
+}
+else {
+	fun flavour = 0;;
+}
+
+ifndef MISSING {
+	fun extra = 2;;
+}
+
+fun main = flavour + extra;;

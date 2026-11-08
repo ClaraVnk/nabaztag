@@ -1,0 +1,9 @@
+proto main 0;;
+type Msg = Ping | Pong _;;
+
+fun handle x =
+	match x with
+	  (Ping -> 1)
+	| (_ -> 0);;
+
+fun main = handle Ping;;

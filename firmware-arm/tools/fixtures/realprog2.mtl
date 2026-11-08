@@ -1,0 +1,30 @@
+proto main 0;;
+type Tok = tnum _ | tsym _ | tend;;
+
+var total = 0;;
+const LIMIT = 100;;
+
+fun classify n =
+	if n % 15 == 0 then 3
+	else if n % 5 == 0 then 2
+	else if n % 3 == 0 then 1
+	else 0;;
+
+fun weigh t =
+	match t with
+	  (tnum n -> classify n)
+	| (tsym s ->
+		match s with
+		  (tend -> 0)
+		| (_ -> 1))
+	| (tend -> 0);;
+
+fun accumulate n =
+	let 0 -> sum in
+	for i=0; i<n; i+1 do set sum = sum + weigh (tnum i);;
+
+fun capped n = if n > LIMIT then LIMIT else n;;
+
+fun main =
+	set total = capped (accumulate 20);
+	total;;

@@ -1,0 +1,29 @@
+proto main 0;;
+type State = idle | connecting _ | connected _ | failed _;;
+
+var tries = 0;;
+var rank = 0;;
+
+fun score s =
+	match s with
+	  (idle -> 0)
+	| (connecting n -> if n < 3 then n else 3)
+	| (connected n -> 4)
+	| (failed n -> 5);;
+
+fun step s =
+	match s with
+	  (idle -> connecting 0)
+	| (connecting n ->
+		if n < 3 then connecting (n + 1)
+		else failed n)
+	| (connected n -> connected n)
+	| (failed n ->
+		match connecting n with
+		  (connecting m -> idle)
+		| (_ -> idle));;
+
+fun main =
+	set tries = tries + 1;
+	set rank = score (step (step idle));
+	rank;;

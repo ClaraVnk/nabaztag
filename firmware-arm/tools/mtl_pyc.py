@@ -52,7 +52,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mtl_asm import Encoder, FunctionBody, Op, NIL  # noqa: E402
-from mtl_comp import BUILTINS, Scope  # noqa: E402
+from mtl_comp import BUILTINS, Scope, wire_wrap  # noqa: E402
 
 
 # Python AST binary ops → MTL opcode.
@@ -909,6 +909,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("input", help=".py source file")
     ap.add_argument("-o", "--output", help="output .bin (default: INPUT.bin)")
+    ap.add_argument(
+        "--bare", action="store_true",
+        help="emit the bytecode body alone, without the 17-byte "
+             "amber/Mind envelope mtl_compiler normally writes around it",
+    )
     args = ap.parse_args()
     src_path = Path(args.input)
     out_path = Path(args.output) if args.output else src_path.with_suffix(".bin")
@@ -918,6 +923,10 @@ def main() -> int:
     except SyntaxError as e:
         print(f"compile error: {e}", file=sys.stderr)
         return 1
+    # Same envelope mtl_compiler and mtl_comp write — this module claims to
+    # produce the blob the C++ would emit, so it has to include it.
+    if not args.bare:
+        blob = wire_wrap(blob)
     out_path.write_bytes(blob)
     print(f"wrote {len(blob)} bytes to {out_path}")
     return 0
