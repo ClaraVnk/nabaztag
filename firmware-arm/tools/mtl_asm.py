@@ -311,10 +311,14 @@ class Encoder:
             # side, vloader.c pushes the raw l (no shift), and the runtime's
             # VAL representation does the tagging. So on disk the int is
             # written as the already-tagged form `n << 1`. Mirror that.
-            tagged = v << 1
-            if not (-(2**31) <= tagged < 2**31):
+            if not (-(2**31) <= v < 2**31):
                 raise ValueError(f"int global doesn't fit in 32 bits: {v}")
-            return struct.pack("<i", tagged)
+            # The tag shift is done in a 32-bit word, so the top bit falls
+            # off the end. boot's `const MSG_IDLE=0x7fffffff;;` lands in the
+            # reference globals section as fe ff ff ff (offset 18156 of
+            # reference-cxx-output.bin) — 0x7fffffff << 1 truncated, not an
+            # error.
+            return struct.pack("<I", (v << 1) & 0xFFFFFFFF)
         if isinstance(v, str):
             v = v.encode("utf-8")
         if isinstance(v, bytes):

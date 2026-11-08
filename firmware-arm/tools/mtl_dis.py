@@ -469,7 +469,10 @@ def attach_function_names(bc: Bytecode, src_path: Path) -> int:
     print a warning to stderr. A larger mismatch usually means the source
     isn't the preprocessed form — flag it.
     """
-    src = src_path.read_text()
+    # The real Violet sources are latin-1 (French comments), and they carry
+    # intentional CRLF inside string literals — read_text() would both choke
+    # on 0xe9 and collapse the line endings. Same rule as mtl_comp.py.
+    src = src_path.read_bytes().decode("latin-1")
     names = extract_fun_names(src)
     if not names:
         print(f"warn: no `fun NAME` declarations found in {src_path}", file=sys.stderr)

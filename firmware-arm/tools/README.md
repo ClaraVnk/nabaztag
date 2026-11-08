@@ -344,13 +344,46 @@ The Phase 7a v6 fixes that closed the last gaps:
 That's it — three fixes worth ~6 KB across the boot binary, all
 isolated to the lexer + name-resolution layer.
 
+### Real production `bootcode.mtl` — BYTE-IDENTICAL
+
+The full Violet bootcode (374 365 bytes of source, 10 677 lines,
+latin-1) compiles to the 105 377-byte body the C++ `mtl_compiler`
+emitted for it — 472 functions, 58 911 bytes of code.
+
+Three more gaps had to close first, each read off the reference
+binary rather than guessed:
+
+- **Integer literals wider than 32 bits.** `md5bytes` writes the MD5
+  length masks at their natural 48-bit width (`0xFFFFFF000000&md5len`).
+  The literal lands in a C++ `int`, so it wraps; the reference emits
+  `OPint -16777216` at code offset 0x0D00. `mtl_comp` used to raise.
+- **Computed index on the write side of `set`.** `set md5bloc.(j*2) = …`
+  and `set ears.i = …`. The read side already parsed `.(EXPR)`; the
+  write side only accepted declared field names. Same single-namespace
+  rule as the read side: a step that is not a declared field name IS an
+  index expression, evaluated inline with nothing pushed in front of it
+  (reference 0x0DBD..0x0DDB).
+- **Int globals whose tag shift overflows.** `const MSG_IDLE=0x7fffffff;;`
+  — the `n << 1` tagging is done in a 32-bit word, so the top bit falls
+  off. The reference globals section holds `fe ff ff ff` at offset
+  18 156. The encoder used to raise.
+
+Comparing against a capture taken off the wire (or against
+`nabaztag-violet/bootcode.hybrid`) needs `--wire`, which rebuilds the
+`/vl/bc.jsp` envelope `"amber" + size_hex(8) + body + "Mind"` around
+the body. `mtl_compiler` itself emits the bare body, so that stays
+opt-in.
+
 ### Not yet supported
 
 `update x with [...]` (record updates with explicit copy), multi-char
 escapes in char literals `'\n'`, function pointers to builtins
 (`#Secho`), forward fun-to-fun references where neither has a
-`proto`, function names DUPED via re-definition (boot.mtl has two
-`fun tcpread` for two different module scopes).
+`proto`, function names DUPED via re-definition.
+
+None of these occur in the production `bootcode.mtl`, so nothing
+anchors them to a reference binary yet. Float literals and float
+globals are still rejected outright.
 
 These come incrementally — each is ~30-100 lines added with a fresh
 byte-identical test case to anchor it.

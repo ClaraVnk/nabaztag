@@ -224,6 +224,20 @@ _MULTI_CHAR_OPS = {
 _SINGLE_OPS = set("+-*/%&|^~!<>=()[]{}#;,:.'\"")  # `\"` only as opener
 
 
+def _wrap_i32(v: int) -> int:
+    """Integer literals land in a C++ `int`, so anything wider than 32 bits
+    is silently truncated — the accumulator just wraps.
+
+    boot's md5bytes writes the MD5 length masks at their natural 48-bit
+    width: `0xFFFFFF000000&md5len`. The reference C++ output emits
+    `OPint -16777216` there (0x0D00 in reference-cxx-output.bin), i.e.
+    0xFFFFFF000000 mod 2**32 read as signed. Reproduce that rather than
+    rejecting the literal.
+    """
+    v &= 0xFFFFFFFF
+    return v - 0x100000000 if v >= 0x80000000 else v
+
+
 def lex(src: str) -> list[Token]:
     """Tokenize a Metal source string. Strips // and /* */ comments. Returns
     a list of tokens ending with a 'eof' marker.
@@ -342,9 +356,11 @@ def lex(src: str) -> list[Token]:
                     )
             tok_text = src[i:j]
             if only_digits:
-                out.append(Token("int", tok_text, int(tok_text), line, col))
+                out.append(Token("int", tok_text, _wrap_i32(int(tok_text)),
+                                 line, col))
             elif tok_text.startswith("0x") and all(c in "0123456789abcdefABCDEF" for c in tok_text[2:]):
-                out.append(Token("int", tok_text, int(tok_text, 16), line, col))
+                out.append(Token("int", tok_text, _wrap_i32(int(tok_text, 16)),
+                                 line, col))
             else:
                 out.append(Token("id", tok_text, tok_text, line, col))
             i = j
@@ -1477,27 +1493,39 @@ class Compiler:
                 raise SyntaxError(
                     f"line {name_tok.line}: set: unknown variable {name_tok.text!r}"
                 )
-            # Walk the .field chain. For each step but the LAST, emit
-            # OPfetchb. For the last, push the index, then EXPR, then
-            # OPstore.
-            field_path: list[int] = []
-            while self.peek().text == ".":
-                self.advance()
-                f = self.advance()
-                if f.text not in self.struct_fields:
-                    raise SyntaxError(
-                        f"line {f.line}: unknown field {f.text!r}"
-                    )
-                field_path.append(self.struct_fields[f.text][0])
-            # All but the last are intermediate fetches.
-            for idx in field_path[:-1]:
-                if 0 <= idx <= 255:
-                    self.fn.opb(Op.OPfetchb, idx)
+            # Walk the .X chain. For each step but the LAST, emit a fetch
+            # so the next step indexes into the inner object. For the last,
+            # leave the index on the stack, then EXPR, then OPstore.
+            #
+            # A step is either a declared field name (static index) or a
+            # computed index — `set md5bloc.(j*2) = …` (boot line 466) and
+            # `set ears.i = …` (line 6160). Same single-namespace rule as
+            # the read path: a step that is not a declared field name IS an
+            # index expression. The reference emits that expression inline
+            # with no OPintb in front (0x0DBD..0x0DDB), so a computed last
+            # step needs nothing pushed after it.
+            while True:
+                self.advance()                      # the '.'
+                f = self.peek()
+                static_idx: int | None = None
+                if f.kind == "id" and f.text in self.struct_fields:
+                    self.advance()
+                    static_idx = self.struct_fields[f.text][0]
+                last = self.peek().text != "."
+                if static_idx is None:
+                    # Computed index: `( EXPR )` (or any single term).
+                    self._parse_term()
+                    if not last:
+                        self.fn.op(Op.OPfetch)
+                elif last:
+                    self._emit_intb_or_int(static_idx)
+                elif 0 <= static_idx <= 255:
+                    self.fn.opb(Op.OPfetchb, static_idx)
                 else:
-                    self.fn.int_(idx)
+                    self.fn.int_(static_idx)
                     self.fn.op(Op.OPfetch)
-            # Last index pushed onto the stack.
-            self._emit_intb_or_int(field_path[-1])
+                if last:
+                    break
             self.expect("=")
             self._parse_expression()
             self.fn.op(Op.OPstore)
@@ -1575,6 +1603,19 @@ class Compiler:
             self.fn.op(Op.OPgetglobal)
 
 
+def wire_wrap(blob: bytes) -> bytes:
+    """The envelope `/vl/bc.jsp` puts around the raw mtl_compiler output
+    before the rabbit downloads it: `"amber" + size_hex(8) + body + "Mind"`
+    (boot.mtl::getbytecode reads `strsub content 13 len`).
+
+    mtl_compiler itself emits the bare body — but every capture taken off
+    the wire, and `nabaztag-violet/bootcode.hybrid` in this repo, carries
+    the envelope, so comparing against one of those needs it reconstructed.
+    It is a pure function of the body, so the result is reproducible.
+    """
+    return b"amber" + b"%08x" % len(blob) + blob + b"Mind"
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1582,6 +1623,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("input", help=".mtl source file to compile")
     ap.add_argument("-o", "--output", help="output .bin (default: INPUT.bin)")
+    ap.add_argument(
+        "--wire", action="store_true",
+        help="wrap the output in the /vl/bc.jsp HTTP wire envelope "
+             "(amber+size+body+Mind), as the rabbit downloads it",
+    )
     args = ap.parse_args()
     src_path = Path(args.input)
     out_path = Path(args.output) if args.output else src_path.with_suffix(".bin")
@@ -1595,6 +1641,8 @@ def main() -> int:
     except SyntaxError as e:
         print(f"compile error: {e}", file=sys.stderr)
         return 1
+    if args.wire:
+        blob = wire_wrap(blob)
     out_path.write_bytes(blob)
     print(f"wrote {len(blob)} bytes to {out_path}")
     return 0
