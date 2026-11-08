@@ -267,7 +267,7 @@ next hardware run needs and `dcc_telemetry` prints them: auth frames sent
 (`a`), auth frames received to us and the last status (`r`), beacons from
 the target heard while waiting (`h`), bulk-out URBs refused (`Y`), bytecode
 loads (`B`, 0 = bootloader), and the ASIC's own count of frames never
-acknowledged / acknowledged (`F`, STA_CSR4/5). `jtag/listen.sh` says how
+acknowledged / acknowledged (`F`, STA_CSR4/5). `../jtag/listen.sh` says how
 to read them.
 
 **Why no OTA ever installed, 2026-11-08.** A rabbit downloads the 215 KB
