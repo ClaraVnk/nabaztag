@@ -61,6 +61,17 @@ colours it expects; `emulator/scenarios/vm/adoption-kx.txt` boots the bootloader
   (not yet confirmed); RUN.
 - a warren answering 404: bytecode fetched at once, no colours, no key; RUN.
 
+The bytecode HMAC, five boots of the same virtual rabbit against
+`kx_warren.py --state … --hmac none|good|bad`:
+
+| boot | warren | rabbit |
+|---|---|---|
+| 1, no key | no HMAC (owner has not confirmed) | exchange, colours a minute, boots |
+| 2, owner confirmed | valid HMAC | colours a last time, takes the signed bytecode, records 'C', boots |
+| 3, confirmed | valid HMAC | no colours, boots at once |
+| 4, confirmed | wrong HMAC | refuses the bytecode, asks again, never hands over |
+| 5, confirmed | no HMAC | refuses too |
+
 The run also caught a real bug: the boot loop's "this network does not work"
 test fired at 20 s during the minute and re-initialised the radio
 (`kx_busy` now holds it off).
@@ -79,5 +90,5 @@ they vary; how much is to be measured before shipping.
 | opcodes, key storage, hiding | steps `adoption_kx` | done |
 | bootloader flow and belly colours | step `adoption_boot`, `boot-mods/adoption.mtl` | done, emulator |
 | warren endpoint and confirmation page | Terrier | |
-| bytecode HMAC | both | |
+| bytecode HMAC | `kxCheck`, `adoption.mtl`; Terrier `sign_bytecode` | done, emulator |
 | TLS 1.3 PSK records | both | |
