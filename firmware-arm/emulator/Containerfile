@@ -57,6 +57,12 @@ RUN cd /build/nabgcc \
  && git apply /build/patches/opnetauth-trace.patch
 
 COPY firmware-arm/crypto             /build/crypto
+# The VM target compiles crypto/nab_sig.c, which includes tweetnacl.h, and the
+# public key the verifier is built around. Neither was ever copied in, so the
+# documented `./run.sh --vm` could not build in a clean container -- it only
+# ever worked against an obj/ left behind by a host build.
+COPY firmware-arm/upstream           /build/upstream
+COPY firmware-arm/keys               /build/keys
 COPY firmware-arm/emulator           /build/emulator
 COPY nabaztag-violet/bootcode.hybrid /build/bootcode.hybrid
 
