@@ -89,7 +89,8 @@ it now serves a build whose OTA path leans on the warren's own check instead
 1. Unplug the rabbit, wait ten seconds, plug it back in. It fetches the
    recovery bytecode on that boot.
 2. Press the firmware update button on its page.
-3. Unplug and plug back in again when the flash ends.
+3. Wait a minute. The rabbit comes back by itself; if it is still orange after
+   that, unplug it, wait ten seconds, plug it back in.
 
 After that the rabbit reports `&s=1` in its boot URL, the warren serves it the
 normal gated bytecode again, and the signature check is back on — per rabbit,
@@ -160,12 +161,13 @@ directly (bit-bang) with **F/F Dupont wires**.
    shipped stable build is mode `lean`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
    reboots on its own.
-7. **Then unplug it, wait ten seconds, and plug it back in.** After the
-   reboot the first belly light blinks **orange** and stays there — that is
-   normal, not a failed flash. A flash ends in a *software* reset, and on this
-   hardware a software reset leaves the 2006 radio asleep; only a power cycle
-   wakes it. (Three "failed" flashes in a row on 2026-10-21 were exactly this,
-   including a known-good image. One unplug and it was back in 75 s.)
+7. **Wait a minute.** From the 2026-11-08 builds on the rabbit reboots and
+   rejoins Wi-Fi by itself (measured on an over-the-air install: 54 s from
+   download to boot URL, nobody at the plug). If the first belly light is
+   still orange after a minute, unplug it, wait ten seconds, plug it back in —
+   builds before that date need this every time, because their post-flash
+   software reset leaves the 2006 radio asleep. (Three "failed" flashes in a
+   row on 2026-10-21 were exactly this, including a known-good image.)
 
 ## If something goes wrong with `full`
 

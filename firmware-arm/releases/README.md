@@ -58,8 +58,7 @@ of flashes reported success and wrote nothing. The June image is gone from
 this folder for that reason: a rabbit flashed with it could never be updated
 over the air again. `minimal` is the parachute.
 
-Expect to unplug and plug back in after any flash: the post-flash reboot
-leaves the 2006 radio asleep and the belly orange until it does.
+If the first belly light is still orange a minute after it reboots, unplug it, wait ten seconds, plug it back in. Since the 2026-11-08 builds this is the exception: an over-the-air install was watched end to end that day and the rabbit came back on its own, 54 s after the download, with nobody at the plug. Earlier builds leave the 2006 radio asleep after the post-flash reset and need the mains every time.
 
 ## `naboot-lean-wpa2.signed.sim` — lean + the WPA2 group-key fix
 
@@ -183,8 +182,10 @@ and exercises the RFC 3394 group-key unwrap.
    air from the Terrier.
 2. Do not unplug during the ~30 s install. The rabbit then reboots by itself.
 3. **It comes up with the first belly light blinking orange. That is normal.
-   Unplug it, wait ten seconds, plug it back in.** A flash ends in a software
-   reset, which leaves the 2006 radio asleep; only a power cycle wakes it.
+   If it is still orange a minute later, unplug it, wait ten seconds, plug it
+   back in.** Builds before 2026-11-08 need that every time (their post-flash
+   reset leaves the 2006 radio asleep); from the 2026-11-08 builds on, the
+   rabbit comes back by itself — measured on an OTA, 54 s download to boot URL.
    Three "failed" flashes in a row were exactly this — including
    `naboot-stable`, the image that had run since June.
 

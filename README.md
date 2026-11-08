@@ -269,9 +269,7 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
    upgrade* and upload the file. **Don't unplug** during the ~30 s flash. When
    it reboots, the first belly light blinks **orange**: that is expected —
-   **unplug it, wait ten seconds, plug it back in**, and it rejoins your
-   network. (A flash ends in a software reset, which leaves the 2006 radio
-   asleep; only a power cycle wakes it. The same applies after every OTA.)
+   **if it is still orange after a minute, unplug it, wait ten seconds, plug it back in**, and it rejoins your Wi-Fi. (Builds before 2026-11-08 need that power cycle every time: their post-flash software reset leaves the 2006 radio asleep. From the 2026-11-08 builds on, the rabbit comes back by itself — measured on an over-the-air install, 54 s from download to boot URL, nobody at the plug.)
    This is the only manual flash — from here on, updates are **signed OTA**,
    over the air.
 3. **Point it at Le Terrier.** After it reboots, re-enter config mode (head
