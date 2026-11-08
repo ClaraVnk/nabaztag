@@ -1,0 +1,3 @@
+proto main 0;;
+fun handler x = x + 1;;
+fun main = #handler;;

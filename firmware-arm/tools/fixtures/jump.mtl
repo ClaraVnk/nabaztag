@@ -1,0 +1,2 @@
+proto main 0;;
+fun main = if 1 then 42 else 99;;

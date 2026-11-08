@@ -1,0 +1,4 @@
+var g=42;;
+const k="hello";;
+fun helper a=a+1;;
+fun main=helper g;;

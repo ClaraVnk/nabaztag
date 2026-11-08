@@ -269,10 +269,14 @@ class Bytecode:
 
 
 def _strip_amber_wrapper(raw: bytes) -> bytes:
-    """The HTTP wire format the rabbit fetches from /vl/bc.jsp wraps the
-    raw mtl_compiler output as `"amber" + size_hex(8) + body + "Mind"`.
-    boot.mtl::getbytecode reads `strsub content 13 len`. If we detect that
-    wrapper, peel it; otherwise return as-is.
+    """mtl_compiler writes `"amber" + size_hex(8) + body + "Mind"` — the
+    17-byte envelope is the compiler's own output format, not something
+    /vl/bc.jsp adds on the way out (an earlier version of this comment said
+    it was; `proto main 0;; fun main= 42;;` straight out of the real
+    mtl_compiler is 37 bytes, 20 of body and 17 of envelope). The reader is
+    boot.mtl::getbytecode, which does `strsub content 13 len`.
+
+    This module works on bodies, so peel the envelope when it's there.
     """
     if len(raw) >= 17 and raw[:5] == b"amber":
         try:

@@ -1,0 +1,2 @@
+proto main 0;;
+fun main = 'A';;

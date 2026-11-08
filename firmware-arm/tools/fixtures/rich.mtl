@@ -1,0 +1,9 @@
+proto main 0;;
+var counter = 0;;
+
+fun main =
+	Secho "hi";
+	set counter = counter + 1;
+	let counter * 2 -> doubled in
+	Iecholn doubled
+	;;

@@ -1604,14 +1604,23 @@ class Compiler:
 
 
 def wire_wrap(blob: bytes) -> bytes:
-    """The envelope `/vl/bc.jsp` puts around the raw mtl_compiler output
-    before the rabbit downloads it: `"amber" + size_hex(8) + body + "Mind"`
-    (boot.mtl::getbytecode reads `strsub content 13 len`).
+    """Wrap a bytecode body in the envelope `mtl_compiler` writes around it:
+    `"amber" + size_hex(8) + body + "Mind"`, 17 bytes in all. The reader side
+    is boot.mtl::getbytecode, which does `strsub content 13 len`.
 
-    mtl_compiler itself emits the bare body — but every capture taken off
-    the wire, and `nabaztag-violet/bootcode.hybrid` in this repo, carries
-    the envelope, so comparing against one of those needs it reconstructed.
-    It is a pure function of the body, so the result is reproducible.
+    This is the COMPILER's output format, not something the serving layer
+    adds. Two measurements say so: `firmware/build-bytecode.sh` invokes the
+    C++ compiler as `"$CC" -s bootcode.mtl "$OUT"` with nothing between it
+    and the file, and that file is the 105 394-byte envelope-carrying blob;
+    and `proto main 0;; fun main= 42;;` compiled by the real mtl_compiler is
+    37 bytes — a 20-byte body plus these 17. mtl_dis.py's _strip_amber_wrapper
+    docstring blames /vl/bc.jsp for it; that attribution is wrong, the jsp
+    only passes it through.
+
+    So this is the default for mtl_comp output, and --bare is the opt-out.
+    An envelope-less file dropped into /data is not what the rabbit will
+    accept. mtl_dis/mtl_asm are the other way round on purpose — see the
+    README's note on which tool deals in which form.
     """
     return b"amber" + b"%08x" % len(blob) + blob + b"Mind"
 
@@ -1624,9 +1633,10 @@ def main() -> int:
     ap.add_argument("input", help=".mtl source file to compile")
     ap.add_argument("-o", "--output", help="output .bin (default: INPUT.bin)")
     ap.add_argument(
-        "--wire", action="store_true",
-        help="wrap the output in the /vl/bc.jsp HTTP wire envelope "
-             "(amber+size+body+Mind), as the rabbit downloads it",
+        "--bare", action="store_true",
+        help="emit the bytecode body alone, without the 17-byte "
+             "amber/Mind envelope mtl_compiler normally writes around it. "
+             "For feeding mtl_dis/mtl_asm, not for serving to a rabbit.",
     )
     args = ap.parse_args()
     src_path = Path(args.input)
@@ -1641,7 +1651,7 @@ def main() -> int:
     except SyntaxError as e:
         print(f"compile error: {e}", file=sys.stderr)
         return 1
-    if args.wire:
+    if not args.bare:
         blob = wire_wrap(blob)
     out_path.write_bytes(blob)
     print(f"wrote {len(blob)} bytes to {out_path}")

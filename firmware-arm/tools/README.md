@@ -131,6 +131,10 @@ checker):
 python3 mtl_asm.py --self-test
 ```
 
+`./run-tests.sh` runs that self-test, every fixture in `fixtures/`, and
+the `bootcode.hybrid` round-trip in one go. Use it before trusting any
+byte-identity claim in this file.
+
 ### Validation status
 
 Cross-validated byte-for-byte against `mtl_compiler` (C++, RedoXyde
@@ -141,6 +145,10 @@ Cross-validated byte-for-byte against `mtl_compiler` (C++, RedoXyde
 | `fun main=42;;` | 20 | minimal — OPintb + OPret |
 | `var g=42;; const k="hello";; fun helper a=a+1;; fun main=helper g;;` | 49 | globals (int + string), function args, OPgetlocalb / OPgetglobalb, OPadd, OPexec call sites |
 | `fun main = if 1 then 42 else 99;;` | 30 | control flow — OPelse + OPgoto with forward labels |
+
+These three are `fixtures/tiny.mtl`, `fixtures/biggish.mtl` and
+`fixtures/jump.mtl`, checked by `./run-tests.sh` against committed C++
+output. The 20 / 49 / 30 are bodies; the files are 17 bytes longer.
 
 All three round-trip exactly: `cmp` reports BYTE-IDENTICAL. That covers
 all the encoder's tricky bits — relative-to-pcbase jump offsets, the
@@ -232,38 +240,62 @@ encoder; uses recursive descent that mirrors `compiler_term.cpp`'s
 precedence ladder.
 
 ```sh
-python3 mtl_comp.py program.mtl -o program.bin
+python3 mtl_comp.py program.mtl -o program.bin   # envelope included
+python3 mtl_comp.py program.mtl -o body.bin --bare
 ```
 
 ### Validated byte-for-byte against mtl_compiler (C++)
 
-Tested on 11 progressively richer programs; for every one,
-`cmp original.bin mtl_comp_output.bin` reports BYTE-IDENTICAL:
+22 programs, committed in `fixtures/` next to the C++ reference each one
+compiles to. Re-check them all, plus `mtl_asm --self-test` and the
+`bootcode.hybrid` round-trip, with no container and no hardware:
 
-| Test               | Size  | What it exercises |
+```sh
+./run-tests.sh          # one line per fixture; non-zero exit on any diff
+```
+
+Sizes below are the **body**; every `.bin` also carries the 17-byte
+`amber`/`Mind` envelope (see *Which tool deals in which form*).
+
+| Test               | Body  | What it exercises |
 |--------------------|-------|-------------------|
 | `tiny.mtl`         | 20 B  | proto + fun returning int constant |
 | `jump.mtl`         | 30 B  | if/then/else with both branches |
 | `biggish.mtl`      | 49 B  | var + const + multi-fun + user fun call |
-| `rich.mtl`         | 99 B  | Secho (builtin) + set global + let-in + sequencing |
-| `real_prog.mtl`    | 182 B | 4-level nested let, recursion, chained ifs |
+| `rich.mtl`         | 51 B  | Secho (builtin) + set global + let-in + sequencing |
+| `real_prog.mtl`    | 138 B | 4-level nested let, recursion, chained ifs |
 | `char.mtl`         | 20 B  | char literal `'A'` |
-| `funptr.mtl`       | 31 B  | function pointer reference `#fname` |
+| `funptr.mtl`       | 33 B  | function pointer reference `#fname` |
 | `cons.mtl`         | 31 B  | list construction `a :: b :: nil` (right-assoc) |
 | `tuple.mtl`        | 28 B  | tuple `[a b c d]` |
 | `loop.mtl`         | 43 B  | `while COND do BODY` |
 | `forloop.mtl`      | 60 B  | `for i=0; i<5; i+1 do ...` |
-| `match.mtl`        | 66 B  | `type ... ;;` + `match x with (Cons -> y) | (Cons p -> y)` |
+| `match.mtl`        | 68 B  | `type ... ;;` + `match x with (Cons -> y) | (Cons p -> y)` |
 | `match2.mtl`       | 51 B  | match with `_` wildcard fallback |
 | `array.mtl`        | 30 B  | array literal `{a b c d e}` |
-| `statemachine.mtl` | 230 B | 4-constructor sum + nested match + if + globals |
-| `realprog2.mtl`    | 344 B | sum + 5 funs + nested match + for + let + chained ifs + modulo |
+| `statemachine.mtl` | 272 B | 4-constructor sum + nested match + if + globals |
+| `realprog2.mtl`    | 254 B | sum + 5 funs + nested match + for + let + chained ifs + modulo |
 | `ifdef.mtl`        | 49 B  | `ifdef NAME { ... } else { ... }` + `ifndef` |
-| `call.mtl`         | 52 B  | `call FUN [a b c]` (dynamic dispatch via OPcallrb) |
+| `call.mtl`         | 44 B  | `call FUN [a b c]` (dynamic dispatch via OPcallrb) |
 | `forfor2.mtl`      | 54 B  | `for VAR=INIT; COND do BODY` (Form 2, auto-increment) |
-| `destruc.mtl`      | 61 B  | `let TUPLE -> [a b c] in ...` (structured destructuring) |
-| `struct.mtl`       | 54 B  | `type Point=[x y z];;` + `[x:1 y:2 z:3]` + `.field` read |
-| `setfield.mtl`     | 62 B  | `set p.x = 99` (struct field write via OPstore) |
+| `destruc.mtl`      | 50 B  | `let TUPLE -> [a b c] in ...` (structured destructuring) |
+| `struct.mtl`       | 38 B  | `type Point=[x y z];;` + `[x:1 y:2 z:3]` + `.field` read |
+| `setfield.mtl`     | 46 B  | `set p.x = 99` (struct field write via OPstore) |
+
+The fixtures were rewritten from these descriptions when the suite was
+committed; the originals were never in the repo. 13 of the 22 come out
+at the byte count the old table claimed, which is good evidence they are
+the same programs. The other 9 are a different program exercising the
+same feature — the description is the contract, the byte count is a
+historical note.
+
+**`mtl_comp.py` does not type-check, and the C++ compiler does.** This
+is not only a missing diagnostic: `mtl_compiler` refuses programs
+`mtl_comp` happily emits bytecode for. The first draft of
+`statemachine.mtl` assigned a `State` to a global initialised to `0`;
+Python produced 289 bytes, the C++ produced `State cannot be unified
+with I` and no output at all. Do not treat a clean `mtl_comp` run as
+evidence that the real compiler would accept the source.
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -368,11 +400,8 @@ binary rather than guessed:
   off. The reference globals section holds `fe ff ff ff` at offset
   18 156. The encoder used to raise.
 
-Comparing against a capture taken off the wire (or against
-`nabaztag-violet/bootcode.hybrid`) needs `--wire`, which rebuilds the
-`/vl/bc.jsp` envelope `"amber" + size_hex(8) + body + "Mind"` around
-the body. `mtl_compiler` itself emits the bare body, so that stays
-opt-in.
+`mtl_comp.py` emits the 17-byte `amber`/`Mind` envelope by default,
+because `mtl_compiler` does — see *Which tool deals in which form*.
 
 ### Not yet supported
 
@@ -401,31 +430,38 @@ python3 mtl_pyc.py program.py -o program.bin
 
 ### Validated byte-for-byte from Python source
 
-| Test               | Size  | Python idiom → MTL feature |
-|--------------------|-------|----------------------------|
-| `tiny.py`          | 20 B  | `def main(): return 42` |
-| `biggish.py`       | 49 B  | top-level globals + user funs |
-| `jump.py`          | 30 B  | `if … else` returning value |
-| `rich.py`          | 99 B  | `Secho("hi")` builtin call + sequencing |
-| `real_prog.py`     | 182 B | nested assignments, chained ifs |
-| `loop.py`          | 43 B  | `while x < 5: …` |
-| `forfor2.py`       | 54 B  | `for i in range(n): …` (Form 2) |
-| `char.py`          | 20 B  | `ord('A')` compile-time char |
-| `funptr.py`        | 31 B  | bare function name as value (function pointer) |
-| `cons.py`          | 31 B  | `lst(a, b, c)` builds a cons-chain |
-| `tuple.py`         | 28 B  | Python list literal `[a, b, c, d]` → n-tuple |
-| `array.py`         | 30 B  | `arr(a, b, c, d, e)` builds a mutable array |
-| `match.py`         | 66 B  | Python 3.10 `match: case Cons: … case Cons(x): …` |
-| `match2.py`        | 51 B  | match with `case _:` wildcard |
-| `statemachine.py`  | 230 B | sum-type `class State` + nested match |
-| `struct.py`        | 54 B  | `class Point: x: int` + `Point(x=…)` + `p.x` |
-| `setfield.py`      | 62 B  | `p.x = 99` struct field write |
-| `ifdef.py`         | 49 B  | top-level `if FLAG:` / `if not FLAG:` → ifdef/ifndef |
-| `call.py`          | 52 B  | `call_(f, a, b)` dynamic dispatch |
-| `destruc.py`       | 61 B  | `[a, b, c] = expr` structured destructuring |
+19 of them, in `fixtures/*.py`. Each is compared against the *same*
+committed C++ reference as its `.mtl` twin, so the claim is that both
+spellings converge on the bytes `mtl_compiler` emits — not merely that
+Python and MTL agree with each other. `./run-tests.sh` checks them.
 
-All 20 tests above produce `.bin` that is `cmp` byte-identical to the
-C++ `mtl_compiler` output for the equivalent `.mtl` source.
+| Test               | Python idiom → MTL feature |
+|--------------------|----------------------------|
+| `tiny.py`          | `def main(): return 42` |
+| `jump.py`          | `if … else` returning value |
+| `rich.py`          | `Secho("hi")` builtin call + sequencing |
+| `real_prog.py`     | nested assignments, chained ifs |
+| `loop.py`          | `while x < 5: …` |
+| `forfor2.py`       | `for i in range(n): …` (Form 2) |
+| `char.py`          | `ord('A')` compile-time char |
+| `funptr.py`        | bare function name as value (function pointer) |
+| `cons.py`          | `lst(a, b, c)` builds a cons-chain |
+| `tuple.py`         | Python list literal `[a, b, c, d]` → n-tuple |
+| `array.py`         | `arr(a, b, c, d, e)` builds a mutable array |
+| `match.py`         | Python 3.10 `match: case Cons: … case Cons(x): …` |
+| `match2.py`        | match with `case _:` wildcard |
+| `statemachine.py`  | sum-type `class State` + nested match |
+| `struct.py`        | `class Point: x: int` + `Point(x=…)` + `p.x` |
+| `setfield.py`      | `p.x = 99` struct field write |
+| `ifdef.py`         | top-level `if FLAG:` / `if not FLAG:` → ifdef/ifndef |
+| `call.py`          | `call_(f, a, b)` dynamic dispatch |
+| `destruc.py`       | `[a, b, c] = expr` structured destructuring |
+
+**There is no `biggish.py`**, though the old table listed one. `mtl_pyc`
+always reserves fun#0 for `main`, and `fixtures/biggish.mtl` has no
+`proto main 0;;`, so its `main` lands *last* — the two bins are the same
+66 bytes with `helper` and `main` swapped in the funtable. Any MTL source
+that omits `proto main` is outside what `mtl_pyc` can reach.
 
 ### Python ↔ MTL idiom mapping
 
@@ -487,6 +523,38 @@ fall through to literal `mtl.OPxxx(...)` calls so nothing is silently
 dropped. Output is **not** guaranteed to recompile to the same bytes —
 it's a reading aid, not a round-trip transform.
 
+## Which tool deals in which form
+
+A Metal `.bin` exists in two shapes, and the tools here are deliberately
+split between them:
+
+| Shape | 17 extra bytes? | Who produces it |
+|---|---|---|
+| **envelope** `"amber" + size_hex(8) + body + "Mind"` | yes | `mtl_compiler`, `mtl_comp.py`, `mtl_pyc.py` |
+| **body** alone | no | `mtl_asm.py`; `mtl_dis.py` reads either and works on the body |
+
+The envelope is the **compiler's own output format**, not something the
+serving layer bolts on. An earlier version of this file, and the
+docstring of `mtl_dis._strip_amber_wrapper`, blamed `/vl/bc.jsp` for it.
+That was wrong, and it mattered: it is why `mtl_comp.py` shipped for a
+while writing files 17 bytes short of what a rabbit will load. Two
+measurements settle it:
+
+- `firmware/build-bytecode.sh` runs `"$CC" -s bootcode.mtl "$OUT"` with
+  nothing between the compiler and the file, and `$OUT` — the blob that
+  becomes `/data/bootcode.hybrid` — carries the envelope.
+- `proto main 0;; fun main= 42;;` straight out of the real
+  `mtl_compiler` is **37 bytes**: 20 of body and 17 of envelope. So does
+  every one of the 22 committed references in `fixtures/`.
+
+The reader on the device is `boot.mtl::getbytecode`, which does
+`strsub content 13 len` — it expects the envelope.
+
+So: **anything served to a rabbit keeps the envelope.** `mtl_comp.py
+--bare` and `mtl_pyc.py --bare` drop it, which is what you want when
+feeding `mtl_asm`/`mtl_dis` or diffing against `.masm` output, and is
+never what you want in `/data`.
+
 ## Format references
 
 All format details are derived from the canonical implementations:
@@ -517,8 +585,3 @@ sed -n '/corename\[\]/,/^};/p' .../stdlib_core.cpp        # builtin names
 - Globals are shown as values; we don't yet correlate `OPgetglobalb 42`
   back to the matching global slot label. Mechanical to add.
 
-> **Note on the test programs.** The small `.mtl` / `.py` fixtures named above
-> (`tiny`, `jump`, `statemachine`, …) were a local scratch suite and are **not
-> committed**; only the production inputs (`boot.0.0.0.13.bin`, the hybrid
-> bytecode) are reproducible from this repo. Treat the per-feature claims as the
-> author's log, not as a test suite you can re-run.
