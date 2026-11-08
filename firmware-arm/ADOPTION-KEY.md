@@ -133,6 +133,29 @@ Flash: `lean-wpa3-tls` is 117,172 of 126,976 bytes, 9,804 spare
 (`lean-wpa3-kx` was 111,764: TLS costs 5,408). The runtime bytecode with
 `patch_tls.py` is 107,119 bytes and type-checks with `tools/mtl_comp.py --check`.
 
+In the emulator, 2026-11-08, against a real Terrier (its container, Python
+3.13.16, OpenSSL 3.5.5) on the host, `emulator/scenarios/vm/xmpp-tls.txt`
+under the `lean-wpa3-tls` bootloader, the runtime fetched from the Terrier
+each time, `--realtime`:
+
+1. fresh eeprom: kx.jsp agrees a key (pending), colours for a minute,
+   bytecode without HMAC, `locate.jsp` names no TLS port; the runtime opens
+   port 5222 (15222 there), registers, binds, "ready for commands".
+2. the owner confirms (`kx_decide`), same eeprom: bytecode with its HMAC,
+   `xmpp_tls` in locate; one connection to the TLS port, the Terrier logs
+   `TLS TLSv1.3 with 127.0.0.1, PSK identity 0019db00beef`, and the whole
+   XMPP session -- stream, SASL, bind, session -- runs inside it; registered
+   and bound.
+3. fresh eeprom, same MAC: kx.jsp refuses a new exchange (409), no key;
+   `locate.jsp` still says `xmpp_tls`, `tlsState` says -1, the runtime opens
+   the plain port; registered and bound.
+
+The run found two bugs on the way: the key sat on the runtime's XMPP
+password slot (fixed on main the same evening, #87), and the gate's
+hand-off after the handshake compared Metal constructors with `==`, which
+never matches -- the handshake completed and the gate timed out two seconds
+later, every three seconds.
+
 ## Code
 
 | piece | where | state |
