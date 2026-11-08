@@ -1,36 +1,42 @@
 /**
  * @file test_sae.c
- * @brief A full SAE exchange, and what it does and does not prove.
+ * @brief SAE against the standard's own vectors, then against itself.
  *
- * ## Read this before trusting the "all good" at the bottom
+ * ## Known answers first (vectors_h2e.h)
  *
- * Every other suite here compares against somebody else's implementation:
- * OpenSSL for AES, SHA-256, CMAC and P-256. There is no SAE in
- * python-cryptography, no published vector set to hand, and no hostapd on
- * the build machine -- so the peer in these tests is this same code playing
- * the other role.
+ * Until 2026-11-08 the peer in this file was this same code playing the
+ * other role, and the header said at length why that proved less than it
+ * looked: a misreading of the standard that is consistent on both sides --
+ * the counter's endianness in the KDF, the order of the MAC addresses, a
+ * label string -- passes a self-exchange every time. Two published vector
+ * sets now settle those questions on a build machine:
  *
- * That is weaker, and worth being precise about rather than glossing.
+ *  - **IEEE 802.11-2020 Annex J.10**, as hostapd carries it. Hunting and
+ *    pecking: STA-A, STA-B, a password, rand and mask, and the exact commit
+ *    bytes that must come out; then the peer's commit and the KCK, PMK and
+ *    PMKID. Hash-to-element: an SSID, a password, an identifier, two MAC
+ *    addresses, and the PWE. One wrong byte anywhere in the derivation and
+ *    nothing matches.
+ *  - **RFC 9380 Appendix J.1.1** (P256_XMD:SHA-256_SSWU_RO_): five pairs of
+ *    field elements with the points the Simplified SWU map must send them
+ *    to, and their sums. That isolates the map itself.
  *
- * **What it does prove.** The two sides reach the same PMK by different
- * routes: each computes K from its own secret scalar and the other's public
- * commit, so the equality is a real property of the group arithmetic and
- * not an identity. It catches a wrong point multiplication, a wrong
- * negation, a scalar reduced mod the wrong modulus, a confirm whose piece
- * order differs between the sides, a PWE derivation that is not symmetric
- * in the two MAC addresses -- all of which are the likely mistakes.
+ * The generator recomputes every vector in Python before printing it, so
+ * the expected values are not something a human typed either.
  *
- * **What it cannot prove.** That this is SAE as a real access point
- * implements it. A misreading of the standard that is consistent on both
- * sides passes every test below: the little-endian counter in the KDF, the
- * order of the MAC addresses in the password hash, the exact label strings.
- * Those are settled only by associating with somebody else's access point,
- * and that test is a UniFi with a WPA3 SSID, not this file.
+ * ## Then the self-exchange
  *
- * So the suite is written to catch what it can and to say clearly what it
- * cannot. The rejections at the end are the part that matters most anyway:
- * they are what stands between the rabbit and a hostile peer, and they do
- * not depend on interop at all.
+ * Still worth running. It catches what a vector cannot: that the two
+ * sides reach the same PMK by *different* routes (each computes K from
+ * its own secret and the other's public commit), that the derivation is
+ * symmetric in the two addresses, and above all what the code refuses
+ * from a hostile peer -- a reflected commit, a scalar outside (1, n), an
+ * element off the curve, a tampered confirm. Those rejections stand
+ * between the rabbit and an attacker and depend on no vector at all.
+ *
+ * What neither settles: the frames around the arithmetic -- status codes,
+ * where the token goes, the RSNXE. That is the emulator's job, and after
+ * it a real access point's.
  */
 
 #include <stdint.h>
@@ -38,6 +44,7 @@
 #include <string.h>
 
 #include "net/sae.h"
+#include "vectors_h2e.h"
 
 static int failures;
 
@@ -66,6 +73,155 @@ static void prng_bytes(uint8_t *out, uint32_t len, void *arg)
 
 static const uint8_t STA[6] = { 0x00, 0x1d, 0x92, 0x16, 0x4f, 0x1c };
 static const uint8_t AP[6]  = { 0x02, 0x00, 0x5e, 0x10, 0x00, 0x01 };
+
+static int same32(const uint8_t *a, const uint8_t *b)
+{
+  return memcmp(a, b, 32) == 0;
+}
+
+static void dump32(const char *label, const uint8_t *v)
+{
+  int i;
+  printf("    %s ", label);
+  for (i = 0; i < 32; i++) printf("%02x", v[i]);
+  printf("\n");
+}
+
+/* --- the published vectors --------------------------------------------- */
+
+/* An RNG that hands out a fixed sequence of 32-byte values: Annex J.10
+ * fixes rand and mask, and sae_commit asks for rand first, then mask. */
+struct seq_rng { const uint8_t *vals[2]; int next; };
+
+static void seq_bytes(uint8_t *out, uint32_t len, void *arg)
+{
+  struct seq_rng *s = (struct seq_rng *)arg;
+  memcpy(out, s->vals[s->next & 1], len);
+  s->next++;
+}
+
+static void test_sswu_vectors(void)
+{
+  size_t i, n = sizeof SSWU_VECS / sizeof SSWU_VECS[0];
+  int all_q = 1, all_p = 1;
+
+  printf("== RFC 9380 J.1.1: the Simplified SWU map, P-256, z = -10\n");
+  for (i = 0; i < n; i++) {
+    const struct sswu_vec *v = &SSWU_VECS[i];
+    p256_point q0, q1, p;
+    int ok0 = p256_sswu(&q0, v->u0, 0) && same32(q0.x, v->q0x) && same32(q0.y, v->q0y);
+    int ok1 = p256_sswu(&q1, v->u1, 0) && same32(q1.x, v->q1x) && same32(q1.y, v->q1y);
+    int okp = ok0 && ok1 && p256_add(&p, &q0, &q1, 0) && same32(p.x, v->px) && same32(p.y, v->py);
+    if (!ok0 || !ok1) {
+      all_q = 0;
+      printf("    vector %u:\n", (unsigned)i);
+      dump32("u0      ", v->u0); dump32("Q0.x got", q0.x); dump32("Q0.x want", v->q0x);
+      dump32("u1      ", v->u1); dump32("Q1.x got", q1.x); dump32("Q1.x want", v->q1x);
+    }
+    if (!okp) all_p = 0;
+  }
+  check(all_q, "SSWU(u) is the published point, 10 of 10");
+  check(all_p, "Q0 + Q1 is the published P, 5 of 5");
+}
+
+static void test_annex_j_hunting_and_pecking(void)
+{
+  sae_ctx c;
+  struct seq_rng rng = { { AJ_RAND, AJ_MASK }, 0 };
+  uint8_t commit[SAE_COMMIT_LEN];
+
+  printf("== IEEE 802.11-2020 Annex J.10: hunting and pecking\n");
+  check(sae_commit(&c, AJ_ADDR1, AJ_ADDR2, AJ_PW, seq_bytes, &rng, 0),
+        "the commit builds from the fixed rand and mask");
+  check(!c.h2e, "and is marked hunting-and-pecking");
+  if (!(same32(c.pwe.x, AJ_HNP_PWE_X) && same32(c.pwe.y, AJ_HNP_PWE_Y))) {
+    dump32("PWE.x got ", c.pwe.x); dump32("PWE.x want", AJ_HNP_PWE_X);
+  }
+  check(same32(c.pwe.x, AJ_HNP_PWE_X) && same32(c.pwe.y, AJ_HNP_PWE_Y),
+        "the PWE is the oracle's");
+  sae_commit_bytes(&c, commit);
+  check(sizeof commit == sizeof AJ_COMMIT &&
+        memcmp(commit, AJ_COMMIT, sizeof commit) == 0,
+        "the 98 commit bytes are the standard's");
+  check(sae_peer_commit(&c, AJ_PEER_COMMIT, sizeof AJ_PEER_COMMIT, 0),
+        "the standard's peer commit is accepted");
+  if (!same32(c.kck, AJ_KCK)) { dump32("KCK got ", c.kck); dump32("KCK want", AJ_KCK); }
+  check(same32(c.kck, AJ_KCK), "KCK");
+  check(same32(c.pmk, AJ_PMK), "PMK");
+  check(memcmp(c.pmkid, AJ_PMKID, 16) == 0, "PMKID");
+  sae_clear(&c);
+}
+
+static void test_annex_j_hash_to_element(void)
+{
+  p256_point pt;
+  sae_ctx a, b;
+  struct prng ra = { 0x600d5eed }, rb = { 0x0ddba11 };
+  uint8_t ca[SAE_COMMIT_LEN], cb[SAE_COMMIT_LEN];
+  uint8_t fa[SAE_CONFIRM_LEN], fb[SAE_CONFIRM_LEN];
+
+  printf("== IEEE 802.11-2020 Annex J.10: hash-to-element\n");
+  check(sae_derive_pt(&pt, (const uint8_t *)AJ_SSID, (uint32_t)strlen(AJ_SSID),
+                      AJ_PW, AJ_PWID, 0),
+        "PT derives from SSID, password and identifier");
+  if (!same32(pt.x, AJ_H2E_PT_X)) { dump32("PT.x got ", pt.x); dump32("PT.x want", AJ_H2E_PT_X); }
+  check(same32(pt.x, AJ_H2E_PT_X) && same32(pt.y, AJ_H2E_PT_Y),
+        "PT is the oracle's");
+  check(sae_commit_pt(&a, AJ_ADDR1B, AJ_ADDR2B, &pt, prng_bytes, &ra, 0),
+        "a commit builds from PT and the two addresses");
+  check(a.h2e, "and is marked hash-to-element");
+  if (!same32(a.pwe.x, AJ_H2E_PWE_X)) { dump32("PWE.x got ", a.pwe.x); dump32("PWE.x want", AJ_H2E_PWE_X); }
+  check(same32(a.pwe.x, AJ_H2E_PWE_X) && same32(a.pwe.y, AJ_H2E_PWE_Y),
+        "the PWE is the standard's (Annex J.10, group 19)");
+  sae_clear(&a);
+
+  /* Without an identifier, which is what a home network does. */
+  check(sae_derive_pt(&pt, (const uint8_t *)AJ_SSID, (uint32_t)strlen(AJ_SSID),
+                      AJ_PW, 0, 0) &&
+        same32(pt.x, AJ_H2E_NOID_PT_X) && same32(pt.y, AJ_H2E_NOID_PT_Y),
+        "without an identifier, PT is the oracle's");
+  check(sae_commit_pt(&a, AJ_ADDR1, AJ_ADDR2, &pt, prng_bytes, &ra, 0) &&
+        same32(a.pwe.x, AJ_H2E_NOID_PWE_X) && same32(a.pwe.y, AJ_H2E_NOID_PWE_Y),
+        "and so is the PWE for STA-A and STA-B");
+
+  /* A whole H2E exchange, the peer passing its addresses the other way
+     round and starting from the same PT. */
+  check(sae_commit_pt(&b, AJ_ADDR2, AJ_ADDR1, &pt, prng_bytes, &rb, 0),
+        "the peer commits from the same PT");
+  check(memcmp(&a.pwe, &b.pwe, sizeof a.pwe) == 0,
+        "both sides derive the same PWE from PT");
+  sae_commit_bytes(&a, ca);
+  sae_commit_bytes(&b, cb);
+  check(sae_peer_commit(&a, cb, sizeof cb, 0) && sae_peer_commit(&b, ca, sizeof ca, 0),
+        "both accept the other's commit");
+  sae_confirm_bytes(&a, fa);
+  sae_confirm_bytes(&b, fb);
+  check(sae_peer_confirm(&a, fb, sizeof fb) && sae_peer_confirm(&b, fa, sizeof fa),
+        "both confirms verify");
+  check(memcmp(a.pmk, b.pmk, sizeof a.pmk) == 0, "the same PMK");
+
+  /* The anti-clogging token goes in a container element after the
+     element with H2E, between the group and the scalar without. */
+  {
+    static const uint8_t token[5] = { 1, 2, 3, 4, 5 };
+    uint8_t out[SAE_COMMIT_TOKEN_LEN];
+    uint32_t n = sae_commit_bytes_token(&a, out, token, sizeof token);
+    check(n == SAE_COMMIT_LEN + 3 + sizeof token &&
+          memcmp(out, ca, SAE_COMMIT_LEN) == 0 &&
+          out[SAE_COMMIT_LEN] == 255 && out[SAE_COMMIT_LEN + 1] == 6 &&
+          out[SAE_COMMIT_LEN + 2] == 93 &&
+          memcmp(out + SAE_COMMIT_LEN + 3, token, sizeof token) == 0,
+          "with H2E the token rides in a container after the element");
+    a.h2e = 0;
+    n = sae_commit_bytes_token(&a, out, token, sizeof token);
+    check(n == SAE_COMMIT_LEN + sizeof token &&
+          memcmp(out + 2, token, sizeof token) == 0 &&
+          memcmp(out + 2 + sizeof token, ca + 2, SAE_COMMIT_LEN - 2) == 0,
+          "without it the token sits between group and scalar");
+  }
+  sae_clear(&a);
+  sae_clear(&b);
+}
 
 /* Runs the whole exchange. Returns 1 if both sides accepted. */
 static int exchange(sae_ctx *a, sae_ctx *b, const char *pw_a, const char *pw_b)
@@ -233,13 +389,16 @@ static void test_clear(void)
 
 int main(void)
 {
+  test_sswu_vectors();
+  test_annex_j_hunting_and_pecking();
+  test_annex_j_hash_to_element();
   test_exchange();
   test_wrong_password();
   test_different_password_different_pmk();
   test_rejections();
   test_clear();
   printf("\n%s\n", failures ? "FAILURES" : "all good");
-  printf("\nNote: the peer here is this same code. See the header comment for\n"
-         "what that proves and what only a real access point can settle.\n");
+  printf("\nNote: the arithmetic is checked against IEEE 802.11-2020 Annex J.10 and\n"
+         "RFC 9380; the framing around it is the emulator's to check, then an AP's.\n");
   return failures ? 1 : 0;
 }

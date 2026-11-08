@@ -141,7 +141,7 @@ static void test_algebra(void)
     borrow = s >> 8;
   }
   check(p256_mul_base(&a, k1, 0) && p256_mul_base(&b, k2, 0) &&
-        p256_add(&sum, &a, &b) && p256_mul_base(&direct, k3, 0) &&
+        p256_add(&sum, &a, &b, 0) && p256_mul_base(&direct, k3, 0) &&
         same(sum.x, direct.x) && same(sum.y, direct.y),
         "k1*G + k2*G == (k1+k2)*G");
 
@@ -149,7 +149,7 @@ static void test_algebra(void)
   {
     uint8_t two[32];
     memset(two, 0, 32); two[31] = 2;
-    check(p256_add(&sum, &g, &g) && p256_mul_base(&direct, two, 0) &&
+    check(p256_add(&sum, &g, &g, 0) && p256_mul_base(&direct, two, 0) &&
           same(sum.x, direct.x) && same(sum.y, direct.y),
           "G + G == 2*G (the add falls through to doubling)");
   }

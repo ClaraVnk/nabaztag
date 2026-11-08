@@ -158,7 +158,7 @@ all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng
 	@echo "== the AES forward cipher, CMAC and BIP"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_cmac test_cmac.c ../crypto/cmac.c && /tmp/t_cmac
 	@echo
-	@echo "== a full SAE exchange (see the header: the peer is this code)"
+	@echo "== SAE: 802.11-2020 Annex J.10 and RFC 9380 vectors, then a full exchange"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_sae test_sae.c ../crypto/sae.c ../crypto/p256.c ../crypto/sha256.c && /tmp/t_sae
 
 # The sources include <net/aes128.h> the way the firmware tree lays them out.
@@ -175,6 +175,7 @@ vectors:
 	python3 vectors_sha256.py > vectors_sha256.h
 	python3 vectors_cmac.py > vectors_cmac.h
 	python3 vectors_tls.py session_openssl.dump > vectors_tls.h
+	python3 vectors_h2e.py > vectors_h2e.h
 
 # The flash budget is the reason WPA3 was "not impossible, just unimplemented"
 # for so long, so the size is part of the test, not a footnote.
