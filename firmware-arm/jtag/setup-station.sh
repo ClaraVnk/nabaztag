@@ -42,5 +42,5 @@ esac
 echo
 echo "== next"
 echo "  wire it up (see wiring.svg), power the rabbit from its own adapter, then:"
-echo "    openocd -f nabaztag-pi.cfg -f oki.tcl -c 'oki_id; shutdown'"
-echo "  manufacturer 0x98, device 0xcd means the five jumpers are right."
+echo "    ./station.sh check   (from this folder)"
+echo "  'reset vector: 0xe59ff018' means the five jumpers are right."

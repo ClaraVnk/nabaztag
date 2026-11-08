@@ -8,6 +8,22 @@ That second use is not hypothetical. On 2026-11-07 a dump showed a rabbit
 running a build from 21 June, byte-exact, after five months of flashes that
 had all reported success. Nothing else in this project could have told us.
 
+## Quick start, on the Raspberry Pi
+
+```
+sudo apt-get install -y git                    # Raspberry Pi OS Lite has none
+git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
+./firmware-arm/jtag/station.sh setup          # once, then log out and back in
+./firmware-arm/jtag/station.sh check          # JTAG answers and the flash reads back
+./firmware-arm/jtag/station.sh flash Nab.bin  # write an image, read it back, compare
+./firmware-arm/jtag/station.sh listen         # the live status line, no halt
+./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
+```
+
+`listen` needs a firmware built with the `dcc_telemetry` step (mode
+`lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
+works on any rabbit, bricked or not.
+
 ![wiring](wiring.svg)
 
 The picture is generated: `./mkwiring.py -o wiring.svg`.
@@ -17,6 +33,7 @@ The picture is generated: `./mkwiring.py -o wiring.svg`.
 | file | what it is |
 | --- | --- |
 | `wiring.svg` / `mkwiring.py` | the five jumpers, and what draws them |
+| `station.sh` | the one command: setup, check, flash, listen, dump |
 | `setup-station.sh` | provisions a fresh Pi: packages, group, GPIO bank check |
 | `nabaztag-pi.cfg` | OpenOCD: linuxgpiod adapter, ARM7TDMI target, no SRST |
 | `oki.tcl` | the OKI ML67Q4051 flash sequence — id, dump, erase, program |
@@ -69,10 +86,14 @@ called out. Use that to flash; use the rest of this file to understand it.
 
 ## Three things to do with it
 
-**Prove the wiring, change nothing.** Manufacturer `0x98`, device `0xcd`:
+**Prove the wiring, change nothing.** OpenOCD must find the IDCODE
+`0x3f0f0f0f`, and the reset vector must read `0xe59ff018` (a firmware) or
+`0xffffffff` (blank flash):
 
 ```sh
-openocd -f nabaztag-pi.cfg -f oki.tcl -c "oki_id; resume; shutdown"
+./station.sh check
+# or by hand:
+openocd -f nabaztag-pi.cfg -c "init; halt 500; echo [read_memory 0x08000000 32 1]; resume; shutdown"
 ```
 
 The `resume` matters: attaching halts the core and `shutdown` does not undo

@@ -1,5 +1,7 @@
 # Flashing a rabbit by JTAG — the commands, in order
 
+The short way, from a clone on the Pi: `station.sh`, next to this file (see README.md). This runbook is the long way, step by step, from another machine over ssh.
+
 Copy-paste runbook. No judgement calls, no reading between the lines. For why
 any of it is shaped this way, see [README.md](README.md); for the recovery
 story around it, [../RECOVERY.md](../RECOVERY.md).
