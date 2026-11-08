@@ -142,7 +142,7 @@ def main():
               and "NewSessionTicket" in trace)
         print(f"  {'ok  ' if ok else 'FAIL'}  openssl s_server, {name} message ({len(msg)} bytes), exit {code}")
         for line in out.splitlines():
-            if line.startswith("client:"):
+            if line.startswith("client:") or not ok:
                 print("        " + line[:110])
         fails += not ok
 
@@ -161,7 +161,7 @@ def main():
         for r in srv.report:
             print("        server: " + r)
         for line in out.splitlines():
-            if line.startswith("client:"):
+            if line.startswith("client:") or not ok:
                 print("        " + line[:110])
         fails += not ok
 

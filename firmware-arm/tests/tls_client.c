@@ -165,6 +165,7 @@ int main(int argc, char **argv)
   }
   close(fd);
   if (dump) fclose(dump);
+  free(msg_out);   /* LeakSanitizer fails the run on Linux otherwise (CI, 2026-11-08) */
   printf("client: %lu watchdog ticks, final state %d, %d bytes received\n",
          ticks, nab_tls_state(), got);
   if (phase < 2) return 1;
