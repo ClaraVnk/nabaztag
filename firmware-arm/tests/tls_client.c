@@ -14,6 +14,10 @@
  *
  * tls_interop.py drives this against `openssl s_server` and Python's ssl.
  */
+/* getaddrinfo and struct addrinfo are POSIX, hidden by -std=c99 on glibc
+   (CI, 2026-11-08); macOS showed them anyway. */
+#define _POSIX_C_SOURCE 200112L
+
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
