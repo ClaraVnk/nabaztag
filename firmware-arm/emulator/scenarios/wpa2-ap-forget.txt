@@ -1,0 +1,25 @@
+# The access point forgets a WPA2 rabbit and says nothing.
+#
+# An idle timeout on the AP, a controller that dropped the client entry, a
+# deauthenticate the rabbit was deaf for: the beacons go on, the AP's copy
+# of the keys is gone, and the rabbit learns nothing -- beacons keep
+# refreshing IEEE80211_RUN_TIMEOUT, and no data frame from the AP ever
+# comes again. In the stock firmware RUN lasts for ever here.
+#
+# With the link_liveness step the driver counts the time since the last
+# unicast data frame from its AP. A live session never lets that reach a
+# minute: the bytecode writes " " to its XMPP socket every 8 s and the TCP
+# acknowledgement comes back through the AP. At 60 s of silence the driver
+# sends a null-data frame; an AP that has forgotten the station answers
+# with a deauthenticate, reason 7 (class 3 frame from a non-associated
+# station), and that one is addressed to us and obeyed. Here that is at
+# about 65 s: RUN since 5 s, forgotten at 20 s, the first probe at 65 s.
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 120000
+at 10000  expect RUN
+at 20000  forget
+at 60000  expect RUN
+at 110000 expect RUN
+at 110000 expect-reassoc 2

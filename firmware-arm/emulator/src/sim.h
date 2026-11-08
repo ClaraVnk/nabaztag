@@ -43,6 +43,7 @@ struct sim_ap {
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
+  int      mute;            /* 1 = drops data from the station, says nothing */
   int      sae_auth;        /* ...and it was SAE, so the AKM-defined key
                                schedule applies to the handshake         */
   uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */
@@ -57,7 +58,12 @@ enum {
   SIM_EV_DISASSOC,      /* AP disassociates the rabbit          */
   SIM_EV_AP_DOWN,       /* AP stops answering entirely          */
   SIM_EV_AP_UP,
-  SIM_EV_AP_SECURITY,   /* AP is reconfigured: new security, deauth */
+  SIM_EV_AP_SECURITY,   /* AP is reconfigured: new security, restart */
+  SIM_EV_AP_RESTART,    /* AP restarts: broadcast deauth, forgets all */
+  SIM_EV_AP_FORGET,     /* AP forgets the station and says nothing   */
+  SIM_EV_SERVER_VANISH, /* the warren's sockets die with no FIN      */
+  SIM_EV_EXPECT_REASSOC,/* assert the rabbit has reached RUN >= n times */
+  SIM_EV_EXPECT_XMPP,   /* assert >= n connections opened to port 5222 */
   SIM_EV_DROP_EAPOL,    /* swallow the next N EAPOL frames      */
   SIM_EV_REAUTH,        /* AP re-sends an authentication reply  */
   SIM_EV_REKEY,         /* AP rotates the group key             */
@@ -95,6 +101,7 @@ struct sim_scenario {
   uint32_t         stop_ms;
   uint32_t         tick_ms;      /* how much virtual time one loop costs */
   int              realtime;     /* pace the loop to the wall clock */
+  int              run_entries;  /* how many times ieee80211_state reached RUN */
 };
 
 extern struct sim_scenario sim;

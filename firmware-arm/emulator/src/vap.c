@@ -397,8 +397,16 @@ static uint32_t build_assoc_resp(uint8_t *out, const struct sim_ap *a,
   return (uint32_t)(p - out);
 }
 
-static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
-                             int disassoc, uint16_t reason)
+static const uint8_t vap_broadcast[IEEE80211_ADDR_LEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
+
+/* Whether this association carries 802.11w: the AP handed the rabbit an
+ * IGTK in message 3 (see vap_send_msg3), so every deauthenticate it sends
+ * from now on has to be signed, and an unsigned one is somebody else's. */
+static int ap_pmf_negotiated(int ap);
+
+static uint32_t build_deauth_to(uint8_t *out, const struct sim_ap *a,
+                                int disassoc, uint16_t reason,
+                                const uint8_t *dest)
 {
   struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
   uint8_t *p = out + sizeof(*fr);
@@ -408,7 +416,7 @@ static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
               | (disassoc ? IEEE80211_FC0_SUBTYPE_DISASSOC
                           : IEEE80211_FC0_SUBTYPE_DEAUTH);
   fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
-  memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr1, dest, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr3, a->bssid, IEEE80211_ADDR_LEN);
 
@@ -417,13 +425,20 @@ static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
   return (uint32_t)(p - out);
 }
 
+static uint32_t build_deauth(uint8_t *out, const struct sim_ap *a,
+                             int disassoc, uint16_t reason)
+{
+  return build_deauth_to(out, a, disassoc, reason, rt2501_mac);
+}
+
 /* The same frame with an 802.11w MMIE: element 76, length 16, then KeyID,
  * the packet number and eight bytes of MIC over the masked header and the
  * body with the MIC field zeroed. */
-static uint32_t build_deauth_protected(uint8_t *out, struct sim_ap *a,
-                                       int disassoc, uint16_t reason)
+static uint32_t build_deauth_protected_to(uint8_t *out, struct sim_ap *a,
+                                          int disassoc, uint16_t reason,
+                                          const uint8_t *dest)
 {
-  uint32_t n = build_deauth(out, a, disassoc, reason);
+  uint32_t n = build_deauth_to(out, a, disassoc, reason, dest);
   uint8_t *body = out + sizeof(struct ieee80211_frame);
   uint32_t blen = n - sizeof(struct ieee80211_frame);
   uint8_t *mmie = body + blen;
@@ -442,6 +457,12 @@ static uint32_t build_deauth_protected(uint8_t *out, struct sim_ap *a,
 
   bip_cmac_128(body + blen - 8, vap_igtk, out, body, blen);
   return sizeof(struct ieee80211_frame) + blen;
+}
+
+static uint32_t build_deauth_protected(uint8_t *out, struct sim_ap *a,
+                                       int disassoc, uint16_t reason)
+{
+  return build_deauth_protected_to(out, a, disassoc, reason, rt2501_mac);
 }
 
 static const char *cipher_name(uint8_t suite)
@@ -1187,6 +1208,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       }
       a->authenticated = 1;
       a->sae_auth = 0;
+      a->mute = 0;
       memcpy(vap_pmk, vap_psk_pmk, EAPOL_MASTER_KEY_LENGTH);
       sim_log("AP %s: auth ok (algorithm %u)", macstr(a->bssid), algorithm);
       n = build_auth_resp(out, a, IEEE80211_STATUS_SUCCESS);
@@ -1240,12 +1262,36 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
   const uint8_t *payload = frame + sizeof(*fr);
   uint32_t payload_length = length - sizeof(*fr);
 
+  if(a->mute) {
+    /* An AP that dropped the station and answers its frames with nothing
+     * at all -- no deauthenticate, no data. Only a watchdog finds this. */
+    vap_stats.muted_from_sta++;
+    return;
+  }
+
   if(!a->associated) {
-    sim_log("AP %s: data frame from an unassociated station, deauthenticating",
-            macstr(a->bssid));
+    /* A class 3 frame from a station this AP does not know. hostapd
+     * answers with a deauthenticate, reason 7 -- and an UNPROTECTED one
+     * whatever the BSS's management frame protection says, because it has
+     * no keys for a station it has never heard of. That frame is what a
+     * rabbit the AP has forgotten gets back for every packet it sends, and
+     * under 802.11w it is indistinguishable from a forgery. */
+    sim_log("AP %s: %s frame from an unassociated station, deauthenticating%s",
+            macstr(a->bssid),
+            (fr->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_NODATA
+              ? "null-data" : "data",
+            ap_pmf_negotiated(ap) ? " (unprotected: no keys for a stranger)" : "");
     uint8_t out[VAP_FRAME_MAX];
     uint32_t n = build_deauth(out, a, 0, IEEE80211_REASON_NOT_ASSOCED);
     queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.deauths_sent++;
+    return;
+  }
+
+  if((fr->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_NODATA) {
+    /* A null-data frame: the station checking that the AP still knows it.
+     * Acknowledged by the hardware and nothing more. */
+    vap_stats.nulls_from_sta++;
     return;
   }
 
@@ -1469,6 +1515,91 @@ void vap_init(void)
             sim.aps[i].pmf ? "  (PMF)" : "");
 }
 
+static int ap_pmf_negotiated(int ap)
+{
+  const struct sim_ap *a = &sim.aps[ap];
+  return (a->pmf || a->security == SIM_SEC_WPA3_SAE)
+         && vap_hs[ap].stage == HS_DONE;
+}
+
+/**
+ * @brief The access point restarts: hostapd's deinit, a UniFi reprovision.
+ *
+ * What a real one sends on the way down is ONE broadcast deauthenticate
+ * (hostapd_deauth_all_stas: addr1 ff:ff:ff:ff:ff:ff, reason 2) -- signed
+ * with the IGTK when the BSS protects management frames, plain otherwise --
+ * and then it forgets every station it had. The new hostapd beacons with
+ * the same BSSID and SSID a few seconds later, knows nobody, and answers
+ * any data frame from a station it does not know with an unprotected
+ * deauthenticate, reason 7. Nothing it sends after the restart can be
+ * decrypted by a station holding the old keys.
+ *
+ * Measured on a UniFi on 2026-11-08 (WPA3->WPA2 SSID change): the rabbit
+ * stayed in RUN for over ten minutes while the controller showed it
+ * offline. The stock firmware only obeys a deauthenticate addressed to its
+ * own MAC, so the broadcast one went by, and the beacons that followed
+ * kept refreshing IEEE80211_RUN_TIMEOUT.
+ */
+void vap_restart(int ap)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t n;
+
+  for(int i=0;i<sim.nb_aps;i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->up) continue;
+    if(ap_pmf_negotiated(i)) {
+      n = build_deauth_protected_to(out, a, 0, IEEE80211_REASON_AUTH_EXPIRE,
+                                    vap_broadcast);
+      sim_log("AP %s: restarting -- broadcast deauthentication, reason 2, "
+              "signed with the IGTK", macstr(a->bssid));
+    } else {
+      n = build_deauth_to(out, a, 0, IEEE80211_REASON_AUTH_EXPIRE, vap_broadcast);
+      sim_log("AP %s: restarting -- broadcast deauthentication, reason 2",
+              macstr(a->bssid));
+    }
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.deauths_sent++;
+    a->associated = 0;
+    a->authenticated = 0;
+    a->sae_auth = 0;
+    memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
+  }
+}
+
+/**
+ * @brief The access point forgets the station and says nothing.
+ *
+ * An idle timeout on the AP, a controller that dropped the client entry, a
+ * hostapd whose deauthenticate the rabbit was deaf for: the beacons go on,
+ * the station's keys are gone from the AP, and the first thing it hears
+ * about it is a reason-7 deauthenticate the next time it transmits -- or
+ * nothing at all, if it never does.
+ */
+void vap_forget(int ap)
+{
+  for(int i=0;i<sim.nb_aps;i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->up) continue;
+    sim_log("AP %s: forgetting the station, silently", macstr(a->bssid));
+    a->associated = 0;
+    a->authenticated = 0;
+    a->sae_auth = 0;
+    memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
+  }
+}
+
+void vap_mute(int ap)
+{
+  for(int i=0;i<sim.nb_aps;i++) {
+    if(ap >= 0 && i != ap) continue;
+    sim.aps[i].mute = 1;
+    sim_log("AP %s: will answer the station's data frames with nothing", macstr(sim.aps[i].bssid));
+  }
+}
+
 void vap_deauth(int ap, int disassoc, uint16_t reason)
 {
   uint8_t out[VAP_FRAME_MAX];
@@ -1479,6 +1610,22 @@ void vap_deauth(int ap, int disassoc, uint16_t reason)
     if(ap >= 0 && i != ap) continue;
     a = &sim.aps[i];
     if(!a->up) continue;
+    if(!a->pmf && ap_pmf_negotiated(i)) {
+      /* An unsigned deauthenticate on an association that negotiated
+       * 802.11w cannot have come from this AP -- it holds the IGTK and
+       * would have signed it. So this models what it is: a forgery, from
+       * somebody within radio range. The frame goes out; the AP's own
+       * state does not change, because the AP did not send it. (Before
+       * 2026-11-08 the AP forgot the station here too, which made a
+       * forged deauth look like a real one to any liveness check.) */
+      n = build_deauth(out, a, disassoc, reason);
+      sim_log("AP %s: an unprotected %s, reason %u, which this AP did not "
+              "send -- a forgery; the AP keeps the station", macstr(a->bssid),
+              disassoc ? "disassociation" : "deauthentication", reason);
+      queue_frame(out, n, a->rssi, a->channel);
+      vap_stats.deauths_sent++;
+      continue;
+    }
     if(a->pmf && !disassoc) {
       /* 802.11w: a station that negotiated management frame protection
        * ignores an unprotected deauthentication. Modelled so a WPA3 scenario

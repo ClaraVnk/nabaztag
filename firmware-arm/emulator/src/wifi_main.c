@@ -165,11 +165,26 @@ void sim_run_events(void)
       case SIM_EV_AP_UP:       vap_set_up(e->ap, 1); break;
       case SIM_EV_AP_SECURITY:
         sim.aps[e->ap].security = e->arg;
-        vap_deauth(e->ap, 0, 3);
+        vap_restart(e->ap);
         break;
+      case SIM_EV_AP_RESTART:  vap_restart(e->ap); break;
+      case SIM_EV_AP_FORGET:   vap_forget(e->ap); if(e->arg) vap_mute(e->ap); break;
       case SIM_EV_SERVER_DROP:
       case SIM_EV_SERVER_CLOSE:
+      case SIM_EV_SERVER_VANISH:
+      case SIM_EV_EXPECT_XMPP:
       case SIM_EV_ARP:        break;   /* no network in this binary */
+      case SIM_EV_EXPECT_REASSOC:
+        if(sim.run_entries >= e->arg)
+          sim_log("ok   reached RUN %d time%s, at least %d expected",
+                  sim.run_entries, sim.run_entries == 1 ? "" : "s", e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected RUN to have been reached %d times, it was %d",
+                   e->arg, sim.run_entries);
+          sim_note_failure(why);
+        }
+        break;
       case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
@@ -344,6 +359,7 @@ int main(int argc, char **argv)
       if(ieee80211_state == IEEE80211_S_RUN) {
         if(was_connected) reconnections++;
         was_connected = 1;
+        sim.run_entries++;
       }
       last_state = ieee80211_state;
     }

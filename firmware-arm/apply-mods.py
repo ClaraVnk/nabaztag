@@ -2770,6 +2770,291 @@ def patch_reset_reason(root: Path) -> None:
         print(f"[ok]   {rel}: reset site tagged")
 
 
+def patch_link_liveness(root: Path) -> None:
+    """Notice a dead association, instead of trusting beacons for ever.
+
+    Two failures measured over JTAG on 2026-11-07/08, both ending at the
+    mains, both the same mistake in ieee80211.c: in RUN the only thing that
+    refreshes IEEE80211_RUN_TIMEOUT is a beacon from the AP (input_mgt,
+    comment "(2)"), and a beacon says the AP's radio is on, not that it
+    still knows us.
+
+      - A UniFi SSID reprovisioned WPA3->WPA2: the controller showed the
+        rabbit offline, the rabbit showed W5 (RUN, SAE) for ten minutes and
+        more, nothing it sent reached the LAN. hostapd's farewell is ONE
+        broadcast deauthenticate (hostapd_deauth_all_stas, addr1
+        ff:ff:ff:ff:ff:ff), BIP-signed under 802.11w. The stock input path
+        drops any deauthenticate whose addr1 is not the rabbit's own MAC,
+        so that frame went by; the restarted AP beacons with the same
+        BSSID, and the timeout is refreshed by a stranger.
+      - An AP that forgets the station and says nothing (an idle timeout, a
+        deauthenticate the rabbit was deaf for) looks identical from
+        inside: beacons, no data, RUN. The AP answers the next data frame
+        with a deauthenticate, reason 7 -- unprotected, because it has no
+        keys for a station it does not know -- and under 802.11w
+        ieee80211_mgmt_ok() throws exactly that frame away.
+
+    Three changes, all in ieee80211.c:
+
+    1. A deauthenticate or disassociate addressed to the broadcast address
+       is accepted when addr2/addr3 are our AP's. Under 802.11w it still
+       has to pass ieee80211_mgmt_ok(), and BIP covers group-addressed
+       management frames -- that is what the IGTK is for.
+
+    2. A liveness watchdog on UNICAST data from the AP. The driver notes
+       counter_timer at every FROMDS data frame addressed to our MAC that
+       the hardware decrypted (rt2501_rx_callback drops CipherErr frames
+       before they get here). A live session never lets that age reach a
+       minute: the bytecode writes " " to its XMPP socket every 8 s
+       (XmppTcpIdleTime, main.mtl) and the server's acknowledgement comes
+       back through the AP. So after IEEE80211_LINK_PROBE_MS (60 s) of
+       silence the driver sends a null-data frame every 10 s -- the frame
+       the stock code already sends in answer to the AP's own ping, so no
+       new TX path -- and an AP that has forgotten us answers each with a
+       deauthenticate addressed to us. After IEEE80211_LINK_DEAD_MS (180 s)
+       with still nothing it gives the association up itself, which covers
+       an AP that answers nothing at all. Both drop to IDLE, which the boot
+       bytecode (initW) and the runtime ("wifi lost") already treat as the
+       start of a fresh scan. Broadcasts are deliberately not counted: a
+       station the AP has silently forgotten still decrypts them.
+
+    3. Under 802.11w, a deauthenticate from our AP that FAILS the MMIE check
+       is still ignored while the link has carried unicast data in the last
+       60 s (scenarios/wpa3-deauth-forged.txt: a forgery costs nothing), and
+       obeyed once the watchdog is already probing and this is what came
+       back. The trade, stated plainly: a forger has to wait for a link
+       that has been dead for a minute, and then costs the rabbit one SAE
+       handshake it cannot break. The standard's answer here is an SA Query,
+       which needs CCMP on a management frame; the RT2573 does not do that
+       and a software CCMP is a later, larger change.
+
+    Also here, because they are a few bytes and the hardware run needs
+    them (dcc_telemetry prints them): counters of open-system
+    authentication frames sent and received (with the last status), of
+    beacons heard from the target BSSID while waiting in AUTH/ASSOC, of
+    probes sent and associations given up, of bulk-out URBs that completed
+    in error (usbhcore.c) and of OPbytecode loads (vinterp.c: 0 means the
+    bootloader is still driving). The 2026-11-08 "deauthenticated, never
+    re-authenticates" case (W2 for 8+ minutes on WPA2) cannot be told apart
+    from a deaf radio, a wrong channel or a silent AP without them.
+
+    Controls, in firmware-arm/emulator: scenarios/wpa2-ap-restart.txt,
+    wpa2-ap-forget.txt, wpa3-ap-restart.txt, wpa3-ap-forget.txt fail
+    without this step (RUN for ever, one association) and pass with it;
+    wpa3-deauth-forged.txt must keep passing. Hardware risk: the null-data
+    TX runs from rt2501_timer(), i.e. the main loop, after its critical
+    section -- the same context and the same rt2501_send() path as the
+    bytecode's own frames. Measured on the ARM7TDMI build, 2026-11-08: lean
+    107 904 -> 108 272 (+368), lean-wpa3 117 692 -> 118 460 (+768),
+    lean-wpa3-slim 107 228 -> 108 332 (+1 104, 18 644 spare).
+    """
+    f = root / "src/net/ieee80211.c"
+    t, nl = read_flat(f)
+    if "ieee80211_link_last_ucast" in t:
+        print(f"[skip] link_liveness: {f} already patched")
+        return
+
+    def one(old: str, new: str, what: str) -> None:
+        nonlocal t
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {f}: link_liveness, {what}: anchor found {t.count(old)} times")
+        t = t.replace(old, new, 1)
+
+    # 1. state and the two helpers, after the association globals (and after
+    #    the hunk of patches/wpa2-scanned-ciphers.patch, which ends three
+    #    lines above this anchor and must keep applying).
+    one("uint16_t ieee80211_assoc_rateset;\n",
+        "uint16_t ieee80211_assoc_rateset;\n"
+        "\n"
+        "/* link_liveness (apply-mods.py): when the AP last sent us a unicast\n"
+        "   data frame, the watchdog that reads it, and counters for\n"
+        "   dcc_telemetry. Times are counter_timer milliseconds. */\n"
+        "#include \"utils/delay.h\"\n"
+        "uint32_t ieee80211_link_last_ucast;\n"
+        "static uint32_t ieee80211_link_next_probe;\n"
+        "uint8_t ieee80211_link_probes, ieee80211_link_deaths;\n"
+        "uint8_t ieee80211_auth_tx, ieee80211_auth_rx, ieee80211_bss_heard;\n"
+        "uint16_t ieee80211_auth_status;\n"
+        "uint8_t nab_tx_errors, nab_bc_loads;\n"
+        "#define IEEE80211_LINK_PROBE_MS       60000\n"
+        "#define IEEE80211_LINK_PROBE_EVERY_MS 10000\n"
+        "#define IEEE80211_LINK_DEAD_MS       180000\n"
+        "\n"
+        "/* Called from ieee80211_timer() in RUN, inside its critical section.\n"
+        "   Returns 1 when a null-data probe is due; the caller sends it after\n"
+        "   enable_ohci_irq(), since rt2501_send() has a critical section of\n"
+        "   its own. */\n"
+        "static int32_t ieee80211_link_watch(void)\n"
+        "{\n"
+        "\tuint32_t idle = counter_timer - ieee80211_link_last_ucast;\n"
+        "\n"
+        "\tif(idle < IEEE80211_LINK_PROBE_MS) return 0;\n"
+        "\tif(idle >= IEEE80211_LINK_DEAD_MS) {\n"
+        "\t\tDBG_WIFI(\"link: no unicast from the AP for 180 s, association given up\"EOL);\n"
+        "\t\tieee80211_link_deaths++;\n"
+        "\t\tieee80211_state = IEEE80211_S_IDLE;\n"
+        "\t\treturn 0;\n"
+        "\t}\n"
+        "\tif((int32_t)(counter_timer - ieee80211_link_next_probe) < 0) return 0;\n"
+        "\tieee80211_link_next_probe = counter_timer + IEEE80211_LINK_PROBE_EVERY_MS;\n"
+        "\tieee80211_link_probes++;\n"
+        "\treturn 1;\n"
+        "}\n"
+        "\n"
+        "/* A deauthenticate/disassociate from our AP that 802.11w refused. A\n"
+        "   forgery while the link carries traffic; the truth once the watchdog\n"
+        "   is already probing (see the docstring in apply-mods.py). */\n"
+        "static void ieee80211_link_suspect(const struct ieee80211_frame *fr)\n"
+        "{\n"
+        "\tif(ieee80211_mode != IEEE80211_M_MANAGED || ieee80211_state != IEEE80211_S_RUN) return;\n"
+        "\tif(memcmp(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) != 0) return;\n"
+        "\tif(memcmp(fr->i_addr2, ieee80211_assoc_mac, IEEE80211_ADDR_LEN) != 0) return;\n"
+        "\tif(memcmp(fr->i_addr3, ieee80211_assoc_bssid, IEEE80211_ADDR_LEN) != 0) return;\n"
+        "\tif(counter_timer - ieee80211_link_last_ucast < IEEE80211_LINK_PROBE_MS) return;\n"
+        "\tDBG_WIFI(\"link: an unprotected deauth after a minute without the AP -- believed\"EOL);\n"
+        "\tieee80211_link_deaths++;\n"
+        "\tieee80211_state = IEEE80211_S_IDLE;\n"
+        "}\n",
+        "the globals")
+
+    # 2. the broadcast farewell is ours too
+    one("\t\t\t\tif(ieee80211_state != IEEE80211_S_IDLE) {\n"
+        "\t\t\t\t\tif(memcmp(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) != 0) break;\n",
+        "\t\t\t\tif(ieee80211_state != IEEE80211_S_IDLE) {\n"
+        "\t\t\t\t\t/* link_liveness: hostapd's farewell on a restart is one\n"
+        "\t\t\t\t\t   BROADCAST deauthenticate (hostapd_deauth_all_stas). */\n"
+        "\t\t\t\t\tif(memcmp(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) != 0\n"
+        "\t\t\t\t\t   && memcmp(fr->i_addr1, ieee80211_broadcast_address, IEEE80211_ADDR_LEN) != 0) break;\n",
+        "the deauth addr1 check")
+
+    # 3. unicast data from the AP is what proves the association
+    one("\t\t/* Source address (i_addr3) can be anything */\n"
+        "\t\tsource_mac = fr->header.i_addr3;\n"
+        "\t\tieee80211_new_rssi_sample(rssi);\n",
+        "\t\t/* Source address (i_addr3) can be anything */\n"
+        "\t\tsource_mac = fr->header.i_addr3;\n"
+        "\t\tieee80211_new_rssi_sample(rssi);\n"
+        "\t\t/* link_liveness: unicast only -- a station the AP has forgotten\n"
+        "\t\t   still decrypts broadcasts under the old group key. */\n"
+        "\t\tif(memcmp(fr->header.i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) == 0)\n"
+        "\t\t\tieee80211_link_last_ucast = counter_timer;\n",
+        "the data-frame BSSID check")
+
+    # 4. a fresh association starts the clock
+    one("\t\t\t\tieee80211_rssi_sample_index = 0;\n"
+        "\t\t\t\tieee80211_rssi_average = -100;\n",
+        "\t\t\t\tieee80211_rssi_sample_index = 0;\n"
+        "\t\t\t\tieee80211_rssi_average = -100;\n"
+        "\t\t\t\tieee80211_link_last_ucast = counter_timer;  /* link_liveness */\n"
+        "\t\t\t\tieee80211_link_next_probe = counter_timer;\n",
+        "the association-success block")
+
+    # 5. the timer runs the watchdog; the probe goes out after the critical section
+    # Two anchors rather than the whole block: wpa3_sae rewrites the
+    # timeout branch (ieee80211_sae_forget on an AUTH timeout).
+    one("void ieee80211_timer(void)\n"
+        "{\n"
+        "\tdisable_ohci_irq();\n",
+        "void ieee80211_timer(void)\n"
+        "{\n"
+        "\tint32_t probe = 0;  /* link_liveness */\n"
+        "\n"
+        "\tdisable_ohci_irq();\n",
+        "the head of ieee80211_timer")
+    one("\t} else {\n"
+        "\t\t/* Master mode */\n"
+        "\t\tuint32_t i;\n",
+        "\t\tif(ieee80211_state == IEEE80211_S_RUN) probe = ieee80211_link_watch();  /* link_liveness */\n"
+        "\t} else {\n"
+        "\t\t/* Master mode */\n"
+        "\t\tuint32_t i;\n",
+        "the managed branch of ieee80211_timer")
+    one("\tenable_ohci_irq();\n"
+        "}\n"
+        "\n"
+        "int32_t rt2501_rssi_average(void)\n",
+        "\tenable_ohci_irq();\n"
+        "\t/* link_liveness: a null-data frame to the AP. One that still knows us\n"
+        "\t   acknowledges it and nothing more; one that has forgotten us answers\n"
+        "\t   with a deauthenticate, reason 7, addressed to us. */\n"
+        "\tif(probe) rt2501_send(NULL, 0, ieee80211_assoc_mac, 1, 0);\n"
+        "}\n"
+        "\n"
+        "int32_t rt2501_rssi_average(void)\n",
+        "the tail of ieee80211_timer")
+
+    # 6. telemetry: beacons from the target while waiting for it
+    one("\t\t\tif(ieee80211_mode == IEEE80211_M_MANAGED) {\n"
+        "\t\t\t\tif(ieee80211_state == IEEE80211_S_SCAN) {\n",
+        "\t\t\tif(ieee80211_mode == IEEE80211_M_MANAGED) {\n"
+        "\t\t\t\t/* link_liveness telemetry: the AP we are waiting on is audible */\n"
+        "\t\t\t\tif((ieee80211_state == IEEE80211_S_AUTH || ieee80211_state == IEEE80211_S_ASSOC)\n"
+        "\t\t\t\t   && memcmp(fr->i_addr3, ieee80211_assoc_bssid, IEEE80211_ADDR_LEN) == 0)\n"
+        "\t\t\t\t\tieee80211_bss_heard++;\n"
+        "\t\t\t\tif(ieee80211_state == IEEE80211_S_SCAN) {\n",
+        "the beacon handler")
+
+    # 7. telemetry: authentication frames addressed to us, whatever the state
+    one("\t\tcase IEEE80211_FC0_SUBTYPE_AUTH:\n"
+        "\t\t\tif(length < (sizeof(struct ieee80211_frame)+6)) return;\n",
+        "\t\tcase IEEE80211_FC0_SUBTYPE_AUTH:\n"
+        "\t\t\tif(length < (sizeof(struct ieee80211_frame)+6)) return;\n"
+        "\t\t\tif(memcmp(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) == 0) {\n"
+        "\t\t\t\tieee80211_auth_rx++;  /* link_liveness telemetry */\n"
+        "\t\t\t\tieee80211_auth_status = (uint16_t)(frame_current[4] | (frame_current[5] << 8));\n"
+        "\t\t\t}\n",
+        "the auth handler")
+
+    # 8. telemetry: open-system authentication frames that left
+    one("\t/* Frame sent, update the state machine */\n"
+        "\tieee80211_state = IEEE80211_S_AUTH;\n",
+        "\t/* Frame sent, update the state machine */\n"
+        "\tieee80211_auth_tx++;  /* link_liveness telemetry */\n"
+        "\tieee80211_state = IEEE80211_S_AUTH;\n",
+        "the auth sender")
+
+    # 9. under 802.11w, read a refused deauthenticate in context (wpa3_sae)
+    pmf = "\t\t\tif(!ieee80211_mgmt_ok((const uint8_t *)fr, length)) break;\n"
+    if pmf in t:
+        one(pmf,
+            "\t\t\tif(!ieee80211_mgmt_ok((const uint8_t *)fr, length)) {\n"
+            "\t\t\t\tieee80211_link_suspect(fr);  /* link_liveness */\n"
+            "\t\t\t\tbreak;\n"
+            "\t\t\t}\n",
+            "the 802.11w gate")
+        pmf_note = ", and the 802.11w gate reads a refused deauth in context"
+    else:
+        pmf_note = ""
+    write_flat(f, t, nl)
+
+    # TX errors: bulk-out URBs that completed in error. usbhcore.c is not
+    # compiled into the emulator (its stub is), so this is hardware only.
+    q = root / "src/usb/usbhcore.c"
+    u, unl = read_flat(q)
+    a = "static void usbh_free_urb_callback(PURB urb)\n{\n  hcd_free(urb->buffer);\n"
+    if "nab_tx_errors" not in u:
+        if u.count(a) != 1:
+            sys.exit(f"FAIL {q}: link_liveness, usbh_free_urb_callback is not the shape expected")
+        u = u.replace(a, "static void usbh_free_urb_callback(PURB urb)\n{\n"
+                         "  /* link_liveness telemetry: a frame the stick refused to take */\n"
+                         "  if(urb->status == URB_XFERERR) { extern uint8_t nab_tx_errors; nab_tx_errors++; }\n"
+                         "  hcd_free(urb->buffer);\n", 1)
+        write_flat(q, u, unl)
+
+    # Bytecode loads: 0 = the bootloader is driving, 1 = the runtime is.
+    q = root / "src/vm/vinterp.c"
+    v, vnl = read_flat(q)
+    a = "      case OPbytecode:\n        DBG_VM(EOL\"#################### OPbytecode\"EOL);\n"
+    if "nab_bc_loads" not in v:
+        if v.count(a) != 1:
+            sys.exit(f"FAIL {q}: link_liveness, OPbytecode is not the shape expected")
+        v = v.replace(a, a + "        { extern uint8_t nab_bc_loads; nab_bc_loads++; }  /* link_liveness telemetry */\n", 1)
+        write_flat(q, v, vnl)
+
+    print(f"[ok]   link_liveness: broadcast deauth obeyed, unicast watchdog with "
+          f"null-data probes{pmf_note}; auth/tx/bytecode counters for telemetry")
+
+
 def patch_dcc_console(root: Path) -> None:
     """Mirror the serial console onto the JTAG debug channel.
 
@@ -2864,11 +3149,25 @@ def patch_dcc_telemetry(root: Path) -> None:
     - one character per rt2501_timer() tick, and only if the channel is
       free: one status read, no loop. Busy, the same character is offered
       again next tick; nothing is lost, nothing waits;
-    - a short line, `W5 A2 S0 C8 E2 X0 K1 D0 P0 T258 R0/0`, snapshotted at
-      its first character: ieee80211_state, authmode, SAE state, SAE cache
-      entries, eapol_state, USB receive errors, rt2501_connected, management
-      frames 802.11w refused, deauth/disassoc seen with the Protected bit,
-      ieee80211_timeout, reset reason/count;
+    - a short line, `W5 A2 S0 C8 E2 X0 K1 D0 P0 T258 R0/0 a1 r1/0 h0 q0 L0 U3
+      Y0 B1 F0/1c`, snapshotted at its first character: ieee80211_state,
+      authmode, SAE state, SAE cache entries, eapol_state, USB receive
+      errors, rt2501_connected, management frames 802.11w refused,
+      deauth/disassoc seen with the Protected bit, ieee80211_timeout, reset
+      reason/count; then link_liveness's counters: open-auth frames sent,
+      auth frames received to us / the last status word, beacons from the
+      target BSSID heard while in AUTH/ASSOC, null-data probes sent,
+      associations given up, seconds since the last unicast data frame
+      from the AP, bulk-out URB errors, bytecode loads (0 = the bootloader
+      is still driving), and F the ASIC's own count of frames never
+      acknowledged / frames acknowledged (STA_CSR4/5). Added 2026-11-08 for
+      the deauthenticated-never-re-authenticates case: `a` rising with `r`
+      at 0 and `h` rising says the AP hears us and does not answer; `h` at
+      0 says we are deaf or on the wrong channel; `Y` rising says the
+      frames never left the stick; `F` failed rising with each `a` says
+      they left and nobody acknowledged them (wrong channel or rate, or an
+      AP that ignores this MAC); about 85 characters, so one line every
+      85 ticks;
     - from the top of rt2501_timer(), before its `if(!rt2501_connected)
       return`, so a radio that has given up still reports that it has.
 
@@ -2884,6 +3183,8 @@ def patch_dcc_telemetry(root: Path) -> None:
     t = read_src(ie)
     if "ieee80211_sae_count" not in t:
         sys.exit(f"FAIL {ie}: dcc_telemetry needs wpa3_sae first")
+    if "ieee80211_link_last_ucast" not in t:
+        sys.exit(f"FAIL {ie}: dcc_telemetry needs link_liveness first (its counters)")
     nl = "\r\n" if "\r\n" in t else "\n"
     # Appended at the end, as patch_wpa3_timing does: wpa2-scanned-ciphers.patch
     # anchors near the top and must keep applying.
@@ -2900,9 +3201,17 @@ def patch_dcc_telemetry(root: Path) -> None:
         "extern uint8_t eapol_state;\n"
         "extern uint8_t ieee80211_pmf_dropped, ieee80211_pmf_protbit;\n"
         "extern int32_t nab_reset_reason, nab_reset_count;\n"
+        "extern volatile uint32_t counter_timer;\n"
+        "extern uint32_t ieee80211_link_last_ucast;\n"
+        "extern uint8_t ieee80211_link_probes, ieee80211_link_deaths;\n"
+        "extern uint8_t ieee80211_auth_tx, ieee80211_auth_rx, ieee80211_bss_heard;\n"
+        "extern uint16_t ieee80211_auth_status;\n"
+        "extern uint8_t nab_tx_errors, nab_bc_loads;\n"
+        "extern uint16_t nab_tx_acked, nab_tx_failed;\n"
+        "void rt2501_tx_stats_poll(void);\n"
         "uint8_t ieee80211_sae_diag(void);\n\n"
         "#define TARGET_REQ_DEBUGCHAR 0x02\n\n"
-        "static char dcctel_line[40];\n"
+        "static char dcctel_line[96];\n"
         "static uint8_t dcctel_pos, dcctel_len;\n\n"
         "__attribute__((target(\"arm\"), noinline))\n"
         "static int dcctel_try(uint32_t w)\n{\n"
@@ -2919,6 +3228,7 @@ def patch_dcc_telemetry(root: Path) -> None:
         "static void dcctel_snapshot(uint8_t rx_errors, uint8_t connected)\n{\n"
         "  char *p = dcctel_line;\n"
         "  uint8_t sae = ieee80211_sae_diag();\n"
+        "  if(connected) rt2501_tx_stats_poll();\n"
         "  *p++ = 'W'; p = dcctel_hex(p, ieee80211_state);\n"
         "  *p++ = ' '; *p++ = 'A'; p = dcctel_hex(p, ieee80211_authmode);\n"
         "  *p++ = ' '; *p++ = 'S'; p = dcctel_hex(p, sae & 15);\n"
@@ -2931,6 +3241,25 @@ def patch_dcc_telemetry(root: Path) -> None:
         "  *p++ = ' '; *p++ = 'T'; p = dcctel_hex(p, ieee80211_timeout);\n"
         "  *p++ = ' '; *p++ = 'R'; p = dcctel_hex(p, (uint32_t)nab_reset_reason);\n"
         "  *p++ = '/'; p = dcctel_hex(p, (uint32_t)nab_reset_count);\n"
+        # link_liveness: a open-auth frames sent, r auth frames received to
+        # us / last status, h beacons from the target while in AUTH/ASSOC,
+        # q null-data probes, L associations given up, U seconds since the
+        # last unicast data frame from the AP, Y bulk-out URB errors,
+        # B bytecode loads (0: the bootloader is driving).
+        "  *p++ = ' '; *p++ = 'a'; p = dcctel_hex(p, ieee80211_auth_tx);\n"
+        "  *p++ = ' '; *p++ = 'r'; p = dcctel_hex(p, ieee80211_auth_rx);\n"
+        "  *p++ = '/'; p = dcctel_hex(p, ieee80211_auth_status);\n"
+        "  *p++ = ' '; *p++ = 'h'; p = dcctel_hex(p, ieee80211_bss_heard);\n"
+        "  *p++ = ' '; *p++ = 'q'; p = dcctel_hex(p, ieee80211_link_probes);\n"
+        "  *p++ = ' '; *p++ = 'L'; p = dcctel_hex(p, ieee80211_link_deaths);\n"
+        "  *p++ = ' '; *p++ = 'U'; p = dcctel_hex(p, (counter_timer - ieee80211_link_last_ucast) / 1000);\n"
+        "  *p++ = ' '; *p++ = 'Y'; p = dcctel_hex(p, nab_tx_errors);\n"
+        "  *p++ = ' '; *p++ = 'B'; p = dcctel_hex(p, nab_bc_loads);\n"
+        # F: frames the ASIC gave up on after every retry (no ACK from the
+        # AP) / frames it got an ACK for. The one counter that tells "the AP
+        # ignores our auth" from "our auth never reaches the air".
+        "  *p++ = ' '; *p++ = 'F'; p = dcctel_hex(p, nab_tx_failed);\n"
+        "  *p++ = '/'; p = dcctel_hex(p, nab_tx_acked);\n"
         "  *p++ = '\\n';\n"
         "  dcctel_len = (uint8_t)(p - dcctel_line);\n"
         "  dcctel_pos = 0;\n}\n\n"
@@ -2948,6 +3277,24 @@ def patch_dcc_telemetry(root: Path) -> None:
                   "void rt2501_timer(void)\n{\n"
                   "  dcctel_tick(rt2501_rx_errors, (uint8_t)rt2501_connected);  /* dcc_telemetry */\n"
                   "  if(!rt2501_connected) return;\n", 1)
+    # The ASIC's own TX statistics. STA_CSR4 holds the no-retry and one-retry
+    # counts, STA_CSR5 the multi-retry and retry-fail counts (16 bits each,
+    # cleared by the read -- Ralink RT2573 register map, the same registers
+    # rt2x00's rt73usb_link_stats reads). Two control transfers per snapshot,
+    # i.e. every ~80 ticks: lighter than rt2501_calibrate, which reads BBP
+    # registers every RT2501_CAL_PERIOD (40) ticks through the same path.
+    # Hardware risk: a control read on a stick that has stopped answering
+    # blocks like any other; dcctel_snapshot only calls this while
+    # rt2501_connected says the stick is there.
+    t = t + ("\n/* dcc_telemetry: the ASIC's TX statistics, accumulated (the registers\n"
+             "   clear on read). failed = frames given up on after every retry, i.e.\n"
+             "   never acknowledged by the AP; acked = everything else. */\n"
+             "uint16_t nab_tx_acked, nab_tx_failed;\n"
+             "void rt2501_tx_stats_poll(void)\n{\n"
+             "  uint32_t c4 = rt2501_read(rt2501_dev, STA_CSR4);\n"
+             "  uint32_t c5 = rt2501_read(rt2501_dev, STA_CSR5);\n"
+             "  nab_tx_acked += (uint16_t)((c4 & 0xffff) + (c4 >> 16) + (c5 & 0xffff));\n"
+             "  nab_tx_failed += (uint16_t)(c5 >> 16);\n}\n")
     write_flat(q, t, nl2)
     print(f"[ok]   dcc_telemetry: a status line on the debug channel, one char per tick")
 
@@ -5836,15 +6183,15 @@ def main() -> int:
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,wpa3_timing,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -5859,7 +6206,7 @@ def main() -> int:
         # lean-wpa3-os: lean-wpa3 compiled at -Os. A MEASUREMENT mode: it
         # says what the flag would buy and is not to be flashed (every
         # hardware-validated image is -O1; see patch_opt_size).
-        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
+        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
         # lean-wpa3-slim: lean-wpa3 with the dead weight measured out of it,
         # and nothing the rabbit does changed. C side: the serial console
         # formats without sprintf (and so without newlib's printf and
@@ -5869,10 +6216,10 @@ def main() -> int:
         # UART pad is unwired on a production rabbit), mkwav is precomputed,
         # and five unreferenced functions are dropped. Each saving is in the
         # step's docstring with the measurement that justified it.
-        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
-        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
+        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -5940,6 +6287,12 @@ def main() -> int:
         sys.exit("FAIL step list: wpa3_sae without wpa3_eapol_akm authenticates "
                  "with SAE and then runs the four-way handshake on WPA2's key "
                  "schedule, which no real AP accepts. Add wpa3_eapol_akm.")
+    # link_liveness hooks the 802.11w gate that wpa3_sae inserts into the
+    # deauthenticate handler, so when both are present it must come after.
+    if ("link_liveness" in steps and "wpa3_sae" in steps
+            and steps.index("link_liveness") < steps.index("wpa3_sae")):
+        sys.exit("FAIL step list: link_liveness must come after wpa3_sae, whose "
+                 "802.11w gate it reads a refused deauthenticate through.")
     if "eapol_msg2_ie" in steps and "group_cipher" not in steps:
         sys.exit("FAIL step list: eapol_msg2_ie reads ieee80211_group_cipher, "
                  "which group_cipher provides.")
@@ -6042,6 +6395,7 @@ def main() -> int:
         "reset_reason": patch_reset_reason,
         "dcc_console": patch_dcc_console,
         "dcc_telemetry": patch_dcc_telemetry,
+        "link_liveness": patch_link_liveness,
         "no_libc_malloc": patch_no_libc_malloc,
         "audio_ampli": patch_audio_ampli,
         "rom_pages": patch_rom_pages,

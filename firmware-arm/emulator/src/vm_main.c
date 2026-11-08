@@ -70,10 +70,35 @@ void sim_run_events(void)
       case SIM_EV_AP_UP:      vap_set_up(e->ap, 1); break;
       case SIM_EV_AP_SECURITY:
         sim.aps[e->ap].security = e->arg;
-        vap_deauth(e->ap, 0, 3);
+        vap_restart(e->ap);
         break;
+      case SIM_EV_AP_RESTART:   vap_restart(e->ap); break;
+      case SIM_EV_AP_FORGET:    vap_forget(e->ap); if(e->arg) vap_mute(e->ap); break;
       case SIM_EV_SERVER_DROP:  gw_server_drop(); break;
       case SIM_EV_SERVER_CLOSE: gw_server_close(1); break;
+      case SIM_EV_SERVER_VANISH: gw_server_vanish(); break;
+      case SIM_EV_EXPECT_REASSOC:
+        if(sim.run_entries >= e->arg)
+          sim_log("ok   reached RUN %d time%s, at least %d expected",
+                  sim.run_entries, sim.run_entries == 1 ? "" : "s", e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected RUN to have been reached %d times, it was %d",
+                   e->arg, sim.run_entries);
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_EXPECT_XMPP:
+        if((int)gw_stats.xmpp_opened >= e->arg)
+          sim_log("ok   %u connection%s opened to the XMPP port, at least %d expected",
+                  gw_stats.xmpp_opened, gw_stats.xmpp_opened == 1 ? "" : "s", e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected %d connections to the XMPP port, there were %u",
+                   e->arg, gw_stats.xmpp_opened);
+          sim_note_failure(why);
+        }
+        break;
       case SIM_EV_ARP:         gw_set_arp(e->arg); break;
       case SIM_EV_PTK_REKEY:  vap_ptk_rekey(e->ap); break;
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
@@ -115,6 +140,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--warren") && i + 1 < argc) warren = argv[++i];
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
+    else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
@@ -127,6 +153,8 @@ int main(int argc, char **argv)
         "  --warren      host to send every TCP connection to, port preserved\n"
         "  --gateway-ip  the gateway's address (default 10.0.0.1)\n"
         "  --lease-ip    the address DHCP offers the rabbit (default 10.0.0.42)\n"
+        "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
+        "                bookkeeping and expect-xmpp-opens\n"
         "  --trace-net   log every packet, not just what happened to it\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
@@ -223,6 +251,7 @@ int main(int argc, char **argv)
       sim_log("state %s -> %s   (radio %d)",
               last_state < 0 ? "-" : sim_state_name(last_state),
               sim_state_name(ieee80211_state), rt2501_state());
+      if(ieee80211_state == IEEE80211_S_RUN) sim.run_entries++;
       last_state = ieee80211_state;
     }
 
@@ -249,8 +278,9 @@ int main(int argc, char **argv)
   if(gw_stats.arp_unanswered)
     printf("  arp left unanswered %u\n", gw_stats.arp_unanswered);
   printf("pings answered      %u\n", gw_stats.pings);
-  printf("tcp open/refused    %u / %u (closed %u)\n", gw_stats.tcp_opened,
-         gw_stats.tcp_refused, gw_stats.tcp_closed);
+  printf("tcp open/refused    %u / %u (closed %u, xmpp %u)\n", gw_stats.tcp_opened,
+         gw_stats.tcp_refused, gw_stats.tcp_closed, gw_stats.xmpp_opened);
+  printf("times in RUN        %d\n", sim.run_entries);
   printf("tcp bytes up/down   %u / %u\n", gw_stats.bytes_from_rabbit,
          gw_stats.bytes_to_rabbit);
   printf("audio clips played  %u (%u bytes)\n", hw_audio_clips(), hw_audio_bytes());

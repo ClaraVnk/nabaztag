@@ -1,0 +1,21 @@
+# A whole rabbit, WPA2, and its access point restarts underneath it.
+#
+# The Wi-Fi-only scenarios/wpa2-ap-restart.txt shows the driver obeying
+# the broadcast deauthenticate; this one shows what the bytecode does with
+# the IDLE that follows -- main.mtl's loop sees netState==RT2501_S_IDLE,
+# says "wifi lost", and (with patch_wifi_reconnect) scans again, so an AP
+# that came back on another channel is found too. Without the
+# link_liveness step the rabbit never leaves RUN and `expect-reassoc 2`
+# fails; that is the control.
+#
+#   python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 \
+#     --server <warren>:19080/vl --ip 10.0.0.42 --gateway 10.0.0.1 -o wpa2.eeprom
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 300000
+at 20000  expect RUN
+at 60000  restart
+at 61000  expect-not RUN
+at 280000 expect RUN
+at 280000 expect-reassoc 2

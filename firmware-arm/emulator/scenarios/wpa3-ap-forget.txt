@@ -1,0 +1,29 @@
+# The access point forgets a WPA3 rabbit and says nothing.
+#
+# The hardest of the four, because 802.11w works against the rabbit here.
+# After the AP has dropped the station the only thing it will ever send
+# about it is an UNPROTECTED deauthenticate, reason 7, in answer to the
+# next data frame -- hostapd has no keys for a station it does not know,
+# so it cannot sign that frame. And an unprotected deauthenticate is
+# precisely what ieee80211_mgmt_ok() exists to ignore: without a liveness
+# check this rabbit is in RUN for good, deaf to the one frame that could
+# have told it.
+#
+# The link_liveness step reads that frame in context. A deauthenticate
+# that fails the 802.11w check is still ignored while unicast data from
+# the AP has been arriving (wpa3-deauth-forged.txt: a forgery costs
+# nothing); the same frame after 60 s without one unicast frame from the
+# AP -- when the driver has started probing with null-data and this is
+# what came back -- is taken at its word. The trade is written down in
+# apply-mods.py: a forger has to wait for a link that has been dead for a
+# minute, and then costs the rabbit one SAE handshake it cannot break.
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 120000
+at 10000  expect RUN
+at 20000  forget
+at 60000  expect RUN
+at 110000 expect RUN
+at 110000 expect-reassoc 2
