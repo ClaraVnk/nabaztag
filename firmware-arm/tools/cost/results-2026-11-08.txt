@@ -1,0 +1,59 @@
+Measured 2026-11-08 with run.sh under qemu-arm 7.2 in localhost/nab-qemu,
+arm-none-eabi-gcc 12.2, -O1 -mthumb -mcpu=arm7tdmi (the firmware's flags),
+repo at 3c4a519. Instructions are architectural counts of what executed;
+text is the linked ELF's text+rodata after --gc-sections, minus the
+embedded blob where there is one (the runtime, 105,522 bytes, or
+msg64+sig64 = 128 bytes). Every case checked its result (RFC 7748 6.1,
+2G and an independently computed kG on P-256, GCM spec test case 4, RFC
+5869 test case 1, FIPS-197 C.1, a throwaway Ed25519 signature) and exited 0.
+
+case             instructions   text   notes
+nop                         8     20   harness overhead
+memcpy_105k           527,639         byte loop, what nab_verify_sig does twice
+x25519             63,635,085  2,108   TweetNaCl crypto_scalarmult; NO tick in its ladder: 53.2 M between ticks
+x25519_base        63,640,618  2,120   TweetNaCl crypto_scalarmult_base
+ed_short          214,429,470  6,604   nab_verify_sig, 64-byte message; 1,019 ticks, longest gap 564,157
+ed_long           247,865,641  6,604   nab_verify_sig over bootcode.hybrid; 1,843 ticks, longest gap 1,012,946
+sha512_long        31,586,814         TweetNaCl crypto_hash over the 105 KB (825 blocks, 38.3 k each)
+sha512_short           45,909         64-byte message (2 blocks)
+p256               53,844,128  3,052   p256_mul, full 256-bit scalar x G (kG checked)
+p256_base           5,570,413  3,052   p256_mul_base with k = 2: 10x cheaper, so the ladder short-cuts
+                                       on infinity and the cost follows the scalar's top bit
+aes_block_cmac          7,248    960   cmac.c aes128_encrypt_block (key schedule every call)
+aes_block               7,106    948   aes128_enc.c init + one block
+gcm_kat                86,872         GCM test case 4 (60 B + 20 B AAD)
+gcm_1k                849,468  1,824   AES-128-GCM of a 1,024-byte record, 5-byte AAD
+ctr_1k                372,477         the CTR half alone (64 blocks)
+ghash_1k              474,773         GCM with 1,024 B of AAD, no data: 65 GHASH blocks + 2 AES, ~7.1 k/block
+hkdf_kat               69,940         RFC 5869 test case 1
+hkdf                   69,404  2,092   one Extract (32/32) + one Expand-Label (32-byte context)
+sha256_1k             149,014  1,404
+sha256_4k             520,102  1,404
+mc_x25519          12,376,375  9,032   Monocypher crypto_x25519 (32-bit limbs)
+mc_ed_short        16,594,174 14,848   Monocypher crypto_ed25519_check, 64-byte message
+mc_ed_long         34,310,875 14,848   same over bootcode.hybrid
+mc_sha512_long     17,349,669         Monocypher SHA-512 over the 105 KB
+c25519_x25519      62,072,245  1,480   c25519 (8-bit limbs): tiny and as slow as TweetNaCl
+c25519_ed_short   150,525,647  5,274
+c25519_ed_long    171,044,347  5,274
+
+Added code (aes128_enc.c duplicates aes128.c's S-box; merged there it is ~530 B):
+  gcm.c 736 (ghash_block 246, ghash_bytes 110, gcm_encrypt 356, be32 24)
+  hkdf.c 268 (hkdf_extract 36, hkdf_expand1 64, tls13_expand_label 128, 33 B data)
+  aes128_enc.c 788 (sbox 256, aes128_enc_init 160, aes128_enc_block 372)
+
+Firmware crypto objects at -O1, text+rodata of the .o (before gc):
+  tweetnacl.c 9,928 (unstripped)  p256.c 3,436  sha256.c 1,634  aes128.c 1,696
+  cmac.c 1,568  sae.c 1,382  nab_sig.c 136
+`lean` image: 107,904 bytes of 126,976 (124 KB IntROM) -> 19,072 spare.
+
+TLS 1.3 protocol logic, no crypto, -Os for arm7tdmi (tls-size/):
+  Mbed TLS 3.6.2 ssl_*.o, 1.3 client only, one suite, no 1.2/DTLS/tickets/
+    PSK/renego/ALPN/debug: 20,260 B  (ssl_tls 4,412  ssl_msg 3,484
+    ssl_tls13_client 3,303  ssl_tls13_generic 2,994  ssl_tls13_keys 3,876
+    ssl_ciphersuites 1,303  ssl_client 888); its X.509+PK+PSA glue is
+    another 52,563 and its crypto 37,383.
+  picotls lib/picotls.c: 45,125 B total; 39,462 reachable from the client
+    entry points (the dispatcher drags the server in: server_handle_hello
+    10,366, handle_client_handshake_message 4,340, decode_client_hello
+    2,262, server_finish_handshake 1,886 -> ~20.6 KB client-side).
