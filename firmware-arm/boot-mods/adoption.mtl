@@ -8,9 +8,13 @@
 // that does not know kx.jsp, or answers anything but 64 hex digits, changes
 // nothing: the rabbit boots as it did, without a key.
 
-const CONF_KXKEY=208;;		//32
-const CONF_KXFLAG=240;;		//1  'K' key, 'C' confirmed
-const CONF_KXCOLORS=241;;	//5
+// Past the runtime's own corner of conf.bin: main.mtl keeps the XMPP
+// password at 208 ("d" + 12 characters, to 220). The first layout put the
+// key there; on hardware, 2026-11-08, the rabbit lost its password, asked
+// to register, and sat blue. 221-223 stay free as a margin.
+const CONF_KXKEY=224;;		//32
+const CONF_KXFLAG=256;;		//1  'K' key, 'C' confirmed
+const CONF_KXCOLORS=257;;	//5
 const KX_SHOW=60;;
 
 var kxdone;;
