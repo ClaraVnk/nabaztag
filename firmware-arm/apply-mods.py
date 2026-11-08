@@ -325,7 +325,13 @@ def patch_verify_wdt(root: Path) -> None:
     """
     p = root / "src/crypto/tweetnacl.c"
     t = p.read_text()
-    if "nab_verify_tick" in t:
+    # The marker is the first tick itself, not the bare name: x25519_wdt
+    # declares nab_verify_tick too, and when it ran first this step took the
+    # declaration for its own work and skipped. Every adoption image of
+    # 2026-11-08 shipped so -- two ticks instead of four, and an OTA that the
+    # watchdog reset in the middle of verifySig, on hardware only (the
+    # emulator has no watchdog).
+    if "nab_verify_tick();\n    FOR(i,16) w[i] = dl64(m + 8 * i);" in t:
         print(f"[skip] {p}: the verifier already feeds the watchdog")
         return
 
@@ -354,8 +360,9 @@ def patch_verify_wdt(root: Path) -> None:
     inc = '#include "tweetnacl.h"\n'
     if inc not in t:
         sys.exit(f"FAIL {p}: no tweetnacl.h include to hang the declaration on")
-    t = t.replace(inc, inc + "/* The watchdog, from nab_sig.c; see patch_verify_wdt. */\n"
-                             "extern void nab_verify_tick(void);\n", 1)
+    if "extern void nab_verify_tick(void);" not in t:
+        t = t.replace(inc, inc + "/* The watchdog, from nab_sig.c; see patch_verify_wdt. */\n"
+                                 "extern void nab_verify_tick(void);\n", 1)
     p.write_text(t)
     print(f"[ok]   {p}: the signature check feeds the watchdog 1,860 times")
 

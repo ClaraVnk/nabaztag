@@ -22,7 +22,7 @@ CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls tls-interop
+.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -120,7 +120,19 @@ tls-interop: $(CRYPTO_H)
 		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c
 	@python3 tls_interop.py --client /tmp/t_tls_client
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls
+# x25519_wdt runs before verify_wdt in every adoption mode. verify_wdt used
+# to take x25519_wdt's declaration of nab_verify_tick for its own work and
+# skip: the signature check lost its four watchdog ticks and every OTA from
+# an adoption image was reset mid-verifySig, on hardware only (2026-11-08).
+wdt_order:
+	@echo "== x25519_wdt then verify_wdt: five watchdog ticks in tweetnacl.c"
+	@rm -rf /tmp/nab-wdt && mkdir -p /tmp/nab-wdt/src/crypto && touch /tmp/nab-wdt/Makefile
+	@cp ../upstream/tweetnacl/tweetnacl.c /tmp/nab-wdt/src/crypto/ && cp ../upstream/tweetnacl/tweetnacl.h /tmp/nab-wdt/
+	@python3 ../apply-mods.py --steps x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt /tmp/nab-wdt >/dev/null
+	@n=$$(grep -c "nab_verify_tick();" /tmp/nab-wdt/src/crypto/tweetnacl.c); \
+	  if [ "$$n" -eq 5 ]; then echo "  ok    5 ticks"; else echo "  FAIL  $$n ticks, want 5"; exit 1; fi
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
