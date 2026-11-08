@@ -1,0 +1,26 @@
+# The access point restarts under a WPA2 rabbit.
+#
+# What hostapd sends on its way down is one BROADCAST deauthenticate
+# (hostapd_deauth_all_stas, addr1 ff:ff:ff:ff:ff:ff, reason 2), and then
+# it forgets everybody. The stock firmware only obeys a deauthenticate
+# addressed to its own MAC (ieee80211_input_mgt, the i_addr1 check), so
+# that frame went by unread, and the beacons of the restarted AP -- same
+# BSSID, same SSID -- kept refreshing IEEE80211_RUN_TIMEOUT for ever.
+#
+# Measured on a UniFi on 2026-11-08 (an SSID reprovisioned): the controller
+# showed the rabbit offline, the rabbit showed W5 (RUN) for ten minutes and
+# more, and nothing it sent reached the LAN. Only the mains ended it.
+#
+# Without the link_liveness step this stays in RUN at 20.5 s and never
+# associates a second time. With it the broadcast frame is obeyed, the
+# rabbit drops to IDLE inside the tick and is back in RUN a few seconds
+# later, through a fresh authentication and a fresh four-way handshake.
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 120000
+at 10000 expect RUN
+at 20000 restart
+at 20500 expect-not RUN
+at 60000 expect RUN
+at 60000 expect-reassoc 2

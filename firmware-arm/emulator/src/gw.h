@@ -14,6 +14,7 @@ struct gw_stats {
   uint32_t dns_queries;
   uint32_t pings;
   uint32_t tcp_opened;
+  uint32_t xmpp_opened;       /* of which, to port 5222 */
   uint32_t tcp_refused;
   uint32_t tcp_closed;
   uint32_t bytes_to_rabbit;
@@ -46,6 +47,10 @@ void gw_poll(void);
 
 void gw_server_drop(void);
 void gw_server_close(int graceful);
+/* The warren's sockets die and the rabbit never sees the FIN: whatever it
+ * sends on them from now on is swallowed. The half-open connection a rabbit
+ * is left with when its server went away while it could not hear. */
+void gw_server_vanish(void);
 void gw_close(void);
 
 #endif /* _GW_H_ */

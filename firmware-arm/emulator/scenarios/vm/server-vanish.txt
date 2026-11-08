@@ -1,0 +1,23 @@
+# The warren dies and the rabbit never hears the FIN.
+#
+# 2026-11-07, over JTAG: the Terrier declared Nabazprout's session dead and
+# closed it while the rabbit was halted under the debugger, so the FIN was
+# never received. The rabbit resumed with ieee80211_state RUN,
+# rt2501_connected 1, rx errors 0 -- a healthy link to a connection that no
+# longer existed on the other side -- and did not redial in five minutes.
+#
+# `server-vanish` is that: the host sockets close, no FIN and no RST is
+# passed on, and every segment the rabbit sends on them is swallowed. The
+# bytecode has two ways to notice -- XmppSessionReadTimeout (60 s with
+# nothing read) and the " " keepalive it writes every 8 s going
+# unacknowledged ten times -- and both end in XmppSessionIsDisconnected,
+# then XmppGateReconnect. So a second connection to port 5222 has to be
+# opened within a couple of minutes of the server going away. Needs a
+# --warren that answers; run under tools/vm-check.sh with one.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 300000
+at 40000  expect RUN
+at 60000  server-vanish
+at 280000 expect RUN
+at 280000 expect-xmpp-opens 2

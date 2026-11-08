@@ -407,6 +407,7 @@ enum {
   TCP_CONNECTING,     /* the host socket is still coming up */
   TCP_OPEN,
   TCP_CLOSING,        /* the rabbit or the host has sent a FIN */
+  TCP_VANISHED,       /* the host is gone and the rabbit was not told */
 };
 
 struct gw_conn {
@@ -575,6 +576,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     }
     c->state = TCP_OPEN;
     gw_stats.tcp_opened++;
+    if(dport == 5222) gw_stats.xmpp_opened++;
     sim_log("gw: the rabbit opened %s:%u -> %s:%u", ipstr(src), sport,
             warren_host, dport);
     /* A connection to anything but the XMPP port, while a session is up, is
@@ -584,6 +586,19 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
      * is a session, so they do not count. */
     if(dport != 5222 && xmpp_conn_count() > 0) sim_note_fetch();
     tcp_send(c, 0x02 | 0x10, NULL, 0);     /* SYN-ACK */
+    return;
+  }
+
+  if(c != NULL && c->state == TCP_VANISHED) {
+    /* A half-open connection: the other end is gone and nothing answers.
+     * The segment goes into the void, as it would on a network whose
+     * server has been unplugged. Logged once; the rabbit's own stack is
+     * what we are watching. */
+    if(!c->fin_sent) {
+      c->fin_sent = 1;
+      sim_log("gw: %s:%u -> %s:%u is half-open, swallowing what the rabbit "
+              "sends on it", ipstr(src), sport, ipstr(dst), dport);
+    }
     return;
   }
 
@@ -798,6 +813,33 @@ void gw_set_subnet(const char *gateway, const char *rabbit)
 void gw_server_drop(void)
 {
   gw_server_close(0);
+}
+
+/**
+ * @brief The server dies and the rabbit never hears the FIN.
+ *
+ * The 2026-11-07 case: the Terrier declared a session dead and closed it
+ * while the rabbit was frozen under JTAG, so the FIN was never received.
+ * The rabbit came back to a connection that looked open and was not, with
+ * ieee80211_state RUN and rt2501_connected 1 -- and did not redial in five
+ * minutes. Here the host sockets are closed without a FIN or a RST being
+ * passed on, and from now on the rabbit's segments on them are swallowed,
+ * which is what a server that has forgotten the connection amounts to for
+ * a TCP stack that ignores RST (tcp.mtl has no TRST branch in STEST).
+ */
+void gw_server_vanish(void)
+{
+  int n = 0;
+  for(int i = 0; i < GW_MAX_CONNECTIONS; i++) {
+    struct gw_conn *c = &conns[i];
+    if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
+    if(c->fd >= 0) { close(c->fd); c->fd = -1; }
+    c->state = TCP_VANISHED;
+    c->fin_sent = 0;              /* reused as "logged once" for the swallow */
+    n++;
+  }
+  sim_log("gw: the server vanished -- %d connection%s left half-open, no FIN, no RST",
+          n, n == 1 ? "" : "s");
 }
 
 /**

@@ -1,0 +1,23 @@
+# The access point restarts under a WPA3 rabbit.
+#
+# Same event as wpa2-ap-restart.txt, with 802.11w in the way: the AP's
+# farewell is a broadcast deauthenticate signed with the IGTK it handed the
+# rabbit in message 3. ieee80211_mgmt_ok() can verify that frame -- BIP
+# covers group-addressed management frames, it is what the IGTK is for --
+# but the stock input path threw it away one line earlier because its
+# addr1 was not the rabbit's MAC. The 2026-11-08 UniFi case was exactly
+# this: WPA3 SSID reprovisioned, rabbit in RUN with SAE for ten minutes,
+# controller showing it gone.
+#
+# A rabbit that drops everything would pass this: wpa3-deauth-forged.txt
+# is the control in the other direction, and both must hold.
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 120000
+at 10000 expect RUN
+at 20000 restart
+at 20500 expect-not RUN
+at 60000 expect RUN
+at 60000 expect-reassoc 2

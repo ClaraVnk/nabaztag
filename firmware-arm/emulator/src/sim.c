@@ -346,9 +346,34 @@ int sim_load(const char *path)
           fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
+      } else if(!strcmp(tok[2], "restart")) {
+        /* hostapd going down and coming back: one broadcast deauthenticate
+           (signed under 802.11w), then an AP that knows nobody. */
+        e->kind = SIM_EV_AP_RESTART;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+        if(e->ap < 0 && n >= 4) {
+          fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
+      } else if(!strcmp(tok[2], "forget")) {
+        /* The AP drops the station's entry and says nothing at all. */
+        e->kind = SIM_EV_AP_FORGET;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+        if(e->ap < 0 && n >= 4) {
+          fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
+      } else if(!strcmp(tok[2], "server-vanish")) {
+        e->kind = SIM_EV_SERVER_VANISH;
+      } else if(!strcmp(tok[2], "expect-reassoc") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_REASSOC;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-xmpp-opens") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_XMPP;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "security") && n >= 5) {
         /* An admin changing the SSID's security, as a UniFi controller
-           does: the AP reprovisions and every station is sent away. */
+           does: the AP reprovisions (see `restart`) with the new security. */
         e->kind = SIM_EV_AP_SECURITY;
         e->ap = ap_by_bssid(tok[3]);
         e->arg = parse_security(tok[4]);
