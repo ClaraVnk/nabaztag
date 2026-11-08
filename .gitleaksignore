@@ -1,0 +1,5 @@
+# firmware-arm/apply-mods.py, link_liveness: the C declarations of the
+# counters ieee80211_auth_tx / ieee80211_auth_rx -- variable names that
+# generic-api-key takes for a key ("auth" + an identifier). No secret.
+68c6cfa1712e2c723c05d527ec23235799e59861:firmware-arm/apply-mods.py:generic-api-key:2815
+68c6cfa1712e2c723c05d527ec23235799e59861:firmware-arm/apply-mods.py:generic-api-key:3142
