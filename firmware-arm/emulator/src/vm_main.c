@@ -99,6 +99,7 @@ int main(int argc, char **argv)
   const char *gateway_ip = NULL;
   const char *lease_ip = NULL;
   int trace_net = 0;
+  int realtime = 0;
   int last_state = -1;
   uint32_t next_timer_ms = 0;
   uint8_t counttimer = 0;
@@ -111,7 +112,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
-    else if(!strcmp(argv[i], "--realtime")) sim.realtime = 1;
+    else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
       fprintf(stderr,
         "usage: %s [scenario] [--eeprom <file>] [--no-eeprom] [--audio-dir <dir>]\n"
@@ -136,6 +137,13 @@ int main(int argc, char **argv)
   } else {
     sim_default();
   }
+  /* After the scenario, not before: sim_load starts from sim_default, which
+   * zeroes the whole struct, so a flag set while parsing the arguments was
+   * wiped and --realtime never paced anything. Found 2026-11-08: a run with
+   * the flag still finished 60 s of virtual time in under a second, and a
+   * warren whose answer took 28 ms of wall clock was always too late for the
+   * rabbit's 10 s of virtual time. */
+  if(realtime) sim.realtime = 1;
   if(vap_crypto_selftest() != 0) return 2;
 
   sim_log("scenario %s, tick %u ms, stop at %u ms",

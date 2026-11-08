@@ -11,8 +11,15 @@
 //   - flashFirmware opcode (always present)
 //   - HTTP_NORMAL httprequest (defined in http.mtl, included by main.mtl)
 //
-// Format expected (produced by firmware-arm/signing/sign_sim.py):
-//   "-violet-" SIZE_HEX(8) PAYLOAD_HEX "-violet-" "-sig-" SIG_HEX(128) "-sig-"
+// Two forms, told apart by the URL's extension:
+//   .sim  "-violet-" SIZE_HEX(8) PAYLOAD_HEX "-violet-" "-sig-" SIG_HEX(128) "-sig-"
+//         (firmware-arm/signing/sign_sim.py; fetched whole, parsed as hex)
+//   .bin  the plain image as bytes, Content-Length its size, the signature
+//         as 128 hex digits in an X-Nab-Sig response header (the warren
+//         derives it from the stored .sim); streamed into one buffer.
+// The .sim form holds about six times the image in the heap and cannot
+// install an image past about 108 KB; the .bin form holds two. See the
+// binary path below for the measurements.
 
 
 // Recursive hex→bin transcribe at offset `off`, writing `len` bytes into
@@ -136,6 +143,52 @@ const OTA_STEP_RUN = 0x0000ff;;   // blue: in the callback at all
 const OTA_STEP_SIG = 0xffffff;;   // white: signature verified
 const OTA_STEP_BAD = 0xff0000;;   // red: it stopped here
 
+// The signature gate and the flash, shared by the hex path (ota_cb) and
+// the binary path (ota_bin_end) so that there is exactly one verifySig
+// call in this file: firmware/patch_ota_recovery.py replaces this body
+// for rabbits whose firmware cannot verify, and a second gate anywhere
+// else would be one it does not reach.
+fun ota_flash firm sig=
+	led 2 OTA_STEP_RUN;
+	// Collect BEFORE verifySig, never let verifySig collect.
+	//
+	// The opcode allocates payload+64 bytes of scratch, then
+	// reads firm and sig through the heap indices it took
+	// before the allocation. When that allocation triggers
+	// the GC, the compaction slides both over the garbage
+	// getbinary_fw left behind (107,704 two-byte strings), the
+	// indices point into the middle of something else, and
+	// the length word read there is whatever it is. Measured
+	// in the emulator 2026-11-08 with this very image: the
+	// third GC of the callback ran inside verifySig and the
+	// opcode then called memcpy with a size of -1,728,528. On
+	// the host that is a segfault; on the ARM7 it is a data
+	// abort, a reset, and a rabbit that boots the firmware it
+	// already had -- nose green, one belly light blue, no red.
+	//
+	// `gc` runs the same compaction with the interpreter's own
+	// roots, so firm and sig come out of it correct, and the
+	// heap it leaves (166,946 words live of 204,800, so 36,267
+	// free against the 26,942 the scratch needs, same run) has
+	// room for the opcode's allocation without a second
+	// collection. With it the same run reaches white, then
+	// flashFirmware with the 107,704-byte image.
+	gc;
+	if (verifySig firm sig)==0 then
+		(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
+	else
+	(
+		led 2 OTA_STEP_SIG;
+		led 3 OTA_STEP_RUN;
+		let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+		(
+			led 3 OTA_STEP_BAD;
+			ota_fail_report if bad==nil then 0xF4 else bad;
+			0
+		)
+	);;
+
+
 fun ota_cb httpreq body=
 	(
 		led 0 OTA_STEP_RUN;
@@ -150,51 +203,174 @@ fun ota_cb httpreq body=
 			else
 			(
 				led 1 OTA_STEP_OK;
-				led 2 OTA_STEP_RUN;
-				// Collect BEFORE verifySig, never let verifySig collect.
-				//
-				// The opcode allocates payload+64 bytes of scratch, then
-				// reads firm and sig through the heap indices it took
-				// before the allocation. When that allocation triggers
-				// the GC, the compaction slides both over the garbage
-				// getbinary_fw left behind (107,704 two-byte strings), the
-				// indices point into the middle of something else, and
-				// the length word read there is whatever it is. Measured
-				// in the emulator 2026-11-08 with this very image: the
-				// third GC of the callback ran inside verifySig and the
-				// opcode then called memcpy with a size of -1,728,528. On
-				// the host that is a segfault; on the ARM7 it is a data
-				// abort, a reset, and a rabbit that boots the firmware it
-				// already had -- nose green, one belly light blue, no red.
-				//
-				// `gc` runs the same compaction with the interpreter's own
-				// roots, so firm and sig come out of it correct, and the
-				// heap it leaves (166,946 words live of 204,800, so 36,267
-				// free against the 26,942 the scratch needs, same run) has
-				// room for the opcode's allocation without a second
-				// collection. With it the same run reaches white, then
-				// flashFirmware with the 107,704-byte image.
-				gc;
-				if (verifySig firm sig)==0 then
-					(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
-				else
-				(
-					led 2 OTA_STEP_SIG;
-					led 3 OTA_STEP_RUN;
-					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-					(
-						led 3 OTA_STEP_BAD;
-						ota_fail_report if bad==nil then 0xF4 else bad;
-						0
-					)
-				)
+				ota_flash firm sig
 			)
 		)
 	);;
+
+
+// ---------------------------------------------------------------------
+// The binary path: the image as bytes, streamed into one buffer.
+//
+// Measured 2026-11-08. A `lean-wpa3` image (117,692 bytes; 235,970 as a
+// .sim) reset the rabbit with nab_reset_reason=1 -- the VM ran out of
+// memory -- before verifySig was ever reached; `lean` (107,904 bytes)
+// installed with the heap at 166,945 words of 204,800 at the gate. The
+// hex path above holds the .sim as a string of twice the image size,
+// http.mtl holds the same string on its own stack for the whole
+// callback (it builds the body once to read the status code and once
+// more to hand it over, and keeps the received segments too), then
+// parsefirm_fw adds the image itself and verifySig adds image+64 of
+// scratch. Six times the image, live at once, out of 800 KB. That is
+// why 107,904 fits and 117,692 does not, and why no image near the
+// flash's 126,976-byte limit can ever come in as hex.
+//
+// Here the warren serves the plain image (what verifySig and
+// flashFirmware take) as application/octet-stream with the Ed25519
+// signature in an `X-Nab-Sig` response header, and the request is
+// HTTP_STREAM: http.mtl hands the callback the header block once, then
+// every received segment as it arrives, then nil. Content-Length sizes
+// one buffer up front and each segment is strcpy'd into it and becomes
+// garbage. Live at the gate: the image once, the scratch once. Two
+// times the image instead of six, no hex, no uncrypt, no second
+// request for the signature, and the callback never sees a copy of the
+// body it has to drop.
+//
+// The 302 case and the DNS/connect failures are http.mtl's as before:
+// a redirect is followed with the same callback and type, a failure
+// arrives as nil before anything else did.
+
+const OTA_BIN_IDLE   = 0;;   // nothing in flight
+const OTA_BIN_HEAD   = 1;;   // request sent, waiting for the header block
+const OTA_BIN_BODY   = 2;;   // header read, buffer allocated, filling it
+const OTA_BIN_DONE   = 3;;   // finished, one way or the other
+
+var g_ota_bstate;;   // one of the above
+var g_ota_bbuf;;     // the image, Content-Length bytes, filling up
+var g_ota_bsig;;     // the 64-byte signature from X-Nab-Sig
+var g_ota_boff;;     // bytes of g_ota_bbuf written so far
+
+
+// The value of header `name` ("Name: ", colon and space included) in the
+// header block `hdr`, without its line ending, or nil. The last header
+// has no line ending at all: http.mtl cuts the block before the blank
+// line, so a header that happens to come last ends with the string.
+fun ota_hdr hdr name=
+	let strstr hdr name 0 -> i in
+	if i!=nil then
+	let i+(strlen name) -> i in
+	let strstr hdr "\13\n" i -> j in
+	let if j==nil then strlen hdr else j -> j in
+	strsub hdr i j-i;;
+
+
+// 128 hex digits -> 64 bytes, or nil.
+fun ota_hdr_sig hdr=
+	let ota_hdr hdr "X-Nab-Sig: " -> h in
+	if h!=nil then if (strlen h)==128 then
+	let strnew 64 -> sig in
+	(
+		getbinary_fw sig h 0 0 64;
+		sig
+	);;
+
+
+// The header block arrived. Everything the whole download needs is
+// decided here: the status, the size, the signature. The belly's first
+// light is this step.
+fun ota_bin_head hdr=
+	led 0 OTA_STEP_RUN;
+	if (httpgetcode hdr)!=200 then
+		(set g_ota_bstate=OTA_BIN_DONE; led 0 OTA_STEP_BAD; ota_fail_report 0xF1; 0)
+	else
+	let ota_hdr hdr "Content-Length: " -> cl in
+	let if cl==nil then nil else atoi cl -> len in
+	let ota_hdr_sig hdr -> sig in
+	if len==nil || len<=0 || sig==nil then
+		(set g_ota_bstate=OTA_BIN_DONE; led 0 OTA_STEP_BAD; ota_fail_report 0xF2; 0)
+	else
+	(
+		set g_ota_bsig=sig;
+		set g_ota_boff=0;
+		set g_ota_bbuf=strnew len;
+		set g_ota_bstate=OTA_BIN_BODY;
+		led 0 OTA_STEP_OK;
+		led 1 OTA_STEP_RUN;
+		0
+	);;
+
+
+// One received segment. strcpy is bounded by the destination's size in
+// the VM (sysCpy), so a server that sends more than it announced cannot
+// write past the buffer; it is caught at the end by the byte count.
+fun ota_bin_chunk data=
+	let strlen data -> n in
+	if g_ota_boff+n > strlen g_ota_bbuf then
+		(set g_ota_bstate=OTA_BIN_DONE; led 1 OTA_STEP_BAD; ota_fail_report 0xF5; 0)
+	else
+	(
+		strcpy g_ota_bbuf g_ota_boff data 0 n;
+		set g_ota_boff=g_ota_boff+n;
+		0
+	);;
+
+
+// The connection closed. Short body: refuse. Complete: the shared gate.
+fun ota_bin_end=
+	if g_ota_bstate==OTA_BIN_HEAD then
+		// Nothing ever arrived: DNS, connect, or a close before the header.
+		(set g_ota_bstate=OTA_BIN_DONE; led 0 OTA_STEP_BAD; ota_fail_report 0xF1; 0)
+	else if g_ota_bstate==OTA_BIN_BODY then
+	(
+		set g_ota_bstate=OTA_BIN_DONE;
+		if g_ota_boff!=strlen g_ota_bbuf then
+			(led 1 OTA_STEP_BAD; ota_fail_report 0xF5; 0)
+		else
+		(
+			led 1 OTA_STEP_OK;
+			let g_ota_bbuf -> firm in
+			let g_ota_bsig -> sig in
+			(
+				// The globals are not needed past this point; the gate's
+				// operands live on its own stack.
+				set g_ota_bbuf=nil;
+				set g_ota_bsig=nil;
+				ota_flash firm sig
+			)
+		)
+	)
+	else 0;;
+
+
+// HTTP_STREAM callback: `[httpreq header]` once, then `[httpreq segment]`
+// for each segment, then `[httpreq nil]`. On a non-200 status http.mtl
+// hands over the raw segments instead and keeps doing so; the state
+// machine ignores everything after it has decided.
+fun ota_bin_cb httpreq data=
+	if data==nil then ota_bin_end
+	else if g_ota_bstate==OTA_BIN_HEAD then ota_bin_head data
+	else if g_ota_bstate==OTA_BIN_BODY then ota_bin_chunk data
+	else 0;;
+
+
+// Does this URL name the binary form? The warren serves it under the
+// same name as the .sim with `.bin` in place of `.sim`, and sends that
+// URL only to a rabbit it has served this bytecode to.
+fun ota_url_is_bin url=
+	let strlen url -> n in
+	n>4 && !strcmp (strsub url n-4 4) ".bin";;
 
 
 // Public entry: kick off the OTA download. Async — returns immediately;
 // the callback handles verify + flash when the body arrives.
 fun flashFromUrl url=
 	set g_ota_url=url;
-	httprequest "GET" url nil #ota_cb HTTP_NORMAL;;
+	if ota_url_is_bin url then
+	(
+		set g_ota_bstate=OTA_BIN_HEAD;
+		set g_ota_bbuf=nil;
+		set g_ota_bsig=nil;
+		set g_ota_boff=0;
+		httprequest "GET" url nil #ota_bin_cb HTTP_STREAM
+	)
+	else httprequest "GET" url nil #ota_cb HTTP_NORMAL;;

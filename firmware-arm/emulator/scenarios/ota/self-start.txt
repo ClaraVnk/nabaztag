@@ -20,7 +20,34 @@
 #   python3 mkconf.py --ssid Terrier --security open --server 10.0.0.1:8080/vl \
 #       --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o open.eeprom
 #   make NABGCC=<tree> BYTECODE=ota-test.bin vm
-#   ./rabbit-vm scenarios/ota/self-start.txt --eeprom open.eeprom --warren 127.0.0.1
+#   ./rabbit-vm scenarios/ota/self-start.txt --eeprom open.eeprom --warren 127.0.0.1 --realtime
+#
+# --realtime, or the rabbit's STD_NET_TIMEOUT of virtual time runs out in a
+# few wall-clock milliseconds and a server that answers in 28 ms is too late
+# every time (2026-11-08: that was the "first request aborts after 908 bytes").
+#
+# A URL ending in .bin exercises the binary path instead -- the plain image
+# as bytes with the signature in an X-Nab-Sig header, the form the Terrier
+# serves as /ota/<image>.signed.bin from the stored .sim. python3 -m http.server
+# cannot add the header; the Terrier's own handler, bound store-less, can:
+#
+#   python3 - <<'EOF'
+#   import sys; sys.path.insert(0, "<terrier checkout>")
+#   from http.server import ThreadingHTTPServer
+#   import protocol, simsig
+#   H = type("H", (protocol.BootHandler,), {"ota_dir": "<dir with the .sim>",
+#            "ota_pubkey": simsig.read_pubkey("<keys/signing_pubkey.h>"),
+#            "store": None, "xmpp": None})
+#   ThreadingHTTPServer(("127.0.0.1", 8011), H).serve_forever()
+#   EOF
+#
+# Measured 2026-11-08 at the gate (the #GC line that the bytecode's own gc
+# prints just before verifySig), 204,800 words of heap: hex path, 107,904-byte
+# image, hp=167412 (82%); hex path, 117,692 bytes, reset for want of memory
+# before the gate (hp=151833 at the last collection). Binary path: 107,904
+# bytes hp=57952 (29%), 117,692 bytes hp=60400 (30%), 126,976 bytes -- the
+# flash's limit, a padded image signed with a throwaway key and a VM built
+# with its public key -- hp=62720 (31%), all three to white and flashFirmware.
 #
 # What it showed on 2026-11-08, before the gc in ota_cb: nose blue, nose green,
 # left green, middle blue, then a segfault in nab_verify_sig -- memcpy with a
