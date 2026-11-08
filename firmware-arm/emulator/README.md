@@ -229,6 +229,33 @@ it 1,860 times. Until an image with that step is flashed, the bytecode fix
 moves the reset from "inside a bad memcpy" to "2 s into a good verification",
 and the belly cannot tell the two apart.
 
+**Why `lean-wpa3` could not install and `lean` could, 2026-11-08.** The same
+scenario with the 117,692-byte image: `#GC : sp=1567 hp=151833 used=74%`,
+then "the firmware asked for a processor reset" -- the VM out of memory
+(`vmem.c`, free space under `VMEM_GCTHRESHOLD` after a collection), before
+`verifySig`, which is what the hardware's `nab_reset_reason = 1` said the
+same afternoon. The hex path holds about six times the image at once: the
+.sim is hex, `http.mtl` builds the body once for the status code and once
+more for the callback and keeps the received segments, then the image and
+the verifier's scratch come on top. `lean` (107,904 bytes) reached the gate
+at `hp=167412 used=82%` with 5% of the heap to spare; nothing bigger fits.
+The bytecode now asks for `/ota/<image>.signed.bin` -- the plain image as
+bytes, the signature in an `X-Nab-Sig` header -- over `HTTP_STREAM` and
+copies each segment into one buffer. At the gate, the same scenario, the
+warren's own handler serving: 107,904 bytes `hp=57952 used=29%`, 117,692
+`hp=60400 used=30%`, 126,976 (the flash's limit, a padded image signed with
+a throwaway key, VM built with its public key) `hp=62720 used=31%`; every one
+reaches white and `flashFirmware`, and the `-otafix` recovery variant
+reaches yellow and the flash on the same path.
+
+Two things about the emulator that run found. `--realtime` on `rabbit-vm`
+never paced: `sim_load` zeroes the whole `sim` struct after the arguments
+were parsed, so a 60 s run finished in under a second, and any server whose
+answer takes more wall clock than the rabbit's `STD_NET_TIMEOUT` takes of
+it -- about 28 ms for the warren's handler -- was always too late, which is
+what the "first request of every run aborts after 908 bytes" looked like.
+Fixed in `vm_main.c`; an OTA scenario against a real server wants the flag.
+
 Whole-rabbit scenarios have a loop now: `tools/vm-check.sh`, and from
 2026-11-08 a second binary for the scenarios whose header says
 `bytecode: bootloader`:

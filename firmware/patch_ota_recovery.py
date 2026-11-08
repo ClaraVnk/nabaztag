@@ -36,39 +36,43 @@ from pathlib import Path
 
 MARKER = "/* ota-recovery */"
 
-# The gated branch as the belly-lit ota_cb writes it (2026-11-08). The
-# previous anchor was the un-instrumented one and matched nothing after the
-# lights went in, so the recovery build refused to build at all.
-OLD = '''				if (verifySig firm sig)==0 then
-					(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
-				else
-				(
-					led 2 OTA_STEP_SIG;
-					led 3 OTA_STEP_RUN;
-					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-					(
-						led 3 OTA_STEP_BAD;
-						ota_fail_report if bad==nil then 0xF4 else bad;
-						0
-					)
-				)'''
+# The gated branch as ota_flash writes it (2026-11-08). It moved out of
+# ota_cb the day the binary OTA path went in, so that the hex path and the
+# binary path share one gate and this patch replaces the only verifySig call
+# in the file; the anchor moved with it. An earlier anchor was the
+# un-instrumented one and matched nothing after the lights went in, so the
+# recovery build refused to build at all -- which is the right failure, and
+# the count check below keeps it.
+OLD = '''	if (verifySig firm sig)==0 then
+		(led 2 OTA_STEP_BAD; ota_fail_report 0xF3; 0)
+	else
+	(
+		led 2 OTA_STEP_SIG;
+		led 3 OTA_STEP_RUN;
+		let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+		(
+			led 3 OTA_STEP_BAD;
+			ota_fail_report if bad==nil then 0xF4 else bad;
+			0
+		)
+	);;'''
 
-NEW = '''				(
-					// ota-recovery: no verifySig here, on purpose. Measured 2026-11-08:
-					// on every build before that day the call itself is what kills the
-					// rabbit -- ~248 million instructions in one opcode against a 2.09 s
-					// watchdog -- so "call it and only report" dies exactly like
-					// "call it and refuse". The warren verified this image before it
-					// offered it; the belly says so in yellow, not white.
-					led 2 0xffff00;
-					led 3 OTA_STEP_RUN;
-					let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
-					(
-						led 3 OTA_STEP_BAD;
-						ota_fail_report if bad==nil then 0xF4 else bad;
-						0
-					)
-				)'''
+NEW = '''	(
+		// ota-recovery: no verifySig here, on purpose. Measured 2026-11-08:
+		// on every build before that day the call itself is what kills the
+		// rabbit -- ~248 million instructions in one opcode against a 2.09 s
+		// watchdog -- so "call it and only report" dies exactly like
+		// "call it and refuse". The warren verified this image before it
+		// offered it; the belly says so in yellow, not white.
+		led 2 0xffff00;
+		led 3 OTA_STEP_RUN;
+		let flashFirmware firm 0x13fb6754 0x0407FE58 -> bad in
+		(
+			led 3 OTA_STEP_BAD;
+			ota_fail_report if bad==nil then 0xF4 else bad;
+			0
+		)
+	);;'''
 
 
 def main() -> int:
