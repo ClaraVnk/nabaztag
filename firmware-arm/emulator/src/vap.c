@@ -1208,6 +1208,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       }
       a->authenticated = 1;
       a->sae_auth = 0;
+      a->mute = 0;
       memcpy(vap_pmk, vap_psk_pmk, EAPOL_MASTER_KEY_LENGTH);
       sim_log("AP %s: auth ok (algorithm %u)", macstr(a->bssid), algorithm);
       n = build_auth_resp(out, a, IEEE80211_STATUS_SUCCESS);
@@ -1260,6 +1261,13 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
   struct sim_ap *a = &sim.aps[ap];
   const uint8_t *payload = frame + sizeof(*fr);
   uint32_t payload_length = length - sizeof(*fr);
+
+  if(a->mute) {
+    /* An AP that dropped the station and answers its frames with nothing
+     * at all -- no deauthenticate, no data. Only a watchdog finds this. */
+    vap_stats.muted_from_sta++;
+    return;
+  }
 
   if(!a->associated) {
     /* A class 3 frame from a station this AP does not know. hostapd
@@ -1580,6 +1588,15 @@ void vap_forget(int ap)
     a->authenticated = 0;
     a->sae_auth = 0;
     memset(&vap_hs[i], 0, sizeof(vap_hs[i]));
+  }
+}
+
+void vap_mute(int ap)
+{
+  for(int i=0;i<sim.nb_aps;i++) {
+    if(ap >= 0 && i != ap) continue;
+    sim.aps[i].mute = 1;
+    sim_log("AP %s: will answer the station's data frames with nothing", macstr(sim.aps[i].bssid));
   }
 }
 

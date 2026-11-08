@@ -21,6 +21,11 @@ the top of nabgcc's mtl/boot/boot.0.0.0.13.mtl:
     163  6  login          169 6  password
     175 32  the PMK, which is what WPA and WPA2 associate with
     207  1  0x47, the byte that says this page means something
+    208  1  'd' when the 12 bytes after it are the XMPP password the
+    209 12  server handed the rabbit at registration (main.mtl,
+            GetXmppPassword). Without it the runtime asks the server to
+            register it (violet:iq:register), which a Terrier does not
+            answer -- its rabbits all registered with Violet long ago.
 
 The cipher byte matters more than it looks: it is what OPnetAuth compares the
 scan result against before it will call netAuth at all, so setting it wrong
@@ -41,6 +46,8 @@ from pathlib import Path
 
 SIZE = 4096
 CONF_LENGTH = 208
+# main.mtl: XMPP_PASSWORD_CHECK = 1 byte ('d') at CONF_LENGTH, then the password
+XMPP_PASSWORD_LENGTH = 12
 
 OFF_SERVERURL = 0
 OFF_NETDHCP = 41
@@ -115,6 +122,9 @@ def main() -> int:
     ap.add_argument("--dns")
     ap.add_argument("--login", default="")
     ap.add_argument("--password", default="")
+    ap.add_argument("--xmpp-password", default="",
+                    help="the 12-character XMPP password a registered rabbit holds; "
+                         "without it the runtime starts a registration instead of logging in")
     ap.add_argument("-o", "--out", type=Path, default=Path("rabbit.eeprom"))
     args = ap.parse_args()
 
@@ -152,6 +162,11 @@ def main() -> int:
 
     put(page, OFF_LOGIN, args.login.encode(), 6, "the login")
     put(page, OFF_PWD, args.password.encode(), 6, "the password")
+    if args.xmpp_password:
+        if len(args.xmpp_password) != XMPP_PASSWORD_LENGTH:
+            sys.exit(f"--xmpp-password must be exactly {XMPP_PASSWORD_LENGTH} characters")
+        page[CONF_LENGTH] = ord("d")
+        page[CONF_LENGTH + 1 : CONF_LENGTH + 1 + XMPP_PASSWORD_LENGTH] = args.xmpp_password.encode()
     page[OFF_MAGIC] = MAGIC
 
     args.out.write_bytes(bytes(page))

@@ -133,6 +133,8 @@ at 90000 expect RUN
 | `at <ms> deauth [<bssid>] [reason <n>]` | deauthenticate the rabbit |
 | `at <ms> disassoc [<bssid>] [reason <n>]` | disassociate it |
 | `at <ms> down <bssid>` / `up <bssid>` | take an AP off the air, or back |
+| `at <ms> restart [<bssid>]` | the AP restarts: one broadcast deauthentication (BIP-signed when 802.11w was negotiated), then it knows nobody |
+| `at <ms> forget [<bssid>] [mute]` | the AP drops the station and says nothing; its next data frame gets a reason-7 deauthentication, unprotected -- or, with `mute`, nothing at all |
 | `at <ms> drop-eapol <n>` | swallow the next `n` EAPOL frames |
 | `at <ms> rekey [<bssid>]` | the AP rotates the group key |
 | `at <ms> ptk-rekey [<bssid>]` | the AP restarts the four-way handshake |
@@ -140,12 +142,18 @@ at 90000 expect RUN
 | `at <ms> arp on` / `arp off` | the gateway answers ARP, or stops |
 | `at <ms> server-drop` | the warren's TCP connections close |
 | `at <ms> server-close` | …after announcing `</stream:stream>`, as a server shutting down does |
+| `at <ms> server-vanish` | the warren's sockets die with no FIN and no RST: the rabbit's segments on them are swallowed |
 | `at <ms> expect <state>` | assert `ieee80211_state`: IDLE, SCAN, AUTH, ASSOC, EAPOL, RUN |
+| `at <ms> expect-not <state>` | assert it is anything but that state |
+| `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
+| `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
 | `realtime` | pace the loop to the wall clock |
 | `fetch <ms> <event>` | any of the above, `<ms>` after the rabbit starts downloading a sound |
 
 `security` is one of `open`, `wep`, `wpa-tkip`, `wpa2-tkip`, `wpa2-ccmp`,
 `wpa2-mixed`, `wpa3-sae`, `wpa2+wpa3`.
+`security <bssid> <sec>` is a `restart` with the new security: that is what
+a controller does when an SSID is reprovisioned.
 
 Time is virtual, not wall-clock. The firmware's only clock is `counter_timer`,
 which the emulator writes itself, so `IEEE80211_RUN_TIMEOUT` — ten minutes on
@@ -198,6 +206,69 @@ is an open one. The check carries its author's own doubt —
 it has to agree with.
 
 ## What it already answers
+
+**Why a rabbit stays "connected" to an access point that has forgotten it,
+2026-11-08.** Two of the four needs-the-mains failures measured over JTAG
+the day before were reproduced here on the first try, because both are one
+line of `ieee80211.c`: in RUN the only thing that refreshes
+`IEEE80211_RUN_TIMEOUT` is a beacon from the AP, and a beacon says the AP's
+radio is on, not that it still knows us.
+
+- `restart` is what hostapd does on its way down: one *broadcast*
+  deauthenticate (`hostapd_deauth_all_stas`), BIP-signed when 802.11w was
+  negotiated, then it knows nobody. The stock input path drops every
+  deauthenticate whose addr1 is not the rabbit's own MAC, so the frame went
+  by and the restarted AP's beacons kept the timeout alive -- which is what
+  the UniFi WPA3->WPA2 reprovision of 2026-11-08 looked like from the JTAG
+  line: W5 for ten minutes, the controller showing the rabbit gone.
+- `forget` is the AP dropping the station and saying nothing. The next data
+  frame from the rabbit gets a reason-7 deauthenticate, *unprotected*,
+  because the AP has no keys for a stranger -- and under 802.11w that is the
+  frame `ieee80211_mgmt_ok()` exists to throw away.
+
+The `link_liveness` step (apply-mods.py) obeys the broadcast farewell,
+keeps the time of the last *unicast* data frame from the AP, probes with
+null-data after 60 s without one and gives up at 180 s, and believes a
+refused deauthenticate only once that minute has passed. Measured here,
+`./rabbit`, before and after:
+
+```
+                          without link_liveness          with
+wpa2-ap-restart   RUN for ever, 1 association   IDLE at +50 ms, RUN again at +5 s
+wpa3-ap-restart   RUN for ever, 1 association   IDLE at +50 ms (the signed broadcast frame), RUN at +5 s
+wpa2-ap-forget    RUN for ever, 1 association   null-data at 65 s, reason 7 back, RUN again at 70 s
+wpa3-ap-forget    RUN for ever, 1 association   same, through "an unprotected deauth after a minute -- believed"
+wpa3-deauth-forged   passes                     passes: the forgery at 15 s of a live link is ignored
+```
+
+The virtual AP had to become more honest for this: an unsigned
+deauthenticate on an association that negotiated 802.11w is now a forgery
+the AP's own state ignores (before, the AP forgot the station too, which
+made a forged frame indistinguishable from a real one to any liveness
+check), and a null-data frame from a station it does not know gets reason
+7, as hostapd gives.
+
+**What this emulator cannot reproduce, and why: the rabbit that is
+deauthenticated and never re-authenticates (2026-11-08, WPA2, UniFi
+"Reconnect", W2 for 8+ minutes).** The virtual AP answers every
+authentication frame it hears, so a rabbit sitting in AUTH with no reply
+is a scenario this harness cannot write. Read offline, the paths after a
+deauthenticate and after a power-on differ in little: `rt2501_auth` sets
+the channel, the BSSID filter, the autoresponder rates and the key before
+it transmits, exactly as at boot; what a deauthenticate leaves behind is
+the cipher nibble of key 0 in SEC_CSR1 (the key itself is invalidated),
+the group keys at indexes 1-3, and eapol's state, none of which touches an
+unencrypted management frame. Which bytecode is driving matters more than
+any of that: the bootloader's `boot_loop` rotates through `wifiscans`
+every `BOOT_WIFITIMEOUT` (20 s) without rescanning, which is the
+"alternating between the two BSSIDs" the JTAG line showed, and a soft
+reboot is how a rabbit ends up there. So the step adds the counters the
+next hardware run needs and `dcc_telemetry` prints them: auth frames sent
+(`a`), auth frames received to us and the last status (`r`), beacons from
+the target heard while waiting (`h`), bulk-out URBs refused (`Y`), bytecode
+loads (`B`, 0 = bootloader), and the ASIC's own count of frames never
+acknowledged / acknowledged (`F`, STA_CSR4/5). `jtag/listen.sh` says how
+to read them.
 
 **Why no OTA ever installed, 2026-11-08.** A rabbit downloads the 215 KB
 signed `.sim`, lights nose blue, nose green, one belly light blue, and

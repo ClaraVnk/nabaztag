@@ -1,0 +1,20 @@
+# The access point forgets a WPA2 rabbit and swallows its frames.
+#
+# wpa2-ap-forget.txt's AP still says reason 7 when the forgotten station
+# transmits. Some do not: a station on the wrong side of an ACL, or an AP
+# whose driver drops class 3 frames from unknown stations without a word,
+# gives nothing back at all -- and the beacons keep coming. This is the
+# case nothing but a watchdog can find, and the one IEEE80211_LINK_DEAD_MS
+# (180 s without one unicast data frame from the AP) exists for: RUN since
+# 5 s, forgotten at 20 s, probes from 65 s unanswered, the association
+# given up at 185 s, RUN again a few seconds later.
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 240000
+at 10000  expect RUN
+at 20000  forget mute
+at 180000 expect RUN
+at 180000 expect-reassoc 1
+at 230000 expect RUN
+at 230000 expect-reassoc 2

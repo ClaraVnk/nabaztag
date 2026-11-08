@@ -2844,7 +2844,9 @@ def patch_link_liveness(root: Path) -> None:
     wpa3-deauth-forged.txt must keep passing. Hardware risk: the null-data
     TX runs from rt2501_timer(), i.e. the main loop, after its critical
     section -- the same context and the same rt2501_send() path as the
-    bytecode's own frames. Measured on the ARM7TDMI build: see the commit.
+    bytecode's own frames. Measured on the ARM7TDMI build, 2026-11-08: lean
+    107 904 -> 108 272 (+368), lean-wpa3 117 692 -> 118 460 (+768),
+    lean-wpa3-slim 107 228 -> 108 332 (+1 104, 18 644 spare).
     """
     f = root / "src/net/ieee80211.c"
     t, nl = read_flat(f)
@@ -3148,7 +3150,7 @@ def patch_dcc_telemetry(root: Path) -> None:
       free: one status read, no loop. Busy, the same character is offered
       again next tick; nothing is lost, nothing waits;
     - a short line, `W5 A2 S0 C8 E2 X0 K1 D0 P0 T258 R0/0 a1 r1/0 h0 q0 L0 U3
-      Y0 B1`, snapshotted at its first character: ieee80211_state,
+      Y0 B1 F0/1c`, snapshotted at its first character: ieee80211_state,
       authmode, SAE state, SAE cache entries, eapol_state, USB receive
       errors, rt2501_connected, management frames 802.11w refused,
       deauth/disassoc seen with the Protected bit, ieee80211_timeout, reset
@@ -3157,11 +3159,15 @@ def patch_dcc_telemetry(root: Path) -> None:
       target BSSID heard while in AUTH/ASSOC, null-data probes sent,
       associations given up, seconds since the last unicast data frame
       from the AP, bulk-out URB errors, bytecode loads (0 = the bootloader
-      is still driving). Added 2026-11-08 for the deauthenticated-never-
-      re-authenticates case: `a` rising with `r` at 0 and `h` rising says
-      the AP hears us and does not answer; `h` at 0 says we are deaf or on
-      the wrong channel; `Y` rising says the frames never left the stick;
-      about 80 characters, so one line every 80 ticks;
+      is still driving), and F the ASIC's own count of frames never
+      acknowledged / frames acknowledged (STA_CSR4/5). Added 2026-11-08 for
+      the deauthenticated-never-re-authenticates case: `a` rising with `r`
+      at 0 and `h` rising says the AP hears us and does not answer; `h` at
+      0 says we are deaf or on the wrong channel; `Y` rising says the
+      frames never left the stick; `F` failed rising with each `a` says
+      they left and nobody acknowledged them (wrong channel or rate, or an
+      AP that ignores this MAC); about 85 characters, so one line every
+      85 ticks;
     - from the top of rt2501_timer(), before its `if(!rt2501_connected)
       return`, so a radio that has given up still reports that it has.
 
@@ -3201,6 +3207,8 @@ def patch_dcc_telemetry(root: Path) -> None:
         "extern uint8_t ieee80211_auth_tx, ieee80211_auth_rx, ieee80211_bss_heard;\n"
         "extern uint16_t ieee80211_auth_status;\n"
         "extern uint8_t nab_tx_errors, nab_bc_loads;\n"
+        "extern uint16_t nab_tx_acked, nab_tx_failed;\n"
+        "void rt2501_tx_stats_poll(void);\n"
         "uint8_t ieee80211_sae_diag(void);\n\n"
         "#define TARGET_REQ_DEBUGCHAR 0x02\n\n"
         "static char dcctel_line[96];\n"
@@ -3220,6 +3228,7 @@ def patch_dcc_telemetry(root: Path) -> None:
         "static void dcctel_snapshot(uint8_t rx_errors, uint8_t connected)\n{\n"
         "  char *p = dcctel_line;\n"
         "  uint8_t sae = ieee80211_sae_diag();\n"
+        "  if(connected) rt2501_tx_stats_poll();\n"
         "  *p++ = 'W'; p = dcctel_hex(p, ieee80211_state);\n"
         "  *p++ = ' '; *p++ = 'A'; p = dcctel_hex(p, ieee80211_authmode);\n"
         "  *p++ = ' '; *p++ = 'S'; p = dcctel_hex(p, sae & 15);\n"
@@ -3246,6 +3255,11 @@ def patch_dcc_telemetry(root: Path) -> None:
         "  *p++ = ' '; *p++ = 'U'; p = dcctel_hex(p, (counter_timer - ieee80211_link_last_ucast) / 1000);\n"
         "  *p++ = ' '; *p++ = 'Y'; p = dcctel_hex(p, nab_tx_errors);\n"
         "  *p++ = ' '; *p++ = 'B'; p = dcctel_hex(p, nab_bc_loads);\n"
+        # F: frames the ASIC gave up on after every retry (no ACK from the
+        # AP) / frames it got an ACK for. The one counter that tells "the AP
+        # ignores our auth" from "our auth never reaches the air".
+        "  *p++ = ' '; *p++ = 'F'; p = dcctel_hex(p, nab_tx_failed);\n"
+        "  *p++ = '/'; p = dcctel_hex(p, nab_tx_acked);\n"
         "  *p++ = '\\n';\n"
         "  dcctel_len = (uint8_t)(p - dcctel_line);\n"
         "  dcctel_pos = 0;\n}\n\n"
@@ -3263,6 +3277,24 @@ def patch_dcc_telemetry(root: Path) -> None:
                   "void rt2501_timer(void)\n{\n"
                   "  dcctel_tick(rt2501_rx_errors, (uint8_t)rt2501_connected);  /* dcc_telemetry */\n"
                   "  if(!rt2501_connected) return;\n", 1)
+    # The ASIC's own TX statistics. STA_CSR4 holds the no-retry and one-retry
+    # counts, STA_CSR5 the multi-retry and retry-fail counts (16 bits each,
+    # cleared by the read -- Ralink RT2573 register map, the same registers
+    # rt2x00's rt73usb_link_stats reads). Two control transfers per snapshot,
+    # i.e. every ~80 ticks: lighter than rt2501_calibrate, which reads BBP
+    # registers every RT2501_CAL_PERIOD (40) ticks through the same path.
+    # Hardware risk: a control read on a stick that has stopped answering
+    # blocks like any other; dcctel_snapshot only calls this while
+    # rt2501_connected says the stick is there.
+    t = t + ("\n/* dcc_telemetry: the ASIC's TX statistics, accumulated (the registers\n"
+             "   clear on read). failed = frames given up on after every retry, i.e.\n"
+             "   never acknowledged by the AP; acked = everything else. */\n"
+             "uint16_t nab_tx_acked, nab_tx_failed;\n"
+             "void rt2501_tx_stats_poll(void)\n{\n"
+             "  uint32_t c4 = rt2501_read(rt2501_dev, STA_CSR4);\n"
+             "  uint32_t c5 = rt2501_read(rt2501_dev, STA_CSR5);\n"
+             "  nab_tx_acked += (uint16_t)((c4 & 0xffff) + (c4 >> 16) + (c5 & 0xffff));\n"
+             "  nab_tx_failed += (uint16_t)(c5 >> 16);\n}\n")
     write_flat(q, t, nl2)
     print(f"[ok]   dcc_telemetry: a status line on the debug channel, one char per tick")
 

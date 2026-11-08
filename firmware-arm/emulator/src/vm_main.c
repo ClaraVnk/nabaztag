@@ -73,7 +73,7 @@ void sim_run_events(void)
         vap_restart(e->ap);
         break;
       case SIM_EV_AP_RESTART:   vap_restart(e->ap); break;
-      case SIM_EV_AP_FORGET:    vap_forget(e->ap); break;
+      case SIM_EV_AP_FORGET:    vap_forget(e->ap); if(e->arg) vap_mute(e->ap); break;
       case SIM_EV_SERVER_DROP:  gw_server_drop(); break;
       case SIM_EV_SERVER_CLOSE: gw_server_close(1); break;
       case SIM_EV_SERVER_VANISH: gw_server_vanish(); break;

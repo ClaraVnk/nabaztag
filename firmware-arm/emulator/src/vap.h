@@ -19,6 +19,7 @@ struct vap_stats {
   uint32_t assoc_responses;
   uint32_t deauths_sent;
   uint32_t nulls_from_sta;     /* null-data frames: the rabbit probing its AP */
+  uint32_t muted_from_sta;     /* frames a muted AP swallowed */
   uint32_t data_from_sta;
   uint32_t data_to_sta;
   uint32_t eapol_from_sta;
@@ -46,6 +47,9 @@ void vap_deauth(int ap, int disassoc, uint16_t reason);
  * knows nobody) or silently forgets the station. See the definitions. */
 void vap_restart(int ap);
 void vap_forget(int ap);
+/* ...and from then on drops its data frames without a word, until it
+ * authenticates again. The AP that never says reason 7. */
+void vap_mute(int ap);
 void vap_deauth_protected(int ap, int disassoc, uint16_t reason);
 void vap_reauth(int ap);
 void vap_rekey(int ap);

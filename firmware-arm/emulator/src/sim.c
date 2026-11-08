@@ -356,10 +356,15 @@ int sim_load(const char *path)
           fclose(f); return -1;
         }
       } else if(!strcmp(tok[2], "forget")) {
-        /* The AP drops the station's entry and says nothing at all. */
+        /* The AP drops the station's entry and says nothing at all; with
+           `mute` it also swallows the station's frames instead of
+           answering them with reason 7. */
         e->kind = SIM_EV_AP_FORGET;
-        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
-        if(e->ap < 0 && n >= 4) {
+        for(int i = 3; i < n; i++) {
+          if(!strcmp(tok[i], "mute")) e->arg = 1;
+          else e->ap = ap_by_bssid(tok[i]);
+        }
+        if(e->ap < 0 && n >= 4 && !(n == 4 && e->arg)) {
           fprintf(stderr, "%s:%d: no AP with BSSID %s\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
