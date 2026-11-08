@@ -90,7 +90,7 @@ def main():
                         tag = bytes([tag[0] ^ 1]) + tag[1:]
                     body = runtime + b"Hmac" + tag.hex().encode()
                 print(f"bc.jsp asked, HMAC {a.hmac if mac in keys else 'none (no key)'}"
-                      f", r={q.get('r', ['-'])[0]}, z={q.get('z', ['-'])[0]}", flush=True)
+                      f", v={q.get('v', ['-'])[0]}, r={q.get('r', ['-'])[0]}, z={q.get('z', ['-'])[0]}", flush=True)
                 return self.send(200, body)
             self.send(404, b"")
 
