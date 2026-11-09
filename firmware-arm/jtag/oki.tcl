@@ -17,8 +17,9 @@
 #
 # 128 KB of flash at 0x08000000, 32 sectors of 4096 bytes. Sector 31
 # (0x1F000) holds the rabbit's configuration -- Wi-Fi, server, MAC-derived
-# identity -- and sector 30 was spared with it in June 2026, so erasing 0..29
-# keeps a configured rabbit configured. Erase 31 and the rabbit comes up as
+# identity -- so erasing 0..30, the firmware's 124 KB, keeps a configured
+# rabbit configured (sector 30 was spared too in June 2026; images have
+# outgrown that since). Erase 31 and the rabbit comes up as
 # it left the factory.
 
 set FLASH_BASE  0x08000000
@@ -185,7 +186,7 @@ proc oki_program_word {addr b0 b1 b2 b3} {
 # Erase the firmware sectors and leave the configuration alone. Sector 30 is
 # spared together with 31: the June 2026 recovery did it that way, the
 # readback was byte-exact, and a configured rabbit stayed configured.
-proc oki_erase_firmware {{last 29}} {
+proc oki_erase_firmware {{last 30}} {
     global FLASH_BASE SECTOR_SIZE
     oki_wd_off
     oki_reset_mode

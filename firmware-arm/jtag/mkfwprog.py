@@ -10,7 +10,7 @@ thousand commands and a couple of minutes.
     ./mkfwprog.py ../bin/lean/Nab.bin -o /tmp/fwprog.tcl
     openocd -f nabaztag-pi.cfg -f oki.tcl -f /tmp/fwprog.tcl -c shutdown
 
-The generated script erases sectors 0..29 and programs the image, then reads
+The generated script erases sectors 0..30 and programs the image, then reads
 it back and compares. The comparison is the point: this chip's writer has no
 error checking at all -- `write_ok` is commented out in mem.c -- so a flash
 that did nothing looks exactly like a flash that worked. Which is how a
@@ -26,7 +26,11 @@ from pathlib import Path
 FLASH_BASE = 0x08000000
 SECTOR_SIZE = 0x1000
 CONF_SECTOR = 31          # Wi-Fi and server configuration; never erased here
-SPARED = 2                # sectors 30 and 31, as in the June 2026 recovery
+# Only the configuration sector is spared. The June 2026 recovery spared 30
+# as well, which capped an image at 122 880 bytes; the linker gives the
+# firmware 124 KB (sys/ml67q4051.ld: "last sector is config data"), and
+# Naboot 1.0.0.2 is 123 420 bytes -- written by OTA into sector 30 since.
+SPARED = 1
 
 
 def main() -> int:
