@@ -205,7 +205,7 @@ never matches -- the handshake completed and the gate timed out two seconds
 later, every three seconds.
 
 The TLS policy, 2026-11-09, same bootloader, `emulator/tools/xmpp-tls-proof.sh`
-with `tools/locate_strip.py` dropping the `xmpp_tls` line between boot 1
+with `emulator/tools/locate_strip.py` dropping the `xmpp_tls` line between boot 1
 (exchange, pending, plain) and boot 2 (owner confirmed), real Terrier
 containers:
 
