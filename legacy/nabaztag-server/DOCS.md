@@ -7,6 +7,11 @@
 > `legacy/`, which Home Assistant does not scan). If you still have it
 > installed it keeps running but will never update; stop it before installing
 > `nabaztag-violet`, which needs the same ports.
+>
+> **Uninstall it.** Its image is frozen in 2019 on Debian 8, PHP 5.6,
+> Apache 2.4.10 and OpenSSL 1.0.1, all long out of support, with dozens of
+> known critical vulnerabilities that cannot be patched in place. It is kept
+> only as history; do not run it, even on a home network.
 
 This add-on runs an [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) server
 inside Home Assistant OS. An **original Nabaztag / Nabaztag:tag** (the 2005–2006
