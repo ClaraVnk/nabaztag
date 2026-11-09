@@ -14,7 +14,10 @@ show any colours it liked.
 
 1. The rabbit boots, finds no key in its configuration sector, draws 32
    random bytes and computes its public key (TweetNaCl X25519, 2–8 s; the
-   ladder feeds the watchdog, step `x25519_wdt`).
+   ladder feeds the watchdog, step `x25519_wdt`). The bytes come from the
+   entropy pool (`crypto/nab_rng.h`, step `entropy_pool`), and only once it
+   holds 128 bits of credit: `kxBegin` answers nil before that and the
+   bootloader asks again on its next pass, for `KX_WAIT` seconds at most.
 2. It sends its public key to the warren and receives the warren's.
 3. Both sides run `nab_kx_derive` / `kx.derive`: HKDF-SHA-256 over the
    shared secret, salt `nabaztag adoption v1`, info `nabkx ‖ rabbit_pub ‖

@@ -33,6 +33,8 @@ struct vap_stats {
   uint32_t ptk_rekeys_answered;
   uint32_t keys_installed;
   uint32_t channel_switches;
+  uint32_t plain_injected;     /* attacker frames sent in clear (inject-plaintext) */
+  uint32_t rx_cipher_err;      /* protected frames the radio could not decrypt */
 };
 
 extern struct vap_stats vap_stats;
@@ -59,5 +61,10 @@ void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
 /* A frame from the phone that joined a rabbit in config mode: see phone.c. */
 void vap_inject(const uint8_t *frame, uint32_t length);
+/* An attacker's plaintext data frame from the AP's address; `eapol` makes
+ * it an EAPOL-Key message 1. */
+void vap_inject_plain(int ap, int eapol);
+/* Deterministic -1..+1 dB jitter on every delivered frame's RSSI; 0 = none. */
+void vap_set_rssi_noise(uint32_t seed);
 
 #endif /* _VAP_H_ */

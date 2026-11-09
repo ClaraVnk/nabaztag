@@ -11,11 +11,11 @@
 
 #include "net/nab_kx.h"
 
-/* The SAE random stream (timer, RSSI, MAC and an xorshift through SHA-256;
-   see ieee80211_sae_rng). A long-lived key deserves better and there is
-   nothing better on this chip; the check colours are what make a passive
-   guess of it useless to an active attacker. */
-extern void ieee80211_rng_bytes(uint8_t *out, uint32_t len);
+/* The entropy pool (nab_rng.h), through the driver's gate: 0 until the pool
+   has accrued its minimum credit, and the bootloader then asks again on its
+   next pass rather than drawing a key from a timer. A long-lived key is the
+   one thing here that must never come from a state an observer can search. */
+extern int ieee80211_rng_key_bytes(uint8_t *out, uint32_t len);
 
 uint8_t nab_kx_latched;
 uint8_t nab_kx_key[NAB_KX_KEY];
@@ -26,7 +26,7 @@ static uint8_t kx_priv[32], kx_pub[NAB_KX_PUB], kx_have;
 int nab_kx_vm_begin(uint8_t pub[NAB_KX_PUB])
 {
   if(nab_kx_latched) return 0;
-  ieee80211_rng_bytes(kx_priv, sizeof kx_priv);
+  if(!ieee80211_rng_key_bytes(kx_priv, sizeof kx_priv)) return 0;
   nab_kx_keypair(kx_pub, kx_priv);
   memcpy(pub, kx_pub, NAB_KX_PUB);
   kx_have = 1;

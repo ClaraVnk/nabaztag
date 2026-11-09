@@ -50,6 +50,24 @@ PDEVINFO rt2501_dev;
 
 /* The radio's own state, as the USB driver would see it. */
 static int vap_radio_up = 1;
+/* Whether the rabbit holds a pairwise key, as the RT2573's key table would:
+   set and cleared through rt2501_set_key() below. A protected data frame
+   is decrypted when it does and dropped (CipherErr) when it does not. */
+static int vap_sta_ptk;
+/* Per-frame RSSI jitter, off (0) by default so a transcript is
+   reproducible; a seed makes every delivered frame wobble by -1..+1 dB,
+   deterministically, which is what the thermal noise on a real link does
+   and what the entropy pool harvests. */
+static uint32_t vap_noise_state;
+void vap_set_rssi_noise(uint32_t seed) { vap_noise_state = seed; }
+static int16_t vap_noise(void)
+{
+  uint32_t s = vap_noise_state;
+  if(s == 0) return 0;
+  s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+  vap_noise_state = s;
+  return (int16_t)((s >> 7) % 3) - 1;
+}
 static uint8_t vap_channel = 1;
 static uint8_t vap_filter_bssid[IEEE80211_ADDR_LEN];
 
@@ -557,6 +575,8 @@ enum {
 
 struct vap_handshake {
   int      stage;
+  int      secure;      /* message 4 received: everything to the station
+                           is encrypted from here on (Protected bit set) */
   uint8_t  gtk_index;
   int      rekey_pending;
   uint8_t  anonce[EAPOL_NONCE_LENGTH];
@@ -691,6 +711,10 @@ static uint32_t vap_wrap_data(uint8_t *out, const struct sim_ap *a,
   memset(fr, 0, sizeof(*fr));
   fr->i_fc[0] = IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
   fr->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
+  /* Encrypted on the air once the AP holds a PTK, and the Protected bit
+   * says so. The body stays in clear here, as it is past the RT2573, which
+   * decrypts in hardware and strips the IV but leaves the header alone. */
+  if(vap_hs[a - sim.aps].secure) fr->i_fc[1] |= IEEE80211_FC1_PROTECTED;
   memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr3, source_mac, IEEE80211_ADDR_LEN);
@@ -1010,6 +1034,7 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
 
   if(hs->stage == HS_SENT_MSG3) {
     hs->stage = HS_DONE;
+    hs->secure = 1;
     sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
             macstr(a->bssid));
     vap_stats.handshakes_completed++;
@@ -1146,6 +1171,12 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
             return;
           }
           vap_sae_live = 1;
+          /* The station's scalar, for tools/rng-boots.sh: two boots that
+             print the same one drew from the same state. */
+          sim_log("AP %s: SAE station scalar %02x%02x%02x%02x%02x%02x%02x%02x...",
+                  macstr(a->bssid), vap_sae.peer_scalar[0], vap_sae.peer_scalar[1],
+                  vap_sae.peer_scalar[2], vap_sae.peer_scalar[3], vap_sae.peer_scalar[4],
+                  vap_sae.peer_scalar[5], vap_sae.peer_scalar[6], vap_sae.peer_scalar[7]);
           sae_commit_bytes(&vap_sae, commit);
           n = build_auth_sae(out, a, 1, commit, sizeof commit);
           queue_frame(out, n, a->rssi, a->channel);
@@ -1237,6 +1268,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       if(a->security >= SIM_SEC_WPA_TKIP) {
         /* An AP sends message 1 as soon as the station is associated. */
         vap_hs[ap].stage = HS_IDLE;
+        vap_hs[ap].secure = 0;
         vap_send_msg1(ap);
       }
       break;
@@ -1471,6 +1503,7 @@ int32_t rt2501_set_key(uint8_t index, uint8_t *key, uint8_t *txmic,
                        uint8_t *rxmic, uint8_t cipher)
 {
   (void)key; (void)txmic; (void)rxmic;
+  if(index == 0) vap_sta_ptk = (cipher != RT2501_CIPHER_NONE_);
   sim_log("radio: key %u installed, cipher %u (%s)", index, cipher,
           index == 0 ? "pairwise" : "group");
   vap_stats.keys_installed++;
@@ -1874,6 +1907,62 @@ void vap_set_up(int ap, int up)
   }
 }
 
+/**
+ * @brief An attacker's data frame: the AP's addresses, no encryption.
+ *
+ * What anyone in radio range can send without the password, and what the
+ * stock receive path accepted once associated (FragAttacks CVE-2020-26140
+ * class; the 2026-11-08 audit's F1). As `eapol`, the payload is an EAPOL-Key
+ * message 1 with a high replay counter -- the frame that made the rabbit
+ * replace its PTK and lose the link (F2); otherwise an ARP-shaped payload.
+ * rx_protected drops both; ieee80211_plain_dropped counts them.
+ */
+void vap_inject_plain(int ap, int eapol)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t len, n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    memset(body, 0, sizeof body);
+    if(eapol) {
+      struct eapol_frame *fr = (struct eapol_frame *)body;
+      uint32_t body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH;
+      memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+      fr->protocol_version = EAPOL_VERSION2;
+      fr->packet_type = EAPOL_TYPE_KEY;
+      fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+      fr->body_length[1] = (uint8_t)(body_length & 0xff);
+      fr->key_frame.descriptor_type = EAPOL_DTYPE_WPA2KEY;
+      fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+      fr->key_frame.key_info.key_type = 1;
+      fr->key_frame.key_info.key_ack  = 1;
+      fr->key_frame.key_length[1] = 16;
+      vap_put_replay(fr->key_frame.replay_counter, vap_hs[i].replay + 1000);
+      memset(fr->key_frame.key_nonce, 0x5a, EAPOL_NONCE_LENGTH);
+      len = LLC_LENGTH + 4 + body_length;
+    } else {
+      /* LLC/SNAP, EtherType ARP, and a request for the rabbit's address. */
+      static const uint8_t arp[] = {
+        0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06,
+        0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01 };
+      memcpy(body, arp, sizeof arp);
+      len = sizeof arp + 20;
+    }
+    n = vap_wrap_data(out, a, a->bssid, body, len);
+    out[1] &= (uint8_t)~IEEE80211_FC1_PROTECTED;   /* the attacker has no key */
+    sim_log("AP %s: an attacker's plaintext %s frame, from the AP's address",
+            macstr(a->bssid), eapol ? "EAPOL message 1" : "ARP");
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.plain_injected++;
+    return;
+  }
+  sim_log("vap: no associated AP to inject a plaintext frame from");
+}
+
 void vap_drop_eapol(int count)
 {
   vap_eapol_drops = count;
@@ -1911,6 +2000,15 @@ void vap_poll(void)
     vap_queue_count--;
     if(q->channel != vap_channel) continue;   /* the radio moved on */
     vap_stats.rx_frames++;
-    ieee80211_input(q->data, q->length, q->rssi);
+    /* The radio's cipher engine: a protected data frame is decrypted when
+     * a pairwise key is installed and reported CipherErr -- dropped before
+     * the driver sees it -- when none is. rt2501usb.c's filter does the
+     * latter on the hardware; here it is the one place the model has. */
+    if((q->data[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA
+       && (q->data[1] & IEEE80211_FC1_PROTECTED) && !vap_sta_ptk) {
+      vap_stats.rx_cipher_err++;
+      continue;
+    }
+    ieee80211_input(q->data, q->length, (int16_t)(q->rssi + vap_noise()));
   }
 }

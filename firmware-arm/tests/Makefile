@@ -17,12 +17,12 @@ INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
 # Defined before any rule that uses it: a prerequisite list is
 # expanded when the rule is read, not when it runs.
-CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h net/nab_tls.h
+CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h net/nab_tls.h net/nab_rng.h
 
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order
+.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -132,7 +132,14 @@ wdt_order:
 	@n=$$(grep -c "nab_verify_tick();" /tmp/nab-wdt/src/crypto/tweetnacl.c); \
 	  if [ "$$n" -eq 5 ]; then echo "  ok    5 ticks"; else echo "  FAIL  $$n ticks, want 5"; exit 1; fi
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order
+# The entropy pool: the gate, the stored seed, and that every input --
+# frame RSSI and arrival time, retained RAM, carry, seed -- changes a draw.
+rng: $(CRYPTO_H)
+	@echo "== the entropy pool: gate, seed, inputs, draws"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_rng test_rng.c \
+		../crypto/nab_rng.c ../crypto/sha256.c && /tmp/t_rng
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
@@ -184,7 +191,9 @@ arm:
 	@arm-none-eabi-size /tmp/sae.o
 	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/nab_tls.c -o /tmp/nab_tls.o
 	@arm-none-eabi-size /tmp/nab_tls.o
+	$(ARM_CC) $(ARM_FLAGS) $(INC) -c ../crypto/nab_rng.c -o /tmp/nab_rng.o
+	@arm-none-eabi-size /tmp/nab_rng.o
 
 clean:
 	rm -rf net /tmp/t_aes /tmp/t_wpa2 /tmp/t_fuzz /tmp/t_p256 \
-		/tmp/t_sha256 /tmp/t_cmac /tmp/t_sae
+		/tmp/t_sha256 /tmp/t_cmac /tmp/t_sae /tmp/t_rng

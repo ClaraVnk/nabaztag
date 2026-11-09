@@ -24,6 +24,8 @@
 #include "usb/rt2501usb.h"
 #include "net/ieee80211.h"
 #include "net/eapol.h"
+#include "net/nab_rng.h"
+#include "utils/mem.h"
 
 /* eapol.c defines this with a uint16_t length; vnet.c declares it with an
  * int32_t one. Matching the definition. */
@@ -66,6 +68,8 @@ int32_t _vmem_heap[VMEM_LENGTH];
  * whatever image you point it at, and main.c's own declaration is
  * `extern const uint8_t *dumpbc` with loaderInit() handed its address. */
 extern const uint8_t dumpbc[];
+
+extern uint8_t ieee80211_plain_dropped;
 
 void sim_run_events(void)
 {
@@ -138,6 +142,19 @@ void sim_run_events(void)
           snprintf(why, sizeof(why), "the firmware asked for a reset %d time%s (last reason %d%s)",
                    sim.resets, sim.resets == 1 ? "" : "s", sim.last_reset_reason,
                    sim.last_reset_reason == 1 ? ", the VM ran out of memory" : "");
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_EXPECT_PLAIN_DROPPED:
+        if(ieee80211_plain_dropped >= e->arg)
+          sim_log("ok   %u plaintext data frame(s) refused on the protected "
+                  "link, at least %d expected", ieee80211_plain_dropped, e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected at least %d plaintext data "
+                   "frame(s) refused, the rabbit refused %u",
+                   e->arg, ieee80211_plain_dropped);
           sim_note_failure(why);
         }
         break;
@@ -249,6 +266,16 @@ int main(int argc, char **argv)
   gw_init(warren);
   hw_eeprom_open(eeprom);
   hw_audio_dir(audio_dir);
+
+  /* The entropy pool, as main.c starts it; the retained RAM is zeros here. */
+  {
+    static uint8_t sram[4096];
+    uint8_t seed[NAB_RNG_SEED_LEN];
+    read_uc_flash(NAB_RNG_SEED_OFF, seed, sizeof seed);
+    nab_rng_init(sram, sizeof sram, seed);
+    sim_log("rng: pool started, %s seed in the config page",
+            nab_rng_seed_stored() ? "a" : "no");
+  }
 
   vap_init();
   ieee80211_init();

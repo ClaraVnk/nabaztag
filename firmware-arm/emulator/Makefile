@@ -31,13 +31,15 @@ FW += $(NABGCC)/src/usb/rt2501usb_buffer.c
 CRYPTO_H := obj/include/net/aes128.h obj/include/net/p256.h \
             obj/include/net/sha256.h obj/include/net/cmac.h \
             obj/include/net/sae.h obj/include/net/nab_kx.h \
-            obj/include/net/nab_tls.h
+            obj/include/net/nab_tls.h obj/include/net/nab_rng.h
 
 FW += ../crypto/aes128.c
 # WPA3-SAE. apply-mods' wpa3_sae step also drops these into the nabgcc
 # tree, but the emulator builds them from crypto/ directly, the way it
 # already does for AES -- one copy, and the host tests use the same one.
 FW += ../crypto/p256.c ../crypto/sha256.c ../crypto/cmac.c ../crypto/sae.c
+# The entropy pool every secret is drawn from (entropy_pool step).
+FW += ../crypto/nab_rng.c
 
 # The hardware stubs nabgcc already ships for its own host build of the VM.
 # Upstream's work, used as it stands — see README.md.
@@ -175,11 +177,20 @@ SCENARIOS = $(sort $(wildcard scenarios/*.txt))
 # The config page the WPA3 scenarios boot from. SAE reads its passphrase out
 # of offset 92, exactly as the bootloader's wifiAuth does, so the scenarios
 # cannot pass by being handed a password the firmware would not have.
+#
+# With the entropy pool's seed in it: a rabbit that has booted before, whose
+# pool is ready at init. The first-boot page has none, and the one scenario
+# that boots from it is the one that measures the wait (wpa3-sae-first-boot).
+# ./rabbit keeps both as fixtures -- a seed the run stores stays in memory.
 obj/conf/wpa3.eeprom: mkconf.py | obj
+	@mkdir -p obj/conf
+	python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 --rng-seed fixed -o $@
+
+obj/conf/wpa3-first-boot.eeprom: mkconf.py | obj
 	@mkdir -p obj/conf
 	python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 -o $@
 
-CONFS = obj/conf/wpa3.eeprom
+CONFS = obj/conf/wpa3.eeprom obj/conf/wpa3-first-boot.eeprom
 
 check: $(TARGET) $(CONFS)
 	@mkdir -p obj/logs; fail=0; \
@@ -193,6 +204,7 @@ check: $(TARGET) $(CONFS)
 	  fi; \
 	done; \
 	echo; echo "transcripts in obj/logs/"; \
+	tools/rng-boots.sh || fail=1; \
 	exit $$fail
 
 # Prove the emulator's own code is clean under the sanitizers. The firmware's

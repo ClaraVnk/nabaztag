@@ -1,0 +1,26 @@
+# A data frame in clear, on a protected link (FragAttacks CVE-2020-26140
+# class; the 2026-11-08 audit's F1).
+#
+# Once the four-way handshake is done the AP encrypts everything, so a data
+# frame that arrives unprotected with the AP's addresses did not come from
+# the AP: anyone in radio range can send one without the password. The stock
+# receive path handed it up regardless -- to the IP stack, or, as an EAPOL-Key
+# message 1 with a high replay counter, to the handshake, which then replaced
+# the pairwise key and lost the link (F2).
+#
+# rx_protected refuses both; ieee80211_plain_dropped counts them. Without
+# that step this scenario fails on the first expect-plain-dropped (the
+# control), and the EAPOL one also shows as a handshake the AP never asked
+# for.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 20000 inject-plaintext
+at 21000 expect-plain-dropped 1
+at 30000 inject-plaintext eapol
+at 31000 expect-plain-dropped 2
+at 59000 expect RUN

@@ -16,10 +16,15 @@ const CONF_KXKEY=224;;		//32
 const CONF_KXFLAG=256;;		//1  'K' key, 'C' confirmed
 const CONF_KXCOLORS=257;;	//5
 const KX_SHOW=60;;
+// How long to wait for the entropy pool before giving up on adoption
+// for this boot (entropy_pool): kxBegin says nil until the pool has its
+// 128 bits of credit, which the scan's beacons give it within seconds.
+const KX_WAIT=30;;
 
 var kxdone;;
 var kxhttp;;
 var kxshow;;
+var kxwait;;
 
 fun kx_hexdigit c= if c>=97 then c-87 else c-48;;
 
@@ -56,7 +61,7 @@ fun kx_showing= kxshow!=nil && time<=kxshow;;
 // bytecode in BOOT_WIFITIMEOUT seconds -- which the exchange in flight and
 // the colours' minute both look like. Measured in the emulator: at 20 s it
 // re-initialised the radio and wiped the colours.
-fun kx_busy= (kxhttp!=nil && kxdone==nil) || kx_showing;;
+fun kx_busy= (kxhttp!=nil && kxdone==nil) || (kxwait!=nil && kxdone==nil) || kx_showing;;
 
 fun _kxcbhttp httpreq res=
 	let kx_unhex httpgetcontent res -> w in
@@ -89,7 +94,14 @@ fun kx_step url=
 	else if kxhttp==nil then
 	(
 		let kxBegin -> pub in
-		if pub==nil then (set kxdone=1; 0)
+		if pub==nil then
+		(
+			// No key from a pool that is not ready yet: ask again next pass,
+			// for KX_WAIT seconds at most.
+			if kxwait==nil then set kxwait=time;
+			if time-kxwait>KX_WAIT then set kxdone=1;
+			0
+		)
 		else (set kxhttp=httprequest "GET" (kx_url url pub) nil #_kxcbhttp HTTP_NORMAL; 0);
 		0
 	)
