@@ -197,6 +197,16 @@ void sim_run_events(void)
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_FORGED_MSG1:
+      case SIM_EV_RESEND_MSG3:
+      case SIM_EV_EAPOL_OVERSIZED:
+      case SIM_EV_EXPECT_PTK_INSTALLS:
+      case SIM_EV_EXPECT_GROUP_INSTALLS:
+      case SIM_EV_EXPECT_PTK_SYNCED:
+      case SIM_EV_EXPECT_EAPOL_BADLEN:
+      case SIM_EV_EXPECT_TKIP_REFUSED:
+      case SIM_EV_EXPECT_SAE_REFUSED:
+        sim_audit_event(e); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
           sim_log("ok   %u plaintext data frame(s) refused on the protected "
@@ -475,7 +485,14 @@ int main(int argc, char **argv)
            vap_stats.rekeys_sent, vap_stats.rekeys_acked);
   if(vap_stats.handshakes_completed)
     printf("handshakes done     %u\n", vap_stats.handshakes_completed);
-  printf("keys installed      %u\n", vap_stats.keys_installed);
+  printf("keys installed      %u (pairwise %u, group %u)\n", vap_stats.keys_installed,
+         vap_stats.ptk_installs, vap_stats.group_installs);
+  if(vap_stats.ptk_mismatch)
+    printf("key mismatch drops  %u (station and AP on different pairwise keys)\n",
+           vap_stats.ptk_mismatch);
+  if(vap_stats.forged_msg1 || vap_stats.msg3_resent || vap_stats.eapol_oversized)
+    printf("attack frames       forged msg1 %u, msg3 resent %u, oversized %u\n",
+           vap_stats.forged_msg1, vap_stats.msg3_resent, vap_stats.eapol_oversized);
   printf("channel switches    %u\n", vap_stats.channel_switches);
   if(vap_stats.rx_overruns)
     printf("rx overruns         %u\n", vap_stats.rx_overruns);

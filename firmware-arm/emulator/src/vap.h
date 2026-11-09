@@ -35,6 +35,12 @@ struct vap_stats {
   uint32_t channel_switches;
   uint32_t plain_injected;     /* attacker frames sent in clear (inject-plaintext) */
   uint32_t rx_cipher_err;      /* protected frames the radio could not decrypt */
+  uint32_t ptk_installs;       /* pairwise keys handed to the radio (slot 0) */
+  uint32_t group_installs;     /* group keys handed to the radio (slots 1-3) */
+  uint32_t ptk_mismatch;       /* frames lost to a station key that is not the AP's */
+  uint32_t forged_msg1;        /* message 1 frames the AP never sent (forged-msg1) */
+  uint32_t msg3_resent;        /* message 3 retransmissions (resend-msg3) */
+  uint32_t eapol_oversized;    /* EAPOL frames with a body_length past the frame */
 };
 
 extern struct vap_stats vap_stats;
@@ -64,6 +70,17 @@ void vap_inject(const uint8_t *frame, uint32_t length);
 /* An attacker's plaintext data frame from the AP's address; `eapol` makes
  * it an EAPOL-Key message 1. */
 void vap_inject_plain(int ap, int eapol);
+/* A message 1 the AP did not send, delivered as if it had (the attacker is
+   past rx_protected, or the build predates it): a fresh ANonce, a high
+   replay counter, and no message 3 ever. The AP keeps its live PTK. */
+void vap_forged_msg1(int ap);
+/* The AP retransmits message 3, as it does when message 4 was lost. */
+void vap_resend_msg3(int ap);
+/* A group key message whose body_length says 65535 in a 150-byte frame. */
+void vap_eapol_oversized(int ap);
+/* 1 when the pairwise key in the station's radio is the one the AP it is
+   associated with transmits under; 0 otherwise, or with no association. */
+int vap_sta_ptk_synced(void);
 /* Deterministic -1..+1 dB jitter on every delivered frame's RSSI; 0 = none. */
 void vap_set_rssi_noise(uint32_t seed);
 

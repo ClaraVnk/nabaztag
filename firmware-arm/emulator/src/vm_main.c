@@ -146,6 +146,16 @@ void sim_run_events(void)
         }
         break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_FORGED_MSG1:
+      case SIM_EV_RESEND_MSG3:
+      case SIM_EV_EAPOL_OVERSIZED:
+      case SIM_EV_EXPECT_PTK_INSTALLS:
+      case SIM_EV_EXPECT_GROUP_INSTALLS:
+      case SIM_EV_EXPECT_PTK_SYNCED:
+      case SIM_EV_EXPECT_EAPOL_BADLEN:
+      case SIM_EV_EXPECT_TKIP_REFUSED:
+      case SIM_EV_EXPECT_SAE_REFUSED:
+        sim_audit_event(e); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
           sim_log("ok   %u plaintext data frame(s) refused on the protected "
