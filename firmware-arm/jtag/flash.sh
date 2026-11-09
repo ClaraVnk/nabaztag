@@ -15,8 +15,14 @@ img=${1:?Nab.bin}
 log=${FLASH_LOG:-/tmp/flash-progress.log}
 cd "$(dirname "$0")"
 pgrep -x openocd >/dev/null && { echo "openocd already running, refusing"; exit 2; }
-rm -f /tmp/readback.bin
-./mkfwprog.py "$img" -o /tmp/fwprog.tcl | tee "$log"
+rm -f /tmp/readback.bin /tmp/fwprog.tcl
+# No script, no OpenOCD: attaching halts the core, and a run that then fails
+# on a missing script leaves the rabbit frozen for nothing.
+./mkfwprog.py "$img" -o /tmp/fwprog.tcl 2>&1 | tee "$log"
+if [ "${PIPESTATUS[0]}" -ne 0 ] || [ ! -f /tmp/fwprog.tcl ]; then
+  echo "=== nothing written: the image was refused (above); the rabbit is untouched ===" | tee -a "$log"
+  exit 1
+fi
 for pass in 1 2 3; do
   echo "=== pass $pass: $(date +%H:%M:%S) ===" | tee -a "$log"
   openocd -f nabaztag-pi.cfg -f oki.tcl -f /tmp/fwprog.tcl -c shutdown 2>&1 \
