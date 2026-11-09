@@ -183,9 +183,8 @@ proc oki_program_word {addr b0 b1 b2 b3} {
     oki_wait
 }
 
-# Erase the firmware sectors and leave the configuration alone. Sector 30 is
-# spared together with 31: the June 2026 recovery did it that way, the
-# readback was byte-exact, and a configured rabbit stayed configured.
+# Erase the firmware sectors, 0..30, and leave the configuration (31) alone,
+# so a configured rabbit stays configured.
 proc oki_erase_firmware {{last 30}} {
     global FLASH_BASE SECTOR_SIZE
     oki_wd_off
