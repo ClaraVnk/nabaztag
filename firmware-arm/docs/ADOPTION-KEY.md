@@ -220,6 +220,65 @@ containers:
 - fix with the attacker rewriting `xmpp_tls` to the plain port: four
   ClientHellos to the plain port, no XMPP, no fallback.
 
+## What else the rabbit tells the warren, and how
+
+Once the XMPP session runs TLS, what travels inside it is authenticated by
+the key; what the runtime still sends over plain HTTP is not. The runtime
+(`main.mtl`, built by `bytecode/build-bytecode.sh`) sends these requests of
+its own:
+
+| request | when | side effect on the warren | now |
+|---|---|---|---|
+| `locate.jsp` | boot, before XMPP | none (read; the TLS policy under the HMAC makes it harmless, above) | HTTP |
+| `rfid.jsp` | a tag on the reader | **yes**: the owner's mapped action | **inside the session** |
+| `record.jsp` (POST, a WAV) | a long press of the head button (`_controlrecord`) | would be | HTTP, not served by the Terrier (a POST: 501) |
+| `itmode.jsp` (start, btn, ear, rfid, reco, done) | interactive mode, entered on a server command the Terrier never sends | would be | HTTP, not served by the Terrier |
+| `sendMailXMPP.jsp` | XMPP register/login failure reports | none | HTTP, not served by the Terrier |
+| `violet:nabaztag:button`, `violet:nabaztag:ears` | head, ears | yes | XMPP already, so inside TLS since `patch_tls.py` |
+| sounds, choreographies, OTA images | commands | none (downloads) | HTTP, out of scope |
+| any URL (`CU` command) | a command from the warren | whatever that URL does; the warren chose it | HTTP |
+| BOSH (`/http-bind`, POST) | the gate's fallback after three failed TCP opens | the session itself | HTTP, not served by the Terrier |
+
+Stage A, `bytecode/patch_rfid_xmpp.py` (2026-11-09): the one live side
+effect moves. `controlrfid` sends the tag as a `<message>` stanza,
+`violet:nabaztag:rfid`, the button's shape, through `xmpps_sendStanza` --
+when the socket runs TLS (`XmppTlsOn`) and the warren asked for it: the
+literal `xmpp-rfid:0`, which the Terrier flips to 1 together with
+`xmpp-tls:N`, for a confirmed rabbit, under the HMAC. The Terrier fires the
+action for the rabbit whose key opened the session (`tls_mac`), never for a
+MAC read out of the stanza, and records at the boot that it told this rabbit
+so (`bc_rfid_session`): a plain `rfid.jsp` in that rabbit's name is then
+ignored, from any address. Everywhere else `rfid.jsp` goes out as before: no
+key, a pending key, a warren without a TLS listener, and a Terrier from
+before this change, which never flips the literal and so never receives a
+stanza it would drop. A confirmed rabbit on the runtime from before keeps the
+address check of the Terrier's `vouch`.
+
+Measured in the emulator, `tools/xmpp-tls-proof.sh --scenario
+scenarios/vm/xmpp-rfid.txt` (boot 2, the owner having confirmed; a tag on
+the reader from 120 s to 124 s; the directive `at <ms> rfid <16 hex>` and
+rabbit-vm's `--port80`, which sends the ping server's connections to the
+Terrier's HTTP port, are new), four runs side by side:
+
+- control, the production runtime (`2d1eebe3`, rebuilt byte for byte) and
+  the Terrier's `main`: TLS session up, the tag goes out as four
+  `GET /vl/rfid.jsp?sn=...&t=d0021a0b0c0d0e0f` (a held tag repeats every
+  second) on new plain connections, vouched for by address, action fired.
+- fix, the runtime with the patch (`4d711512`, 107,429 bytes, each literal
+  once) and the Terrier of this change: four `<message
+  from='<mac>@warren.test/idle' to='rfid@xmpp.objects.violet.net/rfid'
+  id='16'><rfid xmlns="violet:nabaztag:rfid"><tag>d0021a0b0c0d0e0f</tag>`
+  inside the TLS session, `rfid over the session` and the action fired for
+  the session's key, no HTTP connection opened for the tag.
+- the Terrier of this change with the production runtime: as the control.
+- the Terrier's `main` with the new runtime: nothing flips `xmpp-rfid:0`,
+  so `rfid.jsp`, vouched for, as the control.
+
+Not yet: `record.jsp` and the interactive mode, which the Terrier does not
+serve; an HTTP request an attacker forges in a rabbit's name for them is
+answered 404 or 501 today. Stage B would carry them the same way if the
+Terrier ever serves them.
+
 ## Code
 
 | piece | where | state |
@@ -232,3 +291,4 @@ containers:
 | warren endpoint and confirmation page | Terrier | done |
 | bytecode HMAC | `kxCheck`, `adoption.mtl`; Terrier `sign_bytecode` | done, emulator |
 | TLS 1.3 PSK | `../crypto/nab_tls.c`, step `tls_psk`, `bytecode/patch_tls.py`; Terrier xmpp.py | done, OpenSSL and Python ssl; emulator against a real Terrier |
+| RFID report inside the session | `bytecode/patch_rfid_xmpp.py`; Terrier xmpp.py, protocol.py | done, emulator against a real Terrier |

@@ -42,6 +42,8 @@ void gw_set_arp(int on);
  * otherwise): what tells a session from a resource fetch, and what
  * expect-xmpp-opens counts. */
 void gw_set_xmpp_port(uint16_t port);
+/* Send the rabbit's connections to port 80 to this port of the warren. */
+void gw_set_port80(uint16_t port);
 
 /** @brief An Ethernet payload from the rabbit: LLC/SNAP, then the packet. */
 void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);

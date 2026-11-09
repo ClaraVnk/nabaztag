@@ -1,0 +1,27 @@
+# bytecode: bootloader
+#
+# A Ztamp on the reader of a rabbit whose owner confirmed its adoption key,
+# against a real Terrier on the host (--realtime), the runtime fetched from
+# it. Run as boot 2 of tools/xmpp-tls-proof.sh --scenario, after the key is
+# confirmed: the session runs TLS 1.3 PSK (bound about 80 s in, the runtime
+# being fetched at 71 s in real time), and at 120 s a tag is presented for
+# four seconds.
+#
+# What the two runtimes do with it, read in the Terrier's log:
+#
+#   control (the runtime before bytecode/patch_rfid_xmpp.py): one plain
+#      `GET /vl/rfid.jsp?sn=<mac>&...&t=<tag>` -- the request with no
+#      credential that the Terrier can only vouch for by address;
+#   fix: `<message ...><rfid xmlns="violet:nabaztag:rfid"><tag>..` inside
+#      the TLS session, the Terrier logs `rfid over the session`, fires the
+#      action, and no rfid.jsp is sent at all.
+#
+# The gateway's lines here say which HTTP connections the rabbit opened.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 160000
+
+at 20000 expect RUN
+at 120000 rfid d0021a0b0c0d0e0f
+at 124000 rfid none
+at 155000 expect RUN

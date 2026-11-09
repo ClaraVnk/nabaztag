@@ -59,6 +59,13 @@ static uint16_t gw_xmpp_port = 5222;
 
 void gw_set_xmpp_port(uint16_t port) { gw_xmpp_port = port; }
 
+/* Where a connection to port 80 goes instead, 0 for port 80. The runtime
+ * sends rfid.jsp and the other .jsp reports to the ping server that
+ * locate.jsp names, with no port, so a warren on a high port never sees them
+ * unless they are sent there. */
+static uint16_t gw_port80_to;
+void gw_set_port80(uint16_t port) { gw_port80_to = port; }
+
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
  * reach its warren", and exactly what you want when the answer is no. */
@@ -503,6 +510,7 @@ static int host_connect(uint16_t port)
   int fd = -1;
 
   if(warren_host[0] == 0) return -1;
+  if(port == 80 && gw_port80_to) port = gw_port80_to;
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_INET;

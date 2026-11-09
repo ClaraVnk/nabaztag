@@ -98,6 +98,9 @@ stay out of the repo; see `nabaztag-violet/DOCS.md`, *Bytecodes*.)
   server (paired with locate returning a `.local` name + an mDNS responder on the
   HA host). Compiles clean → 103 779 B (+208 B vs the unpatched hybrid). The
   announcer (`mdns.mtl`, publishes the rabbit) is the opposite direction.
+- ✅ TLS 1.3 PSK on the XMPP socket (`patch_tls.py`) for a rabbit whose owner
+  confirmed its adoption key, and the RFID report inside that session instead
+  of plain `rfid.jsp` when the warren asks for it (`patch_rfid_xmpp.py`). See `../firmware-arm/docs/ADOPTION-KEY.md`.
 - ⏳ Serve the hybrid from the add-on, add a **UDP/4000 receiver** + an on-server
   wake-word engine (openWakeWord, "hey Nabi") that hands the utterance to the
   existing STT → conversation-agent → TTS loop. Live-test on the device (a bad

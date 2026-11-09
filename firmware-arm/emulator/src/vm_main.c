@@ -118,6 +118,11 @@ void sim_run_events(void)
       case SIM_EV_UPLOAD:
         phone_start_upload();
         break;
+      case SIM_EV_RFID:
+        hw_clear_tags();
+        if(e->arg) hw_present_tag(e->tag);
+        else sim_log("rfid: the tag was taken away");
+        break;
       case SIM_EV_EXPECT_FLASH:
         if((int)hw_flash_writes() >= e->arg)
           sim_log("ok   flashFirmware reached %u time%s with a %d-byte image, at least %d expected",
@@ -178,6 +183,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--gateway-ip") && i + 1 < argc) gateway_ip = argv[++i];
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
+    else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
@@ -193,6 +199,7 @@ int main(int argc, char **argv)
         "  --lease-ip    the address DHCP offers the rabbit (default 10.0.0.42)\n"
         "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
         "                bookkeeping and expect-xmpp-opens\n"
+        "  --port80      the warren's port that connections to port 80 go to\n"
         "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
         "                rabbit in config mode (scenario: config-mode, upload)\n"
         "  --trace-net   log every packet, not just what happened to it\n"
