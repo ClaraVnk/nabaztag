@@ -341,9 +341,9 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 > Wi-Fi, normal for up to a minute after a flash; **five colours for a
 > minute** = the adoption exchange of step 4, wait it out); that your 2.4 GHz
 > network lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only");
-> on **WPA3**, that the access point allows SAE *hunting-and-pecking* — an
-> H2E-only (hash-to-element) setting is not supported yet, WPA3-only and
-> WPA2/WPA3 transition both are; and that the rabbit can resolve
+> on **WPA3**, that you run 1.0.0.1 or later if the access point is set to
+> H2E-only (hash-to-element) — 1.0.0.0 only does SAE *hunting-and-pecking*;
+> WPA3-only and WPA2/WPA3 transition both work; and that the rabbit can resolve
 > `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash
 > **[`firmware-arm/releases/naboot-minimal.signed.sim`](firmware-arm/releases/)**
@@ -364,7 +364,7 @@ is the short version.
 
 - **WPA3-SAE** — WPA3-only and WPA2/WPA3 transition networks, on 2006 silicon
   (SAE in software, CCMP still in the radio). Hunting-and-pecking only: an
-  access point set to H2E-only is not supported yet (see *Later*).
+  access point set to H2E-only needs 1.0.0.1 (see *Next*).
 - **Adoption key** — one X25519 exchange at adoption; the rabbit shows five
   belly colours, the owner confirms they match the warren's page. Until
   confirmed, the colours show for a minute at every boot.
@@ -391,7 +391,15 @@ is the short version.
   the whole-rabbit emulator, and a Metal toolchain in Python whose
   `mtl_comp.py --check` type-checks the real runtime bytecode.
 
-**Next**
+**Next — Naboot 1.0.0.1 (built and proven in the emulator, not yet on a rabbit)**
+
+- **SAE hash-to-element** (H2E) whenever the access point offers it — the
+  only derivation an H2E-only access point accepts, and the one without the
+  Dragonblood timing leak; hunting-and-pecking stays for access points
+  without it. The password token is derived once per network and kept, so
+  a reassociation costs one scalar multiplication.
+- **An entropy pool** behind every SAE and adoption secret, and a WPA3
+  network that stays WPA3 (no silent downgrade to WPA2).
 
 - **Per-rabbit wake word** compiled into the bytecode — it is recorded on the
   warren today, but not yet minted into each rabbit's own bytecode.
@@ -402,8 +410,6 @@ is the short version.
 
 **Later**
 
-- **H2E** (hash-to-element) for SAE — for access points set to H2E-only, and
-  the timing half of Dragonblood.
 - **A CVE scan** of what the image and the warren carry.
 - **Reclaim flash** — 8 632 bytes are spare today; the measured savings are
   in the history (Phase 8).
@@ -437,8 +443,8 @@ a server restart (it reconnects, base LED violet, no reboot), and after an
 access point that dropped or forgot it (it notices within a few minutes and
 rejoins). If it is *still* orange after that, look at the network before the
 rabbit: 2.4 GHz with 802.11b rates allowed, DNS for the server name, and on
-WPA3 an access point that allows SAE hunting-and-pecking (H2E-only is not
-supported yet).
+WPA3 an access point that allows SAE hunting-and-pecking, or 1.0.0.1 if it
+is set to H2E-only.
 
 **Five colours on the belly for a minute** is not a fault either: that is the
 adoption exchange waiting for you to confirm the colours on the warren's page
