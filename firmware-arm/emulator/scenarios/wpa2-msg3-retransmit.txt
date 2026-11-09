@@ -1,0 +1,24 @@
+# Message 3 again, as an AP retransmits it when message 4 was lost (the
+# 2026-11-08 audit's F4; KRACK CVE-2017-13080 client side).
+#
+# The stock handler accepted it in EAPOL_S_GROUP and ran rt2501_set_key()
+# again with the group key the radio already held -- and, before
+# eapol_ptk_install, a PTK reinstall was only avoided by the key being
+# installed at message 2. Loading a key resets its replay counter, so frames
+# recorded under it replay. gtk_no_reinstall skips the radio for an unchanged
+# key: one group install after the retransmission, two after a real rotation.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 10000 expect-group-installs 1
+at 12000 resend-msg3
+at 13000 expect-group-installs 1        # the same key is not reinstalled
+at 13000 expect-ptk-installs 1          # nor the pairwise one
+at 13000 expect RUN
+at 20000 rekey                          # a changed key still installs
+at 25000 expect-group-installs 2
+at 59000 expect RUN

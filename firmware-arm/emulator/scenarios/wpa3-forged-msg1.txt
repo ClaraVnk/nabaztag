@@ -1,0 +1,20 @@
+# The same forged message 1 (see eapol-forged-msg1.txt) on a WPA3 link,
+# where it is the one unauthenticated frame left that could end a session:
+# 802.11w signs the deauthentication, and this signs nothing.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 90000
+
+at 20000 expect RUN
+at 20000 expect-ptk-installs 1
+at 30000 forged-msg1
+at 31000 expect-ptk-installs 1
+at 31000 expect-ptk-synced
+at 40000 rekey
+at 50000 ptk-rekey
+at 60000 expect-ptk-installs 2
+at 60000 expect-ptk-synced
+at 89000 expect RUN

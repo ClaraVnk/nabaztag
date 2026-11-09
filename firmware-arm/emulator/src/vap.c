@@ -54,6 +54,12 @@ static int vap_radio_up = 1;
    set and cleared through rt2501_set_key() below. A protected data frame
    is decrypted when it does and dropped (CipherErr) when it does not. */
 static int vap_sta_ptk;
+/* The temporal key in slot 0, as the radio would hold it. The AP checks it
+   against the PTK it transmits under: a station on another key cannot
+   decrypt the AP's frames and the AP cannot decrypt the station's, which
+   is how a key installed at message 2 instead of message 3 kills a rekey
+   on real hardware (eapol_ptk_install). */
+static uint8_t vap_sta_tk[16];
 /* Per-frame RSSI jitter, off (0) by default so a transcript is
    reproducible; a seed makes every delivered frame wobble by -1..+1 dB,
    deterministically, which is what the thermal noise on a real link does
@@ -594,6 +600,12 @@ struct vap_handshake {
    * read as the Wi-Fi fault we were hunting on real hardware. It was this. */
   uint8_t  ptk[EAPOL_PTK_LENGTH + 20];   /* kck[16] kek[16] tk[16] mic[16] */
   uint64_t replay;
+  /* The temporal key the AP transmits and receives under: installed when
+     message 4 arrives, so during a rekey it is still the previous one --
+     exactly the window in which a station that installed at message 2 is
+     on the wrong key. */
+  uint8_t  tk_live[16];
+  int      tk_live_set;
 };
 
 static struct vap_handshake vap_hs[SIM_MAX_APS];
@@ -1024,7 +1036,7 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
     return;
   }
 
-  if(hs->rekey_pending) {
+  if(hs->rekey_pending && fr->key_frame.key_info.key_type == 0) {
     hs->rekey_pending = 0;
     sim_log("AP %s: the rabbit acknowledged the group rekey",
             macstr(a->bssid));
@@ -1035,6 +1047,10 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
   if(hs->stage == HS_SENT_MSG3) {
     hs->stage = HS_DONE;
     hs->secure = 1;
+    /* The AP installs the PTK on message 4, as hostapd does: from here
+     * it transmits under this key, and the station had better hold it. */
+    memcpy(hs->tk_live, hs->ptk + 32, 16);
+    hs->tk_live_set = 1;
     sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
             macstr(a->bssid));
     vap_stats.handshakes_completed++;
@@ -1321,6 +1337,17 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
     return;
   }
 
+  /* A protected frame from the station decrypts only under the key the AP
+   * holds for it. On the hardware this is the AP's cipher engine saying
+   * no; here it is the one place the model has. */
+  if((fr->i_fc[1] & IEEE80211_FC1_PROTECTED) && vap_hs[ap].tk_live_set
+     && (!vap_sta_ptk || memcmp(vap_hs[ap].tk_live, vap_sta_tk, 16) != 0)) {
+    vap_stats.ptk_mismatch++;
+    sim_log("AP %s: a protected frame from the station under a key this AP "
+            "does not hold -- dropped", macstr(a->bssid));
+    return;
+  }
+
   if((fr->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_NODATA) {
     /* A null-data frame: the station checking that the AP still knows it.
      * Acknowledged by the hardware and nothing more. */
@@ -1502,8 +1529,18 @@ void vap_inject(const uint8_t *frame, uint32_t length)
 int32_t rt2501_set_key(uint8_t index, uint8_t *key, uint8_t *txmic,
                        uint8_t *rxmic, uint8_t cipher)
 {
-  (void)key; (void)txmic; (void)rxmic;
-  if(index == 0) vap_sta_ptk = (cipher != RT2501_CIPHER_NONE_);
+  (void)txmic; (void)rxmic;
+  if(index == 0) {
+    vap_sta_ptk = (cipher != RT2501_CIPHER_NONE_);
+    if(vap_sta_ptk && key != NULL) {
+      memcpy(vap_sta_tk, key, sizeof vap_sta_tk);
+      vap_stats.ptk_installs++;
+    } else {
+      memset(vap_sta_tk, 0, sizeof vap_sta_tk);
+    }
+  } else if(cipher != RT2501_CIPHER_NONE_) {
+    vap_stats.group_installs++;
+  }
   sim_log("radio: key %u installed, cipher %u (%s)", index, cipher,
           index == 0 ? "pairwise" : "group");
   vap_stats.keys_installed++;
@@ -1963,6 +2000,152 @@ void vap_inject_plain(int ap, int eapol)
   sim_log("vap: no associated AP to inject a plaintext frame from");
 }
 
+/**
+ * @brief A message 1 the AP never sent.
+ *
+ * The 2026-11-08 audit's F2: once eapol_ptk_rekey let message 1 through on a
+ * live link, a forged one -- no MIC to forge -- made the stock supplicant
+ * derive and install a new PTK at message 2 and commit the attacker's
+ * replay counter. rx_protected keeps a plaintext one out; this delivers one
+ * as if the attacker were past that gate (or the build predated it), with
+ * the Protected bit the AP's frames carry, so what is measured is the
+ * handshake's own behaviour: the station must keep its live key, answer
+ * the AP's real rekeys, and not let the counter it echoed lock them out.
+ * The AP's own state is untouched -- it never started a handshake, so the
+ * message 2 it receives is "no handshake in progress".
+ */
+void vap_forged_msg1(int ap)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint32_t body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH;
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(vap_hs[i].stage != HS_DONE) {
+      sim_log("AP %s: no finished handshake to forge a message 1 against",
+              macstr(a->bssid));
+      continue;
+    }
+    memset(body, 0, sizeof body);
+    memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+    fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+    fr->packet_type = EAPOL_TYPE_KEY;
+    fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+    fr->body_length[1] = (uint8_t)(body_length & 0xff);
+    fr->key_frame.descriptor_type =
+        vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+    fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+    fr->key_frame.key_info.key_type = 1;
+    fr->key_frame.key_info.key_ack  = 1;
+    fr->key_frame.key_length[1] = 16;
+    vap_put_replay(fr->key_frame.replay_counter, vap_hs[i].replay + 1000);
+    memset(fr->key_frame.key_nonce, 0x5a, EAPOL_NONCE_LENGTH);
+    n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
+    sim_log("AP %s: a forged EAPOL message 1 (ANonce 5a..5a, replay counter +1000) "
+            "the AP did not send; no message 3 will follow", macstr(a->bssid));
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.forged_msg1++;
+    return;
+  }
+  sim_log("vap: no associated AP to forge a message 1 from");
+}
+
+/**
+ * @brief Message 3 again, as an AP retransmits it when message 4 was lost.
+ *
+ * Same ANonce, same GTK and IGTK, the next replay counter, a fresh MIC. The
+ * station answers with message 4 again and must not hand the radio the
+ * keys it already holds: reinstalling a key resets its replay counter,
+ * which is KRACK (CVE-2017-13077 pairwise, -13080 group; gtk_no_reinstall,
+ * eapol_ptk_install).
+ */
+void vap_resend_msg3(int ap)
+{
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct vap_handshake *hs = &vap_hs[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!sim.aps[i].associated || !ap_audible(&sim.aps[i])) continue;
+    if(hs->stage != HS_DONE && hs->stage != HS_SENT_MSG3) {
+      sim_log("AP %s: no message 3 to retransmit", macstr(sim.aps[i].bssid));
+      continue;
+    }
+    sim_log("AP %s: retransmitting message 3, as if message 4 had been lost",
+            macstr(sim.aps[i].bssid));
+    vap_stats.msg3_resent++;
+    vap_send_msg3(i);
+  }
+}
+
+/**
+ * @brief A group key message whose declared body is longer than the frame.
+ *
+ * The 2026-11-08 audit's F3: eapol_input_msg3() and the group handler
+ * computed the MIC over body_length + 4 bytes with body_length read from
+ * the frame -- 65 539 bytes from a receive buffer of a few hundred. The
+ * frame is a plausible group message otherwise (Secure, MIC, the next
+ * replay counter, Protected on the air). The MIC is garbage: an attacker
+ * cannot sign. The driver copies the frame into its static receive queue
+ * before eapol_input() runs, so the over-read is not a sanitizer report
+ * here; the scenario reads the firmware's own counter instead.
+ */
+void vap_eapol_oversized(int ap)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint32_t carried = (uint32_t)EAPOL_KEY_BODY_LENGTH + 24;   /* what is really there */
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    struct vap_handshake *hs = &vap_hs[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(hs->stage != HS_DONE) {
+      sim_log("AP %s: no finished handshake to follow with a group message",
+              macstr(a->bssid));
+      continue;
+    }
+    memset(body, 0, sizeof body);
+    memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+    fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+    fr->packet_type = EAPOL_TYPE_KEY;
+    fr->body_length[0] = 0xff;      /* 65535 bytes, says the frame */
+    fr->body_length[1] = 0xff;
+    fr->key_frame.descriptor_type =
+        vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+    fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+    fr->key_frame.key_info.key_type = 0;
+    fr->key_frame.key_info.key_index = 1;
+    fr->key_frame.key_info.key_mic  = 1;
+    fr->key_frame.key_info.secure   = 1;
+    fr->key_frame.key_length[1] = 16;
+    vap_put_replay(fr->key_frame.replay_counter, hs->replay + 1);
+    memset(fr->key_frame.key_mic, 0xa5, EAPOL_KEYMIC_LENGTH);
+    fr->key_frame.key_data_length[1] = 24;
+    n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + carried);
+    sim_log("AP %s: a group key message declaring a 65535-byte body in a "
+            "%u-byte frame", macstr(a->bssid), n);
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.eapol_oversized++;
+    return;
+  }
+  sim_log("vap: no associated AP to send an oversized EAPOL frame from");
+}
+
+int vap_sta_ptk_synced(void)
+{
+  for(int i = 0; i < sim.nb_aps; i++)
+    if(sim.aps[i].associated && vap_hs[i].tk_live_set)
+      return vap_sta_ptk && memcmp(vap_hs[i].tk_live, vap_sta_tk, 16) == 0;
+  return 0;
+}
+
 void vap_drop_eapol(int count)
 {
   vap_eapol_drops = count;
@@ -2009,6 +2192,31 @@ void vap_poll(void)
       vap_stats.rx_cipher_err++;
       continue;
     }
-    ieee80211_input(q->data, q->length, (int16_t)(q->rssi + vap_noise()));
+    /* ...and decrypted with the key the station holds, which has to be the
+     * one the AP encrypted with. addr2 says which AP. */
+    if((q->data[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA
+       && (q->data[1] & IEEE80211_FC1_PROTECTED) && q->length >= 16) {
+      int from = ap_index_for_bssid(q->data + 10);
+      if(from >= 0 && vap_hs[from].tk_live_set
+         && memcmp(vap_hs[from].tk_live, vap_sta_tk, 16) != 0) {
+        vap_stats.rx_cipher_err++;
+        vap_stats.ptk_mismatch++;
+        sim_log("radio: a protected frame from AP %s under a key the station "
+                "does not hold -- cipher error, dropped", macstr(q->data + 10));
+        continue;
+      }
+    }
+    /* Delivered in a buffer of exactly its own length, as the radio's
+     * receive buffer bounds it: under ASan a parser that reads past the
+     * frame -- a MIC computed over a length the frame declared rather
+     * than the one it has (eapol_mic_len) -- is caught here and not on a
+     * rabbit. */
+    {
+      uint8_t *exact = malloc(q->length);
+      if(exact == NULL) { sim_note_failure("out of memory"); return; }
+      memcpy(exact, q->data, q->length);
+      ieee80211_input(exact, q->length, (int16_t)(q->rssi + vap_noise()));
+      free(exact);
+    }
   }
 }

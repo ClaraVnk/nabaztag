@@ -79,6 +79,15 @@ enum {
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
   SIM_EV_EXPECT_PLAIN_DROPPED, /* assert >= n plaintext frames refused */
+  SIM_EV_FORGED_MSG1,   /* a message 1 the AP did not send           */
+  SIM_EV_RESEND_MSG3,   /* the AP retransmits message 3              */
+  SIM_EV_EAPOL_OVERSIZED, /* a group message declaring a 64 KB body  */
+  SIM_EV_EXPECT_PTK_INSTALLS,   /* assert exactly n pairwise key installs */
+  SIM_EV_EXPECT_GROUP_INSTALLS, /* assert exactly n group key installs    */
+  SIM_EV_EXPECT_PTK_SYNCED,     /* assert the station's PTK is the AP's   */
+  SIM_EV_EXPECT_EAPOL_BADLEN,   /* assert >= n EAPOL frames refused for length */
+  SIM_EV_EXPECT_TKIP_REFUSED,   /* assert >= n networks refused for pairwise TKIP */
+  SIM_EV_EXPECT_SAE_REFUSED,    /* assert >= n PSK attempts refused on a SAE network */
 };
 
 struct sim_event {
@@ -125,6 +134,10 @@ void sim_note_fetch(void);
 void sim_log(const char *fmt, ...);
 int  sim_failures(void);
 void sim_note_failure(const char *why);
+/* The 2026-11-08 audit's events -- forged message 1, retransmitted message
+   3, oversized EAPOL, and the key-install assertions -- are the same for
+   ./rabbit and ./rabbit-vm, so one handler serves both. 1 when e was one. */
+int sim_audit_event(struct sim_event *e);
 /* Fill a buffer from an xorshift seeded with `seed`; zeros when seed is 0.
  * Stands in for what external RAM holds at power-up. */
 void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed);
