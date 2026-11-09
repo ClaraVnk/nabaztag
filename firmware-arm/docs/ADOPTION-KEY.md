@@ -228,7 +228,7 @@ containers:
 Until 1.0.0.2 the first request of every boot, `bc.jsp`, went in the clear:
 the bytecode carried its HMAC, so nobody could change it, but anyone on the
 path could read it and the query that came with it. Step `boot_tls`
-(`boot-mods/boot_tls.mtl`) moves it inside the same TLS 1.3 PSK as XMPP:
+(`../boot-mods/boot_tls.mtl`) moves it inside the same TLS 1.3 PSK as XMPP:
 
 - **When:** the configuration says the key is confirmed (flag `C` at 256).
   A rabbit learns that from the HMAC on a bytecode, so the first boot after
