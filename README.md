@@ -256,24 +256,20 @@ is the short version.
 - **An entropy pool** behind every SAE and adoption secret, and a WPA3
   network that stays WPA3 (no silent downgrade to WPA2).
 
+**Next**
+
 - **Per-rabbit wake word** compiled into the bytecode — it is recorded on the
   warren today, but not yet minted into each rabbit's own bytecode.
-- **HTTP over TLS-PSK** for the bytecode and OTA fetches — today only the
-  XMPP stream is encrypted; the bytecode (HMAC) and the image (Ed25519) are
-  authenticated but travel in clear.
 - **Close the plain XMPP port** once every rabbit has migrated to TLS.
 
 **Later**
 
-- **H2E** (hash-to-element) for SAE — for access points set to H2E-only, and
-  the timing half of Dragonblood.
 - **The boot over TLS** — `bc.jsp` and `locate.jsp` over TLS-PSK for a
   rabbit whose adoption key is confirmed (a new image, 1.0.0.2).
 - **A JTAG listener that does not stall** — after a few minutes `listen.sh`
   stops on `unknown target request: ff`: openocd's DCC decoder chokes on a
   word starting with 0xff. Either the telemetry never sends one, or the Pi
   reads the DCC channel raw.
-- **A CVE scan** of what the image and the warren carry.
 - **Reclaim flash** — 8 632 bytes are spare today; the measured savings are
   in the history (Phase 8).
 - **`mtl_pyc` typing** — the Python-to-Metal compiler shares `mtl_comp`'s
@@ -334,6 +330,28 @@ page or the add-on's status/logs instead.
 | **Five colours** on the belly for a minute, then a normal boot | Adoption key waiting to be confirmed | Confirm the colours on the warren's page |
 | **Orange forever** right after WPA3 was turned off on your Wi-Fi (1.0.0.1+) | The rabbit refuses a WPA3 → WPA2 downgrade | Re-save the Wi-Fi settings in config mode (see below) |
 | **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); otherwise the JTAG station: `firmware-arm/jtag/station.sh flash` |
+
+### Orange after the Wi-Fi went from WPA3 back to WPA2 (1.0.0.1 and later)
+
+Once a rabbit on 1.0.0.1 has joined a network with WPA3 (SAE), it remembers
+that this network requires WPA3 and **refuses to join it with WPA2 again**.
+That is on purpose: otherwise an attacker could pose as your access point with
+WPA2 only and make the rabbit fall back to it (a "downgrade").
+
+So if you turn WPA3 off on that network (or a router update switches a
+WPA2/WPA3 transition network to WPA2 only), the rabbit stays **orange** and
+never connects. To unlock it:
+
+1. Put the rabbit in config mode (hold the head button while plugging it in,
+   release when the light turns blue — not more than 7 s, or it enters the
+   factory test mode).
+2. Join its Wi-Fi, open its setup page and **save the Wi-Fi settings again**
+   (same network name and password are fine).
+
+That save clears the requirement; the rabbit joins over WPA2 and remembers
+WPA3 again the next time it gets it. Changing the network name or the
+password clears it too. The requirement is stored once per network in the
+configuration flash sector, next to the Wi-Fi password.
 
 ## Repository layout
 
@@ -523,29 +541,6 @@ apply unless the reminder is marked urgent).
 4. Reload YAML. Try it by voice, or test from **Developer Tools → Actions**.
 
 ### Voice / TTS — make Nabi sound as natural as you like
-### Orange after the Wi-Fi went from WPA3 back to WPA2 (1.0.0.1 and later)
-
-Once a rabbit on 1.0.0.1 has joined a network with WPA3 (SAE), it remembers
-that this network requires WPA3 and **refuses to join it with WPA2 again**.
-That is on purpose: otherwise an attacker could pose as your access point with
-WPA2 only and make the rabbit fall back to it (a "downgrade").
-
-So if you turn WPA3 off on that network (or a router update switches a
-WPA2/WPA3 transition network to WPA2 only), the rabbit stays **orange** and
-never connects. To unlock it:
-
-1. Put the rabbit in config mode (hold the head button while plugging it in,
-   release when the light turns blue — not more than 7 s, or it enters the
-   factory test mode).
-2. Join its Wi-Fi, open its setup page and **save the Wi-Fi settings again**
-   (same network name and password are fine).
-
-That save clears the requirement; the rabbit joins over WPA2 and remembers
-WPA3 again the next time it gets it. Changing the network name or the
-password clears it too. The requirement is stored once per network in the
-configuration flash sector, next to the Wi-Fi password.
-
-## Voice / TTS — make Nabi sound as natural as you like
 
 The rabbit's original TTS relied on Acapela's now-dead web service. The add-on
 ships its own **fully-local TTS** (`espeak-ng`, robotic but offline) **and** can
