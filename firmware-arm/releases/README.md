@@ -11,7 +11,7 @@
 
 > **Flashing is done at your own risk** — no warranty, no liability. A failed
 > flash can leave the rabbit unable to re-enter config mode, recoverable only
-> over JTAG. See [`../RECOVERY.md`](../RECOVERY.md). Flashing is optional: a
+> over JTAG. See [`../docs/RECOVERY.md`](../docs/RECOVERY.md). Flashing is optional: a
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware builds we ship: the hardware-verified **stable**
@@ -76,7 +76,7 @@ opcode, and the 2.09 s watchdog is fed only between opcodes. Earlier
 images also refuse signed uploads from the config page (the
 `crypto_sign_open` alias bug). A rabbit on one of those leaves it through
 the recovery bytecode the warren serves it, or over JTAG — see
-`../RECOVERY.md`. Three firmware fixes make this build installable *from*:
+`../docs/RECOVERY.md`. Three firmware fixes make this build installable *from*:
 `verify_wdt` (the signature check feeds the watchdog), the `OPverifySig`
 operands re-read after the allocation that can move them, and
 `sign_open_alias`.
@@ -244,7 +244,7 @@ state where config mode still answers but the modernized UI misbehaves, or when
 you simply want back to stock bootloader behavior. It keeps the `verifySig`
 opcode in place, so signed OTAs stay possible afterwards. It is **not**
 hardware-verified the way `naboot-stable.signed.sim` is — it's the parachute,
-built from the same pinned sources. See `../RECOVERY.md`.
+built from the same pinned sources. See `../docs/RECOVERY.md`.
 
 **Replaced on 2026-10-23, and why it matters.** The file shipped here until
 that date was built on 2026-10-20 from a step list that read
@@ -271,8 +271,8 @@ First flash is from the rabbit's config-mode upload page (hold the head button
 on power-up → blue belly → join `Nabaztag-XXXX` → `http://192.168.0.1` →
 *firmware upgrade* → upload this file). The simple step-by-step guide lives on
 **Le Terrier** (`/naboot`). After this first flash, updates are **OTA** — signed,
-over the air, no opening the rabbit again. See `../RECOVERY.md` for the full
-flash + recovery procedure and `../BRICK_FORENSICS.md` if anything goes wrong.
+over the air, no opening the rabbit again. See `../docs/RECOVERY.md` for the full
+flash + recovery procedure and `../docs/BRICK_FORENSICS.md` if anything goes wrong.
 
 ## Reproducing it
 

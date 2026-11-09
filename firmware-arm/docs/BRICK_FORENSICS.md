@@ -181,13 +181,13 @@ remain at full size. Pursuing `--specs=nano.specs` would need extra
 care (no float-printf, different locking model) — deferred until the
 rabbit is alive again.
 
-All six pass `verify_sim.py` against `keys/signing_pubkey.h`. Build was
+All six pass `verify_sim.py` against `../keys/signing_pubkey.h`. Build was
 done with `./build.sh --remote rocky@vps.example.net:10022
 --runtime podman --mode <mode>` (build.sh supports `--runtime podman`
 and `host:port` remotes).
 
 What `max` adds vs `full`: the boot-side mDNS announcer
-(`boot-mods/mdns.mtl`) — sends a "naboot.local → <netip>" mDNS A
+(`../boot-mods/mdns.mtl`) — sends a "naboot.local → <netip>" mDNS A
 response to 224.0.0.251:5353 every 60 s. Wire-identical design to the
 runtime `bytecode/mdns.mtl`. Useful both in config mode
 (`naboot.local → 192.168.0.1` so the setup page is reachable by name)

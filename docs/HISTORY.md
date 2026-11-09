@@ -95,7 +95,7 @@ to it rather than edited over it.
   Both `minimal` and the full **`lean`** build (modernized pages + sig-gated OTA
   + mDNS) now **boot and run** on the rabbit — JTAG confirms it executes in User
   mode with a live main loop, no longer the Abort dead-loop. See
-  `firmware-arm/RECOVERY.md` and `BRICK_FORENSICS.md`. Six pre-built variants:
+  `firmware-arm/docs/RECOVERY.md` and `BRICK_FORENSICS.md`. Six pre-built variants:
   `minimal` (rescue, vanilla bootloader +
   verifySig only), `signed-stock` / `pages-only` / `mdns-only` (isolation
   bisects), `full` (sig-gated OTA + modernized UI), `max` (`full` + boot-side
