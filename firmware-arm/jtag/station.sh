@@ -4,7 +4,7 @@
 #   git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
 #   ./firmware-arm/jtag/station.sh setup        # once: packages, GPIO group, bank check
 #   ./firmware-arm/jtag/station.sh check        # wiring: JTAG answers, the flash reads back
-#   ./firmware-arm/jtag/station.sh flash Nab.bin
+#   ./firmware-arm/jtag/station.sh flash naboot-1.0.0.2.signed.sim   # or a Nab.bin
 #   ./firmware-arm/jtag/station.sh listen       # live status line, no halt
 #   ./firmware-arm/jtag/station.sh dump out.bin # read the whole flash back
 #
@@ -44,10 +44,24 @@ case "$cmd" in
          echo "the first attach to a running rabbit sometimes times out." ;;
     esac ;;
   flash)
-    [ $# -eq 1 ] || { echo "usage: $0 flash <Nab.bin>"; exit 2; }
+    [ $# -eq 1 ] || { echo "usage: $0 flash <naboot-X.signed.sim | Nab.bin>"; exit 2; }
     need_openocd
     img=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
     [ -f "$img" ] || { echo "no such file: $1"; exit 2; }
+    # A release is a signed .sim: the update container, obfuscated, with its
+    # signature. The chip wants the plain image inside, so verify the
+    # signature with the project key and take the image out of it -- written
+    # as it is, a .sim would leave nothing the rabbit can boot.
+    if [ "$(head -c 8 "$img")" = "-violet-" ]; then
+      plain=$(mktemp /tmp/naboot-XXXXXX)
+      python3 "$here/../signing/verify_sim.py" --extract "$plain" "$img" \
+        || { echo "the signature does not verify: not flashing $1"; rm -f "$plain"; exit 1; }
+      img=$plain
+    fi
+    # Every image this firmware builds starts with the vector table:
+    # LDR PC, [PC, #24], eight times.
+    [ "$(head -c 4 "$img" | od -An -tx1 | tr -d ' \n')" = "18f09fe5" ] \
+      || { echo "$1 does not start with the ARM vector table: not a Nab.bin, not flashing"; exit 1; }
     echo "writing $img -- about 15 minutes; progress in /tmp/flash-progress.log"
     exec "$here/flash.sh" "$img" ;;
   listen)

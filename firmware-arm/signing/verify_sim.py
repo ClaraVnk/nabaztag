@@ -56,6 +56,11 @@ def main() -> int:
         "--pub-header",
         default=str(Path(__file__).resolve().parent.parent / "keys" / "signing_pubkey.h"),
     )
+    p.add_argument(
+        "--extract", metavar="OUT",
+        help="when the signature verifies, write the plain image (the Nab.bin "
+             "the JTAG station flashes) to OUT",
+    )
     args = p.parse_args()
 
     pub = _read_pubkey_from_header(Path(args.pub_header))
@@ -67,6 +72,8 @@ def main() -> int:
     # The plain image, which is what the rabbit verifies. See simpayload.py.
     ok = ed25519.verify(pub, simpayload.deobfuscate(payload), sig)
     print(f"verify({Path(args.sim).name}, key={Path(args.pub_header).name}) = {ok}")
+    if ok and args.extract:
+        Path(args.extract).write_bytes(simpayload.deobfuscate(payload))
     return 0 if ok else 1
 
 
