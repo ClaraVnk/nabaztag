@@ -113,6 +113,54 @@ Whoever can break the handshake can already cut the cable, and the warren
 decides per rabbit what it serves; the plain port stays for every rabbit
 during the transition.
 
+**The line can be removed.** `locate.jsp` is plain HTTP, and whoever owns a
+hop on the path can drop `xmpp_tls` from the answer: the rabbit then opens
+the plain port, where the Terrier refuses a confirmed MAC (the rabbit is
+offline) -- or where the attacker answers as the warren, in the clear
+(audit T6). So the runtime bytecode carries a policy the warren sets and
+the HMAC covers. `patch_tls.py` compiles in the literal `xmpp-tls:0`, once;
+for a rabbit whose owner confirmed the key, the Terrier flips the digit to
+`1` before it signs (`mint.require_tls`, then `sign_bytecode`). With a key
+and that digit, `XmppTlsSelect` opens the TLS port whatever `locate.jsp`
+said: the port it named when it did, 5223 (`XMPP_TLS_DEFAULT_PORT`) when it
+did not, never the plain one. The bytecode an unconfirmed rabbit gets has no
+HMAC and keeps the `0`: its pending key would fail the handshake, and
+anybody on the path could rewrite it anyway. One build, one file on the
+warren's disk; what differs per rabbit is one byte under the signature,
+which is why the decision is the warren's and not a second bytecode's: a
+second file would have to be served to the right rabbits by the same
+Terrier logic and rebuilt in step with the first at every change.
+
+What is left to an attacker on the path, once the owner confirmed: the
+host in `xmpp_domain` and the port in `xmpp_tls`. Either rewritten, the
+rabbit does a TLS handshake with something that does not hold its key, the
+handshake fails (`tlsState` 3), `XmppGateStreamClosed` reconnects, over TLS
+again (`XmppTlsSelect` never picks the plain port with the digit at 1) --
+for ever, nothing in the clear, which is the DoS the attacker already had
+by cutting the cable. The rabbit cannot remember the TLS port across boots
+without a flash write, so 5223 is a constant; a warren on another port
+names it in `locate.jsp` and loses only this one fallback.
+
+**A rabbit whose key the warren forgets.** The Terrier refuses to replace
+a confirmed key (`kx_offer`); an operator who deletes the row by hand, or
+points the rabbit at a warren that never knew it, gets a rabbit whose
+bootloader (`conf` flag `C`) refuses every bytecode without a valid HMAC
+-- it does not get as far as the TLS policy. That was true before this
+change and this change adds nothing to it: a confirmed rabbit depends on
+its warren holding the key. The way back is the configuration mode's reset
+page: head button held at power-up, `http://192.168.0.1/reset` (the
+bootloader's `confReset`, any URI starting with `r`), which rewrites the
+configuration sector from its defaults -- Wi-Fi, server, key and flag all
+gone; the next boot runs a fresh exchange, the owner confirms the colours
+again. Saving the Wi-Fi alone (`updateconf`) edits the sector in place and
+keeps the key, so a rabbit moved to another network stays adopted. A JTAG
+flash of the configuration sector does the same as the reset page. On the
+Terrier, `kx_offer` takes a new exchange for a MAC whose key is absent or
+rejected and refuses one while a key is pending or confirmed, so a rabbit
+reset this way needs its old row deleted or rejected first -- which is the
+operator's deliberate act, as it should be: the row is what stops a
+stranger from re-adopting someone else's rabbit.
+
 ### Proven
 
 Against stacks we did not write, `firmware-arm/tests` (`make tls`):
@@ -155,6 +203,22 @@ password slot (fixed on main the same evening, #87), and the gate's
 hand-off after the handshake compared Metal constructors with `==`, which
 never matches -- the handshake completed and the gate timed out two seconds
 later, every three seconds.
+
+The TLS policy, 2026-11-09, same bootloader, `emulator/tools/xmpp-tls-proof.sh`
+with `emulator/tools/locate_strip.py` dropping the `xmpp_tls` line between boot 1
+(exchange, pending, plain) and boot 2 (owner confirmed), real Terrier
+containers:
+
+- control, Terrier `main` and the production runtime (rebuilt from source,
+  byte for byte the deployed `baseline-tls`): boot 2 opens the plain port,
+  three times in the run; the Terrier answers `XMPP auth refused ...
+  confirmed adoption key: TLS port only` each time. Offline.
+- fix, the Terrier of the same date and the runtime with the policy
+  (107,199 bytes, the literal once): boot 2 opens 5223 with no line to tell
+  it to, `TLS TLSv1.3 with ..., PSK identity 0019db00beef`, bound.
+- fix without the attacker: the port `locate.jsp` named, TLS, bound.
+- fix with the attacker rewriting `xmpp_tls` to the plain port: four
+  ClientHellos to the plain port, no XMPP, no fallback.
 
 ## Code
 

@@ -22,6 +22,22 @@ handshake to plain: the gate reconnects, over TLS again. Whoever can break
 the handshake can already cut the cable, and the warren decides per rabbit
 what it serves.
 
+Except that locate.jsp is plain HTTP, and anyone on the path can drop the
+`xmpp_tls` line: the rabbit would then open the plain port and talk XMPP
+in the clear with whoever answers (audit T6). So the bytecode carries a
+policy the warren sets and the HMAC covers: the literal XmppTlsPolicy,
+"xmpp-tls:0" as compiled. For a rabbit whose owner confirmed the key, the
+warren flips the digit to 1 before it signs (mint.require_tls in the
+Terrier), and the rabbit that runs it opens the TLS port whether locate.jsp
+named one or not -- the port named when it did, XMPP_TLS_DEFAULT_PORT
+(5223, the Terrier's) when it did not -- and never the plain one. The
+bytecode without the HMAC, which an unconfirmed rabbit gets and an attacker
+can replace, says 0 and behaves as before: a pending key would fail the
+handshake. One build, one file on the warren's disk; what differs per
+rabbit is one byte under the signature. locate.jsp still names the HOST:
+a wrong one fails the handshake (no PSK) and the gate reconnects, over
+TLS, for ever -- fail closed, nothing in the clear.
+
 Three seams in main.mtl, each the smallest that works:
 
   * XmppTcpOpen / XmppTcpReOpen: the port passes through XmppTlsSelect.
@@ -46,7 +62,9 @@ MARKER = "/* xmpp-over-tls */"
 VARS_OLD = "var XmppServerPort = 5222;;"
 VARS_NEW = """var XmppServerPort = 5222;;
 /* xmpp-over-tls */
-var XmppTlsPort = 0;;	// from locate.jsp "xmpp_tls <port>"; 0: the warren offers none
+var XmppTlsPort = 0;;	// from locate.jsp "xmpp_tls <port>"; 0: the warren named none
+const XMPP_TLS_DEFAULT_PORT=5223;;	// the TLS port when TLS is required and locate.jsp named none
+var XmppTlsPolicy="xmpp-tls:0";;	// the warren flips the digit to 1 before signing: TLS required
 var XmppTlsOn = 0;;	// the current socket runs TLS
 var XmppTlsSock;;	// the socket whose handshake was started
 var XmppTlsUp = 0;;	// the gate has had its TCPWRITE for this handshake
@@ -75,12 +93,21 @@ TLS_FUNS = '''/* xmpp-over-tls -------------------------------------------------
  * TLS 1.3 with the adoption key, between the socket and the XMPP gate.
  * See firmware/patch_tls.py. */
 
-// The port to open: the warren's TLS port when it offered one and this
-// rabbit holds a key, the one asked for otherwise.
+// Did the warren that signed this bytecode require TLS? It flips the digit
+// of XmppTlsPolicy before the HMAC covers it, so locate.jsp, which is plain
+// HTTP, can no longer talk a confirmed rabbit down to the plain port.
+fun XmppTlsRequired= (strget XmppTlsPolicy 9)==49;;
+
+// The port to open. No key (tlsState -1): the one asked for, as before.
+// With a key: the TLS port locate.jsp named; XMPP_TLS_DEFAULT_PORT when it
+// named none and the warren requires TLS (someone in the path dropped the
+// line); the plain port only when it named none and nothing requires TLS.
 fun XmppTlsSelect port=
 	set XmppTlsSock=nil;
 	set XmppTlsUp=0;
-	if XmppTlsPort>0 && (tlsState)>=0 then (set XmppTlsOn=1; XmppTlsPort)
+	if (tlsState)<0 then (set XmppTlsOn=0; port)
+	else if XmppTlsPort>0 then (set XmppTlsOn=1; XmppTlsPort)
+	else if XmppTlsRequired then (set XmppTlsOn=1; XMPP_TLS_DEFAULT_PORT)
 	else (set XmppTlsOn=0; port);;
 
 // Encrypt, then queue as before. Nothing may be sent before the handshake

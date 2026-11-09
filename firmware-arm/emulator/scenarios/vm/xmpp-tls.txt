@@ -19,6 +19,14 @@
 # with ... PSK identity", "registered bunny") and in the gateway's lines
 # here (which port the rabbit opened); this file only keeps the rabbit
 # running long enough.
+#
+# tools/xmpp-tls-proof.sh runs boots 1 and 2 against a Terrier image, and
+# with --strip puts tools/locate_strip.py between the rabbit and the warren:
+# an attacker on the path who drops the `xmpp_tls` line from locate.jsp
+# (plain HTTP). A runtime whose TLS policy the Terrier set (patch_tls.py,
+# "xmpp-tls:1" under the HMAC) must still open the TLS port on boot 2; the
+# runtime from before it opened the plain port, where the Terrier refuses
+# a confirmed MAC -- or an attacker answers in the clear.
 ap 02:00:5e:10:00:01 Terrier 6 open -52
 tick 50
 stop 160000

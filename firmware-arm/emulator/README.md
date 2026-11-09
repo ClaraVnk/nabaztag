@@ -343,6 +343,16 @@ host with `--realtime` (its header says how): three boots of the
 `lean-wpa3-tls` bootloader, the runtime bytecode fetched from the Terrier,
 plain XMPP while the key is pending, TLS 1.3 PSK once the owner confirmed,
 plain again for a reflashed rabbit with no key. See `../ADOPTION-KEY.md`.
+`tools/xmpp-tls-proof.sh` runs the first two boots against a Terrier
+container, and `--strip` puts `tools/locate_strip.py` on the path: an
+attacker who edits `locate.jsp`, dropping the `xmpp_tls` line
+(`--strip-port N` rewrites the port instead). That is how the TLS policy
+under the HMAC was measured, control and fix, before anything was deployed:
+the production runtime, locate stripped, opens the plain port and the
+Terrier refuses it; the runtime with the policy opens 5223 and binds over
+TLS whatever locate said. The attacker tool also takes `--host` to
+rewrite `xmpp_domain`: the handshake with a host that has no key fails,
+and the gate reconnects over TLS, for ever.
 
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
