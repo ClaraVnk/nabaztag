@@ -62,8 +62,8 @@ def _resolve_bootcode():
     has always worked. The copy next to this file comes next: it is the one
     committed in the repo and bundled in the image, so a fresh install — or a
     plain `python3 server.py` from a checkout — serves something instead of
-    500ing (issue #2). firmware/bootcode_hybrid.bin is last: the local output
-    of firmware/build-bytecode.sh, for whoever rebuilds the bytecode.
+    500ing (issue #2). bytecode/bootcode_hybrid.bin is last: the local output
+    of bytecode/build-bytecode.sh, for whoever rebuilds the bytecode.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     explicit = os.environ.get("BOOTCODE_FILE")
@@ -71,7 +71,7 @@ def _resolve_bootcode():
         return explicit
     for cand in ("/data/bootcode.hybrid",
                  os.path.join(here, "bootcode.hybrid"),
-                 os.path.join(here, os.pardir, "firmware", "bootcode_hybrid.bin")):
+                 os.path.join(here, os.pardir, "bytecode", "bootcode_hybrid.bin")):
         if os.path.exists(cand):
             return os.path.normpath(cand)
     return "/data/bootcode.hybrid"
@@ -2571,7 +2571,7 @@ def main():
     if not os.path.exists(BOOTCODE_FILE):
         log.warning("bootcode file not found at %s — /vl/bc.jsp will 500. The "
                     "add-on image bundles one; outside it, set BOOTCODE_FILE to "
-                    "firmware/bootcode_hybrid.bin from the repo (see DOCS.md, "
+                    "bytecode/bootcode_hybrid.bin from the repo (see DOCS.md, "
                     "'Bytecodes')", BOOTCODE_FILE)
     threading.Thread(target=xmpp_server, daemon=True).start()
     threading.Thread(target=api_server, daemon=True).start()

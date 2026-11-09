@@ -223,7 +223,7 @@ apply unless the reminder is marked urgent).
 │   ├── ADOPTION-KEY.md      #    The per-rabbit key: exchange, colours, HMAC, TLS.
 │   ├── BRICK_FORENSICS.md   #    Recovery plan + bisection ladder.
 │   └── RECOVERY.md
-├── firmware/                # Runtime-side bytecode add-ons (mic stream, mDNS,
+├── bytecode/                # Runtime-side bytecode add-ons (mic stream, mDNS,
 │   ├── micstream.mtl        #    OTA, reconnect, the TLS seam) compiled into the
 │   ├── fwota.mtl            #    hybrid bootcode served by the add-on / warren.
 │   ├── patch_tls.py

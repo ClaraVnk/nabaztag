@@ -46,7 +46,7 @@ NEW = """	/* reconnect-not-reboot */
 	// Upstream rebooted here. On hardware a soft reboot re-fetches the bytecode
 	// and then dies before locate.jsp: the radio never comes back without a
 	// power cycle. Reconnect gently instead (base goes violet, 5 s + random
-	// 0-30 s, then XmppGateReconnect). See firmware/patch_reconnect.py.
+	// 0-30 s, then XmppGateReconnect). See bytecode/patch_reconnect.py.
 	Xw "gate stream closed, reconnecting";
 	XmppSessionIsDisconnected xSession
 ;;"""

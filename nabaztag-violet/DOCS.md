@@ -36,7 +36,7 @@ The server picks the first bytecode that exists, in this order:
    add-on's persistent storage;
 3. `nabaztag-violet/bootcode.hybrid` — the copy **committed in this repo** and
    bundled in the add-on image;
-4. `firmware/bootcode_hybrid.bin` — the local output of `firmware/build-bytecode.sh`,
+4. `bytecode/bootcode_hybrid.bin` — the local output of `bytecode/build-bytecode.sh`,
    if you rebuilt the bytecode yourself (not committed).
 
 So running it outside Home Assistant takes nothing special:

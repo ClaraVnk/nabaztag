@@ -6,7 +6,7 @@ has no XMPP server and must not register a fake rabbit against a real one,
 so this turns the first thing a connected rabbit does -- the locate.jsp
 request in runconfigstart -- into `flashFromUrl <url>`. Everything after
 that call is the real path: http.mtl, ota_cb, parsefirm_fw, parsesig_fw,
-verifySig, flashFirmware. Run after firmware/build-bytecode.sh's patches,
+verifySig, flashFirmware. Run after bytecode/build-bytecode.sh's patches,
 on the same sources/ directory, before preprocessing.
 
   usage: patch_ota_test.py <sources-dir> <url>

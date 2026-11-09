@@ -4,7 +4,7 @@
 #
 #   ./tools/mkbytecode.sh --sources <violet-bootcode-dir> \
 #                         --compiler <mtl_compiler> \
-#                         --patch ../../firmware/patch_wifi_reconnect.py \
+#                         --patch ../../bytecode/patch_wifi_reconnect.py \
 #                         --out with33.hybrid
 #
 # <violet-bootcode-dir> is the `bootcode/` directory of OpenJabNab/OpenJabNab,

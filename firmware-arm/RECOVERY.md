@@ -208,7 +208,7 @@ The rabbit now runs **Naboot**. From this point on:
   signed `.sim` the normal way.
 * OTAs become possible via the add-on: stage with `POST /api/ota`, then
   `?trigger=1` to push a `FW <url>` command to the rabbit. This last step
-  needs the **runtime bytecode** to be rebuilt with `firmware/fwota.mtl` +
+  needs the **runtime bytecode** to be rebuilt with `bytecode/fwota.mtl` +
   the patched `patch_main.py` — that rebuild happens *after* the first
   manual flash, so the rabbit always has the verifySig opcode available
   before any bytecode tries to use it.

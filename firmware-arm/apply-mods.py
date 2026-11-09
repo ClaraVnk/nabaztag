@@ -598,7 +598,7 @@ def patch_tls_psk(root: Path) -> None:
     nab_kx_vm.c) and wpa3_sae (SHA-256 and cmac.c's AES block, which GCM
     runs on). The TCP/IP stack and the XMPP client are Metal bytecode, so
     the seam is where that code reads and writes its socket
-    (firmware/patch_tls.py); records, keys and secrets stay in C.
+    (bytecode/patch_tls.py); records, keys and secrets stay in C.
 
       tlsStart id   -> the ClientHello record for PSK identity `id` (the
                        MAC as 12 hex digits), nil without a key

@@ -1986,7 +1986,7 @@ def wire_wrap(blob: bytes) -> bytes:
     is boot.mtl::getbytecode, which does `strsub content 13 len`.
 
     This is the COMPILER's output format, not something the serving layer
-    adds. Two measurements say so: `firmware/build-bytecode.sh` invokes the
+    adds. Two measurements say so: `bytecode/build-bytecode.sh` invokes the
     C++ compiler as `"$CC" -s bootcode.mtl "$OUT"` with nothing between it
     and the file, and that file is the 105 394-byte envelope-carrying blob;
     and `proto main 0;; fun main= 42;;` compiled by the real mtl_compiler is

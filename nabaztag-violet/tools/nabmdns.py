@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nabmdns — a one-name mDNS responder for the rabbit's `.local` server name.
 
-Pairs with the firmware mDNS resolver (firmware/mdnsresolve.mtl): the rabbit
+Pairs with the firmware mDNS resolver (bytecode/mdnsresolve.mtl): the rabbit
 resolves its XMPP server by sending an A query for `<name>.local` to the
 multicast group 224.0.0.251:5353 instead of unicast DNS to the gateway. This
 daemon joins that group and answers the one name we own (`nabaztag.local`) with

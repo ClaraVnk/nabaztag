@@ -88,7 +88,7 @@ Once a rabbit has a confirmed key, its XMPP connection runs inside TLS 1.3
 The TCP/IP stack and the XMPP client are Metal bytecode (`tcp.mtl`,
 `main.mtl`), so TLS cannot sit under the socket. It sits where the XMPP gate
 reads and writes it: step `tls_psk` adds five opcodes, numbered after the
-adoption ones (158-162 in `lean-wpa3-tls`), and `firmware/patch_tls.py`
+adoption ones (158-162 in `lean-wpa3-tls`), and `bytecode/patch_tls.py`
 calls them at the three places `main.mtl` touches its socket -- the port in
 `XmppTcpOpen`, `XmppTcpSend`, `XmppTcpRead`. Every record, key, secret and
 nonce stays in C; the bytecode moves bytes.
@@ -231,4 +231,4 @@ containers:
 | bootloader flow and belly colours | step `adoption_boot`, `boot-mods/adoption.mtl` | done, emulator |
 | warren endpoint and confirmation page | Terrier | done |
 | bytecode HMAC | `kxCheck`, `adoption.mtl`; Terrier `sign_bytecode` | done, emulator |
-| TLS 1.3 PSK | `crypto/nab_tls.c`, step `tls_psk`, `firmware/patch_tls.py`; Terrier xmpp.py | done, OpenSSL and Python ssl; emulator against a real Terrier |
+| TLS 1.3 PSK | `crypto/nab_tls.c`, step `tls_psk`, `bytecode/patch_tls.py`; Terrier xmpp.py | done, OpenSSL and Python ssl; emulator against a real Terrier |
