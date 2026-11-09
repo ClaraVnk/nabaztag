@@ -181,7 +181,7 @@ x86_64 host has no loader for, and which does not build from source with a
 current gcc either.
 
 ```sh
-./tools/mkbytecode.sh --sources <OpenJabNab>/bootcode   --compiler <nabgcc>/mtl/mtl_compiler   --patch ../../firmware/patch_wifi_reconnect.py --out with33.hybrid
+./tools/mkbytecode.sh --sources <OpenJabNab>/bootcode   --compiler <nabgcc>/mtl/mtl_compiler   --patch ../../bytecode/patch_wifi_reconnect.py --out with33.hybrid
 make NABGCC=<tree> BYTECODE=$PWD/with33.hybrid vm
 ```
 
@@ -357,7 +357,7 @@ and the gate reconnects over TLS, for ever.
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
 (`OPnetAuth ... encrypt=0 -> SKIPPED`); with the bytecode
-`firmware/build-bytecode.sh` produces from the stock tree, they pass.
+`bytecode/build-bytecode.sh` produces from the stock tree, they pass.
 
 **The four-way handshake after SAE ran on WPA2's key schedule, 2026-11-08.**
 The whole-rabbit scenario `scenarios/vm/wpa3-sae.txt` was said to end in

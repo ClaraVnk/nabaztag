@@ -91,7 +91,7 @@ READ_NEW = "fun XmppTcpReadPlain t val msg xSession =\n"
 IDLE_ANCHOR = "/*\n * Idle pour le TCP\n"
 TLS_FUNS = '''/* xmpp-over-tls ----------------------------------------------------------
  * TLS 1.3 with the adoption key, between the socket and the XMPP gate.
- * See firmware/patch_tls.py. */
+ * See bytecode/patch_tls.py. */
 
 // Did the warren that signed this bytecode require TLS? It flips the digit
 // of XmppTlsPolicy before the HMAC covers it, so locate.jsp, which is plain

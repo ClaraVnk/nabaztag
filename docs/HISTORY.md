@@ -42,7 +42,7 @@ to it rather than edited over it.
   only records the mic on a physical button press — the server can't start a
   recording. So passive listening required a **custom mic-streaming bytecode**.
   Solution: a *hybrid* bytecode that adds a server-triggered **UDP microphone
-  stream** (`firmware/micstream.mtl`, à la `openab`) to the stock Violet
+  stream** (`bytecode/micstream.mtl`, à la `openab`) to the stock Violet
   bytecode, compiled with RedoXyde's `mtl_linux` in a Linux x86 container.
   Server-side `wake_loop` swaps the audio buffer every few seconds, runs bundled
   whisper.cpp, and if "Nabi" is heard, the rest of the utterance is sent to the
@@ -203,7 +203,7 @@ to it rather than edited over it.
   10–20 KB of ROM (the flash budget is 124 KB and `max` uses ~92%).
   **Scope clarification:** Phase 8 only touches the **boot bytecode**, which
   is already inside the `.sim` and already requires a flash to change. It
-  does **NOT** touch the runtime bytecode (`firmware/*.mtl`), which is
+  does **NOT** touch the runtime bytecode (`bytecode/*.mtl`), which is
   downloaded fresh from the server on every boot and stays OTA-instant.
   **`phase8-rom` build mode** stacks 8 source-level slices on top of
   `lean`: (1) the 4 config-portal HTML pages move from Metal globals
@@ -247,7 +247,7 @@ to it rather than edited over it.
   `A? <name>` query is answered for other hosts and refused only when the source
   IP is the rabbit's. So it could never resolve its server and stayed all-orange.
   Rather than touch the firewall, taught the rabbit to resolve over **multicast
-  mDNS**: `firmware/mdnsresolve.mtl` + `patch_dns.py` make the runtime bytecode's
+  mDNS**: `bytecode/mdnsresolve.mtl` + `patch_dns.py` make the runtime bytecode's
   `dnsreq` route `.local` names to `224.0.0.251:5353` instead of the gateway —
   **no flash** (runtime bytecode, served fresh by `bc.jsp`). The rabbit queries
   from port 1597, so an RFC 6762 §6.7 responder answers it as a legacy unicast
@@ -273,7 +273,7 @@ to it rather than edited over it.
   does not bring the 2006 rt2501 USB radio back; a power cycle does.** That
   also kills the "watchdog that reboots" idea we had queued since June: it
   would have failed the same way.
-  So take the branch Violet declined — `firmware/patch_reconnect.py` routes the
+  So take the branch Violet declined — `bytecode/patch_reconnect.py` routes the
   closed socket to `XmppSessionIsDisconnected`: stop, reset to idle, base LED
   violet, wait 5 s plus a random 0-30 s (so a whole warren does not stampede
   back at once), then `XmppGateReconnect`. The network stack is never torn

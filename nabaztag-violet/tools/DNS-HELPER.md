@@ -21,9 +21,9 @@ firmware, the source port, or L2 isolation.
 The rabbit asks for its server over **multicast mDNS** instead of unicast DNS to
 the gateway, and HA answers with a standard mDNS responder. Three pieces:
 
-1. **Firmware** (`firmware/mdnsresolve.mtl` + `patch_dns.py`): the bootcode's
+1. **Firmware** (`bytecode/mdnsresolve.mtl` + `patch_dns.py`): the bootcode's
    `dnsreq` routes `.local` names to `224.0.0.251:5353` instead of `netdns:53`.
-   Built into the served bytecode — no flashing. See `firmware/README.md`.
+   Built into the served bytecode — no flashing. See `bytecode/README.md`.
 2. **locate** returns a `.local` xmpp domain: set the add-on option
    `server_address = nabaztag.local`.
 3. **`nabmdns.py`** answers `nabaztag.local` on the multicast group. Because the

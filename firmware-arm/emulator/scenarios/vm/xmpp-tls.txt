@@ -3,7 +3,7 @@
 # XMPP over TLS 1.3 with the adoption key, against a real Terrier on the
 # host (its HTTP boot server and both XMPP ports, --realtime). Three boots
 # of the lean-wpa3-tls bootloader, the runtime bytecode fetched from the
-# Terrier each time (firmware/build-bytecode.sh with patch_tls.py):
+# Terrier each time (bytecode/build-bytecode.sh with patch_tls.py):
 #
 #   1. a fresh eeprom: kx.jsp agrees a key (pending), the colours show for
 #      a minute, the bytecode comes without an HMAC, locate.jsp names no

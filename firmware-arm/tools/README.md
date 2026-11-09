@@ -29,10 +29,10 @@ so you can disassemble the file as the rabbit downloads it OR the raw
 
 ```sh
 # Pretty-printed text (default — verbose, but greppable)
-python3 mtl_dis.py firmware/bootcode_hybrid.bin
+python3 mtl_dis.py bytecode/bootcode_hybrid.bin
 
 # Skip the globals dump (faster, smaller — when you only care about code)
-python3 mtl_dis.py firmware/bootcode_hybrid.bin --no-globals
+python3 mtl_dis.py bytecode/bootcode_hybrid.bin --no-globals
 
 # Resolve function names from the .mtl source (huge legibility win):
 # instead of `fun#206`, see `fun#206 wifiInit`, and OPexec annotations
@@ -41,7 +41,7 @@ python3 mtl_dis.py path/to/boot.0.0.0.13.bin \
     --src path/to/boot.0.0.0.13.mtl --no-globals
 
 # JSON output (for tooling / further processing)
-python3 mtl_dis.py firmware/bootcode_hybrid.bin --json > bc.json
+python3 mtl_dis.py bytecode/bootcode_hybrid.bin --json > bc.json
 ```
 
 Name resolution handles `proto NAME ARITY;;` forward-declarations
@@ -630,7 +630,7 @@ That was wrong, and it mattered: it is why `mtl_comp.py` shipped for a
 while writing files 17 bytes short of what a rabbit will load. Two
 measurements settle it:
 
-- `firmware/build-bytecode.sh` runs `"$CC" -s bootcode.mtl "$OUT"` with
+- `bytecode/build-bytecode.sh` runs `"$CC" -s bootcode.mtl "$OUT"` with
   nothing between the compiler and the file, and `$OUT` — the blob that
   becomes `/data/bootcode.hybrid` — carries the envelope.
 - `proto main 0;; fun main= 42;;` straight out of the real

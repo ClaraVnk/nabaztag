@@ -71,7 +71,7 @@ VM += ../crypto/nab_kx.c ../crypto/nab_kx_vm.c
 # resetInfo (crash_report) reads the reset counters; see stubs/counters.c.
 VM += stubs/counters.c
 # TLS on the XMPP connection (tlsStart..tlsClose), for a VM running a
-# runtime bytecode built with firmware/patch_tls.py against a step list
+# runtime bytecode built with bytecode/patch_tls.py against a step list
 # with tls_psk; the opcodes are numbered after adoption_kx's.
 VM += ../crypto/nab_tls.c ../crypto/nab_tls_vm.c
 # The tree's own copy when the container staged one (and sign_open_alias

@@ -145,7 +145,7 @@ const OTA_STEP_BAD = 0xff0000;;   // red: it stopped here
 
 // The signature gate and the flash, shared by the hex path (ota_cb) and
 // the binary path (ota_bin_end) so that there is exactly one verifySig
-// call in this file: firmware/patch_ota_recovery.py replaces this body
+// call in this file: bytecode/patch_ota_recovery.py replaces this body
 // for rabbits whose firmware cannot verify, and a second gate anywhere
 // else would be one it does not reach.
 fun ota_flash firm sig=

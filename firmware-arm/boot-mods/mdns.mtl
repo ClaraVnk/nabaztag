@@ -1,6 +1,6 @@
 // mdns.mtl — boot-loader mDNS announcer for "naboot.local".
 //
-// Identical wire shape to firmware/mdns.mtl (the runtime bytecode mDNS):
+// Identical wire shape to bytecode/mdns.mtl (the runtime bytecode mDNS):
 // every 60 s, send an mDNS A response to 224.0.0.251:5353 mapping
 // "naboot.local" to the current netip. Adapted for boot.mtl context.
 //

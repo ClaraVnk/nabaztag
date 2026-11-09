@@ -55,7 +55,7 @@ COPY --from=whisper /out/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=whisper /out/models /app/models
 
 # The runtime bytecode the rabbit downloads at /vl/bc.jsp — the hybrid build,
-# versioned HERE (firmware/build-bytecode.sh writes a new one locally; copy it
+# versioned HERE (bytecode/build-bytecode.sh writes a new one locally; copy it
 # to bootcode.hybrid and update the checksum below in the same commit — the one
 # on the bootcode line, not the Whisper model's a few lines up). The
 # checksum is verified at build so the file can never drift unnoticed. Without

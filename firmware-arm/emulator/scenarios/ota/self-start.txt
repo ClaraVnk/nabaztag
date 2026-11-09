@@ -9,7 +9,7 @@
 #
 # Build the bytecode on the dev VM, in the firmware build container:
 #
-#   bash firmware/build-bytecode.sh <tree> <mtl_compiler> out.bin   # patches <tree>/sources
+#   bash bytecode/build-bytecode.sh <tree> <mtl_compiler> out.bin   # patches <tree>/sources
 #   python3 tools/patch_ota_test.py <tree>/sources http://10.0.0.1:8000/naboot-stable.signed.sim
 #   ( cd <tree>/sources && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
 #   <mtl_compiler> -s <tree>/bootcode.mtl ota-test.bin
