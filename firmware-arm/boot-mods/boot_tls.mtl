@@ -71,7 +71,9 @@ fun boottls_event t val msg httpreq=
 		if httpreq.stateH==HTTP_REACH then
 		(
 			set httpreq.stateH=HTTP_CONNECTED;
-			boottls_queue httpreq tlsStart webmac netMac
+			// The PSK identity is the MAC as 12 hex digits, as the runtime sends
+			// it: this file's webmac puts colons in, and the warren refuses that.
+			boottls_queue httpreq tlsStart kx_hex netMac
 		);
 		// tlsStart says nil without a key: nothing to send, give up now.
 		if httpreq.outputH==nil && (tlsState)!=1 && (tlsState)!=2 then boottls_end t httpreq
