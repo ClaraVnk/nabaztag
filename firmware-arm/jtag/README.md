@@ -15,10 +15,19 @@ sudo apt-get install -y git                    # Raspberry Pi OS Lite has none
 git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
 ./firmware-arm/jtag/station.sh setup          # once, then log out and back in
 ./firmware-arm/jtag/station.sh check          # JTAG answers and the flash reads back
-./firmware-arm/jtag/station.sh flash Nab.bin  # write an image, read it back, compare
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.2.signed.sim
+                                              # verify, write, read back, compare
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
 ```
+
+`flash` takes a release as published, the signed `.sim`: it checks the
+signature with the project key, takes the plain image out of it and writes
+that. A `.sim` written as it is would leave the chip nothing to boot. It also
+takes a plain `Nab.bin` from a build, and refuses any file that does not
+start with the ARM vector table. Plan two runs: the first erase on a healthy
+rabbit often stops at sector 2 (see below), the second goes through. Unplug
+and replug the rabbit afterwards.
 
 `listen` needs a firmware built with the `dcc_telemetry` step (mode
 `lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
