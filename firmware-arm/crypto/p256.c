@@ -485,7 +485,8 @@ int p256_mul_base(p256_point *out, const uint8_t k[P256_BYTES],
   return p256_mul(out, k, &g, tick);
 }
 
-int p256_add(p256_point *out, const p256_point *a, const p256_point *b)
+int p256_add(p256_point *out, const p256_point *a, const p256_point *b,
+             p256_tick tick)
 {
   fe bx, by;
   jac q;
@@ -505,7 +506,7 @@ int p256_add(p256_point *out, const p256_point *a, const p256_point *b)
   to_mont(by, by);
 
   jac_add_affine(&q, &q, bx, by);
-  return jac_to_affine(out, &q, (p256_tick)0);
+  return jac_to_affine(out, &q, tick);
 }
 
 int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
@@ -543,6 +544,157 @@ int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
   memcpy(out->x, x, P256_BYTES);
   fe_to_bytes(out->y, t);
   return 1;
+}
+
+/* --- hash-to-element: the Simplified SWU map -------------------------- */
+
+/* z = -10, i.e. p - 10, in Montgomery form; and the two constants the map
+   needs that cost an inversion each: x1a = b / (z*a) and nba = -b / a. All
+   derived at first use, like R2 above, so there is no 64-digit literal to
+   mistype. 96 bytes of .bss. */
+static fe ZM, X1A, NBA;
+static int sswu_ready_flag;
+
+static void sswu_ready(p256_tick tick)
+{
+  fe z, am, bm, t;
+
+  if (sswu_ready_flag) return;
+  p256_ready();
+
+  fe_set_u32(z, 10);
+  memset(ZM, 0, sizeof ZM);
+  fe_sub(ZM, ZM, z);                    /* p - 10 */
+  to_mont(ZM, ZM);
+
+  fe_set_u32(am, 3);
+  memset(t, 0, sizeof t);
+  fe_sub(am, t, am);                    /* a = p - 3 */
+  to_mont(am, am);
+  memcpy(bm, B, sizeof bm);
+  to_mont(bm, bm);
+
+  fe_mul(t, ZM, am);                    /* z*a */
+  fe_inv(t, t, tick);
+  fe_mul(X1A, bm, t);                   /* b / (z*a) */
+
+  fe_inv(t, am, tick);
+  fe_mul(t, bm, t);                     /* b / a */
+  memset(NBA, 0, sizeof NBA);
+  fe_sub(NBA, NBA, t);                  /* -b / a */
+
+  sswu_ready_flag = 1;
+}
+
+/* g(x) = x^3 - 3x + b, Montgomery form. */
+static void curve_g(fe r, const fe x)
+{
+  fe t, three, bm;
+  fe_sqr(r, x);
+  fe_mul(r, r, x);
+  fe_set_u32(three, 3);
+  to_mont(three, three);
+  fe_mul(t, three, x);
+  fe_sub(r, r, t);
+  memcpy(bm, B, sizeof bm);
+  to_mont(bm, bm);
+  fe_add(r, r, bm);
+}
+
+int p256_sswu(p256_point *out, const uint8_t u[P256_BYTES], p256_tick tick)
+{
+  fe um, u2, zu2, m, t, x1, x2, gx1, gx2, y1, y2, chk, zero;
+  uint32_t m_zero, is_sq, flip;
+
+  sswu_ready(tick);
+  fe_from_bytes(um, u);
+  if (limbs_cmp(um, P) >= 0) return 0;
+  to_mont(um, um);
+
+  /* m = z^2 u^4 + z u^2 = zu2^2 + zu2 */
+  fe_sqr(u2, um);
+  fe_mul(zu2, ZM, u2);
+  fe_sqr(m, zu2);
+  fe_add(m, m, zu2);
+  m_zero = (uint32_t)limbs_is_zero(m);
+
+  /* t = inverse(m); m^(p-2) is 0 when m is 0, which is what CSEL below
+     needs anyway. 12.4.4.2.3: x1 = CSEL(m == 0, b/(z*a), (-b/a)(1 + t)). */
+  fe_pow(t, m, P_MINUS_2, tick);
+  fe_add(x1, R1, t);                    /* 1 + t */
+  fe_mul(x1, NBA, x1);
+  limbs_cmov(x1, x1, X1A, m_zero);
+
+  curve_g(gx1, x1);
+  fe_mul(x2, zu2, x1);                  /* x2 = z u^2 x1 */
+  curve_g(gx2, x2);
+
+  /* Exactly one of g(x1), g(x2) is a square (z is not). p == 3 mod 4, so
+     the root is v^((p+1)/4), and squaring it back says whether it is one.
+     Both roots are computed; only the selection depends on the answer. */
+  fe_pow(y1, gx1, P_PLUS_1_DIV_4, tick);
+  fe_sqr(chk, y1);
+  is_sq = (uint32_t)limbs_eq(chk, gx1);
+  fe_pow(y2, gx2, P_PLUS_1_DIV_4, tick);
+
+  limbs_cmov(x1, x2, x1, is_sq);        /* x = is_sq ? x1 : x2 */
+  limbs_cmov(y1, y2, y1, is_sq);        /* y = is_sq ? y1 : y2 */
+
+  /* P = CSEL(LSB(u) == LSB(y), (x, y), (x, p - y)), in plain form. */
+  from_mont(x1, x1);
+  from_mont(y1, y1);
+  memset(zero, 0, sizeof zero);
+  fe_sub(y2, zero, y1);                 /* p - y */
+  fe_from_bytes(u2, u);                 /* u, plain, for its LSB */
+  flip = (u2[0] ^ y1[0]) & 1;
+  limbs_cmov(y1, y1, y2, flip);
+
+  fe_to_bytes(out->x, x1);
+  fe_to_bytes(out->y, y1);
+  return 1;
+}
+
+void p256_reduce48(uint8_t out[P256_BYTES], const uint8_t in[48])
+{
+  fe hi, lo, t;
+  uint32_t borrow;
+  int i;
+
+  p256_ready();
+  /* in = hi * 2^256 + lo, hi the top 16 bytes. */
+  memset(hi, 0, sizeof hi);
+  for (i = 0; i < 4; i++) {
+    const uint8_t *q = in + (3 - i) * 4;
+    hi[i] = ((uint32_t)q[0] << 24) | ((uint32_t)q[1] << 16) |
+            ((uint32_t)q[2] << 8) | q[3];
+  }
+  fe_from_bytes(lo, in + 16);
+
+  /* lo < 2^256 < 2p: one conditional subtraction reduces it. */
+  borrow = limbs_sub(t, lo, P);
+  limbs_cmov(lo, lo, t, borrow ^ 1);
+
+  /* hi * 2^256 mod p = hi * R mod p, and a Montgomery product by R^2 is
+     exactly that: (hi * R^2) * R^-1. */
+  fe_mul(t, hi, R2);
+  fe_add(t, t, lo);
+  fe_to_bytes(out, t);
+}
+
+void p256_scalar_from_hash(uint8_t out[P256_BYTES], const uint8_t in[P256_BYTES])
+{
+  fe v, one, nm1, t;
+  uint32_t borrow;
+
+  p256_ready();
+  fe_from_bytes(v, in);
+  fe_set_u32(one, 1);
+  limbs_sub(nm1, N, one);               /* n - 1 */
+  /* v < 2^256 < 2(n-1): one conditional subtraction, then + 1. */
+  borrow = limbs_sub(t, v, nm1);
+  limbs_cmov(v, v, t, borrow ^ 1);
+  limbs_add(v, v, one);
+  fe_to_bytes(out, v);
 }
 
 void p256_negate(p256_point *pt)

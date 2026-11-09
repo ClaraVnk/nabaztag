@@ -42,6 +42,23 @@ boot psk-after obj/sae/rabbit.eeprom \
   && echo "  ok    boot 2 refused PSK on the network that did SAE" \
   || { echo "  FAIL  boot 2 joined the WPA2-only AP: the downgrade went through"; fail=1; }
 
+# The same, when the SAE that stored the record was hash-to-element: the
+# record is the network and its passphrase, not the derivation, so an
+# H2E-only AP writes it too and a WPA2-only AP with that SSID is refused.
+python3 mkconf.py --ssid Terrier --psk nabaztag --security wpa2 --rng-seed fixed -o obj/sae/rabbit-h2e.eeprom > /dev/null
+boot sae-first-h2e obj/sae/rabbit-h2e.eeprom \
+  "ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 h2e-only" "psk nabaztag" "tick 50" "stop 30000" \
+  "at 20000 expect RUN" "at 20000 expect-sae h2e" || fail=1
+grep -q "requires SAE from now on (stored)" obj/sae/sae-first-h2e.log \
+  && echo "  ok    boot 1 (H2E) stored the record" \
+  || { echo "  FAIL  boot 1 (H2E) stored no record"; fail=1; }
+
+boot psk-after-h2e obj/sae/rabbit-h2e.eeprom \
+  "ap 02:00:5e:10:00:02 Terrier 6 wpa2-ccmp -52" "psk nabaztag" "tick 50" "stop 60000" \
+  "at 30000 expect-not RUN" "at 59000 expect-not RUN" "at 59000 expect-sae-refused 1" \
+  && echo "  ok    boot 2 refused PSK on the network that did H2E" \
+  || { echo "  FAIL  boot 2 joined the WPA2-only AP after H2E: the downgrade went through"; fail=1; }
+
 boot reconfigured obj/sae/other.eeprom \
   "ap 02:00:5e:10:00:02 Terrier 6 wpa2-ccmp -52" "psk otherpassword" "tick 50" "stop 30000" \
   "at 20000 expect RUN" \

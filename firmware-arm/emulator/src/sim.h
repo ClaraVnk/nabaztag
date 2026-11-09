@@ -39,7 +39,9 @@ struct sim_ap {
   int      pmf;             /* 1 = refuse unprotected deauth (802.11w)   */
   int      sae_token;       /* 1 = demand an anti-clogging token first   */
   int      sae_asked;       /* whether this AP has asked yet             */
-  int      sae_h2e_only;    /* 1 = refuse hunting-and-pecking commits    */
+  int      sae_h2e_only;    /* 1 = H2E commits only (hostapd sae_pwe=1)  */
+  int      sae_h2e;         /* 1 = H2E offered, both taken (sae_pwe=2)   */
+  int      sae_used_h2e;    /* the last SAE commit was hash-to-element   */
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
@@ -49,6 +51,8 @@ struct sim_ap {
   uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */
   uint8_t  sta_rsn_len;     /* which message 2 must repeat byte for byte */
   uint8_t  sta_akm;         /* its AKM suite type                        */
+  uint8_t  sta_rsnxe[8];    /* its RSN Extension element, if any, which  */
+  uint8_t  sta_rsnxe_len;   /* message 2 must repeat as well             */
 };
 
 enum {
@@ -89,6 +93,7 @@ enum {
   SIM_EV_EXPECT_EAPOL_BADLEN,   /* assert >= n EAPOL frames refused for length */
   SIM_EV_EXPECT_TKIP_REFUSED,   /* assert >= n networks refused for pairwise TKIP */
   SIM_EV_EXPECT_SAE_REFUSED,    /* assert >= n PSK attempts refused on a SAE network */
+  SIM_EV_EXPECT_SAE,    /* assert which SAE derivation the AP saw */
 };
 
 struct sim_event {

@@ -1,0 +1,22 @@
+# A WPA3-only access point that offers hash-to-element and takes both.
+#
+# hostapd's sae_pwe=2, the default since 2.10 and what a current UniFi most
+# likely runs: the RSNXE advertises H2E, a hunted-and-pecked commit is still
+# accepted. The station is free to choose, and wpa_supplicant chooses H2E
+# whenever it is offered. So must the rabbit: H2E is the derivation without
+# the Dragonblood timing leak, and an AP that takes both today may take one
+# tomorrow.
+#
+# The AP also enforces hostapd's check_assoc_ies(): a station whose RSNXE
+# claims H2E but whose commit was hunted and pecked is refused association
+# with status 1. `expect-sae h2e` is the assertion that matters -- RUN alone
+# would be satisfied by hunting and pecking.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52 h2e
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 30000
+
+at 20000 expect RUN
+at 20000 expect-sae h2e

@@ -57,3 +57,21 @@ TLS 1.3 protocol logic, no crypto, -Os for arm7tdmi (tls-size/):
     entry points (the dispatcher drags the server in: server_handle_hello
     10,366, handle_client_handshake_message 4,340, decode_client_hello
     2,262, server_finish_handshake 1,886 -> ~20.6 KB client-side).
+
+SAE, measured the same evening (run.sh sae_pt sae_commit_h2e sae_commit_hnp,
+same flags, the IEEE 802.11-2020 Annex J.10 vectors as inputs, every case
+checked against them and exited 0; tick = nab_verify_tick, so the longest
+stretch is between two feeds of the watchdog):
+
+case             instructions   text   ticks  longest gap   notes
+sae_pt             43,702,541  5,588    144      612,877   hash-to-element PT (two SSWU, one point add), once per (SSID, password)
+sae_commit_h2e    107,596,415  5,372    544      296,143   PWE from PT, then the commit: two scalar multiplications
+sae_commit_hnp    248,871,954  5,976    952      566,593   the hunting-and-pecking commit: 40 rounds, then one multiplication
+p256               53,844,143  3,072                        p256_mul again, unchanged
+
+At 1.5-4 cycles per instruction on the 32.768 MHz ARM7TDMI: PT 2.0-5.3 s,
+the H2E commit 4.9-13.1 s, the hunting-and-pecking commit 11.4-30.4 s.
+The first H2E association costs PT + commit = 151 M, every later one 108 M,
+against 249 M for hunting and pecking each time. The longest gap is
+0.03-0.07 s against the 2.09 s window; before p256_add took the tick it
+was 5.1 M instructions (0.23-0.62 s) in the inversion that ends PT.

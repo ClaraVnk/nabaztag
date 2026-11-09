@@ -3128,6 +3128,296 @@ def patch_sae_required(root: Path) -> None:
     print(f"[ok]   {v}: a configuration save clears the SAE requirement")
 
 
+def patch_wpa3_h2e(root: Path) -> None:
+    """SAE hash-to-element, when the access point offers it.
+
+    `wpa3_sae` hunts and pecks (802.11-2020 12.4.4.2.2), the only password
+    element derivation an AP from before 2019 knows. An AP configured for
+    H2E only -- hostapd's `sae_pwe=1`, and the one setting a UniFi
+    controller does not show -- does not refuse such a commit: hostapd's
+    handle_auth_sae() drops it on the floor (`sae_status_success()` false,
+    `goto remove_sta`, no reply), and the rabbit times out in AUTH, over and
+    over. H2E is also the derivation without the Dragonblood timing leak,
+    which is why wpa_supplicant has used it whenever offered since 2.10.
+
+    So: H2E when the AP's RSN Extension element (ID 244) sets bit 5,
+    hunting and pecking otherwise, exactly wpa_supplicant's `sae_pwe=2`.
+    The arithmetic is in crypto/sae.c (`sae_derive_pt`, `sae_commit_pt`,
+    `p256_sswu`) and is checked against IEEE 802.11-2020 Annex J.10 and
+    RFC 9380 J.1.1 in tests/; this step is the station-side plumbing:
+
+    - The scan remembers, per BSSID, whether the RSNXE advertised H2E,
+      beside the AKM-8 flag the SAE cache already keeps (one byte per
+      entry, 8 bytes).
+    - PT depends on the SSID and the password only, so it is derived once
+      and kept: 64 bytes for the point, 8 for a tag of the (SSID, password)
+      it belongs to, 1 for validity -- 73 bytes of .bss. A rabbit that
+      reassociates pays one scalar multiplication for its PWE, not the
+      whole derivation. The tag is SHA-256(ssid || 0 || password) cut to
+      8 bytes: a change of either on the config page invalidates it.
+    - The commit goes out with status 126 (SAE_HASH_TO_ELEMENT) and the
+      AP's commit is expected back with 126; a 0 there is a mismatch and is
+      refused, as wpa_supplicant refuses it (sme.c, "Unexpected use of
+      status code 0 in SAE commit when H2E was expected"). The confirm
+      keeps status 0.
+    - An anti-clogging token travels in a container element (255, len, 93)
+      after the commit element with H2E, between group and scalar
+      without; both the AP's request and our echo follow that.
+    - The association request carries the RSNXE (f4 01 20) when and only
+      when H2E was used. hostapd with `sae_pwe=2` refuses a station that
+      advertises H2E and then hunts and pecks ("indicates support for SAE
+      H2E, but did not use it", ieee802_11.c), and it compares the RSNXE
+      of message 2 of the four-way handshake with the association's
+      (wpa_auth.c, "RSNXE from (Re)AssocReq did not match"), so message 2
+      repeats it. EAPOL_RSN_LENGTH grows from 24 to 28 to hold it.
+
+    The AKM stays 00-0F-AC:8 and the handshake stays on `wpa3_eapol_akm`'s
+    schedule: H2E changes how the PWE is found, nothing after it.
+    """
+    def edit(rel, pairs, marker, label):
+        f = root / rel
+        src = read_src(f)
+        if marker in src:
+            print(f"[skip] wpa3_h2e: {rel} already done")
+            return
+        nl = "\r\n" if "\r\n" in src else "\n"
+        for old, new, what in pairs:
+            o, n = old.replace("\n", nl), new.replace("\n", nl)
+            if src.count(o) != 1:
+                sys.exit(f"FAIL {f}: expected exactly one {what}, found {src.count(o)} (upstream changed?)")
+            src = src.replace(o, n, 1)
+        write_src(f, src)
+        print(f"[ok]   {f}: {label}")
+
+    t = read_src(root / "src/net/ieee80211.c")
+    if "ieee80211_sae_remember" not in t:
+        sys.exit("FAIL wpa3_h2e: the SAE driver block is missing -- wpa3_sae must run first")
+    if "ieee80211_sae_forget" not in t:
+        sys.exit("FAIL wpa3_h2e: the SAE cache has no forget -- this step edits the cache sae_required left")
+
+    edit("inc/net/ieee80211.h", [
+        ("void ieee80211_sae_password(const uint8_t *password);",
+         "void ieee80211_sae_password(const uint8_t *password);\n"
+         "/* 1 while the current association used SAE hash-to-element: the\n"
+         "   RSNXE then goes in the association request and in EAPOL 2/4. */\n"
+         "int32_t ieee80211_sae_h2e_in_use(void);",
+         "the password hook"),
+    ], "ieee80211_sae_h2e_in_use", "the H2E accessor")
+
+    edit("src/net/ieee80211.c", [
+        # 1. The cache: a flags byte per BSSID.
+        ("static uint8_t ieee80211_sae_bssids[IEEE80211_SAE_CACHE][IEEE80211_ADDR_LEN];\n"
+         "static uint8_t ieee80211_sae_count;\n",
+         "static uint8_t ieee80211_sae_bssids[IEEE80211_SAE_CACHE][IEEE80211_ADDR_LEN];\n"
+         "static uint8_t ieee80211_sae_count;\n"
+         "/* Per entry: bit 0, the RSN element offered AKM 8; bit 1, the RSN\n"
+         "   Extension element (ID 244) set bit 5, SAE hash-to-element. The two\n"
+         "   elements arrive separately, so each sets its own bit. */\n"
+         "#define IEEE80211_SAE_F_SAE 0x01\n"
+         "#define IEEE80211_SAE_F_H2E 0x02\n"
+         "static uint8_t ieee80211_sae_flags[IEEE80211_SAE_CACHE];\n"
+         "/* 1 while the association in progress used H2E (see patch_wpa3_h2e). */\n"
+         "static uint8_t ieee80211_sae_h2e_used;\n"
+         "/* The password token PT (802.11-2020 12.4.4.2.3), derived once per\n"
+         "   (SSID, password) and kept: 64 bytes of point, 8 of tag, 1 of\n"
+         "   validity. Deriving it costs about a scalar multiplication; reusing\n"
+         "   it costs nothing. */\n"
+         "static p256_point ieee80211_sae_pt;\n"
+         "static uint8_t ieee80211_sae_pt_tag[8];\n"
+         "static uint8_t ieee80211_sae_pt_valid;\n",
+         "the SAE cache"),
+                # The three cache functions wpa3_sae and sae_required left: remember
+        # (evicting the oldest when full), forget, known. Each keeps the
+        # flags byte beside its BSSID.
+        ("static void ieee80211_sae_remember(const uint8_t *bssid)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0) return;\n  if(ieee80211_sae_count == IEEE80211_SAE_CACHE) {\n    memmove(ieee80211_sae_bssids[0], ieee80211_sae_bssids[1],\n            (IEEE80211_SAE_CACHE - 1) * IEEE80211_ADDR_LEN);\n    ieee80211_sae_count--;\n  }\n  memcpy(ieee80211_sae_bssids[ieee80211_sae_count++], bssid,\n         IEEE80211_ADDR_LEN);\n}\n",
+         "static void ieee80211_sae_remember_flag(const uint8_t *bssid, uint8_t flag)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0) {\n      ieee80211_sae_flags[i] |= flag;\n      return;\n    }\n  if(ieee80211_sae_count == IEEE80211_SAE_CACHE) {\n    memmove(ieee80211_sae_bssids[0], ieee80211_sae_bssids[1],\n            (IEEE80211_SAE_CACHE - 1) * IEEE80211_ADDR_LEN);\n    memmove(ieee80211_sae_flags, ieee80211_sae_flags + 1, IEEE80211_SAE_CACHE - 1);\n    ieee80211_sae_count--;\n  }\n  memcpy(ieee80211_sae_bssids[ieee80211_sae_count], bssid,\n         IEEE80211_ADDR_LEN);\n  ieee80211_sae_flags[ieee80211_sae_count++] = flag;\n}\n\nstatic void ieee80211_sae_remember(const uint8_t *bssid)\n{\n  ieee80211_sae_remember_flag(bssid, IEEE80211_SAE_F_SAE);\n}\n",
+         "the SAE cache's remember"),
+        ("      memmove(ieee80211_sae_bssids[i], ieee80211_sae_bssids[i + 1],\n              (ieee80211_sae_count - i - 1) * IEEE80211_ADDR_LEN);\n      ieee80211_sae_count--;\n      return;\n",
+         "      memmove(ieee80211_sae_bssids[i], ieee80211_sae_bssids[i + 1],\n              (ieee80211_sae_count - i - 1) * IEEE80211_ADDR_LEN);\n      memmove(ieee80211_sae_flags + i, ieee80211_sae_flags + i + 1,\n              ieee80211_sae_count - i - 1);\n      ieee80211_sae_count--;\n      return;\n",
+         "the SAE cache's forget"),
+        ("static int32_t ieee80211_sae_known(const uint8_t *bssid)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0) return 1;\n  return 0;\n}\n",
+         "static int32_t ieee80211_sae_flag(const uint8_t *bssid, uint8_t flag)\n{\n  uint8_t i;\n  for(i=0;i<ieee80211_sae_count;i++)\n    if(memcmp(ieee80211_sae_bssids[i], bssid, IEEE80211_ADDR_LEN) == 0)\n      return (ieee80211_sae_flags[i] & flag) != 0;\n  return 0;\n}\n\n/* Known for SAE at all: the RSN element offered AKM 8. An entry the RSNXE\n   alone created says no here, and the network is tried with PSK. */\nstatic int32_t ieee80211_sae_known(const uint8_t *bssid)\n{\n  return ieee80211_sae_flag(bssid, IEEE80211_SAE_F_SAE);\n}\n\nint32_t ieee80211_sae_h2e_in_use(void)\n{\n  return ieee80211_sae_h2e_used;\n}\n",
+         "the SAE cache's known"),
+        # 2. The scan: the RSN Extension element.
+        ("\t\t\t\t\t\t\tcase IEEE80211_ELEMID_VENDOR:\n              {\n\t\t\t\t\t\t\t\t/* Check for WPA */",
+         "\t\t\t\t\t\t\tcase 244:\n"
+         "\t\t\t\t\t\t\t\t/* The RSN Extension element (9.4.2.241): one capability octet,\n"
+         "\t\t\t\t\t\t\t\t   bit 5 = SAE hash-to-element. The AP's answer to whether it\n"
+         "\t\t\t\t\t\t\t\t   wants H2E; hostapd sends it for sae_pwe=1 and 2. */\n"
+         "\t\t\t\t\t\t\t\tif(frame_current[1] >= 1 && (frame_current[2] & SAE_RSNXE_H2E_BIT))\n"
+         "\t\t\t\t\t\t\t\t\tieee80211_sae_remember_flag(scan_result.bssid, IEEE80211_SAE_F_H2E);\n"
+         "\t\t\t\t\t\t\t\tbreak;\n"
+         "\t\t\t\t\t\t\tcase IEEE80211_ELEMID_VENDOR:\n              {\n\t\t\t\t\t\t\t\t/* Check for WPA */",
+         "the vendor element case of the scan"),
+        # 3. The auth frame builder takes a status code.
+        ("static int32_t ieee80211_send_auth_body(uint16_t seq, const uint8_t *body,\n                                        uint32_t blen)\n{\n",
+         "static int32_t ieee80211_send_auth_body(uint16_t seq, uint16_t status,\n                                        const uint8_t *body, uint32_t blen)\n{\n",
+         "the auth body sender's definition"),
+        ("  *(write_ptr++) = (IEEE80211_STATUS_SUCCESS & 0x00ff);\n  *(write_ptr++) = (IEEE80211_STATUS_SUCCESS & 0xff00) >> 8;\n  memcpy(write_ptr, body, blen);\n",
+         "  *(write_ptr++) = (status & 0x00ff);\n  *(write_ptr++) = (status & 0xff00) >> 8;\n  memcpy(write_ptr, body, blen);\n",
+         "the status bytes of the auth body"),
+        # 4. The commit: H2E if the AP offered it.
+        ("  DBG_WIFI(\"SAE: deriving the password element\"EOL);\n  if(!sae_commit(&ieee80211_sae, rt2501_mac, ieee80211_assoc_bssid,\n                 (const char *)ieee80211_sae_pw,\n                 ieee80211_sae_rng, NULL, ieee80211_sae_tick)) {\n    DBG_WIFI(\"SAE: could not build a commit\"EOL);\n    sae_clear(&ieee80211_sae);\n    return 0;\n  }\n  sae_commit_bytes(&ieee80211_sae, commit);\n  if(!ieee80211_send_auth_body(IEEE80211_SAE_COMMIT, commit, sizeof commit)) {\n",
+         "  ieee80211_sae_h2e_used = 0;\n"
+         "  if(ieee80211_sae_flag(ieee80211_assoc_bssid, IEEE80211_SAE_F_H2E)) {\n"
+         "    /* Hash-to-element (12.4.4.2.3), because the AP's RSNXE asked for\n"
+         "       it. PT is kept across associations; the tag says whether the\n"
+         "       one we hold is for this SSID and password. */\n"
+         "    uint8_t tag[SHA256_DIGEST], mix[IEEE80211_SSID_MAXLEN + 1 + sizeof ieee80211_sae_pw];\n"
+         "    uint32_t n = strlen((char*)ieee80211_assoc_ssid);\n"
+         "    memcpy(mix, ieee80211_assoc_ssid, n);\n"
+         "    mix[n++] = 0;\n"
+         "    memcpy(mix + n, ieee80211_sae_pw, strlen((char*)ieee80211_sae_pw));\n"
+         "    n += strlen((char*)ieee80211_sae_pw);\n"
+         "    sha256(tag, mix, n);\n"
+         "    memset(mix, 0, sizeof mix);\n"
+         "    if(!ieee80211_sae_pt_valid || memcmp(tag, ieee80211_sae_pt_tag, sizeof ieee80211_sae_pt_tag) != 0) {\n"
+         "      DBG_WIFI(\"SAE: deriving the password token (H2E)\"EOL);\n"
+         "      ieee80211_sae_pt_valid = 0;\n"
+         "      if(!sae_derive_pt(&ieee80211_sae_pt, ieee80211_assoc_ssid,\n"
+         "                        strlen((char*)ieee80211_assoc_ssid),\n"
+         "                        (const char *)ieee80211_sae_pw, NULL,\n"
+         "                        ieee80211_sae_tick)) {\n"
+         "        DBG_WIFI(\"SAE: could not derive PT\"EOL);\n"
+         "        return 0;\n"
+         "      }\n"
+         "      memcpy(ieee80211_sae_pt_tag, tag, sizeof ieee80211_sae_pt_tag);\n"
+         "      ieee80211_sae_pt_valid = 1;\n"
+         "    }\n"
+         "    DBG_WIFI(\"SAE: deriving the password element from PT (H2E)\"EOL);\n"
+         "    if(!sae_commit_pt(&ieee80211_sae, rt2501_mac, ieee80211_assoc_bssid,\n"
+         "                      &ieee80211_sae_pt,\n"
+         "                      ieee80211_sae_rng, NULL, ieee80211_sae_tick)) {\n"
+         "      DBG_WIFI(\"SAE: could not build an H2E commit\"EOL);\n"
+         "      sae_clear(&ieee80211_sae);\n"
+         "      return 0;\n"
+         "    }\n"
+         "    ieee80211_sae_h2e_used = 1;\n"
+         "  } else {\n"
+         "    DBG_WIFI(\"SAE: deriving the password element (hunting and pecking)\"EOL);\n"
+         "    if(!sae_commit(&ieee80211_sae, rt2501_mac, ieee80211_assoc_bssid,\n"
+         "                   (const char *)ieee80211_sae_pw,\n"
+         "                   ieee80211_sae_rng, NULL, ieee80211_sae_tick)) {\n"
+         "      DBG_WIFI(\"SAE: could not build a commit\"EOL);\n"
+         "      sae_clear(&ieee80211_sae);\n"
+         "      return 0;\n"
+         "    }\n"
+         "  }\n"
+         "  sae_commit_bytes(&ieee80211_sae, commit);\n"
+         "  /* Status 126 says \"this commit is H2E\" (Table 9-50); 0 says hunted and\n"
+         "     pecked. hostapd drops a commit whose status does not match its\n"
+         "     sae_pwe without a reply. */\n"
+         "  if(!ieee80211_send_auth_body(IEEE80211_SAE_COMMIT,\n"
+         "                               ieee80211_sae.h2e ? SAE_STATUS_H2E : IEEE80211_STATUS_SUCCESS,\n"
+         "                               commit, sizeof commit)) {\n",
+         "the commit"),
+        # 5. The token: in a container with H2E.
+        ("    if(tlen >= 2 && tok[0] == 19 && tok[1] == 0) { tok += 2; tlen -= 2; }\n",
+         "    if(tlen >= 2 && tok[0] == 19 && tok[1] == 0) { tok += 2; tlen -= 2; }\n"
+         "    /* With H2E the token comes in an Anti-Clogging Token Container\n"
+         "       element (255, length, 93, token) and goes back in one. */\n"
+         "    if(ieee80211_sae.h2e && tlen >= 3 && tok[0] == SAE_EID_EXTENSION\n"
+         "       && tok[2] == SAE_EID_EXT_TOKEN && tok[1] >= 1\n"
+         "       && (uint32_t)tok[1] - 1 <= tlen - 3) {\n"
+         "      tlen = (uint32_t)tok[1] - 1;\n"
+         "      tok += 3;\n"
+         "    }\n",
+         "the token's group prefix"),
+        ("    if(!ieee80211_send_auth_body(IEEE80211_SAE_COMMIT, retry, n)) {\n",
+         "    if(!ieee80211_send_auth_body(IEEE80211_SAE_COMMIT,\n"
+         "                                 ieee80211_sae.h2e ? SAE_STATUS_H2E : IEEE80211_STATUS_SUCCESS,\n"
+         "                                 retry, n)) {\n",
+         "the token retry"),
+        # 6. The AP's commit must answer in kind.
+        ("  if(status != IEEE80211_STATUS_SUCCESS) {\n    sprintf(dbg_buffer, \"SAE: the AP refused us, status %u\"EOL, status);\n",
+         "  if(seq == IEEE80211_SAE_COMMIT && ieee80211_sae.h2e\n"
+         "     && status == SAE_STATUS_H2E) {\n"
+         "    /* 126 on the AP's commit is the H2E handshake going to plan. */\n"
+         "  } else if(status != IEEE80211_STATUS_SUCCESS\n"
+         "            || (seq == IEEE80211_SAE_COMMIT && ieee80211_sae.h2e)) {\n"
+         "    /* ...and a 0 there when we sent 126 is an AP that did not do what\n"
+         "       it advertised; wpa_supplicant refuses that too (sme.c). */\n"
+         "    sprintf(dbg_buffer, \"SAE: the AP refused us, status %u\"EOL, status);\n",
+         "the refusal"),
+        ("    if(!ieee80211_send_auth_body(IEEE80211_SAE_CONFIRM, confirm,\n                                 sizeof confirm)) {\n",
+         "    if(!ieee80211_send_auth_body(IEEE80211_SAE_CONFIRM, IEEE80211_STATUS_SUCCESS,\n                                 confirm, sizeof confirm)) {\n",
+         "the confirm"),
+        # 7. The association request: the RSNXE, when H2E was used.
+        ("\t\t+2+0x16];//+4];\n\t} *assoc;",
+         "\t\t+2+0x16\n\t\t+SAE_RSNXE_LEN];//+4];\n\t} *assoc;",
+         "the association frame's size"),
+        ("      *(write_ptr++) = (ieee80211_authmode == IEEE80211_AUTH_SAE) ? 0x80 : 0x00;\n      *(write_ptr++) = 0x00;\n",
+         "      *(write_ptr++) = (ieee80211_authmode == IEEE80211_AUTH_SAE) ? 0x80 : 0x00;\n      *(write_ptr++) = 0x00;\n"
+         "      /* The RSN Extension element, when and only when this association\n"
+         "         used H2E: hostapd with sae_pwe=2 refuses a station that claims\n"
+         "         H2E here and hunted and pecked, and message 2 of the handshake\n"
+         "         must repeat whatever is sent here. */\n"
+         "      if(ieee80211_authmode == IEEE80211_AUTH_SAE && ieee80211_sae_h2e_used) {\n"
+         "        *(write_ptr++) = SAE_RSNXE_ID;\n"
+         "        *(write_ptr++) = 1;\n"
+         "        *(write_ptr++) = SAE_RSNXE_H2E_BIT;\n"
+         "      }\n",
+         "the RSN capabilities of the association request"),
+    ], "ieee80211_sae_h2e_used", "SAE picks H2E when the AP offers it")
+
+    # Message 2 repeats the RSNXE. EAPOL_RSN_LENGTH is the key_data member's
+    # size: 22 bytes of RSN IE plus 3 of RSNXE no longer fit in 24.
+    edit("inc/net/eapol.h", [
+        ("#define EAPOL_RSN_LENGTH          24\n",
+         "/* 28, not 24: the RSN IE (22) and, after SAE H2E, the RSNXE (3). */\n"
+         "#define EAPOL_RSN_LENGTH          28\n",
+         "EAPOL_RSN_LENGTH"),
+    ], "EAPOL_RSN_LENGTH          28", "room for the RSNXE in key data")
+
+    edit("src/net/eapol.c", [
+        ("  uint16_t rsn_size = sizeof(wpa_rsn);\n  if((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA2)\n    rsn_size = sizeof(wpa2_rsn);\n",
+         "  uint16_t rsn_size = sizeof(wpa_rsn);\n  if((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA2)\n    rsn_size = sizeof(wpa2_rsn);\n"
+         "  /* After SAE H2E the association request carried an RSNXE, and\n"
+         "     hostapd deauthenticates if message 2 does not repeat it. */\n"
+         "  if(ieee80211_authmode == IEEE80211_AUTH_SAE && ieee80211_sae_h2e_in_use())\n"
+         "    rsn_size += SAE_RSNXE_LEN;\n",
+         "the key data size"),
+        ("    memcpy(fr_out.llc_eapol.key_frame.key_data, wpa2_rsn, rsn_size);\n",
+         "    memcpy(fr_out.llc_eapol.key_frame.key_data, wpa2_rsn, sizeof(wpa2_rsn));\n",
+         "the RSN IE copy"),
+        ("    *(fr_out.llc_eapol.key_frame.key_data+13) = (ieee80211_encryption&0x0F);\n",
+         "    *(fr_out.llc_eapol.key_frame.key_data+13) = (ieee80211_encryption&0x0F);\n"
+         "    if(ieee80211_authmode == IEEE80211_AUTH_SAE && ieee80211_sae_h2e_in_use()) {\n"
+         "      /* The RSNXE, as the association request had it (f4 01 20). */\n"
+         "      *(fr_out.llc_eapol.key_frame.key_data+sizeof(wpa2_rsn))   = SAE_RSNXE_ID;\n"
+         "      *(fr_out.llc_eapol.key_frame.key_data+sizeof(wpa2_rsn)+1) = 1;\n"
+         "      *(fr_out.llc_eapol.key_frame.key_data+sizeof(wpa2_rsn)+2) = SAE_RSNXE_H2E_BIT;\n"
+         "    }\n",
+         "the message-2 pairwise byte"),
+        # The frame the stock code sends is LLC + 4 + body_length bytes, and
+        # its body_length counts the key_data member once more than the key
+        # data it holds; the trailer below is what makes the two agree. It
+        # has to be as long as key_data, or a 25-byte key data reads past
+        # the struct -- and the arithmetic of the send has to stay the
+        # stock one: with EAPOL_RSN_LENGTH on both sides it did not, and
+        # every WPA2 scenario stopped at EAPOL on 2026-11-08.
+        ("    uint8_t rsn[sizeof(wpa_rsn)];\n  } fr_out;\n  uint8_t ptk_buffer[80];\n",
+         "    uint8_t rsn[EAPOL_RSN_LENGTH];\n  } fr_out;\n  uint8_t ptk_buffer[80];\n",
+         "the message-2 trailer"),
+        ("  rt2501_send((uint8_t *)&fr_out, sizeof(fr_out)-(sizeof(wpa_rsn)-rsn_size), ieee80211_assoc_mac, 1, 1);\n",
+         "  rt2501_send((uint8_t *)&fr_out, sizeof(fr_out)-(EAPOL_RSN_LENGTH-rsn_size), ieee80211_assoc_mac, 1, 1);\n",
+         "the message-2 send"),
+    ], "SAE_RSNXE_LEN", "message 2 repeats the RSNXE")
+
+    # eapol.c reaches SAE_RSNXE_* through net/sae.h.
+    q = root / "src/net/eapol.c"
+    t = read_src(q)
+    if '#include "net/sae.h"' not in t:
+        nl = "\r\n" if "\r\n" in t else "\n"
+        a = '#include "net/sha256.h"' + nl
+        if a not in t:
+            sys.exit(f"FAIL {q}: the sha256 include is missing -- wpa3_eapol_akm must run first")
+        write_src(q, t.replace(a, a + '#include "net/sae.h"' + nl, 1))
+        print(f"[ok]   {q}: includes net/sae.h")
+
+    print("[ok]   wpa3_h2e: hash-to-element on offer, hunting and pecking otherwise")
+
+
 def patch_firmware_version(root: Path) -> None:
     """Say a version other than 0.0.0.13 in the boot URL and the setup page.
 
@@ -7133,9 +7423,11 @@ def main() -> int:
             "bootloader patch in isolation. "
             "pages-only   = minimal + modernized UI, NO bootloader patch. "
             "Use to verify the page rewrite in isolation. "
-            "lean-wpa3    = lean plus the WPA3-SAE client. A separate mode "
-            "on purpose: `lean` is what every rabbit on the warren runs, "
-            "and an experimental key exchange does not belong in it.\n"
+            "lean-wpa3    = lean plus the WPA3-SAE client, hash-to-element "
+            "when the AP offers it and hunting and pecking otherwise. A "
+            "separate mode on purpose: `lean` is what every rabbit on the "
+            "warren runs, and an experimental key exchange does not belong "
+            "in it.\n"
             "lean-wpa3-slim = lean-wpa3 minus what nothing reads: the debug "
             "sprintf chain (newlib printf + nano malloc), the bootloader's "
             "console literals and hex dumpers, 64 unrolled MD5 steps, a second "
@@ -7190,13 +7482,13 @@ def main() -> int:
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -7211,7 +7503,7 @@ def main() -> int:
         # lean-wpa3-os: lean-wpa3 compiled at -Os. A MEASUREMENT mode: it
         # says what the flag would buy and is not to be flashed (every
         # hardware-validated image is -O1; see patch_opt_size).
-        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
+        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
         # lean-wpa3-slim: lean-wpa3 with the dead weight measured out of it,
         # and nothing the rabbit does changed. C side: the serial console
         # formats without sprintf (and so without newlib's printf and
@@ -7221,17 +7513,17 @@ def main() -> int:
         # UART pad is unwired on a production rabbit), mkwav is precomputed,
         # and five unreferenced functions are dropped. Each saving is in the
         # step's docstring with the measurement that justified it.
-        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
-        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
+        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # The published 1.0.0.0, frozen: firmware-arm/releases/ holds its signed
         # image, and this list must keep rebuilding those bytes.
         "naboot-1.0.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.1: 1.0.0.0 with entropy_pool and rx_protected, and the EAPOL/SAE
         # hardening of the 2026-11-08 audit: eapol_ptk_install (F2), eapol_mic_len
         # (F3), gtk_no_reinstall (F4), no_tkip_pairwise (F8), sae_required (S2).
-        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -7309,6 +7601,19 @@ def main() -> int:
             and steps.index("link_liveness") < steps.index("wpa3_sae")):
         sys.exit("FAIL step list: link_liveness must come after wpa3_sae, whose "
                  "802.11w gate it reads a refused deauthenticate through.")
+    # wpa3_h2e edits text wpa3_sae and wpa3_eapol_akm put there, and its
+    # message 2 relies on the AKM-defined schedule being in place.
+    if "wpa3_h2e" in steps and ("wpa3_sae" not in steps or "wpa3_eapol_akm" not in steps):
+        sys.exit("FAIL step list: wpa3_h2e needs wpa3_sae and wpa3_eapol_akm.")
+    # ...and it anchors on the text entropy_pool (the credit gate before the
+    # commit) and sae_required (the cache's forget) leave in ieee80211_sae_begin
+    # and the SAE cache, so when those are present it must come after them.
+    # H2E draws its rand and mask through the same callback: from the pool.
+    for before in ("entropy_pool", "sae_required"):
+        if ("wpa3_h2e" in steps and before in steps
+                and steps.index("wpa3_h2e") < steps.index(before)):
+            sys.exit(f"FAIL step list: wpa3_h2e must come after {before}, whose "
+                     "text in ieee80211.c it edits.")
     if "eapol_msg2_ie" in steps and "group_cipher" not in steps:
         sys.exit("FAIL step list: eapol_msg2_ie reads ieee80211_group_cipher, "
                  "which group_cipher provides.")
@@ -7441,6 +7746,7 @@ def main() -> int:
         "gtk_no_reinstall": patch_gtk_no_reinstall,
         "no_tkip_pairwise": patch_no_tkip_pairwise,
         "sae_required": patch_sae_required,
+        "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,
