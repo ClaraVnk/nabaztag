@@ -77,6 +77,15 @@ scan against before it will dial at all, and the emulator prints both numbers:
 OPnetAuth: mac=yes bssid=yes crypt=0x00 (&0xF0)=0x00 encrypt=0x00 ... -> calling netAuth
 ```
 
+`./rabbit` has two knobs for the entropy pool, both off by default so a
+transcript stays reproducible: `--rssi-noise <seed>` wobbles every delivered
+frame's RSSI by -1..+1 dB, deterministically, as the thermal noise on a real
+link does; `--sram-seed <seed>` is what the retained external RAM holds at
+power-up. `--eeprom-persist` lets a run write the config page back (the seed
+the pool stores), which is how `tools/rng-boots.sh` makes one run the next
+run's previous boot and checks that two boots on identical timers never draw
+the same SAE scalar or adoption key. `make check` runs it after the scenarios.
+
 Other switches: `--no-eeprom` boots a rabbit straight out of the box,
 `--audio-dir` keeps every clip it plays exactly as the warren served it, so an
 MP3 stays an MP3 and "what did it actually say?" has an answer you can play,
@@ -146,6 +155,8 @@ at 90000 expect RUN
 | `at <ms> server-vanish` | the warren's sockets die with no FIN and no RST: the rabbit's segments on them are swallowed |
 | `at <ms> expect <state>` | assert `ieee80211_state`: IDLE, SCAN, AUTH, ASSOC, EAPOL, RUN |
 | `at <ms> expect-not <state>` | assert it is anything but that state |
+| `at <ms> inject-plaintext [<bssid>] [eapol]` | an attacker's data frame in clear, with the AP's addresses: an ARP, or an EAPOL-Key message 1 with a high replay counter |
+| `at <ms> expect-plain-dropped <n>` | assert the rabbit refused at least `n` plaintext data frames on its protected link (`ieee80211_plain_dropped`) |
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
 | `realtime` | pace the loop to the wall clock |

@@ -1,0 +1,20 @@
+# The same forged plaintext frames (see wpa2-plaintext-inject.txt), on a WPA3
+# link. SAE protects the password; what it does not protect, without this,
+# is the downlink: with plaintext data accepted the uplink is encrypted and
+# the downlink can be written by anyone. A group rekey and a pairwise rekey,
+# both encrypted, still go through.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 90000
+
+at 20000 expect RUN
+at 25000 inject-plaintext
+at 26000 expect-plain-dropped 1
+at 30000 inject-plaintext eapol
+at 31000 expect-plain-dropped 2
+at 40000 rekey
+at 50000 ptk-rekey
+at 89000 expect RUN

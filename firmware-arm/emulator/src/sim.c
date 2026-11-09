@@ -97,6 +97,17 @@ void sim_note_failure(const char *why)
   sim_log("FAIL %s", why);
 }
 
+void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed)
+{
+  uint32_t s = seed, i;
+  memset(buf, 0, len);
+  if(s == 0) return;
+  for(i = 0; i < len; i++) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    buf[i] = (uint8_t)(s >> 11);
+  }
+}
+
 const char *sim_security_name(int security)
 {
   switch(security) {
@@ -422,6 +433,15 @@ int sim_load(const char *path)
       } else if(!strcmp(tok[2], "drop-eapol")) {
         e->kind = SIM_EV_DROP_EAPOL;
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
+      } else if(!strcmp(tok[2], "inject-plaintext")) {
+        e->kind = SIM_EV_INJECT_PLAIN;
+        for(int i = 3; i < n; i++) {
+          if(!strcmp(tok[i], "eapol")) e->arg = 1;
+          else e->ap = ap_by_bssid(tok[i]);
+        }
+      } else if(!strcmp(tok[2], "expect-plain-dropped") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_PLAIN_DROPPED;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect") && n >= 4) {
         e->kind = SIM_EV_EXPECT_STATE;
         e->arg = parse_state(tok[3]);

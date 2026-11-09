@@ -29,10 +29,11 @@ int nab_tls_vm_state(void)
 /**
  * @brief The ClientHello for this rabbit, or 0 without a key.
  *
- * The client random comes from the SAE stream (timer, RSSI, MAC through
- * SHA-256). In TLS 1.3 with a PSK the random is not a secret: it stops a
- * replayed ServerHello from matching, and a repeat would only let a
- * recorded handshake be replayed against the server's rules.
+ * The client random comes from the entropy pool (nab_rng.h), ungated: in
+ * TLS 1.3 with a PSK the random is not a secret, it stops a replayed
+ * ServerHello from matching, and a repeat would only let a recorded
+ * handshake be replayed against the server's rules. Refusing to connect
+ * for want of credit would be worse than a predictable random here.
  */
 int nab_tls_vm_start(const uint8_t *identity, uint32_t idlen, uint8_t *out, uint32_t cap)
 {

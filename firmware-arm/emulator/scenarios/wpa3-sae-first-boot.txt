@@ -1,0 +1,20 @@
+# The first boot of a rabbit's life, on WPA3: no seed in the configuration
+# page, and the entropy pool has only what the scan heard. The first SAE
+# commit waits on the AP's channel until 64 frames have been mixed in --
+# about six seconds of beacons from a lone AP, less with neighbours -- then
+# stores a seed so no later boot waits. Every other WPA3 scenario boots from
+# a page that already holds one (obj/conf/wpa3.eeprom).
+#
+# The transcript shows "SAE: the entropy pool is not ready, listening first",
+# then "RNG: seed stored in the configuration sector", then the commit; RUN
+# comes around 11 s instead of 5. tools/rng-boots.sh measures the same thing
+# and compares the draws between boots.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3-first-boot.eeprom
+tick 50
+stop 30000
+
+at 6000  expect-not RUN
+at 20000 expect RUN

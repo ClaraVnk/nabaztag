@@ -78,6 +78,8 @@ enum {
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
+  SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
+  SIM_EV_EXPECT_PLAIN_DROPPED, /* assert >= n plaintext frames refused */
 };
 
 struct sim_event {
@@ -126,6 +128,9 @@ void sim_note_fetch(void);
 void sim_log(const char *fmt, ...);
 int  sim_failures(void);
 void sim_note_failure(const char *why);
+/* Fill a buffer from an xorshift seeded with `seed`; zeros when seed is 0.
+ * Stands in for what external RAM holds at power-up. */
+void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed);
 const char *sim_security_name(int security);
 const char *sim_state_name(int state);
 
