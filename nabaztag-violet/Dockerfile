@@ -37,12 +37,18 @@ WORKDIR /app
 # The STOCK Violet/OpenJabNab bytecodes are Violet's proprietary firmware, not
 # committed — fetched here at build time. They are kept for protocol work and
 # comparison; what the server actually serves is the hybrid build copied below.
+# From a fixed OpenJabNab commit, each checked against its SHA-256, so a change
+# upstream fails the build instead of shipping other bytes.
+ARG OJN_COMMIT=640257f3cef63fb428d80b8c171f3b15d17ab0ed
+ARG BOOTCODE_VIOLET_SHA256=59e91c6a432056ee94b7c8fe8a1eb7da23a9f4539b9c60e031290322bce4de53
+ARG BOOTCODE_OJN_SHA256=4b051f42a647e55deacea95d30bdf14c31283cfc2048e3bbe78991e4df7e6724
 RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ ffmpeg && \
     curl -fsSL -o /app/bootcode.violet \
-      https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet && \
+      "https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/${OJN_COMMIT}/http-wrapper/ojn_local/bootcode/bootcode.violet" && \
     curl -fsSL -o /app/bootcode.ojn \
-      https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.ojn && \
-    [ -s /app/bootcode.violet ] && [ -s /app/bootcode.ojn ]
+      "https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/${OJN_COMMIT}/http-wrapper/ojn_local/bootcode/bootcode.ojn" && \
+    echo "${BOOTCODE_VIOLET_SHA256}  /app/bootcode.violet" | sha256sum -c - && \
+    echo "${BOOTCODE_OJN_SHA256}  /app/bootcode.ojn" | sha256sum -c -
 
 # Bundled local STT (whisper.cpp + small model) for Phase-2 voice input.
 COPY --from=whisper /out/whisper-cli /usr/local/bin/whisper-cli
