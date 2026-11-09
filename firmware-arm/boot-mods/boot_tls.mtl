@@ -1,0 +1,127 @@
+// boot_tls.mtl -- bc.jsp over TLS 1.3 with the adoption key. See ADOPTION-KEY.md.
+//
+// A rabbit whose owner confirmed its key (flag 'C') asks for its bytecode on
+// the warren's TLS port, 5223, where the Terrier answers HTTP as well as
+// XMPP. The TLS context is free here: the runtime's XMPP starts after this
+// bytecode runs, and starts its own handshake. One attempt per boot: if it
+// fails or times out, this boot fetches bc.jsp in the clear, as before --
+// the bytecode carries its HMAC either way, so what the clear fetch loses is
+// privacy, not integrity.
+//
+// The TCP stack sends one segment at a time and calls back with TCPWRITE
+// when it can take the next, so the records wait in outputH/indexH like the
+// plain request does; the GET itself waits in boottlsreq until the
+// handshake is over.
+
+const BOOT_TLS_PORT=5223;;
+const BOOT_TLS_DONE=3;;	// stateH once the answer, or the failure, is handed over
+
+var boottlsreq;;
+var boottlsfail;;
+
+fun boottls_wanted= (strget conf CONF_KXFLAG)==67 && boottlsfail==nil;;
+
+// Records to write, after whatever is still waiting.
+fun boottls_queue httpreq s=
+	if s!=nil then
+	(
+		if httpreq.outputH==nil then set httpreq.outputH=s
+		else set httpreq.outputH=strcat (strsub httpreq.outputH httpreq.indexH (strlen httpreq.outputH)-httpreq.indexH) s;
+		set httpreq.indexH=0
+	);
+	0;;
+
+// Write what the stack takes now; 0 on a socket error.
+fun boottls_push t httpreq=
+	if httpreq.outputH==nil then 1
+	else let writetcp t httpreq.outputH httpreq.indexH -> i in
+	if i==nil then 0
+	else
+	(
+		if i>=strlen httpreq.outputH then (set httpreq.outputH=nil; set httpreq.indexH=0)
+		else set httpreq.indexH=i;
+		1
+	);;
+
+// Every decrypted record the bytes just fed complete, in order.
+fun boottls_take httpreq p=
+	if p!=nil then
+	(
+		set httpreq.inputH=p::httpreq.inputH;
+		boottls_take httpreq tlsIn nil
+	);
+	0;;
+
+// The answer to the bytecode callback; nothing at all and boot_loop asks
+// again, in the clear (boottlsfail is already set).
+fun boottls_end t httpreq=
+	if httpreq.stateH!=BOOT_TLS_DONE then
+	(
+		set httpreq.stateH=BOOT_TLS_DONE;
+		closetcp t;
+		if httpreq.inputH!=nil then (call httpreq.cbH [httpreq strcatlist rev httpreq.inputH nil]; 0)
+		else (set httpboot=nil; 0)
+	);
+	0;;
+
+fun boottls_event t val msg httpreq=
+	if httpreq.stateH==BOOT_TLS_DONE then 0
+	else if val==TCPWRITE then
+	(
+		if httpreq.stateH==HTTP_REACH then
+		(
+			set httpreq.stateH=HTTP_CONNECTED;
+			boottls_queue httpreq tlsStart webmac netMac
+		);
+		// tlsStart says nil without a key: nothing to send, give up now.
+		if httpreq.outputH==nil && (tlsState)!=1 && (tlsState)!=2 then boottls_end t httpreq
+		else if !boottls_push t httpreq then boottls_end t httpreq
+		else 0;
+		0
+	)
+	else if val==TCPCLOSE || msg==nil || 0==strlen msg then boottls_end t httpreq
+	else
+	(
+		set httpreq.startH=time;
+		boottls_take httpreq tlsIn msg;
+		boottls_queue httpreq tlsOut nil;
+		let tlsState -> st in
+		if st==2 && boottlsreq!=nil then
+		(
+			boottls_queue httpreq tlsOut boottlsreq;
+			set boottlsreq=nil;
+			0
+		)
+		else if st==3 then
+		(
+			// A failed handshake keeps nothing it may have decrypted.
+			set httpreq.inputH=nil;
+			boottls_end t httpreq
+		)
+		else 0;
+		if httpreq.stateH!=BOOT_TLS_DONE && !boottls_push t httpreq then boottls_end t httpreq;
+		0
+	);;
+
+fun boottls_open ip httpreq=
+	nil; ip;
+	if ip==nil then (set httpboot=nil; nil)
+	else
+	(
+		set httpreq.cnxH=opentcp netip nil useparamip ip BOOT_TLS_PORT fixarg4 #boottls_event httpreq;
+		set httpreq.stateH=HTTP_REACH;
+		nil
+	);
+	0;;
+
+fun boottls_request url cb=
+	set boottlsfail=1;	// one attempt per boot
+	let cuturl url -> [host port path] in
+	let [indexH:0 cbH:cb typeH:HTTP_NORMAL stateH:HTTP_SOLVE startH:time] -> httpreq in
+	(
+		nil; port;
+		set boottlsreq=strcatlist "GET "::path::" HTTP/1.0\13\nUser-Agent: MTL\13\nHost: "::host::"\13\n\13\n"::nil;
+		if isip host 0 then boottls_open host httpreq
+		else (dnsreq host fixarg2 #boottls_open httpreq; 0);
+		httpreq
+	);;
