@@ -8,6 +8,15 @@
 #
 #   tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #       --emulator <image> --elf <Nab.elf> --out <dir> [--strip | --strip-port N] [--tls-port N]
+#       [--scenario <file>]
+#
+# --scenario runs boot 2 (the owner confirmed) on another scenario file than
+# xmpp-tls.txt: scenarios/vm/xmpp-rfid.txt presents a tag to the reader at
+# 120 s, and the verdict adds whether the Terrier saw it as plain rfid.jsp or
+# inside the TLS session (bytecode/patch_rfid_xmpp.py).
+#
+# The rabbit's connections to port 80 (the ping server locate.jsp names, so
+# rfid.jsp) go to the Terrier's HTTP port (rabbit-vm --port80).
 #
 # --tls-port sets the Terrier's TLS port (default BASE+23). The stripped case
 # only ends in TLS when it is 5223: with the line gone the rabbit has nothing
@@ -17,7 +26,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -30,6 +39,7 @@ while [ $# -gt 0 ]; do
     --strip-port) STRIP=1; STRIP_PORT=$2; shift 2 ;;
     --base) BASE=$2; shift 2 ;;
     --tls-port) TLS_PORT=$2; shift 2 ;;
+    --scenario) SCENARIO2=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -62,10 +72,11 @@ if [ -n "$STRIP" ]; then
   sleep 1
 fi
 
-boot() {  # boot <label> <eeprom-name>
+boot() {  # boot <label> <eeprom-name> [scenario]
+  SC=${3:-scenarios/vm/xmpp-tls.txt}
   podman run --rm --network host -v "$HERE:/r:z" -v "$OUT/host:/host:z" -v "$OUT:/out:z" --entrypoint sh "$EMU" -c "
     cd /build/emulator
-    cp /r/scenarios/vm/xmpp-tls.txt scenarios/vm/
+    cp /r/scenarios/vm/xmpp-tls.txt /r/scenarios/vm/xmpp-rfid.txt scenarios/vm/
     test -f /out/rabbit-vm.boot || { python3 tools/bootbc.py /host/Nab.elf -o obj/boot.bc > /out/bootbc.log 2>&1 && make -s NABGCC=/build/nabgcc BYTECODE=obj/boot.bc vm >/out/make-boot.log 2>&1 && cp rabbit-vm /out/rabbit-vm.boot; }
     if ! test -f /host/$2.eeprom; then
       python3 mkconf.py --ssid Terrier --security open --server 127.0.0.1:$RABBIT_HTTP/vl --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o /host/$2.eeprom >/dev/null
@@ -73,9 +84,10 @@ boot() {  # boot <label> <eeprom-name>
       # bytes at 208 (main.mtl GetXmppPassword).
       python3 -c \"p='/host/$2.eeprom'; b=bytearray(open(p,'rb').read()); b[208:221]=b'd'+b'emulatorpass'; open(p,'wb').write(b)\"
     fi
-    /out/rabbit-vm.boot scenarios/vm/xmpp-tls.txt --eeprom /host/$2.eeprom --warren 127.0.0.1 --realtime" > "$OUT/vm-$1.log" 2>&1
+    /out/rabbit-vm.boot $SC --eeprom /host/$2.eeprom --warren 127.0.0.1 --port80 $HTTP --realtime" > "$OUT/vm-$1.log" 2>&1
   echo "== boot $1: vm exit $?  $(grep -a 'final state' "$OUT/vm-$1.log" | head -1)"
   grep -a "gw: the rabbit opened" "$OUT/vm-$1.log" | grep -v ":$HTTP$\|:$MITM$" | sed 's/^/   /' | head -6
+  grep -a "rfid:" "$OUT/vm-$1.log" | sed 's/^/   /' | head -4
 }
 
 boot 1-pending proof-a
@@ -83,13 +95,20 @@ MAC=$(podman logs "$NAME" 2>&1 | grep -a "kx: .* agreed" | head -1 | sed 's/.*kx
 echo "   rabbit mac: $MAC"
 podman logs "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port" | tail -3 | sed 's/^/   /'
 echo "== the owner confirms the colours"
-podman exec -w /app "$NAME" python3 -c "import tenant; s=tenant.Store('/data/terrier.db'); print('   kx_decide', s.kx_decide('$MAC', True), s.kx_get('$MAC')['state'])"
+podman exec -w /app "$NAME" python3 -c "
+try: from terrier import tenant
+except ImportError: import tenant
+s=tenant.Store('/data/terrier.db'); print('   kx_decide', s.kx_decide('$MAC', True), s.kx_get('$MAC')['state'])"
 T0=$(date +%s)
-boot 2-confirmed proof-a
+boot 2-confirmed proof-a ${SCENARIO2:-scenarios/vm/xmpp-tls.txt}
 echo "   terrier, since the owner confirmed:"
-podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode" | sed 's/^/   /' | head -12
+podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode\|rfid\|RFID" | sed 's/^/   /' | head -16
 [ -n "$STRIP" ] && { echo "   attacker:"; sed 's/^/   /' "$OUT/mitm.log" | grep -v forwarded; }
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
+if [ -n "$SCENARIO2" ]; then
+  echo "   terrier, the tag:"
+  grep -a "RFID\|rfid" "$OUT/terrier.log" | sed 's/^/   /' | head -12
+fi
 podman rm -f "$NAME" >/dev/null 2>&1
 [ -n "$MITM_PID" ] && kill $MITM_PID 2>/dev/null
 echo "proof-done: $OUT"

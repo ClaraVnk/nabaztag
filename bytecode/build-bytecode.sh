@@ -67,17 +67,26 @@ python3 "$HERE/patch_wifi_reconnect.py" "$BC/sources"
 # when locate.jsp (plain HTTP) was stripped of its xmpp_tls line.
 echo "==> patch_tls.py  (TLS 1.3 PSK on the XMPP connection)"
 python3 "$HERE/patch_tls.py" "$BC/sources/main.mtl"
+# The RFID report rides inside that TLS session instead of plain rfid.jsp
+# (a <message> with violet:nabaztag:rfid, the button's shape) when the warren
+# flipped "xmpp-rfid:0" to 1 under the HMAC; rfid.jsp as before otherwise.
+echo "==> patch_rfid_xmpp.py  (RFID report over the XMPP session when it runs TLS)"
+python3 "$HERE/patch_rfid_xmpp.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
 "$CC" -s "$BC/bootcode.mtl" "$OUT"
 
 # The literal the warren flips for a confirmed rabbit must be there exactly
-# once, or the Terrier leaves the policy alone and TLS stays optional.
+# once, or the Terrier leaves the policy alone and TLS stays optional; the
+# RFID one once too, or the tag never leaves rfid.jsp.
 python3 - "$OUT" <<'PY'
 import sys
-n = open(sys.argv[1], "rb").read().count(b"xmpp-tls:0")
-sys.exit(0 if n == 1 else f"FAIL: {n} 'xmpp-tls:0' literals in the bytecode, expected 1")
+b = open(sys.argv[1], "rb").read()
+for lit in (b"xmpp-tls:0", b"xmpp-rfid:0"):
+    n = b.count(lit)
+    if n != 1:
+        sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")
 PY
 
 echo "==> built $OUT ($(wc -c < "$OUT") bytes)"

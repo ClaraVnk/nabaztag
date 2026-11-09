@@ -77,6 +77,7 @@ enum {
   SIM_EV_UPLOAD,        /* the phone POSTs --upload to the upgrade page */
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
+  SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
 };
 
 struct sim_event {
@@ -91,6 +92,8 @@ struct sim_event {
    * for "while the sound is still coming" is how a scenario passes because
    * the thing it meant to interrupt had already finished. */
   int      rel_fetch;
+  /* `rfid <16 hex>`: the tag's eight bytes; arg says whether one is there. */
+  uint8_t  tag[8];
 };
 
 /* The scenario, parsed once from a file. */

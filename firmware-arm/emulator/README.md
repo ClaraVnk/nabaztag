@@ -142,6 +142,7 @@ at 90000 expect RUN
 | `at <ms> arp on` / `arp off` | the gateway answers ARP, or stops |
 | `at <ms> server-drop` | the warren's TCP connections close |
 | `at <ms> server-close` | …after announcing `</stream:stream>`, as a server shutting down does |
+| `at <ms> rfid <16 hex>` / `rfid none` | a tag (eight bytes) is on the reader until it is taken away (`./rabbit-vm`) |
 | `at <ms> server-vanish` | the warren's sockets die with no FIN and no RST: the rabbit's segments on them are swallowed |
 | `at <ms> expect <state>` | assert `ieee80211_state`: IDLE, SCAN, AUTH, ASSOC, EAPOL, RUN |
 | `at <ms> expect-not <state>` | assert it is anything but that state |
@@ -353,6 +354,13 @@ Terrier refuses it; the runtime with the policy opens 5223 and binds over
 TLS whatever locate said. The attacker tool also takes `--host` to
 rewrite `xmpp_domain`: the handshake with a host that has no key fails,
 and the gate reconnects over TLS, for ever.
+`--scenario scenarios/vm/xmpp-rfid.txt` runs boot 2 with a tag presented to
+the reader at 120 s: the production runtime sends plain `rfid.jsp`, the one
+with `bytecode/patch_rfid_xmpp.py`, served by a Terrier that flips its
+`xmpp-rfid:0`, sends the tag inside the TLS session. The ping server
+`locate.jsp` names has no port, so `rfid.jsp` goes to port 80; rabbit-vm's
+`--port80 <N>`, which the script passes, sends those connections to the
+Terrier's HTTP port.
 
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
@@ -639,9 +647,10 @@ play anything while a capture is running, and says so in the transcript
 issue #23's finding 5 was measured. Feeding a real file in is a small change
 and would let the wake word be tested end to end.
 
-**The rest of the body.** The RFID reader has a scenario-driven tag list and
-no protocol, and nothing presses a button yet. The hooks are there
-(`hw_press`, `hw_present_tag`); the scenario directives are not.
+**The rest of the body.** The RFID reader has a scenario-driven tag list
+(`at <ms> rfid <16 hex>`, `rfid none`) and no protocol: `rfid_read` returns
+zeros. Nothing presses a button yet; the hook is there (`hw_press`), the
+scenario directive is not.
 
 ## Layout
 

@@ -227,6 +227,8 @@ void sim_note_fetch(void)
  *   at <ms> up <bssid>
  *   at <ms> arp on|off            the gateway answers ARP, or stops
  *   at <ms> server-drop           the warren's TCP connections close
+ *   at <ms> rfid <16 hex>|none    a tag is on the reader (eight bytes), or
+ *                                 none is any more
  *   at <ms> server-close          …after announcing </stream:stream>, which
  *                                 is what a server shutting down does
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
@@ -432,6 +434,22 @@ int sim_load(const char *path)
       } else if(!strcmp(tok[2], "expect-flash")) {
         e->kind = SIM_EV_EXPECT_FLASH;
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
+      } else if(!strcmp(tok[2], "rfid") && n >= 4) {
+        /* The reader sees one tag until `rfid none`: the runtime reports a
+           tag that stays once a second, which is what a Ztamp left on the
+           rabbit does, so a scenario takes it away when it has been seen. */
+        e->kind = SIM_EV_RFID;
+        if(strcmp(tok[3], "none")) {
+          if(strlen(tok[3]) != 16 || strspn(tok[3], "0123456789abcdefABCDEF") != 16) {
+            fprintf(stderr, "%s:%d: a tag is 16 hex digits, or none\n", path, lineno);
+            fclose(f); return -1;
+          }
+          for(int i = 0; i < 8; i++) {
+            char h[3] = { tok[3][2*i], tok[3][2*i+1], 0 };
+            e->tag[i] = (uint8_t)strtoul(h, NULL, 16);
+          }
+          e->arg = 1;
+        }
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "expect-not") && n >= 4) {
