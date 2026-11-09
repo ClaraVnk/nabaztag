@@ -205,6 +205,7 @@ check: $(TARGET) $(CONFS)
 	done; \
 	echo; echo "transcripts in obj/logs/"; \
 	tools/rng-boots.sh || fail=1; \
+	tools/sae-downgrade.sh || fail=1; \
 	exit $$fail
 
 # Prove the emulator's own code is clean under the sanitizers. The firmware's

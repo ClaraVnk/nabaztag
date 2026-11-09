@@ -1,0 +1,23 @@
+# The retransmitted message 3 on a WPA3 link, where the key data also carries
+# the IGTK. ieee80211_install_igtk() took the packet number from the frame
+# each time, which reopened the replay window for management frames;
+# gtk_no_reinstall keeps the IPN it has for an unchanged key. The restart at
+# 30 s is the check that the AP's signed deauthentication, with the next
+# IPN, is still believed afterwards.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
+psk nabaztag
+conf obj/conf/wpa3.eeprom
+tick 50
+stop 90000
+
+at 20000 expect RUN
+at 20000 expect-group-installs 1
+at 22000 resend-msg3
+at 23000 expect-group-installs 1
+at 23000 expect-ptk-installs 1
+at 23000 expect RUN
+at 30000 restart
+at 30100 expect-not RUN                 # the signed broadcast farewell was believed
+at 60000 expect RUN
+at 60000 expect-reassoc 2

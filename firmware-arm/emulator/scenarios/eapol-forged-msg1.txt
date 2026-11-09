@@ -1,0 +1,31 @@
+# A message 1 the AP never sent, on a live WPA2 link (the 2026-11-08 audit's
+# F2; pacifox's ordering note in issue #26).
+#
+# Message 1 carries no MIC, so anyone who can get a frame to the handshake
+# can write one. The stock supplicant derived a new PTK from it, installed
+# it at message 2 -- 802.11i installs after message 3 -- and committed its
+# replay counter: the radio was then on a key the AP does not hold (deaf in
+# both directions) and every genuine EAPOL frame failed the replay check.
+# rx_protected keeps a plaintext one out; this one is delivered as if the
+# attacker were past that gate, so what is measured is the handshake.
+#
+# eapol_ptk_install keeps the live key until a MIC-checked message 3 and
+# commits the counter there. Without it: 2 pairwise installs by 21 s, the
+# station's key is not the AP's, and the rekeys at 30 s and 40 s are lost.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 70000
+
+at 10000 expect RUN
+at 10000 expect-ptk-installs 1
+at 20000 forged-msg1
+at 21000 expect-ptk-installs 1          # the live key stayed
+at 21000 expect-ptk-synced
+at 21000 expect RUN
+at 30000 rekey                          # a real group rekey still goes through
+at 40000 ptk-rekey                      # and a real pairwise rekey installs once more
+at 50000 expect-ptk-installs 2
+at 50000 expect-ptk-synced
+at 69000 expect RUN

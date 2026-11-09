@@ -1,0 +1,23 @@
+# A group key message whose body_length says 65535 in a 150-byte frame (the
+# 2026-11-08 audit's F3).
+#
+# Both MIC checks computed over body_length + 4 bytes, with body_length taken
+# from the frame: 64 KB read past the receive buffer -- a wrong MIC when that
+# memory exists, a data abort and the watchdog when it does not. The driver
+# copies the frame into its receive queue (rt2501usb_buffer.c, a static pool)
+# before eapol_input() sees it, so the over-read stays inside that pool and
+# no sanitizer reports it: the control is the counter below, which a build
+# without eapol_mic_len does not have. With the step the frame is refused
+# before any MIC is computed and the link is untouched.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 60000
+
+at 10000 expect RUN
+at 20000 eapol-oversized
+at 21000 expect-eapol-badlen 1
+at 21000 expect RUN
+at 30000 rekey                          # the real rekey after it still goes through
+at 59000 expect RUN

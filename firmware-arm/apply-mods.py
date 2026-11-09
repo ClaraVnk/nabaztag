@@ -2491,6 +2491,643 @@ def patch_rx_protected(root: Path) -> None:
         print(f"[ok]   {q}: an undecrypted protected data frame stops at the radio")
 
 
+def patch_eapol_ptk_install(root: Path) -> None:
+    """Install the pairwise key after message 3, not after message 2.
+
+    The stock supplicant derives the PTK in eapol_input_msg1(), answers with
+    message 2 and installs the new key into the radio right there -- before
+    anything from the AP has been authenticated. 802.11i has the supplicant
+    install after message 3, whose MIC proves the AP holds the same PTK.
+    pacifox flagged the ordering in issue #26 and the 2026-11-08 audit made
+    it a finding (F2): message 1 carries no MIC, so once eapol_ptk_rekey let
+    message 1 through on a live link, one forged message 1 replaced the live
+    PTK and committed its replay counter, and the link was dead until the
+    next association. rx_protected closed the plaintext way in; this closes
+    the hole itself, whatever the way in.
+
+    It also makes a real rekey work on hardware. With the key swapped at
+    message 2, the AP's message 3 -- still encrypted under the old PTK, the
+    AP installs the new one only after message 4 -- arrived as a cipher
+    error and the rekey failed; hostapd then retries three times and
+    deauthenticates. The emulator could not see that: its radio has no
+    cipher. It can now (expect-ptk-synced).
+
+    What changes in eapol.c:
+
+      * message 1 derives into `ptk_new` and leaves `ptk`, the live key,
+        alone; message 2 is MIC'd with the candidate's KCK and echoes the
+        counter of the frame it answers (`replay_pending`) rather than
+        committing it -- the commit moved to message 3, after the MIC;
+      * message 3's MIC is checked with the candidate's KCK; on MIC OK the
+        candidate becomes `ptk`, message 4 goes out (still in clear, as
+        ieee80211_send has it while eapol_state is MSG3), and only then is
+        the key handed to the radio, with ptk_tsc reset;
+      * a retransmitted message 3 (state already GROUP) re-sends message 4
+        and does NOT reinstall: reinstalling the same PTK resets the packet
+        counters, which is KRACK's pairwise case (CVE-2017-13077);
+      * a message 1 on a live link (state GROUP or RUN) no longer drops the
+        state to MSG1: `eapol_rekey` marks the rekey and the state stays,
+        so the uplink stays encrypted under the live key (ieee80211_send
+        sends in clear only in MSG1/MSG3) and a group message is still
+        accepted meanwhile. Message 3 ends the rekey; a forged message 1
+        that no message 3 follows leaves the session exactly as it was.
+
+    Needs eapol_replay (replay_pending, eapol_commit_replay) and
+    eapol_ptk_rekey (message 1 accepted while running -- without it this is
+    moot) before it; wpa2_gtk for the message 3 shape it anchors on.
+    """
+    p = root / "src/net/eapol.c"
+    t, nl = read_flat(p)
+    if "ptk_new" in t:
+        print(f"[skip] eapol_ptk_install: {p} already installs after message 3")
+        return
+    for need, what in (("replay_pending", "eapol_replay"),
+                       ("hostapd's wpa_ptk_rekey", "eapol_ptk_rekey"),
+                       ("eapol_install_msg3_gtk", "wpa2_gtk")):
+        if need not in t:
+            sys.exit(f"FAIL {p}: eapol_ptk_install needs {what} applied first")
+
+    def once(old, new, what):
+        nonlocal t
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {p}: expected exactly one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+
+    once("} ptk;  // Pairwise Transient Key",
+         "} ptk, ptk_new;  // Pairwise Transient Key; ptk_new: derived at\n"
+         "                 // message 1, live only once message 3 verified\n"
+         "                 // (eapol_ptk_install)\n"
+         "/* 1 from a message 1 received on a live link until the message 3 that\n"
+         "   completes the rekey: the state stays GROUP/RUN meanwhile. */\n"
+         "static uint8_t eapol_rekey;",
+         "ptk declaration")
+    once("void eapol_init(void)\n{\n  eapol_state = EAPOL_S_MSG1;\n",
+         "void eapol_init(void)\n{\n  eapol_state = EAPOL_S_MSG1;\n"
+         "  eapol_rekey = 0;   /* eapol_ptk_install */\n",
+         "eapol_init")
+    once("  eapol_state = EAPOL_S_MSG1;\n"
+         "\n"
+         "  if((ieee80211_encryption&0x0F) == 0x00)\n",
+         "  /* On a live link this is a rekey (eapol_ptk_install): the live key\n"
+         "     stays installed and the state stays where it is, so the uplink\n"
+         "     stays encrypted and a group message is still taken; message 3\n"
+         "     ends it. A message 1 nobody follows up changes nothing. */\n"
+         "  if(eapol_state == EAPOL_S_GROUP || eapol_state == EAPOL_S_RUN)\n"
+         "    eapol_rekey = 1;\n"
+         "  else\n"
+         "    eapol_state = EAPOL_S_MSG1;\n"
+         "\n"
+         "  if((ieee80211_encryption&0x0F) == 0x00)\n",
+         "message 1 state")
+    once("  /* EAPOL_S_GROUP can happen if the AP did not receive our reply */\n"
+         "  if((eapol_state != EAPOL_S_MSG3) && (eapol_state != EAPOL_S_GROUP)) {\n",
+         "  /* EAPOL_S_GROUP can happen if the AP did not receive our reply, and\n"
+         "     RUN during a rekey (eapol_ptk_install). */\n"
+         "  if((eapol_state != EAPOL_S_MSG3) && (eapol_state != EAPOL_S_GROUP)\n"
+         "     && !(eapol_rekey && eapol_state == EAPOL_S_RUN)) {\n",
+         "message 3 state guard")
+    # --- message 1: derive a candidate, commit nothing -------------------
+    once("  memcpy(ptk.b, ptk_buffer, EAPOL_PTK_LENGTH);",
+         "  memcpy(ptk_new.b, ptk_buffer, EAPOL_PTK_LENGTH);",
+         "PTK copy in message 1")
+    once('    sprintf(dbg_buffer, "%02x", ptk.b[i]);',
+         '    sprintf(dbg_buffer, "%02x", ptk_new.b[i]);',
+         "PTK dump in message 1")
+    once("    eapol_mic_sha(ptk.s.kck, EAPOL_MICK_LENGTH,\n"
+         "              (uint8_t *)&fr_out+LLC_LENGTH,\n"
+         "              sizeof(struct eapol_frame)+ rsn_size-LLC_LENGTH,",
+         "    eapol_mic_sha(ptk_new.s.kck, EAPOL_MICK_LENGTH,\n"
+         "              (uint8_t *)&fr_out+LLC_LENGTH,\n"
+         "              sizeof(struct eapol_frame)+ rsn_size-LLC_LENGTH,",
+         "message 2 SHA MIC")
+    once("    hmac_md5(ptk.s.kck, EAPOL_MICK_LENGTH,\n"
+         "              (uint8_t *)&fr_out+LLC_LENGTH, sizeof(struct eapol_frame)+\n"
+         "              rsn_size-LLC_LENGTH, fr_out.llc_eapol.key_frame.key_mic);",
+         "    hmac_md5(ptk_new.s.kck, EAPOL_MICK_LENGTH,\n"
+         "              (uint8_t *)&fr_out+LLC_LENGTH, sizeof(struct eapol_frame)+\n"
+         "              rsn_size-LLC_LENGTH, fr_out.llc_eapol.key_frame.key_mic);",
+         "message 2 MD5 MIC")
+    once("  /* No MIC on message 1/4 — nothing to wait for. */\n"
+         "  eapol_commit_replay();\n",
+         "  /* No MIC on message 1/4, so nothing it carries is trusted yet: the\n"
+         "     replay counter is echoed in message 2 and committed at message 3\n"
+         "     (eapol_ptk_install). */\n",
+         "message 1 replay commit")
+    once("  memcpy(fr_out.llc_eapol.key_frame.replay_counter,\n"
+         "                                    replay_counter, EAPOL_RPC_LENGTH);\n"
+         "  memcpy(fr_out.llc_eapol.key_frame.key_nonce, snonce, EAPOL_NONCE_LENGTH);",
+         "  memcpy(fr_out.llc_eapol.key_frame.replay_counter,\n"
+         "                                    replay_pending, EAPOL_RPC_LENGTH);\n"
+         "  memcpy(fr_out.llc_eapol.key_frame.key_nonce, snonce, EAPOL_NONCE_LENGTH);",
+         "message 2 replay counter")
+    once("  /* Install pairwise encryption and MIC keys */\n"
+         "  if((ieee80211_encryption&0x0F) == IEEE80211_CIPHER_CCMP)  // FIXME\n"
+         "  {\n"
+         "    rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_AES);\n"
+         "  }\n"
+         "  else\n"
+         "  {\n"
+         "    rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_TKIP);\n"
+         "  }\n"
+         "  memset(ptk_tsc, 0, EAPOL_TSC_LENGTH);\n"
+         "\n"
+         "  eapol_state = EAPOL_S_MSG3;\n"
+         "}",
+         "  /* Not installed here. The radio keeps the live key, if any, until\n"
+         "     message 3 proves the AP derived the same one (eapol_ptk_install).\n"
+         "     During a rekey the state stays where it was, too. */\n"
+         "\n"
+         "  if(!eapol_rekey) eapol_state = EAPOL_S_MSG3;\n"
+         "}",
+         "PTK install in message 1")
+    # --- message 3: verify with the candidate, then make it live ----------
+    once("  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];\n"
+         "  struct {\n"
+         "    struct eapol_frame llc_eapol;\n"
+         "  } fr_out;",
+         "  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];\n"
+         "  int32_t install_ptk;   /* eapol_ptk_install */\n"
+         "  struct {\n"
+         "    struct eapol_frame llc_eapol;\n"
+         "  } fr_out;",
+         "message 3 locals")
+    once("     eapol_mic_sha(ptk.s.kck, EAPOL_MICK_LENGTH,\n"
+         "     frame+LLC_LENGTH,\n",
+         "     eapol_mic_sha(ptk_new.s.kck, EAPOL_MICK_LENGTH,\n"
+         "     frame+LLC_LENGTH,\n",
+         "message 3 SHA MIC check")
+    once("    hmac_md5(ptk.s.kck, EAPOL_MICK_LENGTH,\n"
+         "     frame+LLC_LENGTH,\n",
+         "    hmac_md5(ptk_new.s.kck, EAPOL_MICK_LENGTH,\n"
+         "     frame+LLC_LENGTH,\n",
+         "message 3 MD5 MIC check")
+    once('  DBG_WIFI("MIC OK"EOL);\n'
+         "  eapol_commit_replay();\n"
+         "\n"
+         "  eapol_state = EAPOL_S_MSG3;",
+         '  DBG_WIFI("MIC OK"EOL);\n'
+         "  eapol_commit_replay();\n"
+         "\n"
+         "  /* The AP holds the key message 1 derived: it is the live one from\n"
+         "     here. Handed to the radio after message 4 below, and only on the\n"
+         "     first message 3 -- a retransmission (state already GROUP) must\n"
+         "     not reinstall it, which would reset the packet counters. */\n"
+         "  install_ptk = (eapol_state == EAPOL_S_MSG3) || eapol_rekey;\n"
+         "  eapol_rekey = 0;\n"
+         "  memcpy(ptk.b, ptk_new.b, EAPOL_PTK_LENGTH);\n"
+         "\n"
+         "  eapol_state = EAPOL_S_MSG3;",
+         "message 3 MIC OK")
+    once('  //DBG_WIFI("Response sent"EOL);\n'
+         "\n"
+         "  eapol_state = EAPOL_S_GROUP;",
+         '  //DBG_WIFI("Response sent"EOL);\n'
+         "\n"
+         "  /* Install pairwise encryption and MIC keys: after message 4 went out\n"
+         "     in clear, as the standard orders it (eapol_ptk_install). */\n"
+         "  if(install_ptk) {\n"
+         "    if((ieee80211_encryption&0x0F) == IEEE80211_CIPHER_CCMP)\n"
+         "      rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_AES);\n"
+         "    else\n"
+         "      rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_TKIP);\n"
+         "    memset(ptk_tsc, 0, EAPOL_TSC_LENGTH);\n"
+         '    DBG_WIFI("PTK installed"EOL);\n'
+         "  }\n"
+         "\n"
+         "  eapol_state = EAPOL_S_GROUP;",
+         "message 4 sent")
+    write_flat(p, t, nl)
+    print(f"[ok]   {p}: the PTK is installed after message 3, not message 2")
+
+
+def patch_eapol_mic_len(root: Path) -> None:
+    """Bound the EAPOL MIC span by the frame the radio delivered.
+
+    eapol_input_msg3() and eapol_input_group_msg1() compute the MIC over
+    `body_length + 4` bytes, with body_length read out of the frame itself:
+    up to 65 539 bytes from a receive buffer of a few hundred. eapol_input()
+    only checks that the frame is at least a key frame long. The 2026-11-08
+    audit's F3: one frame with a large body_length reads 64 KB past the
+    receive buffer -- a wrong MIC if that memory exists, a data abort and
+    the watchdog if it does not. The dispatcher drops the frame before any
+    MIC check as soon as the declared body does not fit in `length`, or is
+    shorter than a key frame. `eapol_bad_length` counts them, for the
+    emulator (expect-eapol-badlen) and for telemetry.
+    """
+    p = root / "src/net/eapol.c"
+    t, nl = read_flat(p)
+    if "eapol_mic_span" in t:
+        print(f"[skip] eapol_mic_len: {p} already bounds the MIC span")
+        return
+    anchor = "static void eapol_input_msg1(uint8_t *frame, uint32_t length)"
+    if t.count(anchor) != 1:
+        sys.exit(f"FAIL {p}: eapol_input_msg1 not found")
+    helper = (
+        "/* eapol_mic_len: the bytes the MIC covers, from the frame's own length\n"
+        "   field -- which is attacker data until it is checked against what the\n"
+        "   radio delivered. 0 when it does not fit, or is shorter than a key\n"
+        "   frame; the caller drops the frame before any MIC is computed. */\n"
+        "uint8_t eapol_bad_length;\n"
+        "static int32_t eapol_mic_span(const struct eapol_frame *fr, uint32_t length,\n"
+        "                              uint32_t *span)\n"
+        "{\n"
+        "  uint32_t body = ((uint32_t)fr->body_length[0] << 8) | fr->body_length[1];\n"
+        "  if(body < sizeof(struct eapol_key_frame) - EAPOL_RSN_LENGTH\n"
+        "     || LLC_LENGTH + 4 + body > length) {\n"
+        "    eapol_bad_length++;\n"
+        '    DBG_WIFI("EAPOL body length does not fit the frame, dropped"EOL);\n'
+        "    return 0;\n"
+        "  }\n"
+        "  *span = body + 4;\n"
+        "  return 1;\n"
+        "}\n\n"
+    )
+    t = t.replace(anchor, helper + anchor, 1)
+    old = "  uint8_t old_mic[EAPOL_KEYMIC_LENGTH];\n"
+    if t.count(old) != 2:
+        sys.exit(f"FAIL {p}: expected old_mic in message 3 and the group handler, found {t.count(old)}")
+    t = t.replace(old, old + "  uint32_t mic_span;      /* eapol_mic_len */\n")
+    old = "  /* Check MIC */\n  memcpy(old_mic, fr_in->key_frame.key_mic, EAPOL_KEYMIC_LENGTH);\n"
+    if t.count(old) != 2:
+        sys.exit(f"FAIL {p}: expected two MIC checks, found {t.count(old)}")
+    t = t.replace(old, "  if(!eapol_mic_span(fr_in, length, &mic_span)) return;\n" + old)
+    old = "((fr_in->body_length[0] << 8)|fr_in->body_length[1])+4,\n"
+    if t.count(old) != 4:
+        sys.exit(f"FAIL {p}: expected four MIC spans from the frame, found {t.count(old)}")
+    t = t.replace(old, "mic_span,\n")
+    write_flat(p, t, nl)
+    print(f"[ok]   {p}: the MIC span is bounded by the received length")
+
+
+def patch_gtk_no_reinstall(root: Path) -> None:
+    """Do not reinstall a group key the radio already holds.
+
+    A retransmitted message 3 (the AP did not hear message 4) and a repeated
+    group message both run rt2501_set_key() again with the key the radio
+    already has. Loading a key resets the receive sequence counter that
+    goes with it on every Ralink part documented, so the frames an attacker
+    recorded under that key replay: KRACK's group-key case, CVE-2017-13080,
+    the 2026-11-08 audit's F4. The IGTK travels in the same key data and
+    ieee80211_install_igtk() took its IPN from the frame each time, which
+    is the same reset for management frames.
+
+    So eapol.c remembers the key id and bytes it last installed and skips
+    the radio when they are unchanged (eapol_init forgets them: a new
+    association starts clean), and ieee80211_install_igtk() keeps the IPN
+    it has when the IGTK it is handed is the one it holds. A changed key
+    installs as before: the hourly rotation (wpa2-rekey) still goes
+    through; what does not is the same key twice.
+    """
+    p = root / "src/net/eapol.c"
+    t, nl = read_flat(p)
+    if "gtk_live_id" in t:
+        print(f"[skip] gtk_no_reinstall: {p} already skips an unchanged GTK")
+    else:
+        def once(old, new, what):
+            nonlocal t
+            if t.count(old) != 1:
+                sys.exit(f"FAIL {p}: expected exactly one {what}, found {t.count(old)}")
+            t = t.replace(old, new, 1)
+        once("} gtk;  // Group Transient Key",
+             "} gtk;  // Group Transient Key\n"
+             "/* The group key the radio holds (gtk_no_reinstall): key id, 0 for\n"
+             "   none, and the bytes. Loading the same key again would reset its\n"
+             "   replay counter -- CVE-2017-13080. */\n"
+             "static uint8_t gtk_live_id;\n"
+             "static uint8_t gtk_live[32];",
+             "gtk declaration")
+        once("void eapol_init(void)\n{\n  eapol_state = EAPOL_S_MSG1;\n",
+             "void eapol_init(void)\n{\n  eapol_state = EAPOL_S_MSG1;\n"
+             "  gtk_live_id = 0;   /* gtk_no_reinstall: a new association, no key */\n",
+             "eapol_init")
+        once("  rt2501_set_key(key_id, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,\n"
+             "                 (ieee80211_group_cipher == IEEE80211_CIPHER_TKIP)\n"
+             "                   ? RT2501_CIPHER_TKIP : RT2501_CIPHER_AES);\n",
+             "  if(gtk_live_id == key_id\n"
+             "     && memcmp(gtk_live, gtk.s.ek, sizeof(gtk.s.ek)) == 0) {\n"
+             "    /* The key the radio already holds, retransmitted: leave the\n"
+             "       radio's replay counter alone (gtk_no_reinstall). */\n"
+             '    DBG_WIFI("GTK unchanged, not reinstalled"EOL);\n'
+             "  } else {\n"
+             "  rt2501_set_key(key_id, gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx,\n"
+             "                 (ieee80211_group_cipher == IEEE80211_CIPHER_TKIP)\n"
+             "                   ? RT2501_CIPHER_TKIP : RT2501_CIPHER_AES);\n"
+             "  gtk_live_id = key_id;\n"
+             "  memcpy(gtk_live, gtk.s.ek, sizeof(gtk.s.ek));\n"
+             "  }\n",
+             "CCMP group key install")
+        once("        if(fr_in->key_frame.key_info.key_index != 0)\n"
+             "            rt2501_set_key(fr_in->key_frame.key_info.key_index,\n"
+             "                           gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx, RT2501_CIPHER_TKIP);\n",
+             "        if(fr_in->key_frame.key_info.key_index != 0\n"
+             "           && !(gtk_live_id == fr_in->key_frame.key_info.key_index\n"
+             "                && memcmp(gtk_live, gtk.b, sizeof(gtk.b)) == 0)) {\n"
+             "            rt2501_set_key(fr_in->key_frame.key_info.key_index,\n"
+             "                           gtk.s.ek, gtk.s.mick.tx, gtk.s.mick.rx, RT2501_CIPHER_TKIP);\n"
+             "            gtk_live_id = fr_in->key_frame.key_info.key_index;\n"
+             "            memcpy(gtk_live, gtk.b, sizeof(gtk.b));\n"
+             "        }\n",
+             "TKIP group key install")
+        write_flat(p, t, nl)
+        print(f"[ok]   {p}: an unchanged group key is not reinstalled")
+
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    if "gtk_no_reinstall" in t:
+        print(f"[skip] gtk_no_reinstall: {q} already keeps the IPN for an unchanged IGTK")
+        return
+    old = ("  if(!rsn_find_igtk(keydata, len, &id, ipn, key)) return;\n"
+           "  memcpy(ieee80211_igtk, key, sizeof ieee80211_igtk);\n")
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: ieee80211_install_igtk is not the shape wpa3_sae left it")
+    t = t.replace(old,
+                  "  if(!rsn_find_igtk(keydata, len, &id, ipn, key)) return;\n"
+                  "  if(ieee80211_igtk_set && ieee80211_igtk_id == id\n"
+                  "     && memcmp(ieee80211_igtk, key, sizeof ieee80211_igtk) == 0) {\n"
+                  "    /* gtk_no_reinstall: the IGTK we hold, retransmitted. Taking its\n"
+                  "       IPN again would reopen the replay window. */\n"
+                  "    memset(key, 0, sizeof key);\n"
+                  "    return;\n"
+                  "  }\n"
+                  "  memcpy(ieee80211_igtk, key, sizeof ieee80211_igtk);\n", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: an unchanged IGTK keeps its packet number")
+
+
+def patch_no_tkip_pairwise(root: Path) -> None:
+    """Refuse TKIP as the pairwise cipher.
+
+    TKIP is RC4 with a per-packet key mix and a 64-bit MIC; it has been
+    broken since 2008 (Beck-Tews, CVE-2008-5230 class) and withdrawn from
+    the standard since 802.11-2012. This firmware accepted it wherever the
+    AP offered it, and ieee80211_associate() builds WPA (version 1)
+    requests with TKIP as the unicast cipher whatever the AP advertised, so
+    a WPA1 network was a TKIP network. The 2026-11-08 audit's F8.
+
+    Refused, in rt2501_auth: a WPA2 network whose only pairwise cipher is
+    TKIP, and any WPA1 network. The rabbit goes back to IDLE and the
+    bootloader retries, as for any network it cannot join; the bytecode's
+    own OPnetAuth check still filters most of these before they get here.
+    Mixed-mode APs -- TKIP as the GROUP cipher with CCMP pairwise, the
+    2006-era compromise -- are still joined (wpa2-mixed-gtk): the group
+    cipher is the AP's to choose and refusing it would refuse the network.
+    eapol_input_msg1()'s own "switch to TKIP" on key descriptor version 1
+    is closed the same way, for a network that reached it with no cipher
+    bit set.
+    """
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    if "no_tkip_pairwise" in t:
+        print(f"[skip] no_tkip_pairwise: {q} already refuses pairwise TKIP")
+    else:
+        old = ("\tieee80211_encryption = encryption;\n"
+               "\tswitch(ieee80211_encryption&0xF0) {\n"
+               "\t\tcase IEEE80211_CRYPT_NONE:\n"
+               "\t\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n")
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: rt2501_auth's encryption switch not found")
+        t = t.replace(old,
+                      "\tieee80211_encryption = encryption;\n"
+                      "\t/* no_tkip_pairwise: the scan's low bits say which pairwise ciphers\n"
+                      "\t   the AP offers (0x01 TKIP, 0x02 CCMP; ieee80211_associate picks\n"
+                      "\t   CCMP when both). TKIP alone, or WPA version 1 -- which this\n"
+                      "\t   firmware only ever negotiates as TKIP -- is a network we do not\n"
+                      "\t   join. IDLE, and the bootloader retries as for any refusal. */\n"
+                      "\tif((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA\n"
+                      "\t   || ((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA2\n"
+                      "\t       && (ieee80211_encryption&0x03) == 0x01)) {\n"
+                      "\t\tDBG_WIFI(\"TKIP is the only pairwise cipher offered; refusing the network\"EOL);\n"
+                      "\t\tieee80211_tkip_refused++;\n"
+                      "\t\treturn;\n"
+                      "\t}\n"
+                      "\tswitch(ieee80211_encryption&0xF0) {\n"
+                      "\t\tcase IEEE80211_CRYPT_NONE:\n"
+                      "\t\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n", 1)
+        anchor = "void rt2501_auth(const uint8_t *ssid, const uint8_t *mac,"
+        if t.count(anchor) != 1:
+            sys.exit(f"FAIL {q}: rt2501_auth not found")
+        t = t.replace(anchor,
+                      "/* Networks refused for offering TKIP as the pairwise cipher\n"
+                      "   (no_tkip_pairwise); for the emulator and telemetry. */\n"
+                      "uint8_t ieee80211_tkip_refused;\n\n" + anchor, 1)
+        write_flat(q, t, nl)
+        print(f"[ok]   {q}: a TKIP-only or WPA1 network is refused")
+
+    p = root / "src/net/eapol.c"
+    t, nl = read_flat(p)
+    if "no_tkip_pairwise" in t:
+        print(f"[skip] no_tkip_pairwise: {p} already refuses the TKIP switch")
+        return
+    old = ("      case 0x01:\n"
+           "        ieee80211_encryption |= IEEE80211_CIPHER_TKIP;\n"
+           '        DBG_WIFI("AP Uses TKIP so... Switch to TKIP"EOL);\n'
+           "        break;\n")
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {p}: message 1's TKIP switch not found")
+    t = t.replace(old,
+                  "      case 0x01:\n"
+                  "        /* no_tkip_pairwise: a key descriptor that means TKIP on a\n"
+                  "           network that declared no cipher. Not answered. */\n"
+                  '        DBG_WIFI("AP wants pairwise TKIP; refused"EOL);\n'
+                  "        ieee80211_state = IEEE80211_S_IDLE;\n"
+                  "        return;\n", 1)
+    write_flat(p, t, nl)
+    print(f"[ok]   {p}: message 1 no longer switches the link to TKIP")
+
+
+def patch_sae_required(root: Path) -> None:
+    """Once a network has authenticated with SAE, never join it with PSK.
+
+    wpa3_sae chooses SAE for a BSSID seen advertising AKM 8, PSK otherwise;
+    and ieee80211_sae_forget() demotes a BSSID whose SAE attempt is refused
+    or unanswered. Both decisions rest on unauthenticated frames. An access
+    point with the real SSID, another BSSID and WPA2-PSK only is joined
+    with the PBKDF2 PMK, and message 2 of that handshake is what an offline
+    dictionary attack on the passphrase needs -- the attack SAE exists to
+    prevent. One forged refusal from the real BSSID does the same for the
+    next attempt. Dragonblood's downgrade, CVE-2019-9494 family; the
+    2026-11-08 audit's S2.
+
+    The remedy is memory, as wpa_supplicant's: once SAE has succeeded on a
+    network -- the AP's confirm verified, which proves it holds the password
+    -- that network requires SAE from then on, and an AP of that SSID that
+    offers none is refused. The memory has to survive a power cycle or it
+    protects nothing, so it is in the configuration sector, next to the
+    entropy pool's seed: 32 bytes at 4032, SHA-256 of a label, the SSID and
+    the passphrase. Bound to both, so a reconfiguration to another network
+    (or another passphrase) is not locked by the old one, and stored as a
+    hash so the sector holds nothing it did not already hold.
+
+    Flash is the constraint: the sector is rated for 100 program cycles and
+    holds the Wi-Fi password. So the record is written once per network,
+    only after a successful SAE, only when it is not already there, and
+    from the main loop (ieee80211_timer, as rt2501_timer runs it), never
+    from the receive path. The way out of the lock -- an owner who
+    reprovisions the SSID from WPA3 to WPA2-only, which is what happened on
+    2026-11-08 -- is config mode: a configuration save (sysSave covering
+    the Wi-Fi fields, which is physical presence at the rabbit) clears the
+    record, one extra sector write, and only when a record is there. Until
+    then a rabbit whose network went back to WPA2 stays orange, and that
+    is the trade: scenarios/wpa3-downgrade.txt now expects it.
+
+    Needs wpa3_sae (the SAE hook and SHA-256), entropy_pool (buffer_temp
+    shared with the driver, write_uc_flash in ieee80211.c) before it.
+    """
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    if "ieee80211_sae_required" in t:
+        print(f"[skip] sae_required: {q} already remembers SAE networks")
+    else:
+        for need, what in (("static int32_t ieee80211_sae_known", "wpa3_sae"),
+                           ("ieee80211_rng_persist", "entropy_pool")):
+            if need not in t:
+                sys.exit(f"FAIL {q}: sae_required needs {what} applied first")
+
+        def once(old, new, what):
+            nonlocal t
+            if t.count(old) != 1:
+                sys.exit(f"FAIL {q}: expected exactly one {what}, found {t.count(old)}")
+            t = t.replace(old, new, 1)
+
+        once("/* The bodies are further down, next to rt2501_auth:",
+             "/* sae_required: a network that has authenticated with SAE requires it\n"
+             "   from then on. The record is 32 bytes in the configuration sector,\n"
+             "   SHA-256(label, SSID, passphrase): present and matching means\n"
+             "   \"required\". Written once, from the main loop; cleared by a\n"
+             "   configuration save (ieee80211_sae_release, from sysSave). */\n"
+             "#define IEEE80211_SAE_REQ_OFF 4032\n"
+             "#define IEEE80211_SAE_REQ_LEN 32\n"
+             "static uint8_t ieee80211_sae_req_pending;\n"
+             "uint8_t ieee80211_sae_refused;   /* PSK refused on a SAE network */\n"
+             "extern uint8_t buffer_temp[4096];\n"
+             "static void ieee80211_sae_req_tag(uint8_t out[IEEE80211_SAE_REQ_LEN])\n"
+             "{\n"
+             "  sha256_ctx c;\n"
+             "  sha256_init(&c);\n"
+             "  sha256_update(&c, (const uint8_t *)\"nabaztag sae required\", 21);\n"
+             "  sha256_update(&c, ieee80211_assoc_ssid,\n"
+             "                strlen((const char *)ieee80211_assoc_ssid));\n"
+             "  sha256_update(&c, (const uint8_t *)\"\", 1);\n"
+             "  sha256_update(&c, ieee80211_sae_pw, strlen((const char *)ieee80211_sae_pw));\n"
+             "  sha256_final(&c, out);\n"
+             "}\n"
+             "static int32_t ieee80211_sae_required(void)\n"
+             "{\n"
+             "  uint8_t have[IEEE80211_SAE_REQ_LEN], want[IEEE80211_SAE_REQ_LEN];\n"
+             "  if(ieee80211_sae_pw[0] == 0) return 0;\n"
+             "  read_uc_flash(IEEE80211_SAE_REQ_OFF, have, IEEE80211_SAE_REQ_LEN);\n"
+             "  ieee80211_sae_req_tag(want);\n"
+             "  return memcmp(have, want, IEEE80211_SAE_REQ_LEN) == 0;\n"
+             "}\n"
+             "/* Main-loop context only (ieee80211_timer): a sector erase with\n"
+             "   interrupts off is not for the receive path. */\n"
+             "static void ieee80211_sae_req_store(void)\n"
+             "{\n"
+             "  uint8_t tag[IEEE80211_SAE_REQ_LEN];\n"
+             "  if(!ieee80211_sae_req_pending) return;\n"
+             "  ieee80211_sae_req_pending = 0;\n"
+             "  if(ieee80211_sae_pw[0] == 0 || ieee80211_sae_required()) return;\n"
+             "  ieee80211_sae_req_tag(tag);\n"
+             "  __disable_interrupt();\n"
+             "  write_uc_flash(IEEE80211_SAE_REQ_OFF, tag, IEEE80211_SAE_REQ_LEN, buffer_temp);\n"
+             "  __enable_interrupt();\n"
+             "  DBG_WIFI(\"SAE: this network requires SAE from now on (stored)\"EOL);\n"
+             "}\n"
+             "/* A configuration save: the owner is at the rabbit, the lock goes. */\n"
+             "void ieee80211_sae_release(void)\n"
+             "{\n"
+             "  static const uint8_t zero[IEEE80211_SAE_REQ_LEN];\n"
+             "  uint8_t have[IEEE80211_SAE_REQ_LEN];\n"
+             "  read_uc_flash(IEEE80211_SAE_REQ_OFF, have, IEEE80211_SAE_REQ_LEN);\n"
+             "  if(memcmp(have, zero, IEEE80211_SAE_REQ_LEN) == 0) return;\n"
+             "  __disable_interrupt();\n"
+             "  write_uc_flash(IEEE80211_SAE_REQ_OFF, (uint8_t *)zero, IEEE80211_SAE_REQ_LEN, buffer_temp);\n"
+             "  __enable_interrupt();\n"
+             "  DBG_WIFI(\"SAE: requirement cleared by a configuration save\"EOL);\n"
+             "}\n\n"
+             "/* The bodies are further down, next to rt2501_auth:",
+             "SAE cache tail")
+        once('    DBG_WIFI("SAE: accepted, associating"EOL);\n'
+             "    ieee80211_associate();",
+             '    DBG_WIFI("SAE: accepted, associating"EOL);\n'
+             "    ieee80211_sae_req_pending = 1;   /* sae_required: stored from the main loop */\n"
+             "    ieee80211_associate();",
+             "SAE accepted")
+        once("\tif(ieee80211_sae_known(bssid)\n"
+             "\t   && (ieee80211_encryption & 0xF0) == IEEE80211_CRYPT_WPA2) {\n",
+             "\t{\n"
+             "\tint32_t sae_req = ieee80211_sae_required();\n"
+             "\t/* sae_required: a network that has done SAE is not joined any other\n"
+             "\t   way, whatever this AP advertises. */\n"
+             "\tif(sae_req && (ieee80211_encryption & 0xF0) != IEEE80211_CRYPT_WPA2) {\n"
+             "\t\tDBG_WIFI(\"SAE: this network requires SAE and the AP offers none; refused\"EOL);\n"
+             "\t\tieee80211_sae_refused++;\n"
+             "\t\treturn;\n"
+             "\t}\n"
+             "\t/* ...and an AP of it that advertised no SAE is a PSK attempt refused. */\n"
+             "\tif(sae_req && !ieee80211_sae_known(bssid)) ieee80211_sae_refused++;\n"
+             "\tif((ieee80211_sae_known(bssid) || sae_req)\n"
+             "\t   && (ieee80211_encryption & 0xF0) == IEEE80211_CRYPT_WPA2) {\n",
+             "SAE hook in rt2501_auth")
+        once('\t\tDBG_WIFI("SAE: falling back to open auth + PSK"EOL);\n'
+             "\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n"
+             "\t\tieee80211_state = IEEE80211_S_IDLE;\n"
+             "\t}\n",
+             "\t\tif(sae_req) {\n"
+             "\t\t\tDBG_WIFI(\"SAE: required on this network, not falling back to PSK\"EOL);\n"
+             "\t\t\tieee80211_sae_refused++;\n"
+             "\t\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n"
+             "\t\t\tieee80211_state = IEEE80211_S_IDLE;\n"
+             "\t\t\treturn;\n"
+             "\t\t}\n"
+             '\t\tDBG_WIFI("SAE: falling back to open auth + PSK"EOL);\n'
+             "\t\tieee80211_authmode = IEEE80211_AUTH_OPEN;\n"
+             "\t\tieee80211_state = IEEE80211_S_IDLE;\n"
+             "\t}\n"
+             "\t}\n",
+             "PSK fallback")
+        # Inside ieee80211_timer's managed branch: main-loop context (main.c
+        # calls rt2501_timer from its loop), and text neither wpa3_sae nor
+        # link_liveness anchors on.
+        once("\tif(ieee80211_mode == IEEE80211_M_MANAGED) {\n"
+             "\t\t/* Managed mode */\n"
+             "\t\tif(ieee80211_timeout > 0) ieee80211_timeout--;\n",
+             "\tif(ieee80211_mode == IEEE80211_M_MANAGED) {\n"
+             "\t\t/* Managed mode */\n"
+             "\t\tieee80211_sae_req_store();   /* sae_required: main-loop context */\n"
+             "\t\tif(ieee80211_timeout > 0) ieee80211_timeout--;\n",
+             "ieee80211_timer's managed branch")
+        write_flat(q, t, nl)
+        print(f"[ok]   {q}: a network that did SAE requires SAE, remembered in the config sector")
+
+    v = root / "src/vm/vlog.c"
+    t, nl = read_flat(v)
+    if "ieee80211_sae_release" in t:
+        print(f"[skip] sae_required: {v} already clears the record on a configuration save")
+        return
+    old = ("  __disable_interrupt();\n"
+           "  write_uc_flash(j,(uint8_t*)dst,len,buffer_temp);\n"
+           "  __enable_interrupt();\n"
+           "  return len;\n")
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {v}: sysSave's flash write not found")
+    t = t.replace(old,
+                  "  __disable_interrupt();\n"
+                  "  write_uc_flash(j,(uint8_t*)dst,len,buffer_temp);\n"
+                  "  __enable_interrupt();\n"
+                  "  /* sae_required: a save that covers the Wi-Fi fields (offset 92, the\n"
+                  "     208-byte page the bootloader's config mode writes) is the owner at\n"
+                  "     the rabbit; the \"SAE required\" record goes with it. */\n"
+                  "  if(j <= 92 && j + len >= 208) ieee80211_sae_release();\n"
+                  "  return len;\n", 1)
+    anchor = "// pour le firmware, le \"fichier\" ouvert est toujours l'eeprom\nint32_t sysSave("
+    if t.count(anchor) != 1:
+        sys.exit(f"FAIL {v}: sysSave not found")
+    t = t.replace(anchor, "void ieee80211_sae_release(void);   /* sae_required, ieee80211.c */\n" + anchor, 1)
+    write_flat(v, t, nl)
+    print(f"[ok]   {v}: a configuration save clears the SAE requirement")
+
+
 def patch_firmware_version(root: Path) -> None:
     """Say a version other than 0.0.0.13 in the boot URL and the setup page.
 
@@ -6553,13 +7190,13 @@ def main() -> int:
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
         "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
@@ -6574,7 +7211,7 @@ def main() -> int:
         # lean-wpa3-os: lean-wpa3 compiled at -Os. A MEASUREMENT mode: it
         # says what the flag would buy and is not to be flashed (every
         # hardware-validated image is -O1; see patch_opt_size).
-        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
+        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
         # lean-wpa3-slim: lean-wpa3 with the dead weight measured out of it,
         # and nothing the rabbit does changed. C side: the serial console
         # formats without sprintf (and so without newlib's printf and
@@ -6584,15 +7221,17 @@ def main() -> int:
         # UART pad is unwired on a production rabbit), mkwav is precomputed,
         # and five unreferenced functions are dropped. Each saving is in the
         # step's docstring with the measurement that justified it.
-        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
-        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
+        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # The published 1.0.0.0, frozen: firmware-arm/releases/ holds its signed
         # image, and this list must keep rebuilding those bytes.
         "naboot-1.0.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        # 1.0.0.1: 1.0.0.0 with entropy_pool and rx_protected.
-        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        # 1.0.0.1: 1.0.0.0 with entropy_pool and rx_protected, and the EAPOL/SAE
+        # hardening of the 2026-11-08 audit: eapol_ptk_install (F2), eapol_mic_len
+        # (F3), gtk_no_reinstall (F4), no_tkip_pairwise (F8), sae_required (S2).
+        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -6746,6 +7385,23 @@ def main() -> int:
                     f"FAIL step list: persist_counters must run after {dep}, "
                     "which is what declares the counters it moves."
                 )
+    # The 2026-11-08 audit's EAPOL steps edit text the earlier steps leave:
+    # eapol_ptk_install moves the replay commit eapol_replay introduced and
+    # the message-1 path eapol_ptk_rekey opened; eapol_mic_len and
+    # gtk_no_reinstall anchor on wpa2_gtk's and group_cipher's handlers;
+    # sae_required shares buffer_temp and SHA-256 with entropy_pool and
+    # wpa3_sae. Order, like the others.
+    for step_name, deps in (
+            ("eapol_ptk_install", ("eapol_replay", "eapol_ptk_rekey", "wpa2_gtk")),
+            ("eapol_mic_len", ("wpa2_gtk",)),
+            ("gtk_no_reinstall", ("wpa2_gtk", "group_cipher", "wpa3_sae")),
+            ("no_tkip_pairwise", ("wpa3_sae",)),
+            ("sae_required", ("wpa3_sae", "entropy_pool"))):
+        if step_name in steps:
+            for dep in deps:
+                if dep not in steps or steps.index(dep) > steps.index(step_name):
+                    sys.exit(f"FAIL step list: {step_name} must come after {dep}, "
+                             "whose text it edits or relies on.")
     fns = {
         "eapol_replay": patch_eapol_replay,
         "cold_state": patch_cold_state,
@@ -6780,6 +7436,11 @@ def main() -> int:
         "wpa3_eapol_akm": patch_wpa3_eapol_akm,
         "entropy_pool": patch_entropy_pool,
         "rx_protected": patch_rx_protected,
+        "eapol_ptk_install": patch_eapol_ptk_install,
+        "eapol_mic_len": patch_eapol_mic_len,
+        "gtk_no_reinstall": patch_gtk_no_reinstall,
+        "no_tkip_pairwise": patch_no_tkip_pairwise,
+        "sae_required": patch_sae_required,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,

@@ -86,6 +86,29 @@ the pool stores), which is how `tools/rng-boots.sh` makes one run the next
 run's previous boot and checks that two boots on identical timers never draw
 the same SAE scalar or adoption key. `make check` runs it after the scenarios.
 
+The radio's key table is modelled, not just its presence: `rt2501_set_key()`
+records the pairwise key the rabbit installs, the AP installs its own at
+message 4 as hostapd does, and a protected frame in either direction is a
+cipher error when the two differ. That is what shows a PTK installed at
+message 2 instead of message 3 (`eapol_ptk_install`): the AP's message 3 of
+a rekey, still under the old key, no longer decrypts, and the rekey never
+finishes -- which is what a real access point saw and this emulator could
+not. `wpa2-ptk-rekey.txt` asserts `expect-ptk-synced` since. Every frame is
+also delivered in a buffer of exactly its own length, so under `make asan`
+a parser that reads past the frame is a report rather than a data abort on
+a rabbit (not the EAPOL MIC span: the driver copies the frame into its
+static receive queue first, which is why `eapol-oversized-mic` reads the
+firmware's own counter). `make asan` wants `ASAN_OPTIONS=detect_leaks=0`:
+the firmware never frees the frames it sends, by design, and LeakSanitizer
+would fail every run at exit. The 2026-11-08 audit's scenarios -- `eapol-forged-msg1`,
+`wpa3-forged-msg1`, `eapol-oversized-mic`, `wpa2-msg3-retransmit`,
+`wpa3-msg3-retransmit`, `wpa2-tkip` (refused now), `wpa3-downgrade` (refused
+now, on purpose) -- each fail on a build without its step; `./run.sh --steps`
+with the step left out is the control. `tools/sae-downgrade.sh` is the
+power-cycle half of `wpa3-downgrade`: the "SAE required" record has to come
+back from the configuration sector, and a page written for another
+passphrase must not be locked by it. `make check` runs it too.
+
 Other switches: `--no-eeprom` boots a rabbit straight out of the box,
 `--audio-dir` keeps every clip it plays exactly as the warren served it, so an
 MP3 stays an MP3 and "what did it actually say?" has an answer you can play,
@@ -157,6 +180,12 @@ at 90000 expect RUN
 | `at <ms> expect-not <state>` | assert it is anything but that state |
 | `at <ms> inject-plaintext [<bssid>] [eapol]` | an attacker's data frame in clear, with the AP's addresses: an ARP, or an EAPOL-Key message 1 with a high replay counter |
 | `at <ms> expect-plain-dropped <n>` | assert the rabbit refused at least `n` plaintext data frames on its protected link (`ieee80211_plain_dropped`) |
+| `at <ms> forged-msg1 [<bssid>]` | an EAPOL-Key message 1 the AP did not send, delivered as if the attacker were past `rx_protected`: a new ANonce, a replay counter 1000 ahead, and no message 3 ever |
+| `at <ms> resend-msg3 [<bssid>]` | the AP retransmits message 3, as it does when message 4 was lost |
+| `at <ms> eapol-oversized [<bssid>]` | a group key message whose `body_length` says 65535 in a 150-byte frame |
+| `at <ms> expect-ptk-installs <n>` / `expect-group-installs <n>` | assert exactly `n` pairwise / group keys have been handed to the radio |
+| `at <ms> expect-ptk-synced` | assert the pairwise key in the rabbit's radio is the one its AP transmits under |
+| `at <ms> expect-eapol-badlen <n>` / `expect-tkip-refused <n>` / `expect-sae-refused <n>` | assert the firmware's own counters (`eapol_bad_length`, `ieee80211_tkip_refused`, `ieee80211_sae_refused`): at least `n`, and fail when the build has no such step |
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
 | `realtime` | pace the loop to the wall clock |
