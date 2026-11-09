@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "sim.h"
+#include "vap.h"
 
 struct sim_scenario sim;
 
@@ -95,6 +96,17 @@ void sim_note_failure(const char *why)
 {
   sim_fail_count++;
   sim_log("FAIL %s", why);
+}
+
+void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed)
+{
+  uint32_t s = seed, i;
+  memset(buf, 0, len);
+  if(s == 0) return;
+  for(i = 0; i < len; i++) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    buf[i] = (uint8_t)(s >> 11);
+  }
 }
 
 const char *sim_security_name(int security)
@@ -220,7 +232,11 @@ void sim_note_fetch(void)
  *                                  something outside has its own timers
  *   stop <ms>
  *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf] [sae-token]
- *                                 [h2e-only]
+ *                                 [h2e-only] [h2e]
+ *                                 h2e-only: hostapd's sae_pwe=1, the AP
+ *                                 advertises SAE hash-to-element and takes
+ *                                 nothing else; h2e: sae_pwe=2, advertises
+ *                                 it and takes both; neither: sae_pwe=0
  *   at <ms> deauth [<bssid>] [reason <n>]
  *   at <ms> disassoc [<bssid>] [reason <n>]
  *   at <ms> down <bssid>
@@ -233,9 +249,24 @@ void sim_note_fetch(void)
  *                                 is what a server shutting down does
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
  *   at <ms> ptk-rekey [<bssid>]   the AP restarts the four-way handshake
+ *   at <ms> forged-msg1 [<bssid>] a message 1 the AP did not send, no message 3
+ *   at <ms> resend-msg3 [<bssid>] the AP retransmits message 3
+ *   at <ms> eapol-oversized [<bssid>]  a group message declaring a 64 KB body
+ *   at <ms> expect-ptk-installs <n>    exactly n pairwise key installs so far
+ *   at <ms> expect-group-installs <n>  exactly n group key installs so far
+ *   at <ms> expect-ptk-synced          the station's pairwise key is the AP's
+ *   at <ms> expect-eapol-badlen <n>    >= n EAPOL frames refused for their length
+ *   at <ms> expect-tkip-refused <n>    >= n networks refused for pairwise TKIP
+ *   at <ms> expect-sae-refused <n>     >= n PSK attempts refused on a SAE network
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
+ *   at <ms> expect-sae h2e|hnp     assert which password element derivation
+ *                                 the AP saw in the last SAE commit:
+ *                                 hash-to-element or hunting and pecking.
+ *                                 A transition-mode AP that offers H2E and
+ *                                 reaches RUN is not proof the station chose
+ *                                 it; this is
  *   at <ms> expect-not <state>     the opposite, for when what matters is
  *                                 that something did NOT happen. `expect RUN`
  *                                 pins one state out of six; `expect-not RUN`
@@ -326,6 +357,7 @@ int sim_load(const char *path)
       for(int i = 5; i < n; i++) {
         if(!strcmp(tok[i], "pmf")) a->pmf = 1;
         if(!strcmp(tok[i], "h2e-only")) a->sae_h2e_only = 1;
+        if(!strcmp(tok[i], "h2e")) a->sae_h2e = 1;
         /* Make the AP answer the first SAE commit with status 76 and a
            token, the way a loaded access point does. Without this the
            rabbit never exercises that path, and the path is the most
@@ -422,6 +454,41 @@ int sim_load(const char *path)
       } else if(!strcmp(tok[2], "drop-eapol")) {
         e->kind = SIM_EV_DROP_EAPOL;
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;
+      } else if(!strcmp(tok[2], "inject-plaintext")) {
+        e->kind = SIM_EV_INJECT_PLAIN;
+        for(int i = 3; i < n; i++) {
+          if(!strcmp(tok[i], "eapol")) e->arg = 1;
+          else e->ap = ap_by_bssid(tok[i]);
+        }
+      } else if(!strcmp(tok[2], "expect-plain-dropped") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_PLAIN_DROPPED;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "forged-msg1")) {
+        e->kind = SIM_EV_FORGED_MSG1;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+      } else if(!strcmp(tok[2], "resend-msg3")) {
+        e->kind = SIM_EV_RESEND_MSG3;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+      } else if(!strcmp(tok[2], "eapol-oversized")) {
+        e->kind = SIM_EV_EAPOL_OVERSIZED;
+        if(n >= 4) e->ap = ap_by_bssid(tok[3]);
+      } else if(!strcmp(tok[2], "expect-ptk-installs") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_PTK_INSTALLS;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-group-installs") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_GROUP_INSTALLS;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-ptk-synced")) {
+        e->kind = SIM_EV_EXPECT_PTK_SYNCED;
+      } else if(!strcmp(tok[2], "expect-eapol-badlen") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_EAPOL_BADLEN;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-tkip-refused") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_TKIP_REFUSED;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-sae-refused") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_SAE_REFUSED;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect") && n >= 4) {
         e->kind = SIM_EV_EXPECT_STATE;
         e->arg = parse_state(tok[3]);
@@ -452,6 +519,14 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
+      } else if(!strcmp(tok[2], "expect-sae") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_SAE;
+        if(!strcmp(tok[3], "h2e")) e->arg = 1;
+        else if(!strcmp(tok[3], "hnp")) e->arg = 2;
+        else {
+          fprintf(stderr, "%s:%d: expect-sae takes h2e or hnp, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "expect-not") && n >= 4) {
         e->kind = SIM_EV_REFUSE_STATE;
         e->arg = parse_state(tok[3]);
@@ -476,4 +551,78 @@ int sim_load(const char *path)
     return -1;
   }
   return 0;
+}
+
+/* --- the audit's events, shared by both binaries ----------------------- */
+
+/* Counters the hardening steps add to the firmware. Weak: a build without
+   the step has no symbol, and the assertion then fails for that reason --
+   which is the control the scenario wants, not a link error. */
+extern uint8_t eapol_bad_length __attribute__((weak));
+extern uint8_t ieee80211_tkip_refused __attribute__((weak));
+extern uint8_t ieee80211_sae_refused __attribute__((weak));
+
+static void sim_expect_count(const char *what, const uint8_t *counter,
+                             const char *step, int want)
+{
+  char why[200];
+  if(counter == NULL) {
+    snprintf(why, sizeof(why), "expected %s: this build has no %s step, "
+             "nothing counts them", what, step);
+    sim_note_failure(why);
+  } else if(*counter >= want) {
+    sim_log("ok   %u %s, at least %d expected", *counter, what, want);
+  } else {
+    snprintf(why, sizeof(why), "expected at least %d %s, the rabbit counted %u",
+             want, what, *counter);
+    sim_note_failure(why);
+  }
+}
+
+static void sim_expect_exact(const char *what, uint32_t have, int want)
+{
+  char why[160];
+  if((int)have == want) {
+    sim_log("ok   %u %s, as expected", have, what);
+  } else {
+    snprintf(why, sizeof(why), "expected exactly %d %s, there were %u",
+             want, what, have);
+    sim_note_failure(why);
+  }
+}
+
+int sim_audit_event(struct sim_event *e)
+{
+  switch(e->kind) {
+    case SIM_EV_FORGED_MSG1:     vap_forged_msg1(e->ap); return 1;
+    case SIM_EV_RESEND_MSG3:     vap_resend_msg3(e->ap); return 1;
+    case SIM_EV_EAPOL_OVERSIZED: vap_eapol_oversized(e->ap); return 1;
+    case SIM_EV_EXPECT_PTK_INSTALLS:
+      sim_expect_exact("pairwise key install(s)", vap_stats.ptk_installs, e->arg);
+      return 1;
+    case SIM_EV_EXPECT_GROUP_INSTALLS:
+      sim_expect_exact("group key install(s)", vap_stats.group_installs, e->arg);
+      return 1;
+    case SIM_EV_EXPECT_PTK_SYNCED:
+      if(vap_sta_ptk_synced())
+        sim_log("ok   the station's pairwise key is the one its AP transmits under");
+      else
+        sim_note_failure("the station's pairwise key is not the one its AP "
+                         "transmits under -- the link is deaf in both directions");
+      return 1;
+    case SIM_EV_EXPECT_EAPOL_BADLEN:
+      sim_expect_count("EAPOL frame(s) refused for a body length past the frame",
+                       &eapol_bad_length, "eapol_mic_len", e->arg);
+      return 1;
+    case SIM_EV_EXPECT_TKIP_REFUSED:
+      sim_expect_count("network(s) refused for pairwise TKIP",
+                       &ieee80211_tkip_refused, "no_tkip_pairwise", e->arg);
+      return 1;
+    case SIM_EV_EXPECT_SAE_REFUSED:
+      sim_expect_count("PSK attempt(s) refused on a network that did SAE",
+                       &ieee80211_sae_refused, "sae_required", e->arg);
+      return 1;
+    default:
+      return 0;
+  }
 }

@@ -27,6 +27,7 @@
 #include "net/sha256.h"
 
 #include "vapcrypto.h"
+#include "vaph2e.h"
 
 /* --- AES-128, encrypt direction (FIPS-197) ----------------------------- */
 
@@ -279,6 +280,9 @@ int vap_crypto_selftest(void)
     fprintf(stderr, "vapcrypto: key wrap does not match RFC 3394 4.1\n");
     failures++;
   }
+
+  /* And the AP's own hash-to-element against RFC 9380 and Annex J.10. */
+  failures += vap_h2e_selftest();
 
   return failures;
 }

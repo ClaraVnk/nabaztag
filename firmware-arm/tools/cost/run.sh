@@ -8,6 +8,8 @@
 #   bash run.sh x25519 p256        a subset; NOSIZES=1 skips the size tables
 # Inputs, laid out by hand before the first run:
 #   fw/crypto/      copy of firmware-arm/crypto
+#   fw/tests/       copy of firmware-arm/tests (the sae_* cases include its
+#                   vectors_h2e.h, the Annex J.10 and RFC 9380 vectors)
 #   tweetnacl/      tweetnacl.h + tweetnacl.c with sign_open_alias and
 #                   verify_wdt applied but NOT strip_tweetnacl (so X25519 is
 #                   still there): python3 prep-tweetnacl.py <repo root>
@@ -21,12 +23,13 @@
 set -e
 cd "$(dirname "$0")"
 FW=${FW:-fw/crypto}             # firmware-arm/crypto, synced here
+TESTS=${TESTS:-fw/tests}        # firmware-arm/tests, for vectors_h2e.h
 TN=${TN:-tweetnacl}             # patched tweetnacl.c (sign_open_alias + verify_wdt), unstripped
 MC=${MC:-third/monocypher}      # monocypher.c/.h + monocypher-ed25519.c/.h (mc_* cases only)
 C25=${C25:-third/c25519}        # c25519 sources (c25519_* cases only)
 OUT=${OUT:-out}; mkdir -p $OUT inc/net keys
 F="-O1 -mthumb -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin \
-   -ffunction-sections -fdata-sections -I. -Iinc -I$TN -Istub -Ikeys -I$FW -I$MC -I$C25"
+   -ffunction-sections -fdata-sections -I. -Iinc -I$TN -Istub -Ikeys -I$FW -I$MC -I$C25 -I$TESTS"
 CC=arm-none-eabi-gcc
 
 # The firmware includes its crypto headers as "net/x.h".
@@ -59,6 +62,7 @@ srcs() {
     ed_short|ed_long) echo "$FW/nab_sig.c $TN/tweetnacl.c" ;;
     memcpy_105k) echo "" ;;
     p256|p256_base) echo "$FW/p256.c" ;;
+    sae_pt|sae_commit_h2e|sae_commit_hnp) echo "$FW/sae.c $FW/p256.c $FW/sha256.c" ;;
     gcm_kat|gcm_1k|ctr_1k|ghash_1k|aes_block) echo "aes128_enc.c gcm.c" ;;
     hkdf_kat|hkdf) echo "$FW/sha256.c hkdf.c" ;;
     sha256_4k|sha256_1k) echo "$FW/sha256.c" ;;
@@ -76,7 +80,7 @@ objs() {
   esac
 }
 
-ALL="nop memcpy_105k x25519 x25519_base ed_short ed_long sha512_long sha512_short p256 p256_base aes_block_cmac aes_block gcm_kat gcm_1k ctr_1k ghash_1k hkdf_kat hkdf sha256_1k sha256_4k"
+ALL="nop memcpy_105k x25519 x25519_base ed_short ed_long sha512_long sha512_short p256 p256_base sae_pt sae_commit_h2e sae_commit_hnp aes_block_cmac aes_block gcm_kat gcm_1k ctr_1k ghash_1k hkdf_kat hkdf sha256_1k sha256_4k"
 [ $# -gt 0 ] && ALL="$*"
 
 for b in $ALL; do

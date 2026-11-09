@@ -2,9 +2,18 @@
 #
 # Seen on hardware, 2026-11-08: the rabbit had remembered the BSSID as a
 # SAE one, kept sending commits a WPA2-only AP does not answer, and stayed
-# orange until it was unplugged. Expected now: the refused or unanswered
-# SAE attempt forgets the BSSID, the next scan no longer sees AKM 8, and the
-# rabbit comes back over PSK on its own.
+# orange until it was unplugged. #83 made the refused SAE attempt forget
+# the BSSID and come back over PSK -- and that is exactly the downgrade an
+# attacker wants (Dragonblood, CVE-2019-9494 family; the 2026-11-08 audit's
+# S2): a rogue AP with the SSID and WPA2-PSK only collects a message 2 to
+# run a dictionary attack on, and one forged refusal demotes the real AP.
+#
+# sae_required: a network that has authenticated with SAE once requires it
+# from then on, recorded in the configuration sector. So this rabbit now
+# stays off the downgraded network, on purpose, and the way back is the one
+# that proves an owner is present: config mode, which clears the record
+# (tools/sae-downgrade.sh checks the record survives a power cycle).
+
 ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52
 psk nabaztag
 conf obj/conf/wpa3.eeprom
@@ -12,4 +21,5 @@ tick 50
 stop 150000
 at 15000  expect RUN
 at 20000  security 02:00:5e:10:00:01 wpa2-ccmp
-at 140000 expect RUN
+at 140000 expect-not RUN
+at 140000 expect-sae-refused 1

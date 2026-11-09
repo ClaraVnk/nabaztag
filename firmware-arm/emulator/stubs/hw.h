@@ -12,6 +12,7 @@
 
 void hw_eeprom_open(const char *path);
 void hw_eeprom_flush(void);
+void hw_eeprom_volatile(int on);
 /* The config page itself, for the one caller that has to read it the way
  * the bootloader's confGet* functions do. NULL until one is opened. */
 const uint8_t *hw_eeprom_page(void);

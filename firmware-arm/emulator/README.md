@@ -77,6 +77,38 @@ scan against before it will dial at all, and the emulator prints both numbers:
 OPnetAuth: mac=yes bssid=yes crypt=0x00 (&0xF0)=0x00 encrypt=0x00 ... -> calling netAuth
 ```
 
+`./rabbit` has two knobs for the entropy pool, both off by default so a
+transcript stays reproducible: `--rssi-noise <seed>` wobbles every delivered
+frame's RSSI by -1..+1 dB, deterministically, as the thermal noise on a real
+link does; `--sram-seed <seed>` is what the retained external RAM holds at
+power-up. `--eeprom-persist` lets a run write the config page back (the seed
+the pool stores), which is how `tools/rng-boots.sh` makes one run the next
+run's previous boot and checks that two boots on identical timers never draw
+the same SAE scalar or adoption key. `make check` runs it after the scenarios.
+
+The radio's key table is modelled, not just its presence: `rt2501_set_key()`
+records the pairwise key the rabbit installs, the AP installs its own at
+message 4 as hostapd does, and a protected frame in either direction is a
+cipher error when the two differ. That is what shows a PTK installed at
+message 2 instead of message 3 (`eapol_ptk_install`): the AP's message 3 of
+a rekey, still under the old key, no longer decrypts, and the rekey never
+finishes -- which is what a real access point saw and this emulator could
+not. `wpa2-ptk-rekey.txt` asserts `expect-ptk-synced` since. Every frame is
+also delivered in a buffer of exactly its own length, so under `make asan`
+a parser that reads past the frame is a report rather than a data abort on
+a rabbit (not the EAPOL MIC span: the driver copies the frame into its
+static receive queue first, which is why `eapol-oversized-mic` reads the
+firmware's own counter). `make asan` wants `ASAN_OPTIONS=detect_leaks=0`:
+the firmware never frees the frames it sends, by design, and LeakSanitizer
+would fail every run at exit. The 2026-11-08 audit's scenarios -- `eapol-forged-msg1`,
+`wpa3-forged-msg1`, `eapol-oversized-mic`, `wpa2-msg3-retransmit`,
+`wpa3-msg3-retransmit`, `wpa2-tkip` (refused now), `wpa3-downgrade` (refused
+now, on purpose) -- each fail on a build without its step; `./run.sh --steps`
+with the step left out is the control. `tools/sae-downgrade.sh` is the
+power-cycle half of `wpa3-downgrade`: the "SAE required" record has to come
+back from the configuration sector, and a page written for another
+passphrase must not be locked by it. `make check` runs it too.
+
 Other switches: `--no-eeprom` boots a rabbit straight out of the box,
 `--audio-dir` keeps every clip it plays exactly as the warren served it, so an
 MP3 stays an MP3 and "what did it actually say?" has an answer you can play,
@@ -146,6 +178,14 @@ at 90000 expect RUN
 | `at <ms> server-vanish` | the warren's sockets die with no FIN and no RST: the rabbit's segments on them are swallowed |
 | `at <ms> expect <state>` | assert `ieee80211_state`: IDLE, SCAN, AUTH, ASSOC, EAPOL, RUN |
 | `at <ms> expect-not <state>` | assert it is anything but that state |
+| `at <ms> inject-plaintext [<bssid>] [eapol]` | an attacker's data frame in clear, with the AP's addresses: an ARP, or an EAPOL-Key message 1 with a high replay counter |
+| `at <ms> expect-plain-dropped <n>` | assert the rabbit refused at least `n` plaintext data frames on its protected link (`ieee80211_plain_dropped`) |
+| `at <ms> forged-msg1 [<bssid>]` | an EAPOL-Key message 1 the AP did not send, delivered as if the attacker were past `rx_protected`: a new ANonce, a replay counter 1000 ahead, and no message 3 ever |
+| `at <ms> resend-msg3 [<bssid>]` | the AP retransmits message 3, as it does when message 4 was lost |
+| `at <ms> eapol-oversized [<bssid>]` | a group key message whose `body_length` says 65535 in a 150-byte frame |
+| `at <ms> expect-ptk-installs <n>` / `expect-group-installs <n>` | assert exactly `n` pairwise / group keys have been handed to the radio |
+| `at <ms> expect-ptk-synced` | assert the pairwise key in the rabbit's radio is the one its AP transmits under |
+| `at <ms> expect-eapol-badlen <n>` / `expect-tkip-refused <n>` / `expect-sae-refused <n>` | assert the firmware's own counters (`eapol_bad_length`, `ieee80211_tkip_refused`, `ieee80211_sae_refused`): at least `n`, and fail when the build has no such step |
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
 | `realtime` | pace the loop to the wall clock |
@@ -409,8 +449,51 @@ order in an infrastructure BSS; both at once is the mesh behaviour.
 `scenarios/wpa3-transition-sae.txt` boots with a passphrase on a
 transition-mode AP, so SAE runs there too: a rabbit that joins a
 WPA2/WPA3 SSID is not evidence that its SAE works unless it joined that
-way. Still not modelled: whether the access point insists on
-hash-to-element (`wpa3-sae-h2e-only.txt` says what happens if it does).
+way.
+
+**SAE hash-to-element, 2026-11-08.** An access point may insist on it
+(hostapd's `sae_pwe=1`), and hostapd does not refuse a hunted-and-pecked
+commit on such a network: `handle_auth_sae()` drops it without a reply, so
+the station times out in AUTH -- which is what `wpa3-sae-h2e-only.txt`
+asserted until today and what Nabazprout did on a WPA3-only UniFi whose
+controller shows no `sae_pwe`. The firmware now reads bit 5 of the RSN
+Extension element (ID 244) in the beacon and derives the password element
+by H2E when it is set (`wpa3_h2e` in `apply-mods.py`, `sae_derive_pt` and
+`sae_commit_pt` in `../crypto/sae.c`), hunting and pecking otherwise --
+wpa_supplicant's `sae_pwe=2`. With it the commit carries status 126, the
+association request and message 2 carry the RSNXE, and an anti-clogging
+token rides in a container element after the commit element.
+
+The virtual AP does not run the rabbit's H2E back at it. `src/vaph2e.c`
+derives PT and the PWE from the standard on its own arithmetic (four-limb
+integers, affine points, nothing shared but SHA-256), and both it and the
+firmware's `p256_sswu` are checked against RFC 9380 J.1.1 and IEEE
+802.11-2020 Annex J.10 before any scenario runs (`../tests/vectors_h2e.h`,
+generated by a Python oracle that recomputes every published number). On
+every H2E exchange the AP compares its PWE with the station library's. The
+AP also does what hostapd does around it: `h2e-only` drops status-0
+commits silently, `h2e` takes both but refuses association with status 1
+when the RSNXE claims H2E and the commit did not use it (`check_assoc_ies`),
+and message 2 must repeat the RSNXE as well as the RSN IE. `expect-sae
+h2e|hnp` asserts which derivation the AP saw, because RUN alone would be
+satisfied by either. Scenarios: `wpa3-sae-h2e-only`, `wpa3-sae-h2e`,
+`wpa3-sae-h2e-token`, `wpa3-transition-h2e` (the selection picking H2E on a
+WPA2/WPA3 SSID), `wpa3-sae` (no RSNXE, so hunting and pecking) and the
+whole-rabbit `vm/wpa3-sae-h2e`. The firmware without the step fails the
+first four exactly as expected: AUTH for ever on the H2E-only AP, hunting
+and pecking on the others.
+
+What it costs, counted under qemu-arm with the firmware's flags
+(`../tools/cost`): PT 43.7 M instructions, once per (SSID, password) and
+then kept in 73 bytes of `.bss`; the commit from that PT 107.6 M (two
+scalar multiplications); the hunting-and-pecking commit it replaces
+248.9 M. At 1.5-4 cycles per instruction on the 32.768 MHz ARM7TDMI that
+is 2.0-5.3 s for PT and 4.9-13.1 s per commit, against 11.4-30.4 s before.
+The longest stretch between two feeds of the watchdog is 0.61 M
+instructions (0.03-0.07 s) against a 2.09 s window -- it was 5.1 M, in
+the point addition at the end of PT, until `p256_add` took the tick too. H2E costs the `lean-wpa3`
+image 2 464 bytes; on top of the AES-CMAC handshake fix (#82) it is
+120 188 bytes, 6 788 spare, and preflight passes.
 
 **WPA3 personal, SAE only: it associates, as of 2026-10-27 — and it did not
 on real hardware until 2026-11-07, which is worth more than the pass.** The

@@ -66,6 +66,11 @@ OFF_LOGIN = 163
 OFF_PWD = 169
 OFF_WIFIPMK = 175
 OFF_MAGIC = 207
+# The entropy pool's seed (crypto/nab_rng.h): the last 32 bytes of the
+# page, written once by the first boot whose pool was ready. A page with
+# one is a rabbit that has booted before; without, its first commit waits
+# a few seconds listening for beacons.
+OFF_RNGSEED = 4064
 
 MAGIC = 0x47
 
@@ -125,6 +130,9 @@ def main() -> int:
     ap.add_argument("--xmpp-password", default="",
                     help="the 12-character XMPP password a registered rabbit holds; "
                          "without it the runtime starts a registration instead of logging in")
+    ap.add_argument("--rng-seed", metavar="HEX",
+                    help="32 bytes at 4064, the entropy pool's stored seed: a rabbit "
+                         "that has booted before; 'fixed' for a constant one")
     ap.add_argument("-o", "--out", type=Path, default=Path("rabbit.eeprom"))
     args = ap.parse_args()
 
@@ -167,6 +175,12 @@ def main() -> int:
             sys.exit(f"--xmpp-password must be exactly {XMPP_PASSWORD_LENGTH} characters")
         page[CONF_LENGTH] = ord("d")
         page[CONF_LENGTH + 1 : CONF_LENGTH + 1 + XMPP_PASSWORD_LENGTH] = args.xmpp_password.encode()
+    if args.rng_seed:
+        seed = (hashlib.sha256(b"nabaztag emulator rng seed").digest()
+                if args.rng_seed == "fixed" else bytes.fromhex(args.rng_seed))
+        if len(seed) != 32:
+            sys.exit("--rng-seed wants 32 bytes of hex, or 'fixed'")
+        page[OFF_RNGSEED : OFF_RNGSEED + 32] = seed
     page[OFF_MAGIC] = MAGIC
 
     args.out.write_bytes(bytes(page))

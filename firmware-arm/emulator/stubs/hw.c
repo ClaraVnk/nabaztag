@@ -42,6 +42,7 @@ static uint8_t eeprom[EEPROM_SIZE];
 static char eeprom_path[512];
 static int eeprom_dirty;
 static int eeprom_loaded;
+static int eeprom_volatile;
 
 /**
  * @brief Point the EEPROM at a file, reading it if it is there.
@@ -87,12 +88,15 @@ const uint8_t *hw_eeprom_page(void)
   return eeprom_loaded ? eeprom : NULL;
 }
 
+/** @brief Keep the rabbit's writes in memory only: the file is a fixture. */
+void hw_eeprom_volatile(int on) { eeprom_volatile = on; }
+
 /** @brief Write the EEPROM back, if the rabbit changed it. */
 void hw_eeprom_flush(void)
 {
   FILE *f;
 
-  if(!eeprom_dirty || eeprom_path[0] == 0) return;
+  if(!eeprom_dirty || eeprom_path[0] == 0 || eeprom_volatile) return;
   f = fopen(eeprom_path, "wb");
   if(f == NULL) {
     sim_log("eeprom: cannot write %s", eeprom_path);
@@ -128,6 +132,12 @@ void init_uc_flash(void) {}
 
 static uint32_t flash_writes;
 static int32_t  flash_last_size;
+/* The 4 KB scratch buffer vlog.c owns on the rabbit and the driver's seed
+ * write shares (entropy_pool). ./rabbit links no vlog.c, so it lives here;
+ * weak, so ./rabbit-vm takes vlog.c's. */
+__attribute__((weak)) uint8_t buffer_temp[4096];
+/* rx_protected's counter, for a build without that step (the control). */
+__attribute__((weak)) uint8_t ieee80211_plain_dropped;
 
 void flash_uc(uint8_t *data, int32_t nb_byte, uint8_t *temp)
 {

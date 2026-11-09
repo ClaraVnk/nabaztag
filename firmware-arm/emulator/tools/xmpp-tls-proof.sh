@@ -8,12 +8,17 @@
 #
 #   tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #       --emulator <image> --elf <Nab.elf> --out <dir> [--strip | --strip-port N] [--tls-port N]
-#       [--scenario <file>]
+#       [--scenario <file>] [--third]
 #
 # --scenario runs boot 2 (the owner confirmed) on another scenario file than
 # xmpp-tls.txt: scenarios/vm/xmpp-rfid.txt presents a tag to the reader at
 # 120 s, and the verdict adds whether the Terrier saw it as plain rfid.jsp or
 # inside the TLS session (bytecode/patch_rfid_xmpp.py).
+#
+# --third boots the rabbit once more after boot 2. A Naboot 1.0.0.2 rabbit
+# learns that its owner confirmed the key from the HMAC on boot 2's bytecode,
+# so it is boot 3 that asks for bc.jsp on the TLS port (boot-mods/boot_tls.mtl,
+# port 5223: pass --tls-port 5223 for it to land on the Terrier).
 #
 # The rabbit's connections to port 80 (the ping server locate.jsp names, so
 # rfid.jsp) go to the Terrier's HTTP port (rabbit-vm --port80).
@@ -26,7 +31,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +45,7 @@ while [ $# -gt 0 ]; do
     --base) BASE=$2; shift 2 ;;
     --tls-port) TLS_PORT=$2; shift 2 ;;
     --scenario) SCENARIO2=$2; shift 2 ;;
+    --third) THIRD=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -103,6 +109,12 @@ T0=$(date +%s)
 boot 2-confirmed proof-a ${SCENARIO2:-scenarios/vm/xmpp-tls.txt}
 echo "   terrier, since the owner confirmed:"
 podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode\|rfid\|RFID" | sed 's/^/   /' | head -16
+if [ -n "$THIRD" ]; then
+  T1=$(date +%s)
+  boot 3-tls-boot proof-a
+  echo "   terrier, boot 3:"
+  podman logs --since "@$T1" "$NAME" 2>&1 | grep -a "TLS\|bc.jsp\|serving bytecode\|bound and idle\|refused" | sed 's/^/   /' | head -12
+fi
 [ -n "$STRIP" ] && { echo "   attacker:"; sed 's/^/   /' "$OUT/mitm.log" | grep -v forwarded; }
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 if [ -n "$SCENARIO2" ]; then

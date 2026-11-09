@@ -1,11 +1,15 @@
-# WPA2 with TKIP, where the key descriptor version is 1 and the MIC is
-# HMAC-MD5 rather than HMAC-SHA1. Worth its own scenario: eapol.c chooses
-# between the two from a field in message 1, and nothing else tests the
-# MD5 branch.
+# A WPA2 network whose only pairwise cipher is TKIP (the 2026-11-08 audit's
+# F8). TKIP has been broken since 2008 and withdrawn from the standard since
+# 2012; no_tkip_pairwise refuses it, and the rabbit stays off the network.
+# Until that step this scenario expected RUN: it was a test that the broken
+# cipher worked. Mixed-mode APs -- TKIP as the group cipher, CCMP pairwise --
+# are still joined (wpa2-mixed-gtk.txt).
 
 ap 02:00:5e:10:00:01 Terrier 6 wpa2-tkip -52
 psk nabaztag
 tick 50
 stop 60000
 
-at 10000 expect RUN
+at 10000 expect-not RUN
+at 10000 expect-tkip-refused 1
+at 59000 expect-not RUN

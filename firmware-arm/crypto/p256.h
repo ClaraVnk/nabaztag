@@ -59,8 +59,11 @@ int p256_mul_base(p256_point *out, const uint8_t k[P256_BYTES],
                   p256_tick tick);
 
 /** out = a + b, affine. Returns 1 on success, 0 if the sum is infinity
- *  (b == -a) or either input is invalid. */
-int p256_add(p256_point *out, const p256_point *a, const p256_point *b);
+ *  (b == -a) or either input is invalid. The inversion back to affine is
+ *  a full exponentiation -- 5.1 M instructions on the rabbit, measured
+ *  under qemu-arm -- so it takes the tick too. */
+int p256_add(p256_point *out, const p256_point *a, const p256_point *b,
+             p256_tick tick);
 
 /** pt = -pt, i.e. y = p - y. SAE's commit element is the inverse of a
  *  point, and nothing else in the protocol needs a subtraction. */
@@ -90,5 +93,36 @@ void p256_get_base(p256_point *out);
  *  SAE-H2E needs this to turn a password element's x into a point. */
 int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
                     int y_bit, p256_tick tick);
+
+/**
+ * @brief The Simplified SWU map, u -> a point, for SAE hash-to-element.
+ *
+ * IEEE 802.11-2020 12.4.4.2.3 and RFC 9380 6.6.2, with z = -10 (RFC 9380
+ * 8.2 and Table 12-1 of the standard agree on it for P-256). Every u gives
+ * a point, and the work does not depend on which u: there is no branch on
+ * the input, only masked selections -- which is the whole reason H2E exists
+ * (Dragonblood is the timing of hunting and pecking).
+ *
+ * `u` is a field element, big-endian, already reduced below p. Returns 0
+ * only if it is not (the caller reduced it, so that is a bug, not data).
+ *
+ * Costs three exponentiations: inverse(m), sqrt(g(x1)) and sqrt(g(x2)).
+ * The second square root could be derived from the first with sqrt(-z);
+ * it is computed directly instead, because the identity that allows the
+ * shortcut does not hold at u = 0 and a branch there would be the kind of
+ * special case this function exists to avoid. The constants b/(z*a) and
+ * -b/a are derived on first use and kept (64 bytes of .bss).
+ */
+int p256_sswu(p256_point *out, const uint8_t u[P256_BYTES], p256_tick tick);
+
+/** out = in mod p, for a 48-byte (384-bit) big-endian input. H2E's
+ *  pwd-value is olen(p) + olen(p)/2 bytes long precisely so that the
+ *  reduction is uniform; this is that reduction. */
+void p256_reduce48(uint8_t out[P256_BYTES], const uint8_t in[48]);
+
+/** out = (in mod (n - 1)) + 1, i.e. a scalar in [1, n-1], from a 32-byte
+ *  hash. 802.11-2020 12.4.5.2 derives the PWE's scalar from the two MAC
+ *  addresses this way. */
+void p256_scalar_from_hash(uint8_t out[P256_BYTES], const uint8_t in[P256_BYTES]);
 
 #endif /* NAB_P256_H */

@@ -19,7 +19,42 @@ release the community downloads, plus the **minimal rescue** build to roll back 
 when a flash goes wrong. Both are reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.0.0.0.signed.sim` — the release
+## `naboot-1.0.0.2.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.0.0.2` (`firmware-arm/apply-mods.py`): everything in 1.0.0.0, plus an entropy pool behind every SAE, adoption and TLS secret; no plaintext data on a protected link; the four-way handshake hardened (no new pairwise key from a forged message 1, bounded MIC length, no group-key reinstall, no pairwise TKIP); a WPA3 network stays WPA3 (no downgrade to WPA2); SAE hash-to-element (H2E, **beta**); and `bc.jsp` over TLS 1.3 for a rabbit whose adoption key is confirmed |
+| **Firmware version** | `1.0.0.2` (the boot URL says `v=1.0.0.2`) |
+| **Size** | 123 420 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
+| **sha256** | `c03b6e7806fad5f18f20f278644a731c2ae48ce466b224fa6c1a213cac2ad73b` |
+
+**Installed over the air (2026-11-09 15:05):** this exact file, sent by the
+warren to a rabbit running 1.0.0.1. It restarted by itself and, on that very
+first boot, fetched its bytecode inside a TLS 1.3 session on port 5223
+(`r=3.0.2.2.2.0`), accepted it, and opened its XMPP session over TLS 18 s
+later. Earlier the same day the 1.0.0.1 part of it (with H2E) associated over
+WPA3 on a UniFi access point that offers H2E: the access point answered with
+status 126, hash-to-element.
+
+**H2E is beta:** it has joined an access point that offers H2E next to
+hunting-and-pecking, never yet one set to H2E-only. If yours is, please say
+whether the rabbit joins.
+
+**Behaviour to know:** once a rabbit has joined a network over WPA3, it refuses
+that network over WPA2. If WPA3 is turned off there, it stays orange until its
+Wi-Fi settings are saved again in config mode (see the main README,
+*Troubleshooting*).
+
+**Which way in:** as for 1.0.0.0 below — the warren's update button from
+1.0.0.0, `naboot-stable` or `naboot-minimal` of 2026-11-08, the config page
+from a stock rabbit; an older Naboot needs a replug first, for the recovery
+bytecode.
+
+`naboot-1.0.0.0` below stays as the previous release.
+
+## `naboot-1.0.0.0.signed.sim` — the previous release
 
 | | |
 |---|---|

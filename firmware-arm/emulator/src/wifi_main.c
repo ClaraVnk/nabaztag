@@ -28,6 +28,8 @@
 #include "usb/rt2501usb.h"
 #include "net/ieee80211.h"
 #include "net/eapol.h"
+#include "net/nab_rng.h"
+#include "utils/mem.h"
 
 #include "sim.h"
 #include "hw.h"
@@ -47,6 +49,11 @@ volatile uint8_t sim_mmio[1u << 20];
 
 /* eapol.c defines this with a uint16_t length; vnet.c declares it with an
  * int32_t one. Matching the definition. */
+/* rx_protected's counter (ieee80211.c); weak zero in stubs/hw.c for a build
+ * without that step, which is how the control run of
+ * scenarios/wpa2-plaintext-inject.txt fails. */
+extern uint8_t ieee80211_plain_dropped;
+
 extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
                               uint16_t ssidlength, uint8_t *pmk);
 
@@ -190,6 +197,29 @@ void sim_run_events(void)
       case SIM_EV_REKEY:      vap_rekey(e->ap); break;
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
+      case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_FORGED_MSG1:
+      case SIM_EV_RESEND_MSG3:
+      case SIM_EV_EAPOL_OVERSIZED:
+      case SIM_EV_EXPECT_PTK_INSTALLS:
+      case SIM_EV_EXPECT_GROUP_INSTALLS:
+      case SIM_EV_EXPECT_PTK_SYNCED:
+      case SIM_EV_EXPECT_EAPOL_BADLEN:
+      case SIM_EV_EXPECT_TKIP_REFUSED:
+      case SIM_EV_EXPECT_SAE_REFUSED:
+        sim_audit_event(e); break;
+      case SIM_EV_EXPECT_PLAIN_DROPPED:
+        if(ieee80211_plain_dropped >= e->arg)
+          sim_log("ok   %u plaintext data frame(s) refused on the protected "
+                  "link, at least %d expected", ieee80211_plain_dropped, e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected at least %d plaintext data "
+                   "frame(s) refused, the rabbit refused %u",
+                   e->arg, ieee80211_plain_dropped);
+          sim_note_failure(why);
+        }
+        break;
       case SIM_EV_EXPECT_STATE:
         if(ieee80211_state == e->arg)
           sim_log("ok   state is %s, as expected", sim_state_name(e->arg));
@@ -197,6 +227,19 @@ void sim_run_events(void)
           char why[160];
           snprintf(why, sizeof(why), "expected state %s, found %s",
                    sim_state_name(e->arg), sim_state_name(ieee80211_state));
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_EXPECT_SAE:
+        if(vap_last_sae_mode == e->arg)
+          sim_log("ok   the last SAE commit used %s, as expected",
+                  e->arg == 1 ? "hash-to-element" : "hunting and pecking");
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected SAE %s, the AP saw %s",
+                   e->arg == 1 ? "hash-to-element" : "hunting and pecking",
+                   vap_last_sae_mode == 1 ? "hash-to-element"
+                   : vap_last_sae_mode == 2 ? "hunting and pecking" : "no SAE commit at all");
           sim_note_failure(why);
         }
         break;
@@ -240,11 +283,16 @@ int main(int argc, char **argv)
   uint32_t next_retry_ms = 0;
   int was_connected = 0;
   int reconnections = 0;
+  uint32_t sram_seed = 0, rssi_noise = 0;
+  int eeprom_persist = 0;
 
   for(int i=1;i<argc;i++) {
     if(!strcmp(argv[i], "--no-reconnect")) reconnect = 0;
     else if(!strcmp(argv[i], "--rekey-ack")) vap_rekey_ack(1);
     else if(!strcmp(argv[i], "--ssid") && i+1 < argc) target_ssid = argv[++i];
+    else if(!strcmp(argv[i], "--sram-seed") && i+1 < argc) sram_seed = (uint32_t)strtoul(argv[++i], NULL, 0);
+    else if(!strcmp(argv[i], "--rssi-noise") && i+1 < argc) rssi_noise = (uint32_t)strtoul(argv[++i], NULL, 0);
+    else if(!strcmp(argv[i], "--eeprom-persist")) eeprom_persist = 1;
     else if(argv[i][0] == '-') {
       fprintf(stderr,
         "usage: %s [scenario] [--ssid <name>] [--no-reconnect]\n"
@@ -253,7 +301,11 @@ int main(int argc, char **argv)
         "  --ssid          which network to join; default is the first AP's\n"
         "  --no-reconnect  do not retry after a link loss, to see where it stops\n"
         "  --rekey-ack     set Key Ack on a group rekey, which the standard forbids\n"
-        "                  and which this firmware requires\n",
+        "                  and which this firmware requires\n"
+        "  --sram-seed N   what the retained RAM holds at power-up (0 = zeros)\n"
+        "  --rssi-noise N  -1..+1 dB jitter on every frame's RSSI (0 = none)\n"
+        "  --eeprom-persist write the config page back when the rabbit changes it\n"
+        "                  (the entropy pool's seed); by default it stays a fixture\n",
         argv[0]);
       return 2;
     }
@@ -275,6 +327,24 @@ int main(int argc, char **argv)
    * association, because that is when its passphrase is needed. */
   if(sim.conf[0] != 0)
     hw_eeprom_open(sim.conf);
+  /* The scenarios share one config page and a run that stores the pool's
+   * seed in it would hand the next run a seeded pool: a fixture, unless
+   * a run is meant to be the next run's previous boot (tools/rng-boots.sh). */
+  hw_eeprom_volatile(!eeprom_persist);
+
+  /* The entropy pool, as main.c starts it: the retained RAM's power-up
+   * contents -- zeros unless --sram-seed says otherwise, so a run stays
+   * reproducible -- and the seed the config page may hold at 4064. */
+  {
+    static uint8_t sram[4096];
+    uint8_t seed[NAB_RNG_SEED_LEN];
+    sim_fill_noise(sram, sizeof sram, sram_seed);
+    read_uc_flash(NAB_RNG_SEED_OFF, seed, sizeof seed);
+    nab_rng_init(sram, sizeof sram, seed);
+    sim_log("rng: pool started, %s seed in the config page, credit %u",
+            nab_rng_seed_stored() ? "a" : "no", nab_rng_credit());
+  }
+  vap_set_rssi_noise(rssi_noise);
 
   if(vap_crypto_selftest() != 0) {
     fprintf(stderr, "the emulator's own crypto is wrong; not running\n");
@@ -429,10 +499,32 @@ int main(int argc, char **argv)
            vap_stats.rekeys_sent, vap_stats.rekeys_acked);
   if(vap_stats.handshakes_completed)
     printf("handshakes done     %u\n", vap_stats.handshakes_completed);
-  printf("keys installed      %u\n", vap_stats.keys_installed);
+  printf("keys installed      %u (pairwise %u, group %u)\n", vap_stats.keys_installed,
+         vap_stats.ptk_installs, vap_stats.group_installs);
+  if(vap_stats.ptk_mismatch)
+    printf("key mismatch drops  %u (station and AP on different pairwise keys)\n",
+           vap_stats.ptk_mismatch);
+  if(vap_stats.forged_msg1 || vap_stats.msg3_resent || vap_stats.eapol_oversized)
+    printf("attack frames       forged msg1 %u, msg3 resent %u, oversized %u\n",
+           vap_stats.forged_msg1, vap_stats.msg3_resent, vap_stats.eapol_oversized);
   printf("channel switches    %u\n", vap_stats.channel_switches);
   if(vap_stats.rx_overruns)
     printf("rx overruns         %u\n", vap_stats.rx_overruns);
+  if(vap_stats.rx_cipher_err)
+    printf("rx cipher errors    %u\n", vap_stats.rx_cipher_err);
+  if(vap_stats.plain_injected || ieee80211_plain_dropped)
+    printf("plaintext injected  %u, refused %u\n", vap_stats.plain_injected,
+           ieee80211_plain_dropped);
+  printf("entropy pool        credit %u, %s\n", nab_rng_credit(),
+         nab_rng_ready() ? "ready" : "not ready");
+  {
+    /* What kxBegin would draw next. An emulator's key, printed on purpose:
+     * tools/rng-boots.sh compares it between boots. */
+    uint8_t k[8];
+    if(nab_rng_key_bytes(k, sizeof k))
+      printf("  next key bytes    %02x%02x%02x%02x%02x%02x%02x%02x\n",
+             k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7]);
+  }
   /* A rekey the rabbit never answered is a failure even though it stayed
    * associated, because the symptom is silent: it keeps the group key it was
    * handed at association and goes deaf to broadcast traffic. Nothing about

@@ -15,3 +15,11 @@ stop 90000
 at 10000 expect RUN
 at 20000 ptk-rekey
 at 80000 expect RUN
+# And the half pacifox flagged: the stock code installed the new PTK at
+# message 2, so the AP's message 3 -- still under the old key, the AP installs
+# after message 4 -- was a cipher error and the rekey never finished.
+# eapol_ptk_install installs after message 3. The model's radio knows which
+# key each side holds (expect-ptk-synced), so this is the assertion the
+# emulator could not make before.
+at 80000 expect-ptk-installs 2
+at 80000 expect-ptk-synced

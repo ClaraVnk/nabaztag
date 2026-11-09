@@ -37,6 +37,7 @@
 #include "net/hash.h"
 
 #include "net/sae.h"
+#include "vaph2e.h"
 #include "net/cmac.h"
 
 #include "sim.h"
@@ -50,6 +51,30 @@ PDEVINFO rt2501_dev;
 
 /* The radio's own state, as the USB driver would see it. */
 static int vap_radio_up = 1;
+/* Whether the rabbit holds a pairwise key, as the RT2573's key table would:
+   set and cleared through rt2501_set_key() below. A protected data frame
+   is decrypted when it does and dropped (CipherErr) when it does not. */
+static int vap_sta_ptk;
+/* The temporal key in slot 0, as the radio would hold it. The AP checks it
+   against the PTK it transmits under: a station on another key cannot
+   decrypt the AP's frames and the AP cannot decrypt the station's, which
+   is how a key installed at message 2 instead of message 3 kills a rekey
+   on real hardware (eapol_ptk_install). */
+static uint8_t vap_sta_tk[16];
+/* Per-frame RSSI jitter, off (0) by default so a transcript is
+   reproducible; a seed makes every delivered frame wobble by -1..+1 dB,
+   deterministically, which is what the thermal noise on a real link does
+   and what the entropy pool harvests. */
+static uint32_t vap_noise_state;
+void vap_set_rssi_noise(uint32_t seed) { vap_noise_state = seed; }
+static int16_t vap_noise(void)
+{
+  uint32_t s = vap_noise_state;
+  if(s == 0) return 0;
+  s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+  vap_noise_state = s;
+  return (int16_t)((s >> 7) % 3) - 1;
+}
 static uint8_t vap_channel = 1;
 static uint8_t vap_filter_bssid[IEEE80211_ADDR_LEN];
 
@@ -227,6 +252,22 @@ static uint8_t *put_wpa_ie(uint8_t *p, int security)
   return put_ie(p, IEEE80211_ELEMID_VENDOR, body, (uint8_t)(b - body));
 }
 
+/**
+ * @brief The RSN Extension element (802.11-2020 9.4.2.241), ID 244.
+ *
+ * One octet of extended capabilities; bit 5 is "SAE hash-to-element".
+ * hostapd puts it in beacons and probe responses whenever sae_pwe is 1 or
+ * 2, and a station reads it to decide which password element derivation
+ * to use. Absent -- sae_pwe=0 -- means hunting and pecking only.
+ */
+static uint8_t *put_rsnxe(uint8_t *p, const struct sim_ap *a)
+{
+  uint8_t caps = SAE_RSNXE_H2E_BIT;
+  if(a->security != SIM_SEC_WPA3_SAE && a->security != SIM_SEC_WPA2_WPA3) return p;
+  if(!a->sae_h2e && !a->sae_h2e_only) return p;
+  return put_ie(p, SAE_RSNXE_ID, &caps, 1);
+}
+
 static int ap_privacy(const struct sim_ap *a)
 {
   return a->security != SIM_SEC_OPEN;
@@ -275,6 +316,7 @@ static uint32_t build_beacon(uint8_t *out, const struct sim_ap *a,
   p = put_ie(p, IEEE80211_ELEMID_XRATES, xrates, sizeof(xrates));
   p = put_rsn_ie(p, a->security);
   p = put_wpa_ie(p, a->security);
+  p = put_rsnxe(p, a);
 
   return (uint32_t)(p - out);
 }
@@ -322,6 +364,10 @@ static uint32_t build_auth_resp(uint8_t *out, const struct sim_ap *a,
  */
 static sae_ctx vap_sae;
 static int vap_sae_live;
+/* What the last SAE commit this AP processed used: 1 = hash-to-element,
+ * 2 = hunting and pecking, 0 = none yet. The scenario asserts it with
+ * `expect-sae`, so a transition-mode run cannot pass on the wrong one. */
+int vap_last_sae_mode;
 
 static void vap_sae_rng(uint8_t *out, uint32_t len, void *arg)
 {
@@ -495,7 +541,18 @@ static void vap_report_rsn(struct sim_ap *a, const uint8_t *frame,
   const uint8_t *ie = frame + sizeof(struct ieee80211_frame) + 4;
   const uint8_t *end = frame + length;
 
+  a->sta_rsnxe_len = 0;
+  vap_stats.assoc_requests++;
   while(ie + 2 <= end && ie + 2 + ie[1] <= end) {
+    if(ie[0] == SAE_RSNXE_ID && 2 + ie[1] <= sizeof a->sta_rsnxe) {
+      /* The RSN Extension element: kept whole, because hostapd compares
+       * it with the one in message 2 as it compares the RSN IE. */
+      a->sta_rsnxe_len = (uint8_t)(2 + ie[1]);
+      memcpy(a->sta_rsnxe, ie, a->sta_rsnxe_len);
+      sim_log("AP %s: the rabbit's association request carries an RSNXE%s",
+              macstr(a->bssid),
+              (ie[1] >= 1 && (ie[2] & SAE_RSNXE_H2E_BIT)) ? " claiming SAE H2E" : "");
+    }
     if(ie[0] == IEEE80211_ELEMID_RSN && ie[1] >= 16) {
       const uint8_t *p = &ie[2];
       uint16_t version = (uint16_t)(p[0] | (p[1] << 8));
@@ -521,21 +578,16 @@ static void vap_report_rsn(struct sim_ap *a, const uint8_t *frame,
       a->sta_akm = akm;
       a->sta_rsn_len = (uint8_t)((2 + ie[1] <= sizeof a->sta_rsn) ? 2 + ie[1] : 0);
       if(a->sta_rsn_len) memcpy(a->sta_rsn, ie, a->sta_rsn_len);
-      vap_stats.assoc_requests++;
       if(group == 0 || pairwise == 0)
         sim_note_failure("an association request advertising cipher suite 0, "
                          "which is not a cipher");
-      return;
     }
     if(ie[0] == IEEE80211_ELEMID_VENDOR && ie[1] >= 22) {
       sim_log("AP %s: the rabbit asks for WPA1, group %s, first pairwise %s",
               macstr(a->bssid), cipher_name(ie[2 + 7]), cipher_name(ie[2 + 13]));
-      vap_stats.assoc_requests++;
-      return;
     }
     ie += 2 + ie[1];
   }
-  vap_stats.assoc_requests++;
 }
 
 /* --- the four-way handshake, from the access point's side -------------- */
@@ -557,6 +609,8 @@ enum {
 
 struct vap_handshake {
   int      stage;
+  int      secure;      /* message 4 received: everything to the station
+                           is encrypted from here on (Protected bit set) */
   uint8_t  gtk_index;
   int      rekey_pending;
   uint8_t  anonce[EAPOL_NONCE_LENGTH];
@@ -574,6 +628,12 @@ struct vap_handshake {
    * read as the Wi-Fi fault we were hunting on real hardware. It was this. */
   uint8_t  ptk[EAPOL_PTK_LENGTH + 20];   /* kck[16] kek[16] tk[16] mic[16] */
   uint64_t replay;
+  /* The temporal key the AP transmits and receives under: installed when
+     message 4 arrives, so during a rekey it is still the previous one --
+     exactly the window in which a station that installed at message 2 is
+     on the wrong key. */
+  uint8_t  tk_live[16];
+  int      tk_live_set;
 };
 
 static struct vap_handshake vap_hs[SIM_MAX_APS];
@@ -691,6 +751,10 @@ static uint32_t vap_wrap_data(uint8_t *out, const struct sim_ap *a,
   memset(fr, 0, sizeof(*fr));
   fr->i_fc[0] = IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
   fr->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
+  /* Encrypted on the air once the AP holds a PTK, and the Protected bit
+   * says so. The body stays in clear here, as it is past the RT2573, which
+   * decrypts in hardware and strips the IV but leaves the header alone. */
+  if(vap_hs[a - sim.aps].secure) fr->i_fc[1] |= IEEE80211_FC1_PROTECTED;
   memcpy(fr->i_addr1, rt2501_mac, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr2, a->bssid, IEEE80211_ADDR_LEN);
   memcpy(fr->i_addr3, source_mac, IEEE80211_ADDR_LEN);
@@ -926,20 +990,30 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
                      | fr->key_frame.key_data_length[1];
       const uint8_t *kd = (const uint8_t *)fr + LLC_LENGTH + 4
                           + EAPOL_KEY_BODY_LENGTH;
+      /* ...and the RSNXE after it, when the association request had one:
+       * hostapd checks the two elements separately ("RSNXE from
+       * (Re)AssocReq did not match the one in EAPOL-Key msg 2/4") and
+       * disconnects either way, so one byte-for-byte comparison of both
+       * is the same test. */
+      uint8_t want_ies[sizeof a->sta_rsn + sizeof a->sta_rsnxe];
+      uint32_t wl = a->sta_rsn_len;
+      memcpy(want_ies, a->sta_rsn, a->sta_rsn_len);
+      memcpy(want_ies + wl, a->sta_rsnxe, a->sta_rsnxe_len);
+      wl += a->sta_rsnxe_len;
       if(LLC_LENGTH + 4 + EAPOL_KEY_BODY_LENGTH + kdl > length) kdl = 0;
-      if(kdl != a->sta_rsn_len || memcmp(kd, a->sta_rsn, kdl) != 0) {
-        char want[96], got[96];
+      if(kdl != wl || memcmp(kd, want_ies, kdl) != 0) {
+        char want[112], got[112];
         uint32_t i, n;
-        for(i = 0, n = 0; i < a->sta_rsn_len && n + 3 < sizeof want; i++)
-          n += (uint32_t)snprintf(want + n, sizeof want - n, "%02x", a->sta_rsn[i]);
+        for(i = 0, n = 0; i < wl && n + 3 < sizeof want; i++)
+          n += (uint32_t)snprintf(want + n, sizeof want - n, "%02x", want_ies[i]);
         for(i = 0, n = 0; i < kdl && n + 3 < sizeof got; i++)
           n += (uint32_t)snprintf(got + n, sizeof got - n, "%02x", kd[i]);
-        sim_log("AP %s: the RSN IE in 2/4 is not the one from the association "
+        sim_log("AP %s: the RSN IE%s in 2/4 is not the one from the association "
                 "request - a real AP disconnects here (reason 17)",
-                macstr(a->bssid));
+                macstr(a->bssid), a->sta_rsnxe_len ? " and RSNXE" : "");
         sim_log("AP %s:   association: %s", macstr(a->bssid), want);
         sim_log("AP %s:   message 2:   %s", macstr(a->bssid), got);
-        sim_note_failure("the RSN IE in message 2 differs from the "
+        sim_note_failure("the RSN IE/RSNXE in message 2 differs from the "
                          "association request's; hostapd deauthenticates");
         vap_deauth(ap, 0, 17);
         return;
@@ -1000,7 +1074,7 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
     return;
   }
 
-  if(hs->rekey_pending) {
+  if(hs->rekey_pending && fr->key_frame.key_info.key_type == 0) {
     hs->rekey_pending = 0;
     sim_log("AP %s: the rabbit acknowledged the group rekey",
             macstr(a->bssid));
@@ -1010,6 +1084,11 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
 
   if(hs->stage == HS_SENT_MSG3) {
     hs->stage = HS_DONE;
+    hs->secure = 1;
+    /* The AP installs the PTK on message 4, as hostapd does: from here
+     * it transmits under this key, and the station had better hold it. */
+    memcpy(hs->tk_live, hs->ptk + 32, 16);
+    hs->tk_live_set = 1;
     sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
             macstr(a->bssid));
     vap_stats.handshakes_completed++;
@@ -1069,85 +1148,144 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
         uint32_t sae_len = length - sizeof(*fr) - 6;
 
         if(seq == 1) {
-          uint8_t commit[SAE_COMMIT_LEN], confirm[SAE_CONFIRM_LEN];
+          uint8_t commit[SAE_COMMIT_LEN];
+          uint16_t status = (uint16_t)(body[4] | (body[5] << 8));
+          int h2e = (status == SAE_STATUS_H2E);
+          /* hostapd's sae_status_success(): sae_pwe=0 (no flag here) takes
+           * a status-0 commit only, sae_pwe=1 (`h2e-only`) takes 126 only,
+           * sae_pwe=2 (`h2e`) takes either. A commit that does not fit is
+           * not refused: handle_auth_sae() goes to remove_sta without a
+           * reply, and the station sees an authentication timeout. The
+           * first version of this AP answered a hunted-and-pecked commit
+           * with status 1 on an H2E-only network; a real one says nothing,
+           * which is what Nabazprout saw. */
+          int takes_hnp = !a->sae_h2e_only;
+          int takes_h2e = a->sae_h2e_only || a->sae_h2e;
+          static const uint8_t token[] = {
+            0x5a, 0xa5, 0x13, 0x37, 0xc0, 0xff, 0xee, 0x00,
+            0xde, 0xad, 0xbe, 0xef, 0x12, 0x34, 0x56, 0x78
+          };
 
-          /* An access point that will only do hash-to-element.
-           *
-           * This models the one explanation nothing has been able to rule
-           * out for Nabazprout, which goes orange on a WPA3-only UniFi and
-           * is fine in transition mode. hostapd calls the knob `sae_pwe`;
-           * at 1 it accepts H2E commits and nothing else. UniFi Network 10.x
-           * does not expose the field at all, so the controller cannot say
-           * whether it is set, and only the AP's own log would.
-           *
-           * What a real AP does here is refuse with status 1: the station's
-           * commit was derived by hunting and pecking, and no amount of
-           * retrying changes that. Our firmware can only hunt and peck
-           * (crypto/sae.h says why at length), so the exchange is over
-           * before it starts -- the rabbit clears the context, drops to
-           * IDLE, the bytecode retries, and it hunts and pecks again.
-           *
-           * The wire tells the two apart by the RSNXE and by which side of
-           * 12.4.4.3 produced the password element, neither of which is
-           * visible in a commit body on its own. Refusing every commit is
-           * therefore the whole of the model, and it is enough: the point is
-           * to show what this firmware does when an AP says no like that,
-           * not to re-implement hostapd's bookkeeping. */
-          if(a->sae_h2e_only) {
-            uint32_t rn = build_auth_sae_status(out, a, 1, 1, NULL, 0);
-            queue_frame(out, rn, a->rssi, a->channel);
-            sim_log("AP %s: SAE is H2E-only here, and that commit was hunted "
-                    "and pecked — refused, status 1", macstr(a->bssid));
+          if(!h2e && status != IEEE80211_STATUS_SUCCESS) {
+            sim_log("AP %s: SAE commit with status %u, ignored", macstr(a->bssid), status);
+            return;
+          }
+          if((h2e && !takes_h2e) || (!h2e && !takes_hnp)) {
+            sim_log("AP %s: SAE commit says %s but this AP's sae_pwe=%s: dropped "
+                    "without a reply, as hostapd does",
+                    macstr(a->bssid), h2e ? "hash-to-element (126)" : "hunting and pecking (0)",
+                    a->sae_h2e_only ? "1 (H2E only)" : a->sae_h2e ? "2 (both)" : "0 (hunting and pecking only)");
             return;
           }
 
           /* An anti-clogging token, once, if the scenario asked for one.
              The station must come back with the same commit and the token
              echoed; a client that treats status 76 as a refusal stops
-             here. */
+             here. With H2E the token travels inside an Anti-Clogging Token
+             Container element (255, length, 93) both ways -- hostapd's
+             auth_build_token_req() and sae_write_commit(). */
           if(a->sae_token && !a->sae_asked) {
-            static const uint8_t token[] = {
-              0x5a, 0xa5, 0x13, 0x37, 0xc0, 0xff, 0xee, 0x00,
-              0xde, 0xad, 0xbe, 0xef, 0x12, 0x34, 0x56, 0x78
-            };
             uint8_t resp[64];
-            uint32_t rn;
+            uint32_t rn, m = 0;
             a->sae_asked = 1;
-            memcpy(resp, token, sizeof token);
-            rn = build_auth_sae_status(out, a, 1, 76, resp, sizeof token);
+            if(h2e) {
+              resp[m++] = SAE_EID_EXTENSION;
+              resp[m++] = 1 + sizeof token;
+              resp[m++] = SAE_EID_EXT_TOKEN;
+            }
+            memcpy(resp + m, token, sizeof token);
+            m += sizeof token;
+            rn = build_auth_sae_status(out, a, 1, 76, resp, m);
             queue_frame(out, rn, a->rssi, a->channel);
-            sim_log("AP %s: SAE wants an anti-clogging token", macstr(a->bssid));
+            sim_log("AP %s: SAE wants an anti-clogging token%s", macstr(a->bssid),
+                    h2e ? " (in a container element)" : "");
             return;
           }
-          /* The token, if we asked for one, sits between the group and the
-             scalar. Skip it rather than feeding it to sae_peer_commit. */
-          /* A commit with no token is exactly SAE_COMMIT_LEN; anything
-             longer is the token we asked for. Subtracting 2 as well, as the
-             first attempt did, ate two bytes of the scalar on every commit
-             -- including the ones that carried no token at all. */
-          if(sae_len > SAE_COMMIT_LEN) {
+          /* The echoed token: between group and scalar without H2E (strip
+             it so the commit parser sees group || scalar || element); in
+             a container after the element with H2E, where the parser
+             ignores it but this AP checks it is ours. */
+          if(sae_len > SAE_COMMIT_LEN && !h2e) {
             uint32_t extra = sae_len - SAE_COMMIT_LEN;
             sim_log("AP %s: the station echoed a %u-byte token",
                     macstr(a->bssid), extra);
+            if(extra != sizeof token || memcmp(sae_body + 2, token, sizeof token) != 0)
+              sim_note_failure("the station echoed a token that is not the one it was sent");
             memmove((void *)(sae_body + 2), sae_body + 2 + extra,
                     sae_len - 2 - extra);
             sae_len -= extra;
+          } else if(sae_len > SAE_COMMIT_LEN && h2e) {
+            const uint8_t *el = sae_body + SAE_COMMIT_LEN, *el_end = sae_body + sae_len;
+            int seen = 0;
+            while(el + 2 <= el_end && el + 2 + el[1] <= el_end) {
+              if(el[0] == SAE_EID_EXTENSION && el[1] >= 1 && el[2] == SAE_EID_EXT_TOKEN) {
+                seen = 1;
+                sim_log("AP %s: the station echoed a %u-byte token in a container",
+                        macstr(a->bssid), el[1] - 1);
+                if(el[1] - 1 != sizeof token || memcmp(el + 3, token, sizeof token) != 0)
+                  sim_note_failure("the station echoed a token that is not the one it was sent");
+              }
+              el += 2 + el[1];
+            }
+            if(!seen)
+              sim_log("AP %s: %u bytes of elements after the H2E commit, no token among them",
+                      macstr(a->bssid), (unsigned)(sae_len - SAE_COMMIT_LEN));
+          } else if(a->sae_token) {
+            sim_note_failure("the station resent its commit without the token it was asked for");
           }
+
           /* Our own commit first: the PWE depends on both MAC addresses, so
              it cannot be built before the station is known. */
-          if(!sae_commit(&vap_sae, a->bssid, rt2501_mac, sim.psk,
-                         vap_sae_rng, NULL, NULL)) {
-            sim_log("AP %s: SAE could not build a commit", macstr(a->bssid));
-            return;
+          if(h2e) {
+            /* PT and PWE from this AP's own reading of 12.4.4.2.3 and
+             * 12.4.5.2 (vaph2e.c), handed to the station library only for
+             * the scalar arithmetic that follows -- and the library's PWE
+             * is compared with ours, so the two implementations have to
+             * agree on every exchange, not only on the vectors. */
+            uint8_t ptb[64], pweb[64];
+            p256_point pt;
+            if(!vap_h2e_pt(ptb, a->ssid, sim.psk, NULL)) {
+              sim_note_failure("the AP could not derive PT");
+              return;
+            }
+            memcpy(pt.x, ptb, 32);
+            memcpy(pt.y, ptb + 32, 32);
+            if(!sae_commit_pt(&vap_sae, a->bssid, rt2501_mac, &pt,
+                              vap_sae_rng, NULL, NULL)) {
+              sim_log("AP %s: SAE could not build an H2E commit", macstr(a->bssid));
+              return;
+            }
+            if(!vap_h2e_pwe(pweb, ptb, a->bssid, rt2501_mac)
+               || memcmp(pweb, vap_sae.pwe.x, 32) != 0
+               || memcmp(pweb + 32, vap_sae.pwe.y, 32) != 0)
+              sim_note_failure("the AP's own hash-to-element derivation and "
+                               "the station library disagree on the PWE");
+          } else {
+            if(!sae_commit(&vap_sae, a->bssid, rt2501_mac, sim.psk,
+                           vap_sae_rng, NULL, NULL)) {
+              sim_log("AP %s: SAE could not build a commit", macstr(a->bssid));
+              return;
+            }
           }
+          a->sae_used_h2e = h2e;
+          vap_last_sae_mode = h2e ? 1 : 2;
           if(!sae_peer_commit(&vap_sae, sae_body, sae_len, NULL)) {
             sim_log("AP %s: SAE refused the station's commit", macstr(a->bssid));
             sae_clear(&vap_sae);
             return;
           }
           vap_sae_live = 1;
+          /* The station's scalar, for tools/rng-boots.sh: two boots that
+             print the same one drew from the same state. */
+          sim_log("AP %s: SAE station scalar %02x%02x%02x%02x%02x%02x%02x%02x...",
+                  macstr(a->bssid), vap_sae.peer_scalar[0], vap_sae.peer_scalar[1],
+                  vap_sae.peer_scalar[2], vap_sae.peer_scalar[3], vap_sae.peer_scalar[4],
+                  vap_sae.peer_scalar[5], vap_sae.peer_scalar[6], vap_sae.peer_scalar[7]);
           sae_commit_bytes(&vap_sae, commit);
-          n = build_auth_sae(out, a, 1, commit, sizeof commit);
+          /* The AP's commit answers with the same status the station used:
+           * 126 for H2E, 0 otherwise (hostapd auth_sae_send_commit()). */
+          n = build_auth_sae_status(out, a, 1, h2e ? SAE_STATUS_H2E : IEEE80211_STATUS_SUCCESS,
+                                    commit, sizeof commit);
           queue_frame(out, n, a->rssi, a->channel);
           /* The commit alone. hostapd's sae_sm_step(): in an infrastructure
            * BSS the AP sends its confirm only after the station's confirm
@@ -1155,9 +1293,8 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
            * this AP's until 2026-11-08. The rabbit therefore now has to
            * send its confirm into silence and wait, as it will on a real
            * network. */
-          (void)confirm;
-          sim_log("AP %s: SAE commit sent, waiting for the station's confirm",
-                  macstr(a->bssid));
+          sim_log("AP %s: SAE commit sent (%s), waiting for the station's confirm",
+                  macstr(a->bssid), h2e ? "hash-to-element" : "hunting and pecking");
           vap_stats.auth_responses++;
           return;
         }
@@ -1227,6 +1364,23 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
         queue_frame(out, n, a->rssi, a->channel);
         return;
       }
+      /* hostapd, check_assoc_ies(): with sae_pwe=2 a station whose RSNXE
+       * claims SAE H2E but whose commit was hunted and pecked is refused,
+       * status 1 ("indicates support for SAE H2E, but did not use it").
+       * The RSNXE is therefore not a capability a station may advertise
+       * freely: it says what it did. */
+      if(a->sae_h2e && !a->sae_h2e_only && a->sae_auth && !a->sae_used_h2e
+         && a->sta_rsnxe_len >= 3 && (a->sta_rsnxe[2] & SAE_RSNXE_H2E_BIT)) {
+        sim_log("AP %s: the rabbit indicates support for SAE H2E, but did not "
+                "use it - refused, status 1, as hostapd does", macstr(a->bssid));
+        n = build_assoc_resp(out, a, 1, 0);
+        queue_frame(out, n, a->rssi, a->channel);
+        return;
+      }
+      if(a->sae_auth && a->sae_used_h2e
+         && !(a->sta_rsnxe_len >= 3 && (a->sta_rsnxe[2] & SAE_RSNXE_H2E_BIT)))
+        sim_note_failure("the station used SAE H2E but its association "
+                         "request carries no RSNXE saying so");
       a->associated = 1;
       a->assoc_id = (uint32_t)ap + 1;
       sim_log("AP %s: associated, aid %u", macstr(a->bssid), a->assoc_id);
@@ -1237,6 +1391,7 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       if(a->security >= SIM_SEC_WPA_TKIP) {
         /* An AP sends message 1 as soon as the station is associated. */
         vap_hs[ap].stage = HS_IDLE;
+        vap_hs[ap].secure = 0;
         vap_send_msg1(ap);
       }
       break;
@@ -1286,6 +1441,17 @@ static void ap_handle_data(int ap, const struct ieee80211_frame *fr,
     uint32_t n = build_deauth(out, a, 0, IEEE80211_REASON_NOT_ASSOCED);
     queue_frame(out, n, a->rssi, a->channel);
     vap_stats.deauths_sent++;
+    return;
+  }
+
+  /* A protected frame from the station decrypts only under the key the AP
+   * holds for it. On the hardware this is the AP's cipher engine saying
+   * no; here it is the one place the model has. */
+  if((fr->i_fc[1] & IEEE80211_FC1_PROTECTED) && vap_hs[ap].tk_live_set
+     && (!vap_sta_ptk || memcmp(vap_hs[ap].tk_live, vap_sta_tk, 16) != 0)) {
+    vap_stats.ptk_mismatch++;
+    sim_log("AP %s: a protected frame from the station under a key this AP "
+            "does not hold -- dropped", macstr(a->bssid));
     return;
   }
 
@@ -1470,7 +1636,18 @@ void vap_inject(const uint8_t *frame, uint32_t length)
 int32_t rt2501_set_key(uint8_t index, uint8_t *key, uint8_t *txmic,
                        uint8_t *rxmic, uint8_t cipher)
 {
-  (void)key; (void)txmic; (void)rxmic;
+  (void)txmic; (void)rxmic;
+  if(index == 0) {
+    vap_sta_ptk = (cipher != RT2501_CIPHER_NONE_);
+    if(vap_sta_ptk && key != NULL) {
+      memcpy(vap_sta_tk, key, sizeof vap_sta_tk);
+      vap_stats.ptk_installs++;
+    } else {
+      memset(vap_sta_tk, 0, sizeof vap_sta_tk);
+    }
+  } else if(cipher != RT2501_CIPHER_NONE_) {
+    vap_stats.group_installs++;
+  }
   sim_log("radio: key %u installed, cipher %u (%s)", index, cipher,
           index == 0 ? "pairwise" : "group");
   vap_stats.keys_installed++;
@@ -1874,6 +2051,208 @@ void vap_set_up(int ap, int up)
   }
 }
 
+/**
+ * @brief An attacker's data frame: the AP's addresses, no encryption.
+ *
+ * What anyone in radio range can send without the password, and what the
+ * stock receive path accepted once associated (FragAttacks CVE-2020-26140
+ * class; the 2026-11-08 audit's F1). As `eapol`, the payload is an EAPOL-Key
+ * message 1 with a high replay counter -- the frame that made the rabbit
+ * replace its PTK and lose the link (F2); otherwise an ARP-shaped payload.
+ * rx_protected drops both; ieee80211_plain_dropped counts them.
+ */
+void vap_inject_plain(int ap, int eapol)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t len, n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    memset(body, 0, sizeof body);
+    if(eapol) {
+      struct eapol_frame *fr = (struct eapol_frame *)body;
+      uint32_t body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH;
+      memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+      fr->protocol_version = EAPOL_VERSION2;
+      fr->packet_type = EAPOL_TYPE_KEY;
+      fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+      fr->body_length[1] = (uint8_t)(body_length & 0xff);
+      fr->key_frame.descriptor_type = EAPOL_DTYPE_WPA2KEY;
+      fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+      fr->key_frame.key_info.key_type = 1;
+      fr->key_frame.key_info.key_ack  = 1;
+      fr->key_frame.key_length[1] = 16;
+      vap_put_replay(fr->key_frame.replay_counter, vap_hs[i].replay + 1000);
+      memset(fr->key_frame.key_nonce, 0x5a, EAPOL_NONCE_LENGTH);
+      len = LLC_LENGTH + 4 + body_length;
+    } else {
+      /* LLC/SNAP, EtherType ARP, and a request for the rabbit's address. */
+      static const uint8_t arp[] = {
+        0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06,
+        0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01 };
+      memcpy(body, arp, sizeof arp);
+      len = sizeof arp + 20;
+    }
+    n = vap_wrap_data(out, a, a->bssid, body, len);
+    out[1] &= (uint8_t)~IEEE80211_FC1_PROTECTED;   /* the attacker has no key */
+    sim_log("AP %s: an attacker's plaintext %s frame, from the AP's address",
+            macstr(a->bssid), eapol ? "EAPOL message 1" : "ARP");
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.plain_injected++;
+    return;
+  }
+  sim_log("vap: no associated AP to inject a plaintext frame from");
+}
+
+/**
+ * @brief A message 1 the AP never sent.
+ *
+ * The 2026-11-08 audit's F2: once eapol_ptk_rekey let message 1 through on a
+ * live link, a forged one -- no MIC to forge -- made the stock supplicant
+ * derive and install a new PTK at message 2 and commit the attacker's
+ * replay counter. rx_protected keeps a plaintext one out; this delivers one
+ * as if the attacker were past that gate (or the build predated it), with
+ * the Protected bit the AP's frames carry, so what is measured is the
+ * handshake's own behaviour: the station must keep its live key, answer
+ * the AP's real rekeys, and not let the counter it echoed lock them out.
+ * The AP's own state is untouched -- it never started a handshake, so the
+ * message 2 it receives is "no handshake in progress".
+ */
+void vap_forged_msg1(int ap)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint32_t body_length = (uint32_t)EAPOL_KEY_BODY_LENGTH;
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(vap_hs[i].stage != HS_DONE) {
+      sim_log("AP %s: no finished handshake to forge a message 1 against",
+              macstr(a->bssid));
+      continue;
+    }
+    memset(body, 0, sizeof body);
+    memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+    fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+    fr->packet_type = EAPOL_TYPE_KEY;
+    fr->body_length[0] = (uint8_t)((body_length >> 8) & 0xff);
+    fr->body_length[1] = (uint8_t)(body_length & 0xff);
+    fr->key_frame.descriptor_type =
+        vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+    fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+    fr->key_frame.key_info.key_type = 1;
+    fr->key_frame.key_info.key_ack  = 1;
+    fr->key_frame.key_length[1] = 16;
+    vap_put_replay(fr->key_frame.replay_counter, vap_hs[i].replay + 1000);
+    memset(fr->key_frame.key_nonce, 0x5a, EAPOL_NONCE_LENGTH);
+    n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + body_length);
+    sim_log("AP %s: a forged EAPOL message 1 (ANonce 5a..5a, replay counter +1000) "
+            "the AP did not send; no message 3 will follow", macstr(a->bssid));
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.forged_msg1++;
+    return;
+  }
+  sim_log("vap: no associated AP to forge a message 1 from");
+}
+
+/**
+ * @brief Message 3 again, as an AP retransmits it when message 4 was lost.
+ *
+ * Same ANonce, same GTK and IGTK, the next replay counter, a fresh MIC. The
+ * station answers with message 4 again and must not hand the radio the
+ * keys it already holds: reinstalling a key resets its replay counter,
+ * which is KRACK (CVE-2017-13077 pairwise, -13080 group; gtk_no_reinstall,
+ * eapol_ptk_install).
+ */
+void vap_resend_msg3(int ap)
+{
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct vap_handshake *hs = &vap_hs[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!sim.aps[i].associated || !ap_audible(&sim.aps[i])) continue;
+    if(hs->stage != HS_DONE && hs->stage != HS_SENT_MSG3) {
+      sim_log("AP %s: no message 3 to retransmit", macstr(sim.aps[i].bssid));
+      continue;
+    }
+    sim_log("AP %s: retransmitting message 3, as if message 4 had been lost",
+            macstr(sim.aps[i].bssid));
+    vap_stats.msg3_resent++;
+    vap_send_msg3(i);
+  }
+}
+
+/**
+ * @brief A group key message whose declared body is longer than the frame.
+ *
+ * The 2026-11-08 audit's F3: eapol_input_msg3() and the group handler
+ * computed the MIC over body_length + 4 bytes with body_length read from
+ * the frame -- 65 539 bytes from a receive buffer of a few hundred. The
+ * frame is a plausible group message otherwise (Secure, MIC, the next
+ * replay counter, Protected on the air). The MIC is garbage: an attacker
+ * cannot sign. The driver copies the frame into its static receive queue
+ * before eapol_input() runs, so the over-read is not a sanitizer report
+ * here; the scenario reads the firmware's own counter instead.
+ */
+void vap_eapol_oversized(int ap)
+{
+  uint8_t body[sizeof(struct eapol_frame) + 64];
+  uint8_t out[VAP_FRAME_MAX];
+  struct eapol_frame *fr = (struct eapol_frame *)body;
+  uint32_t carried = (uint32_t)EAPOL_KEY_BODY_LENGTH + 24;   /* what is really there */
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    struct vap_handshake *hs = &vap_hs[i];
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(hs->stage != HS_DONE) {
+      sim_log("AP %s: no finished handshake to follow with a group message",
+              macstr(a->bssid));
+      continue;
+    }
+    memset(body, 0, sizeof body);
+    memcpy(fr->llc, eapol_llc, LLC_LENGTH);
+    fr->protocol_version = vap_is_wpa2(a) ? EAPOL_VERSION2 : EAPOL_VERSION;
+    fr->packet_type = EAPOL_TYPE_KEY;
+    fr->body_length[0] = 0xff;      /* 65535 bytes, says the frame */
+    fr->body_length[1] = 0xff;
+    fr->key_frame.descriptor_type =
+        vap_is_wpa2(a) ? EAPOL_DTYPE_WPA2KEY : EAPOL_DTYPE_WPAKEY;
+    fr->key_frame.key_info.key_desc_ver = vap_desc_ver(a);
+    fr->key_frame.key_info.key_type = 0;
+    fr->key_frame.key_info.key_index = 1;
+    fr->key_frame.key_info.key_mic  = 1;
+    fr->key_frame.key_info.secure   = 1;
+    fr->key_frame.key_length[1] = 16;
+    vap_put_replay(fr->key_frame.replay_counter, hs->replay + 1);
+    memset(fr->key_frame.key_mic, 0xa5, EAPOL_KEYMIC_LENGTH);
+    fr->key_frame.key_data_length[1] = 24;
+    n = vap_wrap_data(out, a, a->bssid, body, LLC_LENGTH + 4 + carried);
+    sim_log("AP %s: a group key message declaring a 65535-byte body in a "
+            "%u-byte frame", macstr(a->bssid), n);
+    queue_frame(out, n, a->rssi, a->channel);
+    vap_stats.eapol_oversized++;
+    return;
+  }
+  sim_log("vap: no associated AP to send an oversized EAPOL frame from");
+}
+
+int vap_sta_ptk_synced(void)
+{
+  for(int i = 0; i < sim.nb_aps; i++)
+    if(sim.aps[i].associated && vap_hs[i].tk_live_set)
+      return vap_sta_ptk && memcmp(vap_hs[i].tk_live, vap_sta_tk, 16) == 0;
+  return 0;
+}
+
 void vap_drop_eapol(int count)
 {
   vap_eapol_drops = count;
@@ -1911,6 +2290,40 @@ void vap_poll(void)
     vap_queue_count--;
     if(q->channel != vap_channel) continue;   /* the radio moved on */
     vap_stats.rx_frames++;
-    ieee80211_input(q->data, q->length, q->rssi);
+    /* The radio's cipher engine: a protected data frame is decrypted when
+     * a pairwise key is installed and reported CipherErr -- dropped before
+     * the driver sees it -- when none is. rt2501usb.c's filter does the
+     * latter on the hardware; here it is the one place the model has. */
+    if((q->data[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA
+       && (q->data[1] & IEEE80211_FC1_PROTECTED) && !vap_sta_ptk) {
+      vap_stats.rx_cipher_err++;
+      continue;
+    }
+    /* ...and decrypted with the key the station holds, which has to be the
+     * one the AP encrypted with. addr2 says which AP. */
+    if((q->data[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA
+       && (q->data[1] & IEEE80211_FC1_PROTECTED) && q->length >= 16) {
+      int from = ap_index_for_bssid(q->data + 10);
+      if(from >= 0 && vap_hs[from].tk_live_set
+         && memcmp(vap_hs[from].tk_live, vap_sta_tk, 16) != 0) {
+        vap_stats.rx_cipher_err++;
+        vap_stats.ptk_mismatch++;
+        sim_log("radio: a protected frame from AP %s under a key the station "
+                "does not hold -- cipher error, dropped", macstr(q->data + 10));
+        continue;
+      }
+    }
+    /* Delivered in a buffer of exactly its own length, as the radio's
+     * receive buffer bounds it: under ASan a parser that reads past the
+     * frame -- a MIC computed over a length the frame declared rather
+     * than the one it has (eapol_mic_len) -- is caught here and not on a
+     * rabbit. */
+    {
+      uint8_t *exact = malloc(q->length);
+      if(exact == NULL) { sim_note_failure("out of memory"); return; }
+      memcpy(exact, q->data, q->length);
+      ieee80211_input(exact, q->length, (int16_t)(q->rssi + vap_noise()));
+      free(exact);
+    }
   }
 }

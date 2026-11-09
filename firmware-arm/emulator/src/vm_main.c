@@ -24,6 +24,8 @@
 #include "usb/rt2501usb.h"
 #include "net/ieee80211.h"
 #include "net/eapol.h"
+#include "net/nab_rng.h"
+#include "utils/mem.h"
 
 /* eapol.c defines this with a uint16_t length; vnet.c declares it with an
  * int32_t one. Matching the definition. */
@@ -66,6 +68,8 @@ int32_t _vmem_heap[VMEM_LENGTH];
  * whatever image you point it at, and main.c's own declaration is
  * `extern const uint8_t *dumpbc` with loaderInit() handed its address. */
 extern const uint8_t dumpbc[];
+
+extern uint8_t ieee80211_plain_dropped;
 
 void sim_run_events(void)
 {
@@ -146,6 +150,29 @@ void sim_run_events(void)
           sim_note_failure(why);
         }
         break;
+      case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_FORGED_MSG1:
+      case SIM_EV_RESEND_MSG3:
+      case SIM_EV_EAPOL_OVERSIZED:
+      case SIM_EV_EXPECT_PTK_INSTALLS:
+      case SIM_EV_EXPECT_GROUP_INSTALLS:
+      case SIM_EV_EXPECT_PTK_SYNCED:
+      case SIM_EV_EXPECT_EAPOL_BADLEN:
+      case SIM_EV_EXPECT_TKIP_REFUSED:
+      case SIM_EV_EXPECT_SAE_REFUSED:
+        sim_audit_event(e); break;
+      case SIM_EV_EXPECT_PLAIN_DROPPED:
+        if(ieee80211_plain_dropped >= e->arg)
+          sim_log("ok   %u plaintext data frame(s) refused on the protected "
+                  "link, at least %d expected", ieee80211_plain_dropped, e->arg);
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected at least %d plaintext data "
+                   "frame(s) refused, the rabbit refused %u",
+                   e->arg, ieee80211_plain_dropped);
+          sim_note_failure(why);
+        }
+        break;
       case SIM_EV_EXPECT_STATE:
         if(ieee80211_state == e->arg)
           sim_log("ok   state is %s, as expected", sim_state_name(e->arg));
@@ -153,6 +180,30 @@ void sim_run_events(void)
           char why[160];
           snprintf(why, sizeof(why), "expected state %s, found %s",
                    sim_state_name(e->arg), sim_state_name(ieee80211_state));
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_REFUSE_STATE:
+        if(ieee80211_state != e->arg)
+          sim_log("ok   state is %s, and not %s, as expected",
+                  sim_state_name(ieee80211_state), sim_state_name(e->arg));
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "state must not be %s, but it is",
+                   sim_state_name(e->arg));
+          sim_note_failure(why);
+        }
+        break;
+      case SIM_EV_EXPECT_SAE:
+        if(vap_last_sae_mode == e->arg)
+          sim_log("ok   the last SAE commit used %s, as expected",
+                  e->arg == 1 ? "hash-to-element" : "hunting and pecking");
+        else {
+          char why[160];
+          snprintf(why, sizeof(why), "expected SAE %s, the AP saw %s",
+                   e->arg == 1 ? "hash-to-element" : "hunting and pecking",
+                   vap_last_sae_mode == 1 ? "hash-to-element"
+                   : vap_last_sae_mode == 2 ? "hunting and pecking" : "no SAE commit at all");
           sim_note_failure(why);
         }
         break;
@@ -256,6 +307,16 @@ int main(int argc, char **argv)
   gw_init(warren);
   hw_eeprom_open(eeprom);
   hw_audio_dir(audio_dir);
+
+  /* The entropy pool, as main.c starts it; the retained RAM is zeros here. */
+  {
+    static uint8_t sram[4096];
+    uint8_t seed[NAB_RNG_SEED_LEN];
+    read_uc_flash(NAB_RNG_SEED_OFF, seed, sizeof seed);
+    nab_rng_init(sram, sizeof sram, seed);
+    sim_log("rng: pool started, %s seed in the config page",
+            nab_rng_seed_stored() ? "a" : "no");
+  }
 
   vap_init();
   ieee80211_init();

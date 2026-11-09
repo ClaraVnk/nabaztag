@@ -39,7 +39,9 @@ struct sim_ap {
   int      pmf;             /* 1 = refuse unprotected deauth (802.11w)   */
   int      sae_token;       /* 1 = demand an anti-clogging token first   */
   int      sae_asked;       /* whether this AP has asked yet             */
-  int      sae_h2e_only;    /* 1 = refuse hunting-and-pecking commits    */
+  int      sae_h2e_only;    /* 1 = H2E commits only (hostapd sae_pwe=1)  */
+  int      sae_h2e;         /* 1 = H2E offered, both taken (sae_pwe=2)   */
+  int      sae_used_h2e;    /* the last SAE commit was hash-to-element   */
   uint32_t assoc_id;
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
@@ -49,6 +51,8 @@ struct sim_ap {
   uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */
   uint8_t  sta_rsn_len;     /* which message 2 must repeat byte for byte */
   uint8_t  sta_akm;         /* its AKM suite type                        */
+  uint8_t  sta_rsnxe[8];    /* its RSN Extension element, if any, which  */
+  uint8_t  sta_rsnxe_len;   /* message 2 must repeat as well             */
 };
 
 enum {
@@ -78,6 +82,18 @@ enum {
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
+  SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
+  SIM_EV_EXPECT_PLAIN_DROPPED, /* assert >= n plaintext frames refused */
+  SIM_EV_FORGED_MSG1,   /* a message 1 the AP did not send           */
+  SIM_EV_RESEND_MSG3,   /* the AP retransmits message 3              */
+  SIM_EV_EAPOL_OVERSIZED, /* a group message declaring a 64 KB body  */
+  SIM_EV_EXPECT_PTK_INSTALLS,   /* assert exactly n pairwise key installs */
+  SIM_EV_EXPECT_GROUP_INSTALLS, /* assert exactly n group key installs    */
+  SIM_EV_EXPECT_PTK_SYNCED,     /* assert the station's PTK is the AP's   */
+  SIM_EV_EXPECT_EAPOL_BADLEN,   /* assert >= n EAPOL frames refused for length */
+  SIM_EV_EXPECT_TKIP_REFUSED,   /* assert >= n networks refused for pairwise TKIP */
+  SIM_EV_EXPECT_SAE_REFUSED,    /* assert >= n PSK attempts refused on a SAE network */
+  SIM_EV_EXPECT_SAE,    /* assert which SAE derivation the AP saw */
 };
 
 struct sim_event {
@@ -126,6 +142,13 @@ void sim_note_fetch(void);
 void sim_log(const char *fmt, ...);
 int  sim_failures(void);
 void sim_note_failure(const char *why);
+/* The 2026-11-08 audit's events -- forged message 1, retransmitted message
+   3, oversized EAPOL, and the key-install assertions -- are the same for
+   ./rabbit and ./rabbit-vm, so one handler serves both. 1 when e was one. */
+int sim_audit_event(struct sim_event *e);
+/* Fill a buffer from an xorshift seeded with `seed`; zeros when seed is 0.
+ * Stands in for what external RAM holds at power-up. */
+void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed);
 const char *sim_security_name(int security);
 const char *sim_state_name(int state);
 

@@ -21,13 +21,13 @@ static void mac_order(uint8_t out[12], const uint8_t a[6], const uint8_t b[6])
 }
 
 /*
- * Hunting and pecking, 12.4.4.3.2.
+ * Hunting and pecking, 12.4.4.2.2.
  *
  * The loop runs all SAE_HNP_ROUNDS rounds whatever happens and keeps the
  * first hit. That is not decoration: stopping early makes the number of
  * rounds a function of the password, which is the coarse half of
  * Dragonblood. The fine half -- timing inside the field arithmetic -- is
- * not addressed here and cannot be without H2E.
+ * not addressed here; hash-to-element below is the answer to it.
  */
 static int derive_pwe(p256_point *pwe, const uint8_t own[6],
                       const uint8_t peer[6], const char *password,
@@ -75,19 +75,109 @@ static int derive_pwe(p256_point *pwe, const uint8_t own[6],
   return 1;
 }
 
-int sae_commit(sae_ctx *c,
-               const uint8_t own_mac[6], const uint8_t peer_mac[6],
-               const char *password,
-               sae_rng rng, void *rng_arg, p256_tick tick)
+/*
+ * HKDF-Expand (RFC 5869 2.3) with HMAC-SHA-256, for the 48 bytes H2E wants:
+ * T(1) = HMAC(prk, info || 0x01), T(2) = HMAC(prk, T(1) || info || 0x02),
+ * out = T(1) || T(2)[0..16). Not the 802.11 KDF in sha256_kdf(): that one
+ * counts in little-endian 16-bit words and appends a length; this one is
+ * the IETF shape, and the standard names it explicitly.
+ */
+static void hkdf_expand_48(uint8_t out[48], const uint8_t prk[SHA256_DIGEST],
+                           const char *info)
+{
+  uint8_t t[SHA256_DIGEST], ctr;
+  const uint8_t *pieces[3];
+  uint32_t lens[3], infolen = 0;
+
+  while (info[infolen]) infolen++;
+
+  ctr = 1;
+  pieces[0] = (const uint8_t *)info; lens[0] = infolen;
+  pieces[1] = &ctr;                  lens[1] = 1;
+  hmac_sha256_v(t, prk, SHA256_DIGEST, pieces, lens, 2);
+  memcpy(out, t, SHA256_DIGEST);
+
+  ctr = 2;
+  pieces[0] = t;                     lens[0] = SHA256_DIGEST;
+  pieces[1] = (const uint8_t *)info; lens[1] = infolen;
+  pieces[2] = &ctr;                  lens[2] = 1;
+  hmac_sha256_v(t, prk, SHA256_DIGEST, pieces, lens, 3);
+  memcpy(out + SHA256_DIGEST, t, 48 - SHA256_DIGEST);
+
+  memset(t, 0, sizeof t);
+}
+
+int sae_derive_pt(p256_point *pt,
+                  const uint8_t *ssid, uint32_t ssid_len,
+                  const char *password, const char *identifier,
+                  p256_tick tick)
+{
+  uint8_t seed[SHA256_DIGEST], value[48], u[P256_BYTES];
+  const uint8_t *pieces[2];
+  uint32_t lens[2], n = 1, pwlen = 0, idlen = 0;
+  p256_point p1, p2;
+  int ok;
+
+  while (password[pwlen]) pwlen++;
+
+  /* pwd-seed = HKDF-Extract(ssid, password [|| identifier]): HMAC with the
+     SSID as the key. 12.4.4.2.3. */
+  pieces[0] = (const uint8_t *)password; lens[0] = pwlen;
+  if (identifier) {
+    while (identifier[idlen]) idlen++;
+    pieces[1] = (const uint8_t *)identifier; lens[1] = idlen;
+    n = 2;
+  }
+  hmac_sha256_v(seed, ssid, ssid_len, pieces, lens, (int)n);
+
+  /* u1 = HKDF-Expand(pwd-seed, "SAE Hash to Element u1 P1", 48) mod p,
+     P1 = SSWU(u1); the same with u2, P2. The 48 bytes (olen(p) +
+     olen(p)/2) are what makes the reduction mod p uniform. */
+  hkdf_expand_48(value, seed, "SAE Hash to Element u1 P1");
+  p256_reduce48(u, value);
+  ok = p256_sswu(&p1, u, tick);
+
+  hkdf_expand_48(value, seed, "SAE Hash to Element u2 P2");
+  p256_reduce48(u, value);
+  ok = ok && p256_sswu(&p2, u, tick);
+
+  /* PT = elem-op(P1, P2). Fails only if P2 == -P1. */
+  ok = ok && p256_add(pt, &p1, &p2, tick);
+
+  memset(seed, 0, sizeof seed);
+  memset(value, 0, sizeof value);
+  memset(u, 0, sizeof u);
+  memset(&p1, 0, sizeof p1);
+  memset(&p2, 0, sizeof p2);
+  return ok;
+}
+
+/* 12.4.5.2: val = H(0^32, MAX(mac) || MIN(mac)) mod (n - 1) + 1,
+   PWE = val * PT. */
+static int pwe_from_pt(p256_point *pwe, const p256_point *pt,
+                       const uint8_t own[6], const uint8_t peer[6],
+                       p256_tick tick)
+{
+  uint8_t macs[12], zeros[SHA256_DIGEST], hash[SHA256_DIGEST], val[P256_BYTES];
+  int ok;
+
+  mac_order(macs, own, peer);
+  memset(zeros, 0, sizeof zeros);
+  hmac_sha256(hash, zeros, sizeof zeros, macs, sizeof macs);
+  p256_scalar_from_hash(val, hash);
+  ok = p256_mul(pwe, val, pt, tick);
+  memset(val, 0, sizeof val);
+  memset(hash, 0, sizeof hash);
+  return ok;
+}
+
+/* From a PWE already in the context: rand, mask, commit-scalar and
+   commit-element, the same for both derivations (12.4.5.3). */
+static int commit_from_pwe(sae_ctx *c, sae_rng rng, void *rng_arg,
+                           p256_tick tick)
 {
   uint8_t mask[P256_BYTES];
   int tries;
-
-  memset(c, 0, sizeof *c);
-  memcpy(c->own_mac, own_mac, 6);
-  memcpy(c->peer_mac, peer_mac, 6);
-
-  if (!derive_pwe(&c->pwe, own_mac, peer_mac, password, tick)) return 0;
 
   /* rand and mask both in (1, n); commit-scalar = (rand + mask) mod n, and
      the standard requires that to be greater than 1 as well. Three tries is
@@ -114,6 +204,37 @@ int sae_commit(sae_ctx *c,
   return 1;
 }
 
+int sae_commit(sae_ctx *c,
+               const uint8_t own_mac[6], const uint8_t peer_mac[6],
+               const char *password,
+               sae_rng rng, void *rng_arg, p256_tick tick)
+{
+  memset(c, 0, sizeof *c);
+  memcpy(c->own_mac, own_mac, 6);
+  memcpy(c->peer_mac, peer_mac, 6);
+  c->h2e = 0;
+
+  if (!derive_pwe(&c->pwe, own_mac, peer_mac, password, tick)) return 0;
+  return commit_from_pwe(c, rng, rng_arg, tick);
+}
+
+int sae_commit_pt(sae_ctx *c,
+                  const uint8_t own_mac[6], const uint8_t peer_mac[6],
+                  const p256_point *pt,
+                  sae_rng rng, void *rng_arg, p256_tick tick)
+{
+  memset(c, 0, sizeof *c);
+  memcpy(c->own_mac, own_mac, 6);
+  memcpy(c->peer_mac, peer_mac, 6);
+  c->h2e = 1;
+
+  if (!pwe_from_pt(&c->pwe, pt, own_mac, peer_mac, tick)) {
+    sae_clear(c);
+    return 0;
+  }
+  return commit_from_pwe(c, rng, rng_arg, tick);
+}
+
 void sae_commit_bytes(const sae_ctx *c, uint8_t out[SAE_COMMIT_LEN])
 {
   out[0] = GROUP_19 & 0xff;
@@ -129,10 +250,13 @@ uint32_t sae_commit_bytes_token(const sae_ctx *c, uint8_t *out,
   uint32_t n = 0;
 
   if (tlen > SAE_TOKEN_MAX) tlen = SAE_TOKEN_MAX;
+  /* An element's length byte is 8 bits, and one of them is the extension
+     ID: a token longer than 254 cannot be framed in a container. */
+  if (c->h2e && tlen > 254) tlen = 254;
 
   out[n++] = GROUP_19 & 0xff;
   out[n++] = (uint8_t)(GROUP_19 >> 8);
-  if (token && tlen) {
+  if (!c->h2e && token && tlen) {
     memcpy(out + n, token, tlen);
     n += tlen;
   }
@@ -142,6 +266,13 @@ uint32_t sae_commit_bytes_token(const sae_ctx *c, uint8_t *out,
   n += P256_BYTES;
   memcpy(out + n, c->own_element.y, P256_BYTES);
   n += P256_BYTES;
+  if (c->h2e && token && tlen) {
+    out[n++] = SAE_EID_EXTENSION;
+    out[n++] = (uint8_t)(1 + tlen);
+    out[n++] = SAE_EID_EXT_TOKEN;
+    memcpy(out + n, token, tlen);
+    n += tlen;
+  }
   return n;
 }
 
@@ -171,11 +302,14 @@ int sae_peer_commit(sae_ctx *c, const uint8_t *in, uint32_t len,
 
   /* K = rand * (peer-scalar * PWE + peer-element), and k is its x. */
   if (!p256_mul(&tmp, c->peer_scalar, &c->pwe, tick)) return 0;
-  if (!p256_add(&tmp, &tmp, &c->peer_element)) return 0;
+  if (!p256_add(&tmp, &tmp, &c->peer_element, tick)) return 0;
   if (!p256_mul(&k_point, c->rand, &tmp, tick)) return 0;
   memcpy(k, k_point.x, P256_BYTES);
 
-  /* keyseed = HMAC-SHA256(0^32, k) */
+  /* keyseed = HMAC-SHA256(0^32, k). With H2E the salt would be the
+     Rejected Groups fields instead when there are any (12.4.5.4); this
+     code never rejects a group and ignores a peer's list, so it is zeros
+     either way. */
   memset(zeros, 0, sizeof zeros);
   hmac_sha256(keyseed, zeros, sizeof zeros, k, sizeof k);
 

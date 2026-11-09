@@ -46,6 +46,9 @@ static void hexout(const uint8_t *p, unsigned n)
 #define BENCH_c25519_x25519 25
 #define BENCH_c25519_ed_short 26
 #define BENCH_c25519_ed_long 27
+#define BENCH_sae_pt 28
+#define BENCH_sae_commit_h2e 29
+#define BENCH_sae_commit_hnp 30
 #define SEL CAT(BENCH_, BENCH)
 
 #if SEL == BENCH_nop
@@ -142,6 +145,51 @@ int bench(void)
   memset(k, 0, 32); k[31] = 2;
   if (!p256_mul_base(&out, k, NULL)) return 0;
   return memcmp(out.x, twoG_x, 32) == 0 && memcmp(out.y, twoG_y, 32) == 0;
+#endif
+}
+
+#elif SEL == BENCH_sae_pt || SEL == BENCH_sae_commit_h2e || SEL == BENCH_sae_commit_hnp
+/* SAE as the rabbit runs it, on the IEEE 802.11-2020 Annex J.10 vectors
+ * (vectors_h2e.h, generated under ../../tests). Three shapes:
+ *   sae_pt          the hash-to-element PT, derived once per (SSID, password)
+ *   sae_commit_h2e  what every association then costs: PWE from PT, then
+ *                   the commit (two scalar multiplications)
+ *   sae_commit_hnp  the hunting-and-pecking commit, for comparison: 40
+ *                   rounds of KDF and square root, then one multiplication
+ * The tick is nab_verify_tick, so count.py can report the longest stretch
+ * between two feeds of the watchdog, which is the number that decides
+ * whether the rabbit survives the computation. */
+#include "net/sae.h"
+#include "vectors_h2e.h"
+extern void nab_verify_tick(void);
+struct seq_rng { const uint8_t *vals[2]; int next; };
+static void seq_bytes(uint8_t *out, uint32_t len, void *arg)
+{
+  struct seq_rng *s = (struct seq_rng *)arg;
+  memcpy(out, s->vals[s->next & 1], len);
+  s->next++;
+}
+int bench(void)
+{
+  struct seq_rng rng = { { AJ_RAND, AJ_MASK }, 0 };
+  p256_point pt;
+  sae_ctx c;
+#if SEL == BENCH_sae_pt
+  if (!sae_derive_pt(&pt, (const uint8_t *)AJ_SSID, strlen(AJ_SSID), AJ_PW, AJ_PWID,
+                     nab_verify_tick)) return 0;
+  return memcmp(pt.x, AJ_H2E_PT_X, 32) == 0 && memcmp(pt.y, AJ_H2E_PT_Y, 32) == 0;
+#elif SEL == BENCH_sae_commit_h2e
+  memcpy(pt.x, AJ_H2E_PT_X, 32);
+  memcpy(pt.y, AJ_H2E_PT_Y, 32);
+  if (!sae_commit_pt(&c, AJ_ADDR1B, AJ_ADDR2B, &pt, seq_bytes, &rng, nab_verify_tick)) return 0;
+  return memcmp(c.pwe.x, AJ_H2E_PWE_X, 32) == 0 && memcmp(c.pwe.y, AJ_H2E_PWE_Y, 32) == 0;
+#else
+  {
+    uint8_t commit[SAE_COMMIT_LEN];
+    if (!sae_commit(&c, AJ_ADDR1, AJ_ADDR2, AJ_PW, seq_bytes, &rng, nab_verify_tick)) return 0;
+    sae_commit_bytes(&c, commit);
+    return memcmp(commit, AJ_COMMIT, sizeof commit) == 0;
+  }
 #endif
 }
 

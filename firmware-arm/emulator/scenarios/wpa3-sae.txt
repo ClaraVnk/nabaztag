@@ -1,17 +1,14 @@
-# WPA3 personal, SAE only. The question she will ask next.
+# WPA3 personal, SAE only, on an access point from before hash-to-element.
 #
-# Expected outcome: the rabbit does not try. ieee80211_input_mgt() walks the
-# RSN element's AKM list looking for suite 2 (PSK) and finds only suite 8
-# (SAE), so the scan result comes back IEEE80211_CRYPT_UNSUPPORTED and the
-# network is never a candidate.
+# No RSNXE in the beacon -- hostapd's sae_pwe=0 -- so the only password
+# element derivation this AP knows is hunting and pecking, and a status-126
+# commit would be dropped without a reply. The station has to notice the
+# absence and hunt and peck; `expect-sae hnp` says it did.
 #
-# Unimplemented rather than impossible: SAE needs no accelerator, only
-# P-256 arithmetic, AES-CMAC for management frame protection, and flash this
-# firmware barely has. The README says what it would cost. This scenario is
-# the regression test for the day someone writes it — the assertion below
-# flips from IDLE to RUN and stays there.
-#
-# The transition mode next door is the one worth testing: see wpa3-transition.
+# This scenario spent months asserting IDLE because the scan found only AKM
+# suite 8 and called the network unsupported; since 2026-10-27 it reaches
+# RUN, and since 2026-11-08 it does so on the AKM-8 key schedule a real AP
+# runs. The transition modes next door: wpa3-transition*.txt.
 
 ap 02:00:5e:10:00:01 Terrier 6 wpa3-sae -52
 psk nabaztag
@@ -20,3 +17,4 @@ tick 50
 stop 30000
 
 at 20000 expect RUN
+at 20000 expect-sae hnp
