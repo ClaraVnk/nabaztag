@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.0-8957e5?style=flat-square" alt="Naboot 1.0.0.0 custom firmware">
+  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.2-8957e5?style=flat-square" alt="Naboot 1.0.0.2 custom firmware">
   <a href="https://terrier.cyberloutre.fr/"><img src="https://img.shields.io/badge/warren-Le%20Terrier-8957e5?style=flat-square" alt="Le Terrier, the hosted warren"></a>
   <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
@@ -53,12 +53,13 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
-- 🔧 **Custom firmware — Naboot 1.0.0.0** (2026-11-08, every item
-  proven on a real rabbit): **WPA3-SAE**, a per-rabbit **adoption key**
-  (X25519, confirmed by five belly colours), **HMAC-signed bytecode**, **XMPP
-  over TLS 1.3**, **binary OTA** pushed from the warren's page with the rabbit
-  restarting by itself, a crash report in the boot URL, and a modern config UI
-  — in 118 344 of 126 976 bytes of flash.
+- 🔧 **Custom firmware — Naboot 1.0.0.2** (2026-11-09, every item
+  proven on a real rabbit): **WPA3-SAE** (and H2E, in beta), a per-rabbit
+  **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed
+  bytecode**, **TLS 1.3** for XMPP and for the boot itself, **binary OTA**
+  pushed from the warren's page with the rabbit restarting by itself, the
+  fixes of a security audit, a crash report in the boot URL, and a modern
+  config UI — in 123 420 of 126 976 bytes of flash.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server.
 - 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
@@ -91,7 +92,7 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   your automations.
 
 > ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** The
-> custom **Naboot** firmware (1.0.0.0) adds WPA3, a per-rabbit adoption key,
+> custom **Naboot** firmware (1.0.0.2) adds WPA3, a per-rabbit adoption key,
 > signed bytecode, TLS and over-the-air updates; **Le Terrier** is the public
 > warren. A stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on
 > every boot (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit
@@ -113,20 +114,20 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot 1.0.0.0** — the illustrated 5-minute flashing guide is
+1. **Download Naboot 1.0.0.2** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
-   is mode `naboot-1.0.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   118 344 of 126 976 bytes of flash. The signed file is also in
+   is mode `naboot-1.0.0.2` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   123 420 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.0.0.0.signed.sim`, with its sha256 and which way in from each
-   starting firmware), next to the previous 0.0.0.13 `lean` build and the
-   `minimal` rescue build.
+   (`naboot-1.0.0.2.signed.sim`, with its sha256 and which way in from each
+   starting firmware), next to the previous 1.0.0.0, the 0.0.0.13 `lean`
+   build and the `minimal` rescue build.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
    upgrade* and upload the file. **Don't unplug** during the ~30 s flash. When
    it reboots, the first belly light blinks **orange** while it looks for your
-   Wi-Fi: that is expected, and on 1.0.0.0 the rabbit comes back **by itself**
+   Wi-Fi: that is expected, and since 1.0.0.0 the rabbit comes back **by itself**
    (measured on an over-the-air install: 54 s from download to boot URL,
    nobody at the plug). Only builds before 2026-11-08 needed a power cycle
    after every flash — their post-flash software reset left the 2006 radio
@@ -162,9 +163,10 @@ Put your rabbit on the public warren —
    rabbit — so wait that long before power-cycling, or you'll get a silent
    boot.*
 
-A rabbit on **Naboot 1.0.0.0** whose owner has confirmed its adoption key runs
-its XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from that
-adoption key; the plain port stays for every other rabbit.
+A rabbit on **Naboot 1.0.0.0** or later whose owner has confirmed its adoption
+key runs its XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from
+that adoption key; from **1.0.0.2** its boot request (`bc.jsp`) goes there too.
+The plain port stays for every other rabbit.
 
 > **Nothing happens after step 3 — no code, no voice?** Then the rabbit never
 > reached the Terrier, and the firmware is not the first suspect. Check, in
@@ -174,8 +176,8 @@ adoption key; the plain port stays for every other rabbit.
 > Wi-Fi, normal for up to a minute after a flash; **five colours for a
 > minute** = the adoption exchange of step 4, wait it out); that your 2.4 GHz
 > network lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only");
-> on **WPA3**, that you run 1.0.0.1 or later if the access point is set to
-> H2E-only (hash-to-element; beta, see *Next*) — 1.0.0.0 only does SAE *hunting-and-pecking*;
+> on **WPA3**, that you run 1.0.0.2 if the access point is set to
+> H2E-only (hash-to-element; beta) — 1.0.0.0 only does SAE *hunting-and-pecking*;
 > WPA3-only and WPA2/WPA3 transition both work; and that the rabbit can resolve
 > `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash
@@ -216,7 +218,7 @@ is the short version.
 
 - **WPA3-SAE** — WPA3-only and WPA2/WPA3 transition networks, on 2006 silicon
   (SAE in software, CCMP still in the radio). Hunting-and-pecking only: an
-  access point set to H2E-only needs 1.0.0.1 (see *Next*).
+  access point set to H2E-only needs 1.0.0.2 (below).
 - **Adoption key** — one X25519 exchange at adoption; the rabbit shows five
   belly colours, the owner confirms they match the warren's page. Until
   confirmed, the colours show for a minute at every boot.
@@ -243,7 +245,7 @@ is the short version.
   the whole-rabbit emulator, and a Metal toolchain in Python whose
   `mtl_comp.py --check` type-checks the real runtime bytecode.
 
-**Next — Naboot 1.0.0.1 (proven in the emulator, running on one rabbit)**
+**Done — Naboot 1.0.0.2 (2026-11-09; proven in the emulator and on a real rabbit)**
 
 - **SAE hash-to-element** (H2E) whenever the access point offers it — **beta**:
   it has joined one real access point that offers H2E alongside
@@ -255,9 +257,9 @@ is the short version.
   a reassociation costs one scalar multiplication.
 - **An entropy pool** behind every SAE and adoption secret, and a WPA3
   network that stays WPA3 (no silent downgrade to WPA2).
-
-**Next — Naboot 1.0.0.2 (proven in the emulator)**
-
+- **The fixes of a security audit** — no plaintext data frame once the link
+  is protected, no new pairwise key from a forged message 1, a bounded MIC
+  length, no group-key reinstall on a retransmit, no pairwise TKIP.
 - **The boot over TLS** — a rabbit whose adoption key is confirmed asks for
   its bytecode inside a TLS 1.3 session with the warren, instead of in the
   clear; one attempt per boot, then plain, since the bytecode carries its
@@ -305,7 +307,7 @@ a server restart (it reconnects, base LED violet, no reboot), and after an
 access point that dropped or forgot it (it notices within a few minutes and
 rejoins). If it is *still* orange after that, look at the network before the
 rabbit: 2.4 GHz with 802.11b rates allowed, DNS for the server name, and on
-WPA3 an access point that allows SAE hunting-and-pecking, or 1.0.0.1 if it
+WPA3 an access point that allows SAE hunting-and-pecking, or 1.0.0.2 if it
 is set to H2E-only.
 
 **Five colours on the belly for a minute** is not a fault either: that is the
@@ -333,12 +335,12 @@ page or the add-on's status/logs instead.
 |---|---|---|
 | Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | On 1.0.0.0: wait a minute or two, then check the network. Stock or older builds: power-cycle (unplug ~10 s) |
 | **Five colours** on the belly for a minute, then a normal boot | Adoption key waiting to be confirmed | Confirm the colours on the warren's page |
-| **Orange forever** right after WPA3 was turned off on your Wi-Fi (1.0.0.1+) | The rabbit refuses a WPA3 → WPA2 downgrade | Re-save the Wi-Fi settings in config mode (see below) |
+| **Orange forever** right after WPA3 was turned off on your Wi-Fi (1.0.0.2+) | The rabbit refuses a WPA3 → WPA2 downgrade | Re-save the Wi-Fi settings in config mode (see below) |
 | **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); otherwise the JTAG station: `firmware-arm/jtag/station.sh flash` |
 
-### Orange after the Wi-Fi went from WPA3 back to WPA2 (1.0.0.1 and later)
+### Orange after the Wi-Fi went from WPA3 back to WPA2 (1.0.0.2 and later)
 
-Once a rabbit on 1.0.0.1 has joined a network with WPA3 (SAE), it remembers
+Once a rabbit on 1.0.0.2 has joined a network with WPA3 (SAE), it remembers
 that this network requires WPA3 and **refuses to join it with WPA2 again**.
 That is on purpose: otherwise an attacker could pose as your access point with
 WPA2 only and make the rabbit fall back to it (a "downgrade").
@@ -362,12 +364,12 @@ configuration flash sector, next to the Wi-Fi password.
 
 ```
 .
-├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.0. Forks
+├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.2. Forks
 │   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
 │   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
 │   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
 │   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
-│   │                        #    {docker,podman} --mode naboot-1.0.0.0 (or
+│   │                        #    {docker,podman} --mode naboot-1.0.0.2 (or
 │   │                        #    minimal, lean, …).
 │   ├── releases/            #    the signed .sim images + their sha256 (README.md)
 │   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
