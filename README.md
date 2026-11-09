@@ -287,9 +287,11 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 1. **Download Naboot 1.0.0.0** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
    is mode `naboot-1.0.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   118 344 of 126 976 bytes of flash. The earlier signed images — the
-   0.0.0.13 `lean` build and the `minimal` rescue build — stay in
-   [`firmware-arm/releases/`](firmware-arm/releases/).
+   118 344 of 126 976 bytes of flash. The signed file is also in
+   [`firmware-arm/releases/`](firmware-arm/releases/)
+   (`naboot-1.0.0.0.signed.sim`, with its sha256 and which way in from each
+   starting firmware), next to the previous 0.0.0.13 `lean` build and the
+   `minimal` rescue build.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
