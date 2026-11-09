@@ -3418,6 +3418,51 @@ def patch_wpa3_h2e(root: Path) -> None:
     print("[ok]   wpa3_h2e: hash-to-element on offer, hunting and pecking otherwise")
 
 
+def patch_boot_tls(root: Path) -> None:
+    """bc.jsp over TLS 1.3 with the adoption key: boot-mods/boot_tls.mtl.
+
+    For a rabbit whose owner confirmed its key (flag 'C' at 256), the
+    bootloader asks for its bytecode on the warren's TLS port, 5223, where
+    the Terrier answers HTTP as well as XMPP (one listener, the first bytes
+    after the handshake decide). The TLS context is free at boot: the
+    runtime's XMPP starts after the bytecode runs, with its own handshake.
+
+    One attempt per boot, then plain bc.jsp: a warren without the HTTP side
+    of the TLS port, or a handshake that fails, costs one BOOT_HTTPTIMEOUT
+    and the rabbit boots as before. The bytecode carries its HMAC either
+    way, so a forced fallback loses privacy, not integrity -- and the
+    warren learns from where the boot came: only a TLS bc.jsp is proof of
+    the key.
+
+    Requires adoption_boot (the flag, kx_ready, httpboot's call site) and
+    tls_psk (the opcodes).
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if "boottls_request" in t:
+        print(f"[skip] {q}: bc.jsp already goes over TLS when it can")
+        return
+    if "kx_ready" not in t:
+        sys.exit(f"FAIL {q}: adoption_boot must run first")
+    if "tlsStart" not in (root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp").read_text():
+        sys.exit(f"FAIL {q}: tls_psk must run first")
+    nl = "\r\n" if "\r\n" in t else "\n"
+    body = (Path(__file__).resolve().parent / "boot-mods" / "boot_tls.mtl").read_text()
+    edits = [
+        ("fun boot_url url =" + nl, body.replace("\n", nl) + nl + "fun boot_url url =" + nl, "fun boot_url"),
+        ('\t\tif wifiReady && kx_ready then set httpboot=httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,
+         '\t\tif wifiReady && kx_ready then set httpboot=if boottls_wanted then boottls_request boot_url url #_bootcbhttp'
+         ' else httprequest "GET" boot_url url nil #_bootcbhttp HTTP_NORMAL;' + nl,
+         "the bytecode request"),
+    ]
+    for a, b, what in edits:
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(a)}")
+        t = t.replace(a, b, 1)
+    write_src(q, t)
+    print(f"[ok]   {q}: bc.jsp over TLS 1.3 for a confirmed key, one attempt per boot")
+
+
 def patch_firmware_version(root: Path) -> None:
     """Say a version other than 0.0.0.13 in the boot URL and the setup page.
 
@@ -7410,7 +7455,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -7524,6 +7569,8 @@ def main() -> int:
         # hardening of the 2026-11-08 audit: eapol_ptk_install (F2), eapol_mic_len
         # (F3), gtk_no_reinstall (F4), no_tkip_pairwise (F8), sae_required (S2).
         "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        # 1.0.0.2: 1.0.0.1 with bc.jsp over TLS for a confirmed key (boot_tls).
+        "naboot-1.0.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -7755,6 +7802,7 @@ def main() -> int:
         "extbss": patch_extbss,
         "persist_counters": patch_persist_counters,
         "firmware_version": patch_firmware_version,
+        "boot_tls": patch_boot_tls,
         "reset_reason": patch_reset_reason,
         "dcc_console": patch_dcc_console,
         "dcc_telemetry": patch_dcc_telemetry,

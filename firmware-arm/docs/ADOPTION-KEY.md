@@ -223,6 +223,40 @@ containers:
 - fix with the attacker rewriting `xmpp_tls` to the plain port: four
   ClientHellos to the plain port, no XMPP, no fallback.
 
+## The boot over TLS (Naboot 1.0.0.2)
+
+Until 1.0.0.2 the first request of every boot, `bc.jsp`, went in the clear:
+the bytecode carried its HMAC, so nobody could change it, but anyone on the
+path could read it and the query that came with it. Step `boot_tls`
+(`../boot-mods/boot_tls.mtl`) moves it inside the same TLS 1.3 PSK as XMPP:
+
+- **When:** the configuration says the key is confirmed (flag `C` at 256).
+  A rabbit learns that from the HMAC on a bytecode, so the first boot after
+  the owner confirms the colours is still plain; the next ones are not.
+- **Where:** the warren's TLS port, 5223. The Terrier keeps one listener: after
+  the handshake, an HTTP verb as the first bytes goes to its boot handler,
+  with the MAC the PSK proved (a different `m=` is refused); anything else is
+  XMPP as before. Only `bc.jsp` and `locate.jsp` are answered there.
+- **Free context:** the firmware holds one TLS session. At boot the runtime's
+  XMPP has not started, so the bootloader uses it and lets it go; the runtime
+  starts its own handshake.
+- **Records:** the rabbit's receive buffer holds one 4 KB record, so the
+  Terrier writes the answer in 1 KB records. The 107 KB runtime comes through
+  in about four seconds in the emulator.
+- **Fallback:** one attempt per boot. A failed handshake, a closed connection
+  or no answer within `BOOT_HTTPTIMEOUT` (10 s) sends this boot to plain
+  `bc.jsp`. The bytecode keeps its HMAC either way, so a forced fallback costs
+  privacy, not integrity.
+
+Proven in the emulator (`emulator/tools/xmpp-tls-proof.sh --tls-port 5223
+--third`, a real Terrier container, three boots): boot 3 logs `HTTP over TLS
+… PSK identity 0019db00beef`, the runtime is served inside the session, the
+rabbit accepts it and opens XMPP over TLS 4.5 s later. Against a Terrier
+without the HTTP side, the GET goes unanswered and the rabbit boots in the
+clear 10 s later. The first build sent its identity with colons (the
+bootloader's `webmac`); the warren refused it and the fallback hid nothing:
+the log said so, and `kx_hex` fixed it.
+
 ## What else the rabbit tells the warren, and how
 
 Once the XMPP session runs TLS, what travels inside it is authenticated by

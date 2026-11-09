@@ -256,6 +256,13 @@ is the short version.
 - **An entropy pool** behind every SAE and adoption secret, and a WPA3
   network that stays WPA3 (no silent downgrade to WPA2).
 
+**Next — Naboot 1.0.0.2 (proven in the emulator)**
+
+- **The boot over TLS** — a rabbit whose adoption key is confirmed asks for
+  its bytecode inside a TLS 1.3 session with the warren, instead of in the
+  clear; one attempt per boot, then plain, since the bytecode carries its
+  HMAC anyway.
+
 **Next**
 
 - **Per-rabbit wake word** compiled into the bytecode — it is recorded on the
@@ -264,8 +271,6 @@ is the short version.
 
 **Later**
 
-- **The boot over TLS** — `bc.jsp` and `locate.jsp` over TLS-PSK for a
-  rabbit whose adoption key is confirmed (a new image, 1.0.0.2).
 - **A JTAG listener that does not stall** — after a few minutes `listen.sh`
   stops on `unknown target request: ff`: openocd's DCC decoder chokes on a
   word starting with 0xff. Either the telemetry never sends one, or the Pi
