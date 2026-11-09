@@ -256,7 +256,12 @@ is the short version.
 
 - **H2E** (hash-to-element) for SAE — for access points set to H2E-only, and
   the timing half of Dragonblood.
-- **A CVE scan** of what the image and the warren carry.
+- **The boot over TLS** — `bc.jsp` and `locate.jsp` over TLS-PSK for a
+  rabbit whose adoption key is confirmed (a new image, 1.0.0.2).
+- **A JTAG listener that does not stall** — after a few minutes `listen.sh`
+  stops on `unknown target request: ff`: openocd's DCC decoder chokes on a
+  word starting with 0xff. Either the telemetry never sends one, or the Pi
+  reads the DCC channel raw.
 - **Reclaim flash** — 8 632 bytes are spare today; the measured savings are
   in the history (Phase 8).
 - **`mtl_pyc` typing** — the Python-to-Metal compiler shares `mtl_comp`'s
