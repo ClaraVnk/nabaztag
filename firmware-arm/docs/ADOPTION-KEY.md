@@ -2,7 +2,7 @@
 
 What it is for: authenticating the bytecode the warren serves (HMAC), then
 keying TLS 1.3 on the XMPP connection (PSK only — certificate TLS does not
-fit, see `tools/cost/results-2026-11-08.txt`). Until now everything between
+fit, see `../tools/cost/results-2026-11-08.txt`). Until now everything between
 a rabbit and its warren travels in clear and unauthenticated.
 
 ## The exchange
@@ -58,10 +58,10 @@ shown it. The warren now answers registration (Terrier), and the key moved.
 
 Once a rabbit has a confirmed key, its XMPP connection runs inside TLS 1.3
 (RFC 8446) keyed from it. The smallest client that interoperates,
-`crypto/nab_tls.c`:
+`../crypto/nab_tls.c`:
 
 - **One suite**, TLS_AES_128_GCM_SHA256. GCM is the bit-serial GHASH from
-  `tools/cost/`, measured at 849 k instructions per KB, on cmac.c's AES block,
+  `../tools/cost/`, measured at 849 k instructions per KB, on cmac.c's AES block,
   which the WPA3 modes already link.
 - **`psk_ke` only**: no (EC)DHE, so **no forward secrecy** -- whoever obtains
   the adoption key later can read a recorded session. The alternative,
@@ -169,7 +169,7 @@ Against stacks we did not write, `firmware-arm/tests` (`make tls`):
   3.15's `ssl` with `set_psk_server_callback` (what the Terrier runs, on
   OpenSSL 4.1.0 locally, 3.5.5 in its Rocky 10 container with Python
   3.13.16): handshake, 13 and 9,000 bytes both ways, close_notify exchanged.
-- The OpenSSL session recorded (`tests/session_openssl.dump`) and replayed
+- The OpenSSL session recorded (`../tests/session_openssl.dump`) and replayed
   offline by `test_tls.c`: with a fixed random the ClientHello, the Finished,
   the application record and the close_notify come out byte for byte as
   OpenSSL accepted them, at 1460, 7 and 1 bytes per segment; then with a
@@ -179,10 +179,10 @@ Against stacks we did not write, `firmware-arm/tests` (`make tls`):
 
 Flash: `lean-wpa3-tls` is 117,172 of 126,976 bytes, 9,804 spare
 (`lean-wpa3-kx` was 111,764: TLS costs 5,408). The runtime bytecode with
-`patch_tls.py` is 107,119 bytes and type-checks with `tools/mtl_comp.py --check`.
+`patch_tls.py` is 107,119 bytes and type-checks with `../tools/mtl_comp.py --check`.
 
 In the emulator, 2026-11-08, against a real Terrier (its container, Python
-3.13.16, OpenSSL 3.5.5) on the host, `emulator/scenarios/vm/xmpp-tls.txt`
+3.13.16, OpenSSL 3.5.5) on the host, `../emulator/scenarios/vm/xmpp-tls.txt`
 under the `lean-wpa3-tls` bootloader, the runtime fetched from the Terrier
 each time, `--realtime`:
 
@@ -204,8 +204,8 @@ hand-off after the handshake compared Metal constructors with `==`, which
 never matches -- the handshake completed and the gate timed out two seconds
 later, every three seconds.
 
-The TLS policy, 2026-11-09, same bootloader, `emulator/tools/xmpp-tls-proof.sh`
-with `emulator/tools/locate_strip.py` dropping the `xmpp_tls` line between boot 1
+The TLS policy, 2026-11-09, same bootloader, `../emulator/tools/xmpp-tls-proof.sh`
+with `../emulator/tools/locate_strip.py` dropping the `xmpp_tls` line between boot 1
 (exchange, pending, plain) and boot 2 (owner confirmed), real Terrier
 containers:
 
@@ -224,11 +224,11 @@ containers:
 
 | piece | where | state |
 |---|---|---|
-| X25519 + HKDF + colours | `crypto/nab_kx.c`, tests `make kx` | done, against OpenSSL |
+| X25519 + HKDF + colours | `../crypto/nab_kx.c`, tests `make kx` | done, against OpenSSL |
 | X25519 watchdog | step `x25519_wdt` | done, 509 ticks per multiplication |
 | warren side | Terrier: kx.py and its tests | done, same vectors |
 | opcodes, key storage, hiding | steps `adoption_kx` | done |
-| bootloader flow and belly colours | step `adoption_boot`, `boot-mods/adoption.mtl` | done, emulator |
+| bootloader flow and belly colours | step `adoption_boot`, `../boot-mods/adoption.mtl` | done, emulator |
 | warren endpoint and confirmation page | Terrier | done |
 | bytecode HMAC | `kxCheck`, `adoption.mtl`; Terrier `sign_bytecode` | done, emulator |
-| TLS 1.3 PSK | `crypto/nab_tls.c`, step `tls_psk`, `bytecode/patch_tls.py`; Terrier xmpp.py | done, OpenSSL and Python ssl; emulator against a real Terrier |
+| TLS 1.3 PSK | `../crypto/nab_tls.c`, step `tls_psk`, `bytecode/patch_tls.py`; Terrier xmpp.py | done, OpenSSL and Python ssl; emulator against a real Terrier |

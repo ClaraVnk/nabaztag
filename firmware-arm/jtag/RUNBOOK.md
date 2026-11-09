@@ -4,7 +4,7 @@ The short way, from a clone on the Pi: `station.sh`, next to this file (see READ
 
 Copy-paste runbook. No judgement calls, no reading between the lines. For why
 any of it is shaped this way, see [README.md](README.md); for the recovery
-story around it, [../RECOVERY.md](../RECOVERY.md).
+story around it, [../docs/RECOVERY.md](../docs/RECOVERY.md).
 
 **Flashing is at your own risk.**
 
@@ -137,4 +137,4 @@ else looked fine.
 | `z=` unchanged after a power cycle | nothing was written. Go back to step 4 |
 
 A true brick — a Data Abort dead-loop — and its bisection ladder are in
-[../BRICK_FORENSICS.md](../BRICK_FORENSICS.md).
+[../docs/BRICK_FORENSICS.md](../docs/BRICK_FORENSICS.md).

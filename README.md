@@ -220,9 +220,10 @@ apply unless the reminder is marked urgent).
 │   │                        #    run on a build machine against a virtual AP,
 │   │                        #    so a fix costs a second instead of unplugging
 │   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
-│   ├── ADOPTION-KEY.md      #    The per-rabbit key: exchange, colours, HMAC, TLS.
-│   ├── BRICK_FORENSICS.md   #    Recovery plan + bisection ladder.
-│   └── RECOVERY.md
+│   └── docs/
+│       ├── ADOPTION-KEY.md  #    The per-rabbit key: exchange, colours, HMAC, TLS.
+│       ├── BRICK_FORENSICS.md #  Recovery plan + bisection ladder.
+│       └── RECOVERY.md
 ├── bytecode/                # Runtime-side bytecode add-ons (mic stream, mDNS,
 │   ├── micstream.mtl        #    OTA, reconnect, the TLS seam) compiled into the
 │   ├── fwota.mtl            #    hybrid bootcode served by the add-on / warren.
@@ -277,7 +278,7 @@ Full guide (API, pairing, troubleshooting) is in
 > ⚠️ **Flashing is done at your own risk** — no warranty, no liability. A
 > failed flash can leave the rabbit unable to re-enter config mode,
 > recoverable only over JTAG
-> (see [`firmware-arm/RECOVERY.md`](firmware-arm/RECOVERY.md)). Flashing is
+> (see [`firmware-arm/docs/RECOVERY.md`](firmware-arm/docs/RECOVERY.md)). Flashing is
 > **optional**: a stock rabbit works fine on the add-on above, with nothing
 > flashed.
 
@@ -368,7 +369,7 @@ is the short version.
 - **Adoption key** — one X25519 exchange at adoption; the rabbit shows five
   belly colours, the owner confirms they match the warren's page. Until
   confirmed, the colours show for a minute at every boot.
-  [`firmware-arm/ADOPTION-KEY.md`](firmware-arm/ADOPTION-KEY.md).
+  [`firmware-arm/docs/ADOPTION-KEY.md`](firmware-arm/docs/ADOPTION-KEY.md).
 - **HMAC-signed bytecode** — a confirmed rabbit refuses bytecode its warren
   did not sign.
 - **XMPP over TLS 1.3** (PSK, port 5223) for confirmed rabbits; the PSK is

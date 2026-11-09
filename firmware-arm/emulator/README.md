@@ -342,7 +342,7 @@ tools/vm-check.sh --boot-vm ./rabbit-vm-boot
 host with `--realtime` (its header says how): three boots of the
 `lean-wpa3-tls` bootloader, the runtime bytecode fetched from the Terrier,
 plain XMPP while the key is pending, TLS 1.3 PSK once the owner confirmed,
-plain again for a reflashed rabbit with no key. See `../ADOPTION-KEY.md`.
+plain again for a reflashed rabbit with no key. See `../docs/ADOPTION-KEY.md`.
 `tools/xmpp-tls-proof.sh` runs the first two boots against a Terrier
 container, and `--strip` puts `tools/locate_strip.py` on the path: an
 attacker who edits `locate.jsp`, dropping the `xmpp_tls` line

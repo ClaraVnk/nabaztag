@@ -3,7 +3,7 @@
 > **Flashing is done at your own risk.** No warranty of any kind, and no
 > liability for a rabbit that stops working. A failed flash can leave the
 > rabbit unable to re-enter config mode, recoverable only by opening the base
-> and reprogramming the chip over JTAG — see [`jtag/`](jtag/). Flashing is
+> and reprogramming the chip over JTAG — see [`../jtag/`](../jtag/). Flashing is
 > optional: a stock rabbit works fine with the Home Assistant add-on.
 
 The `firmware-arm/` tree builds several `.sim` *modes* from the same pinned
@@ -13,21 +13,21 @@ bootloader. The ones that matter for flashing and recovery:
 
 | Build | `Nab.bin` | Shipped? | What's modified |
 |---|---|---|---|
-| **lean** (stable) | 107 288 B | **yes** — `releases/naboot-lean-wpa2.signed.sim`, hardware-verified 2026-10-27 (a spoken sentence *and* both MIDI jingles, heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the WPA2 group key, the cold-state guards, the audio half-duplex fix, the bounded hardware waits — and, since 2026-10-27, `extbss`: every `.bss.*` zeroed at boot (the EAPOL state no longer starts on whatever the SRAM held), 8 KB of scratch moved to external RAM, 10 104 bytes of user stack instead of 1 916, and seven RT2501/USB failures that used to be detected and then dropped. The build the community runs. `releases/naboot-stable.signed.sim` (113 256 B, June) is kept as the older verified fallback. |
-| **minimal** (rescue) | 119 800 B | **yes** — `releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
+| **lean** (stable) | 107 288 B | **yes** — `../releases/naboot-lean-wpa2.signed.sim`, hardware-verified 2026-10-27 (a spoken sentence *and* both MIDI jingles, heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the WPA2 group key, the cold-state guards, the audio half-duplex fix, the bounded hardware waits — and, since 2026-10-27, `extbss`: every `.bss.*` zeroed at boot (the EAPOL state no longer starts on whatever the SRAM held), 8 KB of scratch moved to external RAM, 10 104 bytes of user stack instead of 1 916, and seven RT2501/USB failures that used to be detected and then dropped. The build the community runs. `../releases/naboot-stable.signed.sim` (113 256 B, June) is kept as the older verified fallback. |
+| **minimal** (rescue) | 119 800 B | **yes** — `../releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
 | **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Untested on hardware as of 2026-06-01, and it no longer stacks on `lean-wpa3`: `rom_pages` and `wpa3_boot_pw` both take opcode 153. |
 | **lean-wpa3-slim** (proposed, 2026-11-08) | 107 228 B | no — not yet on hardware | `lean-wpa3` (117 692 B) with the dead weight measured out, nothing the rabbit does changed: the debug `sprintf` chain that pulled newlib's printf and nano malloc into the image (5 680 B), the bootloader's console literals, echo opcodes and hex dumpers plus five unreferenced functions (2 880 B of bytecode), MD5 as a loop instead of 64 unrolled steps (1 656 B), one AES S-box instead of two (256 B). Emulator suites green under its own bootloader bytecode; the console and USB files it edits make it hardware-risk until a rabbit has run it. |
 
 Sizes are those of the 2026-10-20 builds, except `minimal`, which was rebuilt
 on 2026-10-23: the shipped one was missing the `audio_fifo_data` step and so
-carried the 2026-06-20 brick itself. `./build.sh` prints the current ones and
+carried the 2026-06-20 brick itself. `../build.sh` prints the current ones and
 refuses to hand you an image that fails `preflight.py`.
 Bisection modes (`signed-stock`, `pages-only`, `mdns-only`, `lean-nomdns`) are
 described in `apply-mods.py --help` and [BRICK_FORENSICS.md](./BRICK_FORENSICS.md).
 
 Every build lands under `bin/<mode>/` (ignored by git), but the signed `.sim`
-files we actually **ship** live in `releases/`:
+files we actually **ship** live in `../releases/`:
 
 ```
 firmware-arm/releases/
@@ -35,7 +35,7 @@ firmware-arm/releases/
 └── naboot-minimal.signed.sim  ← upload this one (rescue / rollback — mode `minimal`)
 ```
 
-`full` is **not shipped**: there is no full build under `releases/`. If you
+`full` is **not shipped**: there is no full build under `../releases/`. If you
 want it, build and sign it yourself with
 `./build.sh --mode full --remote <user@dev-vm> --runtime podman`, which leaves
 it at `bin/full/firmware0.0.0.13.signed.sim` on your own machine.
@@ -65,7 +65,7 @@ message and every length. Any build with a signature-gated `httpflash` —
 silence: no red belly, no error page, the sequence completed and nothing was
 written. That is why flashes reported success for five months and the chip
 never changed. Fixed in `b8f6dd1`; the regression test is
-`tests/test_sign_open.c`.
+`../tests/test_sign_open.c`.
 
 **What that means for you.** The broken verifier is in the firmware your
 rabbit is *running*, not in the image being sent, so it refuses the very
@@ -102,17 +102,17 @@ check was the one thing that did not depend on the transport, and the
 transport is plain HTTP. For the length of one update, "is the server sound"
 stops being the whole question, and your DNS and network path join it. If that
 is not a trade you want, flash over JTAG instead — the steps are below — or
-roll back to `releases/naboot-minimal.signed.sim` from your rabbit's own setup
+roll back to `../releases/naboot-minimal.signed.sim` from your rabbit's own setup
 page, which has no gate.
 
 ## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
 
 The station's OpenOCD configuration, the OKI flash sequence in TCL and the
 generator that turns a `Nab.bin` into a write script now live in
-[`jtag/`](jtag/) — they were on the flash station's SD card and that card is
-gone. **[`jtag/RUNBOOK.md`](jtag/RUNBOOK.md) is the copy-paste procedure**:
+[`../jtag/`](../jtag/) — they were on the flash station's SD card and that card is
+gone. **[`../jtag/RUNBOOK.md`](../jtag/RUNBOOK.md) is the copy-paste procedure**:
 every command from an untouched Pi to a confirmed boot mark, including the two
-steps that look like failures and are not. `jtag/README.md` has the wiring
+steps that look like failures and are not. `../jtag/README.md` has the wiring
 diagram and explains why each command is shaped the way it is.
 
 When the rabbit can't re-enter config mode (true brick), reflash over **JTAG**.
@@ -158,7 +158,7 @@ directly (bit-bang) with **F/F Dupont wires**.
    *modernized* setup page (`page_a`), unless this is the first flash — in
    which case you still see the 2006 UI.
 5. Click **firmware upgrade** → `page_u` → upload
-   `releases/naboot-stable.signed.sim`. (`full` is not shipped — see above; the
+   `../releases/naboot-stable.signed.sim`. (`full` is not shipped — see above; the
    shipped stable build is mode `lean`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
    reboots on its own.
@@ -174,7 +174,7 @@ directly (bit-bang) with **F/F Dupont wires**.
 
 If the rabbit boots into `full` but the modernized config-mode UI misbehaves
 (broken form, can't re-upload), enter config mode again (head button + power)
-and upload `releases/naboot-minimal.signed.sim`. Minimal restores the
+and upload `../releases/naboot-minimal.signed.sim`. Minimal restores the
 2006-style stock UI exactly as it shipped, with the verifySig opcode kept
 in place so OTAs still work.
 
@@ -224,4 +224,4 @@ The rabbit now runs **Naboot**. From this point on:
   (`NABGCC_COMMIT=2c05b53fe…`, `MTL_LINUX_COMMIT=7e557a153…` in the
   Dockerfile). `./build.sh --mode <mode> --remote <user@dev-vm> --runtime podman`
   rebuilds from scratch on the build VM — **never on the Home Assistant host**
-  (building there takes the rabbit's server down; see `releases/README.md`).
+  (building there takes the rabbit's server down; see `../releases/README.md`).
