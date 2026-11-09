@@ -320,6 +320,7 @@ page or the add-on's status/logs instead.
 |---|---|---|
 | Belly LEDs **blink/glow orange**, boot animation plays | Booted, seeking Wi-Fi/server | On 1.0.0.0: wait a minute or two, then check the network. Stock or older builds: power-cycle (unplug ~10 s) |
 | **Five colours** on the belly for a minute, then a normal boot | Adoption key waiting to be confirmed | Confirm the colours on the warren's page |
+| **Orange forever** right after WPA3 was turned off on your Wi-Fi (1.0.0.1+) | The rabbit refuses a WPA3 → WPA2 downgrade | Re-save the Wi-Fi settings in config mode (see below) |
 | **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); otherwise the JTAG station: `firmware-arm/jtag/station.sh flash` |
 
 ## Repository layout
@@ -510,6 +511,29 @@ apply unless the reminder is marked urgent).
 4. Reload YAML. Try it by voice, or test from **Developer Tools → Actions**.
 
 ### Voice / TTS — make Nabi sound as natural as you like
+### Orange after the Wi-Fi went from WPA3 back to WPA2 (1.0.0.1 and later)
+
+Once a rabbit on 1.0.0.1 has joined a network with WPA3 (SAE), it remembers
+that this network requires WPA3 and **refuses to join it with WPA2 again**.
+That is on purpose: otherwise an attacker could pose as your access point with
+WPA2 only and make the rabbit fall back to it (a "downgrade").
+
+So if you turn WPA3 off on that network (or a router update switches a
+WPA2/WPA3 transition network to WPA2 only), the rabbit stays **orange** and
+never connects. To unlock it:
+
+1. Put the rabbit in config mode (hold the head button while plugging it in,
+   release when the light turns blue — not more than 7 s, or it enters the
+   factory test mode).
+2. Join its Wi-Fi, open its setup page and **save the Wi-Fi settings again**
+   (same network name and password are fine).
+
+That save clears the requirement; the rabbit joins over WPA2 and remembers
+WPA3 again the next time it gets it. Changing the network name or the
+password clears it too. The requirement is stored once per network in the
+configuration flash sector, next to the Wi-Fi password.
+
+## Voice / TTS — make Nabi sound as natural as you like
 
 The rabbit's original TTS relied on Acapela's now-dead web service. The add-on
 ships its own **fully-local TTS** (`espeak-ng`, robotic but offline) **and** can
