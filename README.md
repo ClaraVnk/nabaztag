@@ -4,61 +4,68 @@
   <img src="images/home-assistant.png" alt="Home Assistant" height="48">
 </p>
 
-<h1 align="center">Nabaztag&nbsp;&nbsp;×&nbsp;&nbsp;Home Assistant</h1>
+<h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
 
 <p align="center">
-  <strong>Bring the 2006 Wi-Fi rabbit back to life — and let it talk to Claude.</strong><br>
-  <sub>100&nbsp;% local · no cloud · no account. The Violet servers died in 2011; this is its new home.</sub>
+  <strong>Bring the 2006 Wi-Fi rabbit back to life — new firmware, a new warren, driven from Home Assistant.</strong><br>
+  <sub>WPA3 · TLS 1.3 · signed over-the-air updates · a per-rabbit adoption key. The Violet servers died in 2011; this is its new home.</sub>
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.0-8957e5?style=flat-square" alt="Naboot 1.0.0.0 custom firmware">
+  <a href="https://terrier.cyberloutre.fr/"><img src="https://img.shields.io/badge/warren-Le%20Terrier-8957e5?style=flat-square" alt="Le Terrier, the hosted warren"></a>
+  <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
+  <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
+  <img src="https://img.shields.io/badge/protocol-Violet-6f42c1?style=flat-square" alt="Violet protocol">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-add--on-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="Home Assistant add-on">
-  <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <img src="https://img.shields.io/badge/100%25-local-44cc11?style=flat-square" alt="100% local, no cloud">
-  <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
-  <img src="https://img.shields.io/badge/firmware-Naboot-8957e5?style=flat-square" alt="Naboot custom firmware">
-  <img src="https://img.shields.io/badge/protocol-Violet-6f42c1?style=flat-square" alt="Violet protocol">
   <img src="https://img.shields.io/badge/python-stdlib%20only-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python stdlib only">
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/signed%20OTA-verified-success?style=flat-square" alt="signed OTA verified">
   <img src="https://img.shields.io/badge/breathes-live-success?style=flat-square" alt="breathes">
   <img src="https://img.shields.io/badge/speaks-live-success?style=flat-square" alt="speaks">
   <img src="https://img.shields.io/badge/moves%20%26%20glows-live-success?style=flat-square" alt="moves and glows">
   <img src="https://img.shields.io/badge/%22hey%20Nabi%22-beta-dbab09?style=flat-square" alt="wake word (beta)">
   <img src="https://img.shields.io/badge/asks%20Claude-live-success?style=flat-square" alt="asks Claude">
-  <img src="https://img.shields.io/badge/signed%20OTA-verified-success?style=flat-square" alt="signed OTA verified">
   <br><sub>every capability above verified live on a real Nabaztag:tag&nbsp;v2 🐰</sub>
 </p>
 
 Bring an **original Nabaztag** (the 2005–2006 Wi-Fi rabbit by Violet/Mindscape)
-back to life and drive it from **Home Assistant**, fully locally — no cloud.
+back to life:
 
-This repository is a **Home Assistant OS add-on repository**. Its primary add-on
-is a small, **dependency-free server that speaks the original Violet protocol**
-directly: the rabbit phones home to it (the real Violet servers died around
-2011), and Home Assistant drives the rabbit — ears, belly weather icons, nose —
-through a simple control API.
+- **[Naboot](#flash-naboot--adopt-your-rabbit-on-le-terrier)** is a custom
+  firmware for the rabbit — **WPA3**, **XMPP over TLS 1.3**, **signed
+  over-the-air updates** and a per-rabbit **adoption key**. You flash it once
+  from your phone; every update after that arrives over the air.
+- **[Le Terrier](https://terrier.cyberloutre.fr/)** is the hosted "warren" the
+  rabbit phones home to, now that the Violet servers are gone (around 2011).
+  Adopt your rabbit there — no server to run at home.
+- **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** puts the
+  rabbit in **Home Assistant** as devices and entities. It is the recommended
+  way to use a rabbit from Home Assistant today.
+
+Rather host everything yourself? This repository is also a Home Assistant add-on
+repository whose add-on runs a warren inside Home Assistant, with nothing
+flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-legacy).
 
 ### ✨ Highlights
 
-- 🐰 **Revives a 2006 rabbit** with **zero hardware mods** and **nothing flashed**
-  by default — a stock rabbit just downloads its bytecode from the add-on on boot.
-- 🗣️ **Talk to Claude through the rabbit** — hold the head button, ask, and it
-  answers in its own voice while moving its ears + LEDs. Hands-free **"hey Nabi"
-  wake word is in beta** — opt-in and off by default (see the privacy note below).
-- 🔒 **100&nbsp;% local** — bundled whisper.cpp STT + Piper / espeak-ng TTS. No
-  cloud, no account, no telemetry.
-- 🧩 **Driven from Home Assistant** — speak text, play audio, original Violet
-  jingles, ear choreographies, RGB light shows, weather / mail / air belly icons;
-  button / RFID / ear-move events come back as HA events for your automations.
-- 🔧 **Optional custom firmware — Naboot 1.0.0.0** (2026-11-08, every item
+- 🔧 **Custom firmware — Naboot 1.0.0.0** (2026-11-08, every item
   proven on a real rabbit): **WPA3-SAE**, a per-rabbit **adoption key**
   (X25519, confirmed by five belly colours), **HMAC-signed bytecode**, **XMPP
   over TLS 1.3**, **binary OTA** pushed from the warren's page with the rabbit
   restarting by itself, a crash report in the boot URL, and a modern config UI
   — in 118 344 of 126 976 bytes of flash.
+- 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
+  anyone can adopt a rabbit without running their own server.
+- 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
+  rabbit as proper Home Assistant **devices and entities** (a light, a switch,
+  selects, sensors, buttons) rather than REST calls. It works against Le
+  Terrier or against a warren you run yourself, and it is where this project's
+  Home Assistant work happens now.
 - 📡 **Survives a hostile network** — a tiny firmware mDNS resolver lets the rabbit
   find its server over multicast even when the gateway refuses its unicast DNS.
 - 🔁 **Comes back by itself** — restart the server and the rabbit reconnects in
@@ -70,208 +77,28 @@ through a simple control API.
   rabbit, write an image and read it back, dump what it *really* runs, or
   watch its live status line without halting it. See
   [`firmware-arm/jtag/README.md`](firmware-arm/jtag/README.md).
-- 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
-  anyone can adopt a rabbit without running their own server.
-- 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
-  rabbit as proper Home Assistant **devices and entities** (a light, a switch,
-  selects, sensors, buttons) rather than REST calls. It works against Le
-  Terrier or against a warren you run yourself, and it is where this project's
-  Home Assistant work happens now.
+- 🗣️ **Talk to Claude through the rabbit** — hold the head button, ask, and it
+  answers in its own voice while moving its ears + LEDs. Hands-free **"hey Nabi"
+  wake word is in beta** — opt-in and off by default (see the privacy note below).
+- 🐰 **Or nothing flashed at all** — with the [Home Assistant
+  add-on](#the-home-assistant-add-on-legacy), a stock rabbit with **zero
+  hardware mods** just downloads its bytecode from the add-on on boot.
+- 🔒 **100&nbsp;% local with the add-on** — bundled whisper.cpp STT + Piper /
+  espeak-ng TTS. No cloud, no account, no telemetry.
+- 🧩 **Driven from Home Assistant through the add-on** — speak text, play audio,
+  original Violet jingles, ear choreographies, RGB light shows, weather / mail /
+  air belly icons; button / RFID / ear-move events come back as HA events for
+  your automations.
 
-> ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** A
-> stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on every boot
-> (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit boots,
-> breathes, speaks, plays jingles, moves its ears, lights up, listens hands-free
-> for "hey Nabi", asks **Claude** and answers. The custom **Naboot** firmware
-> (1.0.0.0) adds WPA3, a per-rabbit adoption key, signed bytecode, TLS and
-> over-the-air updates; **Le Terrier** is the public warren. The **Roadmap**
-> below says what is done and what comes next; the phase-by-phase story is in
-> [`docs/HISTORY.md`](docs/HISTORY.md).
-
-## How it works
-
-```
-Nabaztag (<rabbit-ip>)  ──HTTP /vl/bc.jsp,/vl/locate.jsp :80──▶  ┌──────────────────────────┐
-       ▲                                                          │  Add-on @ <haos-ip>       │
-       │                ◀──── XMPP push (commands) :5222 ───────  │  nabaztag-violet (Python) │
-       │                ───── XMPP events (button/RFID) ───────▶  │   HTTP boot + XMPP + API  │
-Home Assistant  ──── HTTP control API :8099 (/api/...) ─────────▶ └──────────────────────────┘
-```
-
-On boot the rabbit fetches its **bytecode** (`/vl/bc.jsp`) and a **locate** file
-(`/vl/locate.jsp`) that points it at our server, then opens an **XMPP** stream.
-Our server completes the handshake using the documented **SASL success-bypass**
-(no Violet password needed), keeps the rabbit idle, pushes `violet:packet`
-commands, and **logs everything** the rabbit sends. No OpenJabNab, no reverse
-proxy — one clean process.
-
-A rabbit on **Naboot 1.0.0.0** whose owner has confirmed its adoption key runs
-the same XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from
-that adoption key; the plain port stays for every other rabbit.
-
-## Home Assistant: the integration, or this add-on
-
-There are two ways to drive a rabbit from Home Assistant, and they are not
-equal any more.
-
-**[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** is the one to
-install today. The rabbit arrives as a **device with entities** — the belly as a
-light, sleep as a switch, the nose and the voice as selects, the mood and the
-diagnostics as sensors — so it works with the dashboard, with automations and
-with voice assistants without a single REST call. It talks to **[Le
-Terrier](https://terrier.cyberloutre.fr/)**, the hosted warren, or to one you run
-yourself; the address is the only thing to type, and it is pre-filled.
-
-Add it as a HACS custom repository: `https://github.com/ClaraVnk/terrier-ha`,
-category *Integration*.
-
-**This add-on** runs a warren inside Home Assistant itself, with the control API
-described below. It still works and it is still here, in `legacy/` — but the
-server it embeds is the ancestor of Le Terrier, and new work goes to the
-integration and to the warren rather than here.
-
-## What you can do from Home Assistant
-
-Commands use the two `violet:packet` channels reverse-engineered from the
-bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
-(`AmbientPacket`) for the at-a-glance indicators:
-
-- 🗣️ make it **speak** any text — **built-in local TTS** (`/api/say`, espeak-ng;
-  no cloud, nothing to install)
-- 🔊 **play audio** — stream any MP3 or WAV (e.g. a Piper TTS media URL); the
-  rabbit fetches it over HTTP from the add-on
-- 🎵 **original Nabaztag jingles** — the iconic Violet sounds (extracted from the
-  firmware as MIDI, synthesized on the fly): `acquired`, `ack`, `rfid_ok`, …
-- 👂 **move the ears** to precise positions (independent left / right) via a
-  choreography
-- 💡 **RGB light shows** on the 5 LEDs (bottom / left / middle / right / top)
-- 🌦️ **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
-  air quality &nbsp; 👃 **nose** blink &nbsp; 💤 **sleep / wake**
-- 🎤 **talk to it** — hold the head button, ask a question; it transcribes
-  (bundled whisper.cpp), asks a **conversation agent (e.g. Claude)**, and speaks
-  the reply — which can itself move the ears/LEDs
-- 🐇 **give it standing orders** — *"préviens-moi quand la batterie de
-  l'aspirateur est pleine"*, *"rappelle-moi de sortir le linge dans 40 minutes"*.
-  Nabi remembers, watches the condition (or the clock) and pipes up on its own —
-  then forgets the task. See [Give Nabi standing orders](#give-nabi-standing-orders).
-- 📟 (v2) react to **button** presses, **RFID/Ztamp** tags and **ears moved by
-  hand** — re-emitted as `nabaztag_event` **Home Assistant events** to trigger
-  automations (Nabi as an input device)
-
-## Give Nabi standing orders
-
-Beyond one-off questions, you can hand Nabi a **deferred task** in plain French and
-let it watch for you:
-
-> *"Nabi, préviens-moi quand la batterie de l'aspirateur est pleine."*
-> *"Rappelle-moi de sortir le linge dans 40 minutes."*
-> *"Oublie tout."*
-
-Nabi remembers the order, **Home Assistant watches the condition** (a state
-threshold, an entity state, or the clock), and the rabbit **announces it on its
-own** in Violet's voice once it's met — then forgets the task (single shot, up to
-5 at a time).
-
-It works by exposing three scripts as **tools** to your Claude conversation agent
-(no add-on change): the spoken request already flows to that agent, which calls
-`nabaztag_remember_task` / `nabaztag_remind` / `nabaztag_forget`. A 1-minute
-engine in `home-assistant/nabaztag_tasks.yaml` evaluates the stored tasks and
-routes the announcement through `script.nabaztag_notify` (so quiet hours still
-apply unless the reminder is marked urgent).
-
-**Setup (once):**
-
-1. Drop `home-assistant/nabaztag_tasks.yaml` into `/config/packages/` (it reuses
-   `proactive.yaml`'s `script.nabaztag_notify` — install that too).
-2. **Anthropic integration → enable "Control Home Assistant"** (the LLM API).
-3. **Settings → Voice assistants → Expose** the three `nabaztag_*` scripts **and
-   the entities Nabi should watch** (vacuum, washer, weather…) so Claude knows
-   their `entity_id`.
-4. Reload YAML. Try it by voice, or test from **Developer Tools → Actions**.
-
-## Repository layout
-
-```
-.
-├── repository.yaml          # declares this as an HA add-on repository
-├── nabaztag-violet/         # ⭐ primary add-on — our own Violet-protocol server
-│   ├── server.py            #    dependency-free Python (HTTP boot + XMPP + control API)
-│   ├── config.yaml          #    options (server_address, log_level), ports, arch
-│   ├── Dockerfile           #    installs python3, fetches the bytecode at build
-│   ├── build.yaml
-│   └── DOCS.md              #    install / pairing / API / status
-├── legacy/
-│   └── nabaztag-server/     # the first OpenJabNab-based add-on — superseded by
-│                            #    nabaztag-violet, no longer offered in the store,
-│                            #    kept for reference only
-│                            # (Le Terrier — the public warren at
-│                            #  terrier.cyberloutre.fr — lives in a separate
-│                            #  private repo; the live site is the showcase.)
-├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.0. Forks
-│   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
-│   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
-│   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
-│   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
-│   │                        #    {docker,podman} --mode naboot-1.0.0.0 (or
-│   │                        #    minimal, lean, …).
-│   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
-│   │                        #    station.sh setup|check|flash|listen|dump
-│   ├── emulator/            #    A rabbit that is not a rabbit: the Wi-Fi stack
-│   │                        #    run on a build machine against a virtual AP,
-│   │                        #    so a fix costs a second instead of unplugging
-│   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
-│   └── docs/
-│       ├── ADOPTION-KEY.md  #    The per-rabbit key: exchange, colours, HMAC, TLS.
-│       ├── BRICK_FORENSICS.md #  Recovery plan + bisection ladder.
-│       └── RECOVERY.md
-├── bytecode/                # Runtime-side bytecode add-ons (mic stream, mDNS,
-│   ├── micstream.mtl        #    OTA, reconnect, the TLS seam) compiled into the
-│   ├── fwota.mtl            #    hybrid bootcode served by the add-on / warren.
-│   ├── patch_tls.py
-│   └── patch_main.py
-├── docs/
-│   └── HISTORY.md           # the phase-by-phase journal (the former Roadmap)
-├── home-assistant/
-│   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
-│   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
-│   ├── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
-│   ├── proactive.yaml       # Nabi "alive" — proactive companion (quips, briefing, notify)
-│   ├── nabaztag_tasks.yaml  # standing orders ("préviens-moi quand…") via Claude tools
-│   └── rfid.yaml            # RFID tag → action (remembers last tag; dispatches known ones)
-├── README.md
-└── LICENSE
-```
-
-## Quick start
-
-1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**,
-   add `https://github.com/ClaraVnk/nabaztag`.
-2. Install **Nabaztag Violet Server**. In **Configuration**, set `server_address`
-   to a **hostname** such as `nabaztag.lan` — **not a raw IP**: the bytecode
-   resolves the XMPP server by **DNS**, so an IP literal fails. **Start** the
-   add-on.
-3. **Add a DNS record** so the rabbit resolves that hostname to the HAOS host:
-   `nabaztag.lan → <haos-ip>` (UniFi "Local DNS Records", AdGuard/Pi-hole rewrite…).
-   Verify from any device: `nslookup nabaztag.lan` → `<haos-ip>`.
-4. **Point the rabbit at the server:** hold its head while powering it (LEDs go
-   blue), join its `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform**
-   to `http://<haos-ip>/vl` (the IP is fine here — boot/locate don't need DNS),
-   then *update and start*.
-5. Watch the add-on log: `serving bootcode → … → bound and idle — ready for
-   commands`. Optionally drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
-
-> Running the server **outside** Home Assistant (a Pi, a VPS)? `python3
-> nabaztag-violet/server.py` from a checkout serves the committed
-> `nabaztag-violet/bootcode.hybrid` on its own. See `nabaztag-violet/DOCS.md`,
-> *Bytecodes — and running the server outside the add-on*.
-
-> **Rabbit on its own VLAN/subnet?** Allow it through the firewall to the HAOS
-> host on TCP **80** and **5222**, and give it a **DHCP reservation** (so its IP —
-> and the firewall rule — stay valid; a changed IP silently breaks everything). On
-> a flat home network there's nothing to do.
-
-Full guide (API, pairing, troubleshooting) is in
-**[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
+> ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** The
+> custom **Naboot** firmware (1.0.0.0) adds WPA3, a per-rabbit adoption key,
+> signed bytecode, TLS and over-the-air updates; **Le Terrier** is the public
+> warren. A stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on
+> every boot (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit
+> boots, breathes, speaks, plays jingles, moves its ears, lights up, listens
+> hands-free for "hey Nabi", asks **Claude** and answers. The
+> **[Roadmap](#roadmap)** below says what is done and what comes next; the
+> phase-by-phase story is in [`docs/HISTORY.md`](docs/HISTORY.md).
 
 ## Flash Naboot & adopt your rabbit on Le Terrier
 
@@ -279,10 +106,11 @@ Full guide (API, pairing, troubleshooting) is in
 > failed flash can leave the rabbit unable to re-enter config mode,
 > recoverable only over JTAG
 > (see [`firmware-arm/docs/RECOVERY.md`](firmware-arm/docs/RECOVERY.md)). Flashing is
-> **optional**: a stock rabbit works fine on the add-on above, with nothing
+> **optional**: a stock rabbit works fine on the
+> [Home Assistant add-on](#the-home-assistant-add-on-legacy), with nothing
 > flashed.
 
-Don't want to run a server at home? Put your rabbit on the public warren —
+Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
 1. **Download Naboot 1.0.0.0** — the illustrated 5-minute flashing guide is
@@ -312,7 +140,7 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    Wi-Fi, then under **Advanced → Server** set **Boot URL host** to
    **`terrier.cyberloutre.fr/vl`** and tap *Connect rabbit*. The field holds
    `host/vl`, and the rabbit then requests `http://<that>/bc.jsp`.
-   Le Terrier and this add-on both answer whether or not the `/vl` is there,
+   Le Terrier and the add-on both answer whether or not the `/vl` is there,
    so dropping it is survivable here — but keep it anyway: it is the path a
    stock Violet or OpenJabNab server expects, and the one every other document
    about this hardware assumes. No `https://` either, in any case: the 2006
@@ -334,6 +162,10 @@ Don't want to run a server at home? Put your rabbit on the public warren —
    rabbit — so wait that long before power-cycling, or you'll get a silent
    boot.*
 
+A rabbit on **Naboot 1.0.0.0** whose owner has confirmed its adoption key runs
+its XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from that
+adoption key; the plain port stays for every other rabbit.
+
 > **Nothing happens after step 3 — no code, no voice?** Then the rabbit never
 > reached the Terrier, and the firmware is not the first suspect. Check, in
 > order: that **Boot URL host** has no `https://` and no typo (a wrong host
@@ -350,10 +182,29 @@ Don't want to run a server at home? Put your rabbit on the public warren —
 > **[`firmware-arm/releases/naboot-minimal.signed.sim`](firmware-arm/releases/)**
 > the same way — it is the rescue build (`RECOVERY.md`).
 
-> The custom firmware is **optional**: a stock rabbit works fine on the Home
-> Assistant add-on above (nothing flashed). Naboot is what unlocks **WPA3**,
-> the **adoption key** with signed bytecode and **TLS**, **over-the-air
-> updates**, the modern config UI, and dialing a remote warren like Le Terrier.
+> The custom firmware is **optional**: a stock rabbit works fine on the
+> [Home Assistant add-on](#the-home-assistant-add-on-legacy) (nothing flashed).
+> Naboot is what unlocks **WPA3**, the **adoption key** with signed bytecode and
+> **TLS**, **over-the-air updates**, the modern config UI, and dialing a remote
+> warren like Le Terrier.
+
+## Home Assistant: the HACS integration
+
+**[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** is the way to
+drive a rabbit from Home Assistant today. The rabbit arrives as a **device with
+entities** — the belly as a light, sleep as a switch, the nose and the voice as
+selects, the mood and the diagnostics as sensors — so it works with the
+dashboard, with automations and with voice assistants without a single REST
+call. It talks to **[Le Terrier](https://terrier.cyberloutre.fr/)**, the hosted
+warren, or to one you run yourself; the address is the only thing to type, and
+it is pre-filled.
+
+Add it as a HACS custom repository: `https://github.com/ClaraVnk/terrier-ha`,
+category *Integration*.
+
+The other way — [this repository's add-on](#the-home-assistant-add-on-legacy),
+a warren inside Home Assistant itself with a REST control API — still works,
+but new work goes to the integration and to the warren rather than there.
 
 ## Roadmap
 
@@ -414,15 +265,13 @@ is the short version.
 ## Hardware
 
 - Tested on the **Nabaztag:tag** (v2, 2006 — mic + RFID). The v1 (2005) likely
-  works (same Violet protocol) but is **untested**. The Violet add-on drives a
-  **stock** rabbit with no hardware mod and **no flashing required** — but the
-  optional **Naboot** custom firmware *is* flashed (once from the config-mode
-  upload page, then over the air) for WPA3, the adoption key, TLS, signed OTA
-  and a modern config UI.
-- Host architecture: **amd64**. **arm64/aarch64** (Raspberry Pi 4/5) is
-  provisional — the add-on declares it, but nobody has built or run it on
-  real arm hardware yet. Reports welcome in
-  [#7](https://github.com/ClaraVnk/nabaztag/issues/7).
+  works (same Violet protocol) but is **untested**. The optional **Naboot**
+  custom firmware is flashed once from the config-mode upload page, then
+  updated over the air, for WPA3, the adoption key, TLS, signed OTA and a
+  modern config UI. The Violet add-on drives a **stock** rabbit with no
+  hardware mod and **no flashing required**.
+- The add-on's host architectures are listed in
+  [its section](#host-architecture).
 
 ## Troubleshooting
 
@@ -443,7 +292,8 @@ supported yet).
 
 **Five colours on the belly for a minute** is not a fault either: that is the
 adoption exchange waiting for you to confirm the colours on the warren's page
-(see *Flash Naboot & adopt*). Until you do, it repeats at every boot.
+(see [*Flash Naboot & adopt*](#flash-naboot--adopt-your-rabbit-on-le-terrier)).
+Until you do, it repeats at every boot.
 
 **On a stock rabbit, or a Naboot build from before 2026-11-08,** the old advice
 stands: these 2006 radios are flaky at re-associating on boot, and a software
@@ -453,10 +303,11 @@ fully discharges), plug it back in. It then boots → fetches its bytecode →
 more — it's normal, not a fault.
 
 Tips: it's the Wi-Fi association that's flaky, so a strong signal / 2.4 GHz / a
-less crowded channel helps. Don't restart the add-on repeatedly in a short window
-(each restart drops the rabbit's connection and makes it re-seek). A `ping` from
-HA failing is **not** a sign of trouble if the rabbit is on a different VLAN
-(cross-VLAN ICMP is usually blocked) — check the add-on's status/logs instead.
+less crowded channel helps. Don't restart the server (or the add-on) repeatedly
+in a short window (each restart drops the rabbit's connection and makes it
+re-seek). A `ping` from HA failing is **not** a sign of trouble if the rabbit is
+on a different VLAN (cross-VLAN ICMP is usually blocked) — check the warren's
+page or the add-on's status/logs instead.
 
 ### Telling a real brick apart from Wi-Fi flakiness
 
@@ -466,7 +317,194 @@ HA failing is **not** a sign of trouble if the rabbit is on a different VLAN
 | **Five colours** on the belly for a minute, then a normal boot | Adoption key waiting to be confirmed | Confirm the colours on the warren's page |
 | **No LEDs / no boot animation at all**, frozen | Possible bad flash | Config-mode upload (hold head button on power-up → upload a signed `.sim`); otherwise the JTAG station: `firmware-arm/jtag/station.sh flash` |
 
-## Voice / TTS — make Nabi sound as natural as you like
+## Repository layout
+
+```
+.
+├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.0. Forks
+│   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
+│   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
+│   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
+│   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
+│   │                        #    {docker,podman} --mode naboot-1.0.0.0 (or
+│   │                        #    minimal, lean, …).
+│   ├── releases/            #    the signed .sim images + their sha256 (README.md)
+│   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
+│   │                        #    station.sh setup|check|flash|listen|dump
+│   ├── emulator/            #    A rabbit that is not a rabbit: the Wi-Fi stack
+│   │                        #    run on a build machine against a virtual AP,
+│   │                        #    so a fix costs a second instead of unplugging
+│   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
+│   └── docs/
+│       ├── ADOPTION-KEY.md  #    The per-rabbit key: exchange, colours, HMAC, TLS.
+│       ├── BRICK_FORENSICS.md #  Recovery plan + bisection ladder.
+│       └── RECOVERY.md
+├── bytecode/                # Runtime-side bytecode add-ons (mic stream, mDNS,
+│   ├── micstream.mtl        #    OTA, reconnect, the TLS seam) compiled into the
+│   ├── fwota.mtl            #    hybrid bootcode served by the add-on / warren.
+│   ├── patch_tls.py
+│   └── patch_main.py
+│                            # (Le Terrier — the public warren at
+│                            #  terrier.cyberloutre.fr — lives in a separate
+│                            #  private repo; the live site is the showcase.
+│                            #  The HACS integration is ClaraVnk/terrier-ha.)
+├── docs/
+│   └── HISTORY.md           # the phase-by-phase journal (the former Roadmap)
+├── repository.yaml          # declares this as an HA add-on repository
+├── nabaztag-violet/         # the Home Assistant add-on — our own Violet-protocol server
+│   ├── server.py            #    dependency-free Python (HTTP boot + XMPP + control API)
+│   ├── config.yaml          #    options (server_address, log_level), ports, arch
+│   ├── Dockerfile           #    installs python3, fetches the bytecode at build
+│   ├── build.yaml
+│   └── DOCS.md              #    install / pairing / API / status
+├── legacy/
+│   └── nabaztag-server/     # the first OpenJabNab-based add-on — superseded by
+│                            #    nabaztag-violet, no longer offered in the store,
+│                            #    kept for reference only
+├── home-assistant/          # packages for the add-on's REST control API
+│   ├── nabaztag.yaml        # ready-to-paste HA package (rest_commands + scripts)
+│   ├── ambient.yaml         # ambient automations (belly/ears/nose) over the REST API
+│   ├── entities.yaml        # optional dashboard controls (sleep/nose/ears/belly) over REST
+│   ├── proactive.yaml       # Nabi "alive" — proactive companion (quips, briefing, notify)
+│   ├── nabaztag_tasks.yaml  # standing orders ("préviens-moi quand…") via Claude tools
+│   └── rfid.yaml            # RFID tag → action (remembers last tag; dispatches known ones)
+├── README.md
+└── LICENSE
+```
+
+## The Home Assistant add-on (legacy)
+
+This repository is a **Home Assistant OS add-on repository** (`repository.yaml`
+at the root). Its add-on, **Nabaztag Violet Server** (`nabaztag-violet/`), is a
+small, **dependency-free server that speaks the original Violet protocol**
+directly: the rabbit phones home to it, and Home Assistant drives the rabbit —
+ears, belly weather icons, nose — through a simple control API. A **stock**
+rabbit needs nothing flashed for it.
+
+It still works and it is still here — but the server it embeds is the ancestor
+of Le Terrier, and new work goes to the
+[HACS integration](#home-assistant-the-hacs-integration) and to the warren
+rather than here.
+
+> `legacy/nabaztag-server/` is a different, older add-on: the first one, built on
+> OpenJabNab. It is no longer offered in the store and its image cannot be
+> patched — if you still have it installed, **uninstall it** (see its
+> [`DOCS.md`](legacy/nabaztag-server/DOCS.md)).
+
+### How it works
+
+```
+Nabaztag (<rabbit-ip>)  ──HTTP /vl/bc.jsp,/vl/locate.jsp :80──▶  ┌──────────────────────────┐
+       ▲                                                          │  Add-on @ <haos-ip>       │
+       │                ◀──── XMPP push (commands) :5222 ───────  │  nabaztag-violet (Python) │
+       │                ───── XMPP events (button/RFID) ───────▶  │   HTTP boot + XMPP + API  │
+Home Assistant  ──── HTTP control API :8099 (/api/...) ─────────▶ └──────────────────────────┘
+```
+
+On boot the rabbit fetches its **bytecode** (`/vl/bc.jsp`) and a **locate** file
+(`/vl/locate.jsp`) that points it at our server, then opens an **XMPP** stream.
+Our server completes the handshake using the documented **SASL success-bypass**
+(no Violet password needed), keeps the rabbit idle, pushes `violet:packet`
+commands, and **logs everything** the rabbit sends. No OpenJabNab, no reverse
+proxy — one clean process.
+
+### Quick start
+
+1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**,
+   add `https://github.com/ClaraVnk/nabaztag`.
+2. Install **Nabaztag Violet Server**. In **Configuration**, set `server_address`
+   to a **hostname** such as `nabaztag.lan` — **not a raw IP**: the bytecode
+   resolves the XMPP server by **DNS**, so an IP literal fails. **Start** the
+   add-on.
+3. **Add a DNS record** so the rabbit resolves that hostname to the HAOS host:
+   `nabaztag.lan → <haos-ip>` (UniFi "Local DNS Records", AdGuard/Pi-hole rewrite…).
+   Verify from any device: `nslookup nabaztag.lan` → `<haos-ip>`.
+4. **Point the rabbit at the server:** hold its head while powering it (LEDs go
+   blue), join its `NabaztagXX` Wi-Fi, open `192.168.0.1`, set **Violet Platform**
+   to `http://<haos-ip>/vl` (the IP is fine here — boot/locate don't need DNS),
+   then *update and start*.
+5. Watch the add-on log: `serving bootcode → … → bound and idle — ready for
+   commands`. Optionally drop `home-assistant/nabaztag.yaml` into `/config/packages/`.
+
+> Running the server **outside** Home Assistant (a Pi, a VPS)? `python3
+> nabaztag-violet/server.py` from a checkout serves the committed
+> `nabaztag-violet/bootcode.hybrid` on its own. See `nabaztag-violet/DOCS.md`,
+> *Bytecodes — and running the server outside the add-on*.
+
+> **Rabbit on its own VLAN/subnet?** Allow it through the firewall to the HAOS
+> host on TCP **80** and **5222**, and give it a **DHCP reservation** (so its IP —
+> and the firewall rule — stay valid; a changed IP silently breaks everything). On
+> a flat home network there's nothing to do.
+
+Full guide (API, pairing, troubleshooting) is in
+**[`nabaztag-violet/DOCS.md`](nabaztag-violet/DOCS.md)**.
+
+### Host architecture
+
+**amd64**. **arm64/aarch64** (Raspberry Pi 4/5) is provisional — the add-on
+declares it, but nobody has built or run it on real arm hardware yet. Reports
+welcome in [#7](https://github.com/ClaraVnk/nabaztag/issues/7).
+
+### What you can do from Home Assistant
+
+Commands use the two `violet:packet` channels reverse-engineered from the
+bytecode — *programs* (`MessagePacket`) for the rich stuff, *ambient*
+(`AmbientPacket`) for the at-a-glance indicators:
+
+- 🗣️ make it **speak** any text — **built-in local TTS** (`/api/say`, espeak-ng;
+  no cloud, nothing to install)
+- 🔊 **play audio** — stream any MP3 or WAV (e.g. a Piper TTS media URL); the
+  rabbit fetches it over HTTP from the add-on
+- 🎵 **original Nabaztag jingles** — the iconic Violet sounds (extracted from the
+  firmware as MIDI, synthesized on the fly): `acquired`, `ack`, `rfid_ok`, …
+- 👂 **move the ears** to precise positions (independent left / right) via a
+  choreography
+- 💡 **RGB light shows** on the 5 LEDs (bottom / left / middle / right / top)
+- 🌦️ **belly icons** — weather (sun/cloudy/smog/rain/snow/storm), stock, e-mail,
+  air quality &nbsp; 👃 **nose** blink &nbsp; 💤 **sleep / wake**
+- 🎤 **talk to it** — hold the head button, ask a question; it transcribes
+  (bundled whisper.cpp), asks a **conversation agent (e.g. Claude)**, and speaks
+  the reply — which can itself move the ears/LEDs
+- 🐇 **give it standing orders** — *"préviens-moi quand la batterie de
+  l'aspirateur est pleine"*, *"rappelle-moi de sortir le linge dans 40 minutes"*.
+  Nabi remembers, watches the condition (or the clock) and pipes up on its own —
+  then forgets the task. See [Give Nabi standing orders](#give-nabi-standing-orders).
+- 📟 (v2) react to **button** presses, **RFID/Ztamp** tags and **ears moved by
+  hand** — re-emitted as `nabaztag_event` **Home Assistant events** to trigger
+  automations (Nabi as an input device)
+
+### Give Nabi standing orders
+
+Beyond one-off questions, you can hand Nabi a **deferred task** in plain French and
+let it watch for you:
+
+> *"Nabi, préviens-moi quand la batterie de l'aspirateur est pleine."*
+> *"Rappelle-moi de sortir le linge dans 40 minutes."*
+> *"Oublie tout."*
+
+Nabi remembers the order, **Home Assistant watches the condition** (a state
+threshold, an entity state, or the clock), and the rabbit **announces it on its
+own** in Violet's voice once it's met — then forgets the task (single shot, up to
+5 at a time).
+
+It works by exposing three scripts as **tools** to your Claude conversation agent
+(no add-on change): the spoken request already flows to that agent, which calls
+`nabaztag_remember_task` / `nabaztag_remind` / `nabaztag_forget`. A 1-minute
+engine in `home-assistant/nabaztag_tasks.yaml` evaluates the stored tasks and
+routes the announcement through `script.nabaztag_notify` (so quiet hours still
+apply unless the reminder is marked urgent).
+
+**Setup (once):**
+
+1. Drop `home-assistant/nabaztag_tasks.yaml` into `/config/packages/` (it reuses
+   `proactive.yaml`'s `script.nabaztag_notify` — install that too).
+2. **Anthropic integration → enable "Control Home Assistant"** (the LLM API).
+3. **Settings → Voice assistants → Expose** the three `nabaztag_*` scripts **and
+   the entities Nabi should watch** (vacuum, washer, weather…) so Claude knows
+   their `entity_id`.
+4. Reload YAML. Try it by voice, or test from **Developer Tools → Actions**.
+
+### Voice / TTS — make Nabi sound as natural as you like
 
 The rabbit's original TTS relied on Acapela's now-dead web service. The add-on
 ships its own **fully-local TTS** (`espeak-ng`, robotic but offline) **and** can

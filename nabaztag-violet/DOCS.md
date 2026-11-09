@@ -12,7 +12,7 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
 > HACS (custom repository, category *Integration*). It points at
 > **[Le Terrier](https://terrier.cyberloutre.fr/)**, the hosted warren, by
 > default, or at this add-on if you would rather host it yourself: give it
-> `http://<your-home-assistant>:8080`.
+> `http://<your-home-assistant>:8099` (the control API, container port 8080).
 
 ## What it does
 
@@ -24,7 +24,7 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
   and can push `violet:packet` commands. **Every byte the rabbit sends is
   logged** — this doubles as the platform to finish reverse-engineering the
   command/event packets on the real device.
-- **Control API (`:8080`)** — small HTTP API for Home Assistant.
+- **Control API (host `:8099`, container `:8080`)** — small HTTP API for Home Assistant.
 
 
 ## Bytecodes — and running the server outside the add-on
