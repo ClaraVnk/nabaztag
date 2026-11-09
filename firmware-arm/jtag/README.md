@@ -25,9 +25,10 @@ git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
 signature with the project key, takes the plain image out of it and writes
 that. A `.sim` written as it is would leave the chip nothing to boot. It also
 takes a plain `Nab.bin` from a build, and refuses any file that does not
-start with the ARM vector table. Plan two runs: the first erase on a healthy
-rabbit often stops at sector 2 (see below), the second goes through. Unplug
-and replug the rabbit afterwards.
+start with the ARM vector table. The link rarely lasts a whole image, so
+before every pass it reads the flash and writes only what is missing: an
+interrupted pass is not lost, and running the same command again resumes
+where it stopped. Unplug and replug the rabbit afterwards.
 
 `listen` needs a firmware built with the `dcc_telemetry` step (mode
 `lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
