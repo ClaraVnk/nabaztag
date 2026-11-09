@@ -61,13 +61,24 @@ python3 "$HERE/patch_wifi_reconnect.py" "$BC/sources"
 # calls (tlsStart..tlsClose) exist from firmware mode lean-wpa3-tls on;
 # on an older firmware the bytecode never reaches them, because locate
 # only offers TLS to rabbits whose owner confirmed a key, and a key
-# needs that firmware's bootloader.
+# needs that firmware's bootloader. The output carries the literal
+# "xmpp-tls:0" exactly once: the warren flips it to "xmpp-tls:1" under the
+# HMAC for a confirmed rabbit, and that rabbit then opens the TLS port even
+# when locate.jsp (plain HTTP) was stripped of its xmpp_tls line.
 echo "==> patch_tls.py  (TLS 1.3 PSK on the XMPP connection)"
 python3 "$HERE/patch_tls.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
 "$CC" -s "$BC/bootcode.mtl" "$OUT"
+
+# The literal the warren flips for a confirmed rabbit must be there exactly
+# once, or the Terrier leaves the policy alone and TLS stays optional.
+python3 - "$OUT" <<'PY'
+import sys
+n = open(sys.argv[1], "rb").read().count(b"xmpp-tls:0")
+sys.exit(0 if n == 1 else f"FAIL: {n} 'xmpp-tls:0' literals in the bytecode, expected 1")
+PY
 
 echo "==> built $OUT ($(wc -c < "$OUT") bytes)"
 echo "    deploy: copy it to the add-on's /data/bootcode.hybrid"
