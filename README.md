@@ -175,7 +175,7 @@ adoption key; the plain port stays for every other rabbit.
 > minute** = the adoption exchange of step 4, wait it out); that your 2.4 GHz
 > network lets a 2006 **802.11b** radio in (b rates enabled, no "n/g only");
 > on **WPA3**, that you run 1.0.0.1 or later if the access point is set to
-> H2E-only (hash-to-element) — 1.0.0.0 only does SAE *hunting-and-pecking*;
+> H2E-only (hash-to-element; beta, see *Next*) — 1.0.0.0 only does SAE *hunting-and-pecking*;
 > WPA3-only and WPA2/WPA3 transition both work; and that the rabbit can resolve
 > `terrier.cyberloutre.fr` (it needs working DNS). Want
 > to go back to the stock bootloader meanwhile? Flash
@@ -243,9 +243,12 @@ is the short version.
   the whole-rabbit emulator, and a Metal toolchain in Python whose
   `mtl_comp.py --check` type-checks the real runtime bytecode.
 
-**Next — Naboot 1.0.0.1 (built and proven in the emulator, not yet on a rabbit)**
+**Next — Naboot 1.0.0.1 (proven in the emulator, running on one rabbit)**
 
-- **SAE hash-to-element** (H2E) whenever the access point offers it — the
+- **SAE hash-to-element** (H2E) whenever the access point offers it — **beta**:
+  it has joined one real access point that offers H2E alongside
+  hunting-and-pecking, but never yet one set to H2E-only. If yours is
+  H2E-only, please report whether the rabbit joins. H2E is the
   only derivation an H2E-only access point accepts, and the one without the
   Dragonblood timing leak; hunting-and-pecking stays for access points
   without it. The password token is derived once per network and kept, so
