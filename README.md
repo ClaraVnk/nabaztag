@@ -257,7 +257,8 @@ is the short version.
   when that port does not answer; proven in the emulator. "Talk to it"
   streams the microphone inside the session too
   (`bytecode/patch_mic_in_session.py`) instead of UDP; proven in the emulator,
-  whose microphone now records a known pattern (`stubs/audio.c`).
+  whose microphone now records a known pattern
+  (`firmware-arm/emulator/stubs/audio.c`).
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
