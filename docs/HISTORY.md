@@ -188,6 +188,9 @@ to it rather than edited over it.
        Python. So the contributor-facing surface already is Python. It is
        only worth relying on once 7a can build the real sources, since
        `mtl_pyc` shares `mtl_comp`'s codegen and therefore its gaps.
+       (Since 2026-11-10 it writes `.mtl` and hands it to `mtl_comp`, so a
+       Python program is parsed, typed and compiled exactly like its `.mtl`
+       twin.)
     3. **Phase 7c — put the toolchain under test (not started):** these
        four tools are 4 500 lines and **nothing in CI runs any of them**.
        `mtl_asm`/`mtl_dis` round-trip the real 103 KB bytecode

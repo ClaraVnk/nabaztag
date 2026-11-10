@@ -12,6 +12,9 @@
 #   4. fixtures/*.py              — mtl_pyc.py vs the SAME reference, i.e. the
 #                                   Python and MTL spellings converge on the
 #                                   bytes the C++ compiler emits
+#   4b. fixtures/illtyped/*.py    — the Python spelling of an ill-typed .mtl:
+#                                   mtl_pyc must refuse it with the twin's
+#                                   NAME.err lines, and write nothing
 #   5. bootcode.hybrid            — bin -> masm -> bin round-trip
 #   6. the real bootcode and the bootloader, when their sources are at hand:
 #        BOOTCODE_MTL=path/to/bootcode.mtl  [BOOTCODE_REF=path/to/reference.bin]
@@ -155,6 +158,33 @@ for src in "${pyfixtures[@]}"; do
         ok "$name.py" "byte-identical"
     else
         bad "$name.py" "differs from $name.bin"
+    fi
+done
+
+echo
+echo "== fixtures/illtyped/*.py: mtl_pyc.py must refuse them like their .mtl twins =="
+pyillt=("$HERE"/fixtures/illtyped/*.py)
+for src in "${pyillt[@]}"; do
+    name="$(basename "$src" .py)"
+    referr="$HERE/fixtures/illtyped/$name.err"
+    if [ ! -f "$referr" ]; then
+        bad "$name.py" "no committed verdict $name.err"
+        continue
+    fi
+    if "$PY" -I "$HERE/mtl_pyc.py" "$src" -o "$TMP/badpy_$name.bin" --types \
+            > "$TMP/badpy_$name.out" 2> "$TMP/badpy_$name.err"; then
+        bad "$name.py" "ACCEPTED — the C++ refuses its .mtl twin"
+        continue
+    fi
+    if [ -f "$TMP/badpy_$name.bin" ]; then
+        bad "$name.py" "refused but still wrote $TMP/badpy_$name.bin"
+        continue
+    fi
+    { grep '^Compiler :' "$TMP/badpy_$name.out"; grep -v '^compile error:' "$TMP/badpy_$name.err"; } > "$TMP/badpy_$name.all"
+    if cmp -s "$referr" "$TMP/badpy_$name.all"; then
+        ok "$name.py" "refused with $name.err's lines"
+    else
+        bad "$name.py" "refused, but not the C++'s words: $(diff "$referr" "$TMP/badpy_$name.all" | head -3 | tr '\n' ' ')"
     fi
 done
 

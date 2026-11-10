@@ -371,14 +371,11 @@ said 2), and `- 0x10` is `OPintb 16; OPneg`, not `OPint -16`
 occurs in the production bootcode, which is why the bytes had matched
 before.
 
-Typing covers `.mtl` only. `mtl_pyc.py` does **not** share this: it
-walks a Python AST and emits opcodes through its own copy of the
-codegen (it imports only `BUILTINS`, `Scope` and `wire_wrap` from
-`mtl_comp`), so none of these `unif` calls run for it. Giving it the
-same guarantee means re-threading each typing call through its AST
-walker, in the C++'s evaluation order — a separate job. Until then a
-clean `mtl_pyc` run says nothing about types; compile the equivalent
-`.mtl` through `mtl_comp --check` first.
+`mtl_pyc.py` gets the same typing for free: it writes `.mtl` source and
+compiles it with `mtl_comp.Compiler`, so every `unif` call above runs
+for a Python program too. Ten of the refusals have a Python spelling in
+`fixtures/illtyped/*.py`, and `mtl_pyc` refuses each with the `.err`
+lines of its `.mtl` twin (see the `mtl_pyc.py` section).
 
 `forloop.mtl` is interesting because the C++ codegen uses a clever
 "skip-NEXT-on-first-iteration" trampoline pattern (NEXT is emitted in
@@ -516,7 +513,30 @@ executes Metal bytecode; Python is purely contributor-facing.
 
 ```sh
 python3 mtl_pyc.py program.py -o program.bin
+python3 mtl_pyc.py program.py --emit-mtl     # the generated .mtl, nothing compiled
+python3 mtl_pyc.py program.py --types        # the type line of every declaration
+python3 mtl_pyc.py program.py --check        # type-check only, write nothing
 ```
+
+`mtl_pyc` is a front end. It parses the Python with the stdlib `ast`
+module and writes Metal source text, following the mapping table below;
+that text goes through `mtl_comp.Compiler` in the same process — the
+parser, type inference and codegen that compile the real bootcode
+byte-identically to the C++. There is no second codegen. A program the
+C++ would refuse is refused with `mtl_comp`'s lines on stderr, exit 1,
+and no output file; `--bare` and the envelope behave as in `mtl_comp`.
+
+The front end only picks spellings (`#f` or `f`, `set` or `let`, where
+parentheses go); arity, unknown names and types are `mtl_comp`'s to
+check. Two choices in the text it writes are worth knowing, both free in
+bytes:
+
+- an `if` with no `else` is written `… else nil`, which compiles to the
+  same `OPnil` and undefined type as a missing `else` and rules out a
+  dangling `else`;
+- a call with no argument to a function whose arity it does not know is
+  written `(f)`, so a function that wants arguments fails at `)` instead
+  of taking its neighbours as arguments.
 
 ### Validated byte-for-byte from Python source
 
@@ -553,16 +573,45 @@ always reserves fun#0 for `main`, and `fixtures/biggish.mtl` has no
 66 bytes with `helper` and `main` swapped in the funtable. Any MTL source
 that omits `proto main` is outside what `mtl_pyc` can reach.
 
+### Refused like the C++
+
+Ten of the thirteen programs in `fixtures/illtyped/` have a Python
+spelling next to them (`NAME.py`). `run-tests.sh` requires `mtl_pyc` to
+refuse each with exactly the lines of the twin's `NAME.err`, and to write
+no file: `arg_count`, `arg_type`, `cond_not_int`, `global_weak_reuse`,
+`if_branches`, `list_mixed`, `match_wrong_cons`, `state_in_int`,
+`struct_field_type`, `struct_field_use`.
+
+The other three have none. `const_set` needs a `const`, which the Python
+subset does not write (a top-level assignment is always a `var`).
+`proto_mismatch` needs a proto that disagrees with its function, and
+`mtl_pyc` writes protos from the `def` itself. `for_init_type` needs a
+`for` whose start is a string: `for s in range("a", 1)` is refused too,
+but at the condition `s<1` (`I cannot be unified with S`), not at the
+increment, so its lines are not the twin's.
+
+Annotations matter for typing, not for bytes: `x: int` is `x: I`, a
+payload `(int,)` is `I`; `object` (or any name that is not `int`, `str`,
+a class of the program or `list[…]`) leaves the type to inference, as
+`_` or an unannotated field does in `.mtl`. The `--types` lines of a
+`.py` fixture therefore differ from its `.mtl` twin's where the Python
+annotates and the `.mtl` does not; the bytes do not.
+
 ### Python ↔ MTL idiom mapping
 
 | Python | MTL |
 |--------|-----|
 | `def f(a, b): return body` | `fun f a b = body;;` |
 | `def main(): …` (always fun#0) | `proto main 0;; fun main = …;;` |
+| a `def` called before it appears | `proto f N;;` at the top |
+| `f(a, b)` / `f()` / bare `f` | `f a b` / `f` / `#f` (function pointer) |
 | `x = expr` (first time, in fn) | `let expr -> x in <rest>` |
-| `x = expr` (already a local) | `set x = expr` |
-| `x = expr` (top-level) | `var x = expr;;` (or `const …`) |
-| `if a: b else: c` (stmt) | `if a then b else c` |
+| `x = expr` (already a local or a global) | `set x = expr` |
+| `x += e` | `set x = x + e` |
+| `x = expr` (top-level) | `var x = expr;;` |
+| `if a: b else: c` (stmt) | `if a then b else c` (no `else:` → `else nil`) |
+| `a if c else b` | `if c then a else b` |
+| `and` / `or` / `not` | `&&` / `\|\|` / `!` |
 | `while c: body` | `while c do body` |
 | `for i in range(n): body` | `for i=0; i<n do body` (Form 2) |
 | `match x: case Cons: … case Cons(p): …` | `match x with (Cons -> …) | (Cons p -> …)` |
@@ -572,8 +621,10 @@ that omits `proto main` is outside what `mtl_pyc` can reach.
 | `lst(a, b, c)` | `a :: b :: c :: nil` (right-assoc cons) |
 | `ord('A')` | `'A'` (char literal) |
 | `call_(f, a, b)` | `call f [a b]` |
-| `class S: idle = (); done = (int,)` | `type S = idle | done _;;` |
-| `class T: x: int; y: int` | `type T = [x y];;` |
+| `class S: idle = (); done = (int,)` | `type S = idle | done I;;` |
+| `class S: …; done = (object,)` | `type S = … | done _;;` (payload type inferred) |
+| `class T: x: int; y: str` | `type T = [x: I y: S];;` |
+| `class T: x: object` | `type T = [x];;` (field type inferred) |
 | `T(x=1, y=2)` | `[x:1 y:2]` |
 | `obj.field` | `obj.field` |
 | `obj.field = v` | `set obj.field = v` |
