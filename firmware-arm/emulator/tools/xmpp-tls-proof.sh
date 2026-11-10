@@ -26,6 +26,14 @@
 # (bytecode/patch_liveness.py). The verdict adds every port 80 open after
 # the stop: a BOSH post shows up there.
 #
+# --speak-at S --speak TEXT has the warren make the rabbit say TEXT S seconds
+# into boot 2, the way an owner's script does: an owner account and an API
+# token are made for the rabbit after the confirmation, and at S the API's
+# /speak is called from inside the container. The verdict adds what the
+# rabbit did with it -- `res:` lines when the sound came down the session
+# (bytecode/patch_res_in_session.py), a port 80 open and a `serving resource`
+# when it was fetched over HTTP -- and how many bytes reached the player.
+#
 # The rabbit's connections to port 80 (the ping server locate.jsp names, so
 # rfid.jsp) go to the Terrier's HTTP port (rabbit-vm --port80).
 #
@@ -37,7 +45,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,6 +62,8 @@ while [ $# -gt 0 ]; do
     --third) THIRD=1; shift ;;
     --down-at) DOWN_AT=$2; shift 2 ;;
     --up-at) UP_AT=$2; shift 2 ;;
+    --speak-at) SPEAK_AT=$2; shift 2 ;;
+    --speak) SPEAK=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -113,7 +123,24 @@ podman exec -w /app "$NAME" python3 -c "
 try: from terrier import tenant
 except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); print('   kx_decide', s.kx_decide('$MAC', True), s.kx_get('$MAC')['state'])"
+if [ -n "$SPEAK_AT" ]; then
+  TOKEN=$(podman exec -w /app "$NAME" python3 -c "
+try: from terrier import tenant
+except ImportError: import tenant
+s=tenant.Store('/data/terrier.db'); o=s.create_owner('proof@warren.test','!',True)
+assert s.redeem_pair_code(s.mint_pair_code('$MAC'),o)=='$MAC'; print(s.create_api_token(o,'proof'))")
+  echo "   owner and API token made for $MAC"
+fi
 T0=$(date +%s)
+if [ -n "$SPEAK_AT" ]; then
+  ( sleep "$SPEAK_AT"; echo "   [speak at +${SPEAK_AT}s, $(date +%T.%3N)]"
+    podman exec "$NAME" python3 -c "
+import json, sys, urllib.request
+r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/speak', method='POST',
+  data=json.dumps({'text': sys.argv[1]}).encode(),
+  headers={'Authorization': 'Bearer $TOKEN', 'Content-Type': 'application/json'})
+print('   speak:', urllib.request.urlopen(r, timeout=60).read().decode())" "$SPEAK" ) &
+fi
 if [ -n "$DOWN_AT" ]; then
   ( sleep "$DOWN_AT"; podman stop -t 1 "$NAME" >/dev/null; echo "   [terrier stopped at +${DOWN_AT}s]";
     [ -n "$UP_AT" ] && { sleep $((UP_AT - DOWN_AT)); podman start "$NAME" >/dev/null; echo "   [terrier started at +${UP_AT}s]"; } ) &
@@ -130,6 +157,12 @@ if [ -n "$THIRD" ]; then
 fi
 [ -n "$STRIP" ] && { echo "   attacker:"; sed 's/^/   /' "$OUT/mitm.log" | grep -v forwarded; }
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
+if [ -n "$SPEAK_AT" ]; then
+  echo "   the sound, rabbit side (boot 2):"
+  grep -a "res: \|exec ST\|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -14
+  echo "   the sound, terrier side:"
+  grep -a "inside the session\|serving resource\|GET /res/\|sent by URL" "$OUT/terrier.log" | sed 's/^/   /' | head -8
+fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"
   grep -a "RFID\|rfid" "$OUT/terrier.log" | sed 's/^/   /' | head -12
