@@ -26,8 +26,11 @@ static void mac_order(uint8_t out[12], const uint8_t a[6], const uint8_t b[6])
  * The loop runs all SAE_HNP_ROUNDS rounds whatever happens and keeps the
  * first hit. That is not decoration: stopping early makes the number of
  * rounds a function of the password, which is the coarse half of
- * Dragonblood. The fine half -- timing inside the field arithmetic -- is
- * not addressed here; hash-to-element below is the answer to it.
+ * Dragonblood. The fine half is timing inside a round, and every round now
+ * does the same work: p256_below_p and p256_decompress run in constant time
+ * and both always run (`&`, not `&&`), and the first hit is kept by a masked
+ * copy rather than by a branch. Hash-to-element, below, avoids the question
+ * altogether when the access point offers it.
  */
 static int derive_pwe(p256_point *pwe, const uint8_t own[6],
                       const uint8_t peer[6], const char *password,
@@ -38,8 +41,10 @@ static int derive_pwe(p256_point *pwe, const uint8_t own[6],
   const uint8_t *pieces[2];
   uint32_t lens[2], pwlen = 0;
   p256_point found;
-  int have = 0, round;
+  uint32_t have = 0;
+  int round;
 
+  memset(&found, 0, sizeof found);
   while (password[pwlen]) pwlen++;
   mac_order(key, own, peer);
   p256_get_p(p_bytes);
@@ -58,12 +63,17 @@ static int derive_pwe(p256_point *pwe, const uint8_t own[6],
 
     /* A value at or above p is not a field element: reject it rather than
        reduce it, or the two peers can disagree about the point. */
-    if (p256_below_p(value) &&
-        p256_decompress(&cand, value, seed[SHA256_DIGEST - 1] & 1, tick)) {
-      if (!have) {
-        memcpy(&found, &cand, sizeof found);
-        have = 1;
-      }
+    {
+      uint32_t ok = (uint32_t)p256_below_p(value)
+                  & (uint32_t)p256_decompress(&cand, value,
+                                              seed[SHA256_DIGEST - 1] & 1, tick);
+      uint32_t m = 0u - (ok & (have ^ 1));
+      __asm__ ("" : "+r" (m));        /* see CT_BARRIER in p256.c */
+      uint8_t *f = (uint8_t *)&found;
+      const uint8_t *k = (const uint8_t *)&cand;
+      uint32_t i;
+      for (i = 0; i < sizeof found; i++) f[i] = (uint8_t)((f[i] & ~m) | (k[i] & m));
+      have |= ok;
     }
     if (tick) tick();
   }

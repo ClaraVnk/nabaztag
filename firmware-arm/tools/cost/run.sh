@@ -2,8 +2,9 @@
 # What does each crypto primitive cost on the rabbit's CPU? Build it against
 # the firmware's own sources with the firmware's flags, run it under
 # qemu-arm, count executed instructions (count.py), read the code size.
-# Runs inside localhost/nab-qemu (qemu-arm + arm-none-eabi-gcc 12.2) with
-# this directory mounted at /m:
+# Runs inside localhost/nab-qemu, built from the Containerfile beside this
+# script (results-2026-11-08.txt came from an earlier gcc 12.2 image; compare
+# counts from the same image only), with this directory mounted at /m:
 #   podman run --rm -v $PWD:/m:Z -w /m localhost/nab-qemu bash run.sh
 #   bash run.sh x25519 p256        a subset; NOSIZES=1 skips the size tables
 # Inputs, laid out by hand before the first run:

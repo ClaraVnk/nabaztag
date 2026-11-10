@@ -1,0 +1,5 @@
+# What run.sh and ct.sh build and lay out on each run.
+out/
+inc/
+keys/
+fw/
