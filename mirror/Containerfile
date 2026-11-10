@@ -1,0 +1,9 @@
+# The Mir:ror reader (mirror.py), in a small image. Standard library only.
+#
+#   podman build -t violet-mirror mirror/
+#
+# Run it with the reader passed in (see mirror.container and README.md).
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache python3
+COPY mirror.py /usr/local/bin/mirror.py
+ENTRYPOINT ["python3", "-u", "/usr/local/bin/mirror.py"]

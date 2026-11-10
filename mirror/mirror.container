@@ -1,0 +1,19 @@
+# Quadlet unit for the Mir:ror reader, for rootless podman:
+#   ~/.config/containers/systemd/violet-mirror.container
+# then: systemctl --user daemon-reload && systemctl --user start violet-mirror
+[Unit]
+Description=Violet Mir:ror reader for Le Terrier
+
+[Container]
+Image=localhost/violet-mirror
+# The udev rule in README.md names the reader /dev/violet-mirror.
+AddDevice=/dev/violet-mirror
+# Keep the user's groups (plugdev) so the device can be opened.
+PodmanArgs=--group-add keep-groups
+EnvironmentFile=%h/.config/violet-mirror.env
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
