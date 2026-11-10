@@ -96,6 +96,10 @@ python3 "$HERE/patch_mic_in_session.py" "$BC/sources/main.mtl"
 # the image, then `FW res:N <sig>`, when the warren flipped "xmpp-ota:0".
 echo "==> patch_ota_in_session.py  (firmware updates inside the session)"
 python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
+# A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
+# goes back to sleep instead of staying half awake and deaf to sleep commands.
+echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
+python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
