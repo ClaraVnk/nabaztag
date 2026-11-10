@@ -251,7 +251,10 @@ is the short version.
   rabbit -- AI answers included -- now come down its XMPP-over-TLS session
   (`bytecode/patch_res_in_session.py`) instead of plain HTTP, with no firmware
   change. On a real rabbit: a 122 KB answer, played whole, no `/res/` request
-  in the clear.
+  in the clear. Its jingles and choreographies follow the same path
+  (`bytecode/patch_rsc_in_session.py`), and it asks `locate.jsp` on the TLS
+  port too (`bytecode/patch_locate_tls.py`), falling back to plain HTTP once
+  when that port does not answer; proven in the emulator.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
@@ -304,8 +307,11 @@ is the short version.
 - **Reclaim flash** — 3 412 bytes are spare in 1.0.0.3. `small_strings`
   (merged, not yet in an image) gives 840 back; the measured savings are in
   the history (Phase 8).
-- **`mtl_pyc` typing** — the Python-to-Metal compiler shares `mtl_comp`'s
-  code generation but not yet its type checker.
+- **The microphone and over-the-air updates inside the session** — "Lui
+  parler" still sends the rabbit's audio over UDP, and an OTA image is still
+  downloaded over HTTP (it is signed, so only its privacy is at stake).
+- **Radio and podcasts inside the session** — they need playback while the
+  stream arrives, with the warren pacing it.
 
 ## Hardware
 

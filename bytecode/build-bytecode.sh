@@ -80,6 +80,14 @@ python3 "$HERE/patch_liveness.py" "$BC/sources/main.mtl"
 # otherwise.
 echo "==> patch_res_in_session.py  (sounds inside the XMPP session when it runs TLS)"
 python3 "$HERE/patch_res_in_session.py" "$BC/sources/main.mtl"
+# locate.jsp on the TLS port, as the bootloader asks for bc.jsp, when that
+# warren requires TLS; in the clear after an attempt that got no answer.
+echo "==> patch_locate_tls.py  (locate.jsp over TLS when the warren requires it)"
+python3 "$HERE/patch_locate_tls.py" "$BC/sources/main.mtl"
+# A program's jingles and choreographies (MU, MC, CH) come down the session
+# as res:N too, when the warren flipped "xmpp-rsc:0" to 1 under the HMAC.
+echo "==> patch_rsc_in_session.py  (jingles and choreographies inside the session)"
+python3 "$HERE/patch_rsc_in_session.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
@@ -88,11 +96,12 @@ echo "==> preprocessing + compiling (with $CC)"
 # The literal the warren flips for a confirmed rabbit must be there exactly
 # once, or the Terrier leaves the policy alone and TLS stays optional; the
 # RFID one once too, or the tag never leaves rfid.jsp; the resource one once,
-# or every sound is still fetched over plain HTTP.
+# or every sound is still fetched over plain HTTP; the program-resource one
+# once, or jingles and choreographies are.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
-for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0"):
+for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")
