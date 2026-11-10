@@ -26,4 +26,15 @@
 # the frames; B 0 = the bootloader is driving (its boot_loop rotates through
 # wifiscans every 20 s, which is the "alternating BSSIDs" of 2026-11-08).
 cd "$(dirname "$0")"
-exec openocd -f nabaztag-pi-listen.cfg "$@"
+# Stopping this script -- Ctrl-C, `timeout`, a dropped ssh -- has to stop
+# openocd as well, and only SIGKILL does: openocd acts on TERM and INT in its
+# server loop, and dcc-listen.tcl never hands control back to it. Left
+# behind, openocd keeps the GPIO lines with nobody reading its output,
+# blocks on the full pipe, and the next listen.sh fails with "Error
+# requesting gpio line tdo" (2026-11-10: one had sat there for five hours,
+# and `timeout` could not stop another). The listener never halts the core,
+# so killing it leaves the rabbit running.
+openocd -f nabaztag-pi-listen.cfg -f dcc-listen.tcl "$@" > >(grep --line-buffered -v "^Info :") 2>&1 &
+ocd=$!
+trap 'trap - INT TERM HUP EXIT; kill -KILL $ocd 2>/dev/null' INT TERM HUP EXIT
+wait $ocd
