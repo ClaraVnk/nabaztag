@@ -19,7 +19,41 @@ release the community downloads, plus the **minimal rescue** build to roll back 
 when a flash goes wrong. Both are reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.0.0.2.signed.sim` — the release
+## `naboot-1.0.0.3.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.0.0.3` (`firmware-arm/apply-mods.py`): 1.0.0.2, with the WPA3 password exchange (SAE hunting-and-pecking) in constant time — the same work whatever the password, so its timing says nothing about it |
+| **Firmware version** | `1.0.0.3` (the boot URL says `v=1.0.0.3`) |
+| **Size** | 123 564 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (pubkey embedded in the firmware: `../keys/signing_pubkey.h`) |
+| **sha256** | `789be0850ede4ce4444813c1563d984c4dffc85db9d4f13938ebb5c4708b0efc` |
+
+**Measured before it was flashed** (`../tools/cost/ct.sh`, qemu-arm, the
+firmware's own sources and flags): the password element costs 161 060 360
+instructions whether the first point is found at round 1 or at round 12
+(167 150 792 against 167 065 465 before), and decompressing a valid or an
+invalid x differs by one instruction, outside the crypto. Instructions, not
+cycles: the ARM7TDMI multiplier still finishes early on small operands.
+
+**In the emulator:** every Wi-Fi scenario (35 of 35), and the whole rabbit
+booting three times against a Terrier image — pending key, confirmed key with
+the warren vanishing under the TLS session (back in 49 s later), then
+`bc.jsp` over TLS.
+
+**Installed over the air (2026-11-10 16:56):** this exact file, sent by the
+warren to a rabbit running 1.0.0.2. It restarted by itself, announced
+`v=1.0.0.3` with `r=3.0.3.3.3.0`, fetched its bytecode inside TLS 1.3 and
+opened its XMPP session over TLS 11 s later.
+
+**H2E is still beta**, and everything said under 1.0.0.2 below about WPA3 →
+WPA2 holds.
+
+`naboot-1.0.0.2` below stays as the previous release: flash it back if this
+one gives you trouble.
+
+## `naboot-1.0.0.2.signed.sim` — the previous release
 
 | | |
 |---|---|
@@ -52,9 +86,9 @@ Wi-Fi settings are saved again in config mode (see the main README,
 from a stock rabbit; an older Naboot needs a replug first, for the recovery
 bytecode.
 
-`naboot-1.0.0.0` below stays as the previous release.
+`naboot-1.0.0.0` below is the release before it.
 
-## `naboot-1.0.0.0.signed.sim` — the previous release
+## `naboot-1.0.0.0.signed.sim` — an older release
 
 | | |
 |---|---|
