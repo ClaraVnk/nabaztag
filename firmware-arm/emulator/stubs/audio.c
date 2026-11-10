@@ -252,6 +252,17 @@ uint16_t check_decode_time(void)
 
 /* --- the microphone --------------------------------------------------- */
 
+/* What the microphone hears: a known, loud pattern, so that a capture can be
+ * checked byte for byte at the far end. One 256-byte IMA-ADPCM block, as the
+ * VS1003 hands them over (rec_check in hal/audio.c), every 63 ms of sim time:
+ * a block is 505 samples at 8 kHz. Each block is a zero header (predictor 0,
+ * step index 0) and 252 bytes of 0xF7 -- nibbles 7 then 15, the loudest
+ * swing there is -- so the warren's loudness gate takes it for speech. */
+#define MIC_BLOCK     256
+#define MIC_BLOCK_MS  63
+static uint32_t rec_next;
+static uint32_t rec_blocks;
+
 void init_adpcm_encode(uint16_t sampling_frequency, uint16_t gain)
 {
   sim_log("microphone: encoding at %u Hz, gain %u", sampling_frequency, gain);
@@ -269,6 +280,8 @@ AUDIO_STATUS rec_start(uint16_t sampling_frequency, uint16_t gain)
     AUDIO_REFUSED;
   }
   rec_state = 1;
+  rec_next = sim_now();
+  rec_blocks = 0;
   sim_log("microphone: recording at %u Hz, gain %u", sampling_frequency, gain);
   AUDIO_OK;
 }
@@ -276,14 +289,32 @@ AUDIO_STATUS rec_start(uint16_t sampling_frequency, uint16_t gain)
 void rec_stop(void)
 {
   rec_state = 0;
-  sim_log("microphone: stopped");
+  sim_log("microphone: stopped after %u blocks (%u bytes)",
+          rec_blocks, rec_blocks * MIC_BLOCK);
 }
 
 /**
- * @brief Hand the firmware a block of captured audio.
+ * @brief Hand the firmware the blocks the microphone has captured by now.
  *
- * Silence, for now: there is no sound in a container. It returns nothing
- * rather than nothing-at-all, so the push-to-talk path can be driven later
- * by feeding a file in here.
+ * The real one reads whatever the VS1003 has buffered; this one hands over
+ * one pattern block per MIC_BLOCK_MS of sim time since rec_start(), through
+ * the same audioRecFeed_begin()/audioRecFeed_end() pair, which calls the
+ * bytecode's recStart callback.
  */
-void rec_check(void) {}
+void rec_check(void)
+{
+  if(!rec_state)
+    return;
+  while((int32_t)(sim_now() - rec_next) >= 0) {
+    uint8_t *dst = audioRecFeed_begin(MIC_BLOCK);
+    if(dst) {
+      memset(dst, 0, 4);
+      memset(dst + 4, 0xF7, MIC_BLOCK - 4);
+    }
+    audioRecFeed_end();
+    rec_blocks++;
+    rec_next += MIC_BLOCK_MS;
+    if(!rec_state)          /* the callback may have stopped the recorder */
+      return;
+  }
+}
