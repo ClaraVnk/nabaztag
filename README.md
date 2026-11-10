@@ -267,6 +267,12 @@ is the short version.
     report), with no `/ota/` request.
 
   Only radio and podcasts still stream in the clear (see Later).
+- **The Mir:ror is a tag reader again.** Violet's USB RFID reader (2008),
+  read on a real one and plugged into a Raspberry Pi
+  ([`mirror/`](mirror/README.md)): a tag on it does what it does on the
+  rabbit's nose — the bound action runs, Home Assistant hears of it — and
+  turning it upside down and back are two more tags to bind. On a real
+  rabbit: a Nano:ztag on the Mir:ror, the rabbit said its sentence.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
