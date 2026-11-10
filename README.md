@@ -247,6 +247,12 @@ is the short version.
 
 **Done — Naboot 1.0.0.3 (2026-11-10; proven in the emulator and on a real rabbit)**
 
+- **A JTAG listener that does not stall.** `listen.sh` used to stop after a
+  few minutes on `unknown target request: ff`: openocd's DCC decoder chokes
+  on the `0xff` words the JTAG bus produces during a reset. The Pi now reads
+  the DCC channel itself (`firmware-arm/jtag/dcc-listen.tcl`, scan chain 2),
+  keeps the telemetry words and counts the rest; it ran 40 minutes with no
+  stall. Stopping `listen.sh` now stops openocd too.
 - **WPA3 in constant time.** The SAE password element costs the same
   number of instructions whatever the password: 161 060 360 whether the
   first point is at round 1 or round 12, measured under qemu-arm
@@ -281,12 +287,9 @@ is the short version.
 
 **Later**
 
-- **A JTAG listener that does not stall** — after a few minutes `listen.sh`
-  stops on `unknown target request: ff`: openocd's DCC decoder chokes on a
-  word starting with 0xff. Either the telemetry never sends one, or the Pi
-  reads the DCC channel raw.
-- **Reclaim flash** — 8 632 bytes are spare today; the measured savings are
-  in the history (Phase 8).
+- **Reclaim flash** — 3 412 bytes are spare in 1.0.0.3. `small_strings`
+  (merged, not yet in an image) gives 840 back; the measured savings are in
+  the history (Phase 8).
 - **`mtl_pyc` typing** — the Python-to-Metal compiler shares `mtl_comp`'s
   code generation but not yet its type checker.
 
