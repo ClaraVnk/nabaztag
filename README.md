@@ -247,6 +247,15 @@ is the short version.
 
 **Done — Naboot 1.0.0.3 (2026-11-10; proven in the emulator and on a real rabbit)**
 
+- **What the rabbit says travels encrypted.** Sounds the warren hands a TLS
+  rabbit -- AI answers included -- now come down its XMPP-over-TLS session
+  (`bytecode/patch_res_in_session.py`) instead of plain HTTP, with no firmware
+  change. On a real rabbit: a 122 KB answer, played whole, no `/res/` request
+  in the clear.
+- **A rabbit that comes back on its own.** No more BOSH fallback after three
+  failed connections, and a write no longer counts as hearing from the
+  server (`bytecode/patch_liveness.py`): with the warren stopped for four
+  minutes the rabbit was back over TLS two seconds after it restarted.
 - **A JTAG listener that does not stall.** `listen.sh` used to stop after a
   few minutes on `unknown target request: ff`: openocd's DCC decoder chokes
   on the `0xff` words the JTAG bus produces during a reset. The Pi now reads
@@ -287,6 +296,11 @@ is the short version.
 
 **Later**
 
+- **Play a sound while it is still arriving in the session** — since
+  2026-11-10 a TLS rabbit's sounds come down its encrypted XMPP session
+  instead of plain HTTP, but playback starts once the whole file is in: about
+  9 s for a 120 KB answer on a real rabbit, where HTTP started after 80 KB.
+  Feeding the player as the records arrive would close the gap.
 - **Reclaim flash** — 3 412 bytes are spare in 1.0.0.3. `small_strings`
   (merged, not yet in an image) gives 840 back; the measured savings are in
   the history (Phase 8).
