@@ -31,6 +31,11 @@
 # '{"name":"..."}'` (MU) or `ears '{"left":8,"right":8}'` (CH): the verdict's
 # `res:` lines then show the jingle or choreography taken from the session
 # (bytecode/patch_rsc_in_session.py), a port 80 open that it was fetched.
+# `listen '{"seconds":3}'` is "talk to it": the rabbit is given a
+# transcription key that goes nowhere, so the capture runs and the verdict
+# shows what the emulated microphone recorded (stubs/audio.c) against what
+# the Terrier captured -- inside the session (bytecode/patch_mic_in_session.py)
+# or over UDP.
 #
 # --speak-at S --speak TEXT has the warren make the rabbit say TEXT S seconds
 # into boot 2, the way an owner's script does: an owner account and an API
@@ -135,7 +140,9 @@ if [ -n "$SPEAK_AT" ]; then
 try: from terrier import tenant
 except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); o=s.create_owner('proof@warren.test','!',True)
-assert s.redeem_pair_code(s.mint_pair_code('$MAC'),o)=='$MAC'; print(s.create_api_token(o,'proof'))")
+assert s.redeem_pair_code(s.mint_pair_code('$MAC'),o)=='$MAC'; print(s.create_api_token(o,'proof'))
+r=s.get_rabbit('$MAC'); c=dict(r['config'] or {}); c.update(stt_provider='openai', stt_key='proof-not-a-key')
+s.save_rabbit_config('$MAC', c)")
   echo "   owner and API token made for $MAC"
 fi
 T0=$(date +%s)
@@ -175,9 +182,9 @@ fi
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 if [ -n "$SPEAK_AT" ]; then
   echo "   the sound, rabbit side (boot 2):"
-  grep -a "res: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
+  grep -a "res: \|mic: \|microphone: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
   echo "   the sound, terrier side:"
-  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL" "$OUT/terrier.log" | sed 's/^/   /' | head -12
+  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"

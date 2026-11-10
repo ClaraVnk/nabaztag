@@ -88,6 +88,10 @@ python3 "$HERE/patch_locate_tls.py" "$BC/sources/main.mtl"
 # as res:N too, when the warren flipped "xmpp-rsc:0" to 1 under the HMAC.
 echo "==> patch_rsc_in_session.py  (jingles and choreographies inside the session)"
 python3 "$HERE/patch_rsc_in_session.py" "$BC/sources/main.mtl"
+# "Talk to it": `RS session` streams the microphone inside the TLS session
+# (announce + raw ADPCM) instead of UDP, when the warren flipped "xmpp-mic:0".
+echo "==> patch_mic_in_session.py  (the microphone inside the session)"
+python3 "$HERE/patch_mic_in_session.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
@@ -97,11 +101,12 @@ echo "==> preprocessing + compiling (with $CC)"
 # once, or the Terrier leaves the policy alone and TLS stays optional; the
 # RFID one once too, or the tag never leaves rfid.jsp; the resource one once,
 # or every sound is still fetched over plain HTTP; the program-resource one
-# once, or jingles and choreographies are.
+# once, or jingles and choreographies are; the microphone one once, or what
+# is said to the rabbit still crosses the internet in UDP.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
-for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0"):
+for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")

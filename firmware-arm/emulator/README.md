@@ -727,13 +727,15 @@ other finding on this page is one the emulator *can* settle: anything whose
 only observable effect is sound pressure in a room needs a rabbit and a pair
 of ears, and a green run here means nothing about it.
 
-**The microphone records silence.** `rec_check()` hands the firmware nothing,
-so a capture produces an empty stream. What the capture *costs* is modelled,
+**The microphone records a pattern, not sound.** `rec_check()` hands the
+firmware one 256-byte IMA-ADPCM block every 63 ms of sim time while it
+records -- a zero header, then 0xF7 bytes, loud enough for the warren's
+loudness gate -- so a capture can be counted and checked at the far end. What the capture *costs* is modelled,
 and that turned out to be the part that matters: `play_start()` refuses to
 play anything while a capture is running, and says so in the transcript
 (`audio: play_start refused, the microphone has the decoder`), which is how
-issue #23's finding 5 was measured. Feeding a real file in is a small change
-and would let the wake word be tested end to end.
+issue #23's finding 5 was measured. `xmpp-tls-proof.sh --api listen '{"seconds":3}'`
+uses it to prove the microphone inside the TLS session.
 
 **The rest of the body.** The RFID reader has a scenario-driven tag list
 (`at <ms> rfid <16 hex>`, `rfid none`) and no protocol: `rfid_read` returns
