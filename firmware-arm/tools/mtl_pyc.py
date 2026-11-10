@@ -1,46 +1,47 @@
 #!/usr/bin/env python3
-"""Phase 7b: Python source compiler — `.py` -> Metal `.bin`.
+"""Phase 7b: Python source compiler — `.py` -> Metal `.bin`, through `.mtl`.
 
-The "view as Python" surface for Metal: write what looks like idiomatic
-Python, get byte-identical MTL bytecode out the other end. Built on
-mtl_asm's Encoder. Where mtl_comp.py parses `.mtl` source (with all its
-quirks), this module parses standard Python via the stdlib `ast`
-module and maps the AST nodes to MTL operations.
+The "view as Python" surface for Metal: write a subset of Python, get the
+bytecode the C++ `mtl_compiler` would emit for the equivalent `.mtl`.
 
-The lossless target: `mtl_pyc.py prog.py -o prog.bin` produces the
-same bytecode `mtl_comp.py prog.mtl -o prog.bin` would, when prog.py
-and prog.mtl express the same logic.
+This module is a front end only. It parses the Python with the stdlib
+`ast` module and writes Metal source text (`--emit-mtl` prints it); that
+text then goes through `mtl_comp.Compiler`, in-process — the same parser,
+type inference and codegen that compile the real bootcode byte-identically
+to the C++. So a Python program is typed exactly like its `.mtl` spelling,
+and one the C++ would refuse is refused here, with mtl_comp's words.
 
-### Supported Python subset (v0)
+### Supported Python subset
 
 Top-level:
-    G = 42                    # → var G=42;;
-    K = "hello"               # → var K="hello";;  (no const distinction yet)
+    G = 42                    # var G = 42;;
+    def f(a, b): ...          # fun f a b = ...;;
+    class S: idle = (); done = (int,)      # type S = idle | done I;;
+    class T: x: int; y: str   # type T = [x: I y: S];;
+    if FLAG: ... else: ...    # ifdef FLAG { ... } else { ... }
+    if not FLAG: ...          # ifndef FLAG { ... }
 
-    def fname(arg1, arg2):
-        ...                   # → fun fname arg1 arg2 = body;;
+Statements (in a function body):
+    return EXPR               # EXPR is the value of the rest of the body
+    x = EXPR                  # new name: let EXPR -> x in <rest>
+                              # known local or global: set x = EXPR
+    [a, b, _] = EXPR          # let EXPR -> [a b _] in <rest>
+    obj.f = EXPR, x += EXPR   # set obj.f = EXPR, set x = x + EXPR
+    if / elif / else          # if C then A else B
+    while C: BODY             # while C do BODY
+    for i in range(A, B):     # for i=A; i<B do BODY   (Form 2)
+    match X: case Cons(p):    # match X with (Cons p -> ...) | (_ -> ...)
+    global x                  # ignored (assignment to a global is a set)
 
-Statements (in function body):
-    return EXPR               # leaves EXPR's value as the function's return
-    if X: Y else: Z           # → if X then Y else Z  (statement form)
-    while COND: BODY          # → while COND do BODY
-    for i in range(N): BODY   # → for i=0; i<N; i+1 do BODY
-    var = EXPR                # → let EXPR -> var in <rest>  (function-scoped)
+Expressions: int / str / None / True / False, arithmetic, bitwise and
+comparison operators, `and` / `or` / `not`, `-x`, `~x`, `A if C else B`,
+`f(a, b)`, a bare function name (a function pointer, `#f`), `[a, b]`
+(tuple), `arr(a, b)` ({a b}), `lst(a, b)` (a :: b :: nil), `ord('A')`,
+`call_(f, a, b)` (call f [a b]), `Cons(x)`, `T(x=1, y=2)` ([x: 1 y: 2]),
+`obj.f`.
 
-Expressions:
-    int / str / None          # int / string / nil
-    +, -, *, /, %, &, |, ^,
-    <<, >>, ==, !=, <, >, <=, >=,
-    `and` (short-circuit) and `or` (short-circuit)
-    not, -EXPR, ~EXPR
-    name (var ref / fn call)
-    fname(a, b, c)            # MTL fn call with positional args
-    [a, b, c]                 # tuple `[a b c]`
-
-### Convention
-
-A function named `main` always gets MTL fun#0 (auto-proto). This
-matches the canonical MTL pattern `proto main 0;; ... fun main=...;;`.
+A function named `main` always gets fun#0: the emitted source starts with
+`proto main N;;`. A function called before its `def` gets a `proto` too.
 """
 
 from __future__ import annotations
@@ -51,858 +52,581 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mtl_asm import Encoder, FunctionBody, Op, NIL  # noqa: E402
-from mtl_comp import BUILTINS, Scope, wire_wrap  # noqa: E402
+from mtl_comp import BUILTINS, Compiler, MtlError, wire_wrap  # noqa: E402
 
 
-# Python AST binary ops → MTL opcode.
+# Precedence levels of the MTL grammar (mtl_comp's parse ladder), lowest
+# first. A sub-expression whose level is below what its slot needs gets
+# parentheses; `( … )` is a parseprogram and costs no bytecode.
+SEQ, EXPR, LOGIC, NOT, CMP, ADD, MUL, BIT, UNARY, ATOM = range(10)
+
 _BINOPS = {
-    ast.Add:    Op.OPadd,
-    ast.Sub:    Op.OPsub,
-    ast.Mult:   Op.OPmul,
-    ast.Div:    Op.OPdiv,
-    ast.FloorDiv: Op.OPdiv,
-    ast.Mod:    Op.OPmod,
-    ast.BitAnd: Op.OPand,
-    ast.BitOr:  Op.OPor,
-    ast.BitXor: Op.OPeor,
-    ast.LShift: Op.OPshl,
-    ast.RShift: Op.OPshr,
+    ast.Add: ("+", ADD), ast.Sub: ("-", ADD),
+    ast.Mult: ("*", MUL), ast.Div: ("/", MUL), ast.FloorDiv: ("/", MUL),
+    ast.Mod: ("%", MUL),
+    ast.BitAnd: ("&", BIT), ast.BitOr: ("|", BIT), ast.BitXor: ("^", BIT),
+    ast.LShift: ("<<", BIT), ast.RShift: (">>", BIT),
 }
 
-# Python AST comparisons → MTL opcode.
 _CMPOPS = {
-    ast.Eq:    Op.OPeq,
-    ast.NotEq: Op.OPne,
-    ast.Lt:    Op.OPlt,
-    ast.Gt:    Op.OPgt,
-    ast.LtE:   Op.OPle,
-    ast.GtE:   Op.OPge,
+    ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.Gt: ">",
+    ast.LtE: "<=", ast.GtE: ">=",
 }
 
+# Words the MTL parser reads as syntax; a Python name spelled like one
+# cannot be written into the source.
+_MTL_KEYWORDS = {
+    "proto", "var", "const", "fun", "type", "ifdef", "ifndef", "else",
+    "if", "then", "let", "in", "set", "while", "do", "for", "match", "with",
+    "call", "update", "nil",
+}
 
-class PyCompiler:
+# Python annotation -> MTL type.
+_TYPE_NAMES = {"int": "I", "str": "S"}
+
+
+def _mtl_string(value: str) -> str:
+    """A Python str as an MTL string literal. The bytes are the UTF-8
+    encoding; anything outside printable ASCII is written `\\DDD` with
+    three digits, so a following digit is never read into the escape."""
+    out = ['"']
+    for b in value.encode("utf-8"):
+        c = chr(b)
+        if c in '"\\':
+            out.append("\\" + c)
+        elif 32 <= b < 127:
+            out.append(c)
+        else:
+            out.append(f"\\{b:03d}")
+    out.append('"')
+    return "".join(out)
+
+
+def _err(node: ast.AST, msg: str) -> SyntaxError:
+    return SyntaxError(f"line {getattr(node, 'lineno', '?')}: {msg}")
+
+
+class MtlEmitter:
+    """Python AST -> MTL source text. Knows names only well enough to pick
+    the spelling (`#f` or `f`, `set` or `let`); every check of meaning —
+    arity, types, unknown labels — is left to mtl_comp."""
+
     def __init__(self) -> None:
-        self.enc = Encoder()
-        self.globals_by_name: dict[str, int] = {}
-        self.funs_by_name: dict[str, tuple[int, int]] = {}
-        # Sum-type constructors: name -> (tag, has_payload).
-        self.constructors: dict[str, tuple[int, bool]] = {}
-        # Struct fields: field name -> (idx, struct_size).
-        self.struct_fields: dict[str, tuple[int, int]] = {}
-        # Names known via `# ifdef` so we can skip blocks (set by
-        # `@if_defined(NAME)` decorator on classes, or auto-defined
-        # by var/fun/type decls).
-        # Phase 7b doesn't currently support runtime ifdef gating
-        # at the Python level — but the namespace check is in place.
-        # fn-being-compiled state
-        self.fn: FunctionBody | None = None
-        self.scope: Scope | None = None
-        self.label_counter = 0
-        self.nlocals_high_water = 0
+        self.funs: dict[str, int] = {}             # name -> arity
+        self.globals: set[str] = set()
+        self.constructors: dict[str, bool] = {}    # name -> has payload
+        self.structs: set[str] = set()
+        self.fields: set[str] = set()
+        self.types: set[str] = set()
+        self.locals: list[str] = []
 
-    # ---- helpers ---------------------------------------------------------
-    def new_label(self, prefix: str = "L") -> str:
-        self.label_counter += 1
-        return f"{prefix}{self.label_counter}"
-
-    def _emit_intb_or_int(self, val: int) -> None:
-        if 0 <= val <= 255:
-            self.fn.intb(val)
-        else:
-            self.fn.int_(val)
-
-    def _emit_get_global(self, idx: int) -> None:
-        if 0 <= idx <= 255:
-            self.fn.opb(Op.OPgetglobalb, idx)
-        else:
-            self.fn.int_(idx)
-            self.fn.op(Op.OPgetglobal)
-
-    # ---- top-level -------------------------------------------------------
-    def compile_source(self, src: str) -> bytes:
+    # ---- module -----------------------------------------------------------
+    def emit_module(self, src: str) -> str:
         tree = ast.parse(src)
-        # First pass: register every top-level fun in source order. If
-        # `main` exists, it gets index 0 (auto-proto). Var decls don't
-        # need pre-registration; they're consumed in source order.
-        funs: list[ast.FunctionDef] = [
-            n for n in tree.body if isinstance(n, ast.FunctionDef)
-        ]
-        main_fn = next((f for f in funs if f.name == "main"), None)
-        if main_fn is not None:
-            # Reserve index 0 for main.
-            placeholder = self.enc.new_function(nargs=len(main_fn.args.args), nlocals=0)
-            self.funs_by_name["main"] = (0, len(main_fn.args.args))
-
-        # Second pass: walk top-level statements in source order.
+        self._collect(tree.body)
+        lines: list[str] = []
+        if "main" in self.funs:
+            lines.append(f"proto main {self.funs['main']};;")
+        for name in self._forward_refs(tree.body):
+            lines.append(f"proto {name} {self.funs[name]};;")
         for node in tree.body:
+            lines.extend(self._top(node))
+        return "\n".join(lines) + "\n"
+
+    def _collect(self, body: list[ast.stmt]) -> None:
+        """Every name declared at top level, both ifdef branches included:
+        which branch is live is mtl_comp's decision, not ours."""
+        for node in body:
             if isinstance(node, ast.FunctionDef):
-                self._compile_funcdef(node)
-            elif isinstance(node, ast.ClassDef):
-                self._compile_classdef(node)
+                self.funs.setdefault(self._name(node, node.name), len(node.args.args))
             elif isinstance(node, ast.Assign):
-                self._compile_global_assign(node)
-            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-                # Docstring at module level — ignore.
-                pass
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        self.globals.add(self._name(node, t.id))
+            elif isinstance(node, ast.ClassDef):
+                self.types.add(self._name(node, node.name))
+                for st in self._class_body(node):
+                    if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+                        self.structs.add(node.name)
+                        self.fields.add(self._name(st, st.target.id))
+                    elif (isinstance(st, ast.Assign) and len(st.targets) == 1
+                          and isinstance(st.targets[0], ast.Name)):
+                        self.constructors[self._name(st, st.targets[0].id)] = \
+                            self._sum_payload(st.value) is not None
             elif isinstance(node, ast.If):
-                # `if NAME:` at top-level is an `ifdef NAME` block.
-                # Active iff NAME is currently in scope (var/fun/type).
-                self._compile_top_ifdef(node)
-            else:
-                raise SyntaxError(
-                    f"line {node.lineno}: unsupported top-level statement "
-                    f"{ast.dump(node)[:80]}"
-                )
-        return self.enc.emit()
+                self._collect(node.body)
+                self._collect(node.orelse)
 
-    def _compile_top_ifdef(self, node: ast.If) -> None:
-        """`if NAME:` at top-level is an `ifdef NAME` block. The active
-        branch's body is parsed as top-level decls; the inactive branch
-        is skipped wholesale. Supports `else:` for the alternative.
-        """
-        # Accept `if NAME:` (ifdef) or `if not NAME:` (ifndef).
-        negate = False
-        test = node.test
-        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            negate = True
-            test = test.operand
-        if not isinstance(test, ast.Name):
-            raise SyntaxError(
-                f"line {node.lineno}: top-level `if` must be `if NAME:` (ifdef)"
-            )
-        name = test.id
-        active = self._is_defined(name)
-        if negate:
-            active = not active
-        body = node.body if active else node.orelse
-        for st in body:
-            if isinstance(st, ast.FunctionDef):
-                self._compile_funcdef(st)
-            elif isinstance(st, ast.ClassDef):
-                self._compile_classdef(st)
-            elif isinstance(st, ast.Assign):
-                self._compile_global_assign(st)
-            elif isinstance(st, ast.If):
-                self._compile_top_ifdef(st)
-            else:
-                raise SyntaxError(
-                    f"line {st.lineno}: unsupported top-level statement "
-                    f"in ifdef block"
-                )
+    def _forward_refs(self, body: list[ast.stmt]) -> list[str]:
+        """Functions called (or pointed to) before their `def`: each needs a
+        `proto` ahead of the first use, as in MTL."""
+        defined = {"main"}
+        needed: list[str] = []
 
-    def _is_defined(self, name: str) -> bool:
-        return (
-            name in self.globals_by_name
-            or name in self.funs_by_name
-            or name in self.constructors
-            or name in self.struct_fields  # also covers struct types
-        )
+        def walk(stmts: list[ast.stmt]) -> None:
+            for node in stmts:
+                if isinstance(node, ast.FunctionDef):
+                    defined.add(node.name)          # recursion needs no proto
+                    for sub in ast.walk(node):
+                        if (isinstance(sub, ast.Name) and sub.id in self.funs
+                                and sub.id not in defined and sub.id not in needed):
+                            needed.append(sub.id)
+                elif isinstance(node, ast.If):
+                    walk(node.body)
+                    walk(node.orelse)
 
-    def _compile_classdef(self, node: ast.ClassDef) -> None:
-        """Two flavors:
-          - `class Name:`  with class-body attribute assignments where
-            each value is a tuple `()` (no payload) or `(...)` (1 payload)
-            => sum type.
-          - `class Name:`  with annotation-only assignments (`field: type`)
-            => struct type with those fields.
-        We disambiguate by looking at the FIRST class-body statement.
-        """
-        body = [s for s in node.body if not isinstance(s, ast.Pass)
-                and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
-        if not body:
-            return
-        first = body[0]
-        if isinstance(first, ast.AnnAssign):
-            self._declare_struct(node.name, body)
-        elif isinstance(first, ast.Assign):
-            self._declare_sum(node.name, body)
-        else:
-            raise SyntaxError(
-                f"line {node.lineno}: class body must be all `field: type` "
-                f"(struct) or all `Cons = ()` (sum)"
-            )
+        walk(body)
+        return needed
 
-    def _declare_sum(self, type_name: str, body: list[ast.stmt]) -> None:
-        """`class Name:
-              cons1 = ()        # CONS0 (no payload)
-              cons2 = (...)     # CONS (1 payload)
-              ...`
-        Each constructor gets an auto-incrementing tag.
-        """
-        tag = 0
-        for st in body:
-            if not isinstance(st, ast.Assign) or len(st.targets) != 1 or not isinstance(st.targets[0], ast.Name):
-                raise SyntaxError(
-                    f"line {st.lineno}: sum-type body needs `Cons = ()` or `Cons = (X,)`"
-                )
-            cname = st.targets[0].id
-            v = st.value
-            has_payload = False
-            if isinstance(v, (ast.Tuple, ast.List)):
-                has_payload = len(v.elts) > 0
-            elif isinstance(v, ast.Constant) and v.value == ():
-                has_payload = False
-            else:
-                # Be lenient: any non-empty value means "with payload".
-                has_payload = not (isinstance(v, ast.Constant) and v.value is None)
-            self.constructors[cname] = (tag, has_payload)
-            tag += 1
-
-    def _declare_struct(self, type_name: str, body: list[ast.stmt]) -> None:
-        """`class Name:
-              field1: type
-              field2: type
-              ...`
-        Each field gets an index and the total struct size.
-        """
-        field_names: list[str] = []
-        for st in body:
-            if not isinstance(st, ast.AnnAssign) or not isinstance(st.target, ast.Name):
-                raise SyntaxError(
-                    f"line {st.lineno}: struct field must be `name: type`"
-                )
-            field_names.append(st.target.id)
-        size = len(field_names)
-        for i, fname in enumerate(field_names):
-            self.struct_fields[fname] = (i, size)
-
-    def _compile_global_assign(self, node: ast.Assign) -> None:
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-            raise SyntaxError(
-                f"line {node.lineno}: top-level assignment must be `NAME = EXPR`"
-            )
-        name = node.targets[0].id
-        init = self._eval_const(node.value)
-        idx = self.enc.add_global(init)
-        self.globals_by_name[name] = idx
-
-    def _eval_const(self, node: ast.AST) -> "object":
-        """Evaluate a constant expression at compile time. Supports the
-        same forms MTL accepts in `var X = EXPR;;`."""
-        if isinstance(node, ast.Constant):
-            v = node.value
-            if v is None:
-                return NIL
-            if isinstance(v, bool):
-                return 1 if v else 0
-            if isinstance(v, (int, str)):
-                return v
-            raise SyntaxError(f"unsupported constant value {v!r}")
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-            inner = self._eval_const(node.operand)
-            if isinstance(inner, int):
-                return -inner
-            raise SyntaxError("only int may be negated in a constant")
-        if isinstance(node, ast.List) or isinstance(node, ast.Tuple):
-            return tuple(self._eval_const(e) for e in node.elts)
-        if isinstance(node, ast.Name) and node.id == "None":
-            return NIL
-        raise SyntaxError(
-            f"line {getattr(node, 'lineno', '?')}: unsupported constant "
-            f"expression {ast.dump(node)[:60]}"
-        )
-
-    # ---- function definition --------------------------------------------
-    def _compile_funcdef(self, node: ast.FunctionDef) -> None:
-        args = [a.arg for a in node.args.args]
-
-        if node.name in self.funs_by_name:
-            # Reserved slot (e.g. main).
-            fun_idx, _ = self.funs_by_name[node.name]
-            fn = self.enc._functions[fun_idx]
-            fn.nargs = len(args)
-            fn.code = bytearray()
-        else:
-            fn = self.enc.new_function(nargs=len(args), nlocals=0)
-            fun_idx = len(self.enc._functions) - 1
-            self.funs_by_name[node.name] = (fun_idx, len(args))
-
-        self.fn = fn
-        self.scope = Scope()
-        for a in args:
-            self.scope.declare(a)
-        self.nlocals_high_water = 0
-
-        self._compile_body(node.body)
-        self.fn.ret()
-        self.fn.nlocals = self.nlocals_high_water
-        self.fn = None
-        self.scope = None
-
-    def _compile_body(self, stmts: list[ast.stmt]) -> None:
-        """Compile a sequence of statements. The LAST statement's value
-        becomes the function's result; intermediate ones are OPdrop'd
-        after evaluation (matching Metal's `expr; expr; expr` semantics).
-
-        A `return X` anywhere in the sequence emits X and stops further
-        compilation of this body (callers handle OPret at the end).
-        """
-        if not stmts:
-            self.fn.op(Op.OPnil)
-            return
-        for i, st in enumerate(stmts):
-            last = (i == len(stmts) - 1)
-            if isinstance(st, ast.Return):
-                # `return X` — evaluate, that becomes the result; stop.
-                if st.value is None:
-                    self.fn.op(Op.OPnil)
-                else:
-                    self._compile_expr(st.value)
-                return
-            if isinstance(st, ast.Assign):
-                # `var = EXPR` — Metal lacks plain statement-level
-                # assignment, so we encode it as `let EXPR -> var in
-                # <rest>`. The "rest" is the remaining statements.
-                if len(st.targets) != 1:
-                    raise SyntaxError(
-                        f"line {st.lineno}: only single-target assignment supported"
-                    )
-                target = st.targets[0]
-                # Struct field write: `obj.field = EXPR`.
-                if isinstance(target, ast.Attribute):
-                    self._compile_attribute_set_chain(target, st.value)
-                    if not last:
-                        self.fn.drop()
-                    continue
-                # List/tuple destructuring: `[a, b, c] = EXPR` mirrors
-                # `let EXPR -> [a b c] in <rest>`.
-                if isinstance(target, (ast.List, ast.Tuple)):
-                    names: list[str] = []
-                    for el in target.elts:
-                        if not isinstance(el, ast.Name):
-                            raise SyntaxError(
-                                f"line {st.lineno}: destructuring elements "
-                                f"must be plain names"
-                            )
-                        names.append(el.id)
-                    self._compile_expr(st.value)
-                    declared: list[str] = []
-                    for j, nm in enumerate(names):
-                        self.fn.op(Op.OPdup)
-                        self.fn.opb(Op.OPfetchb, j)
-                        idx = self.scope.declare(nm)
-                        new_locals_after_args = (idx + 1) - self.fn.nargs
-                        if new_locals_after_args > self.nlocals_high_water:
-                            self.nlocals_high_water = new_locals_after_args
-                        self.fn.opb(Op.OPsetlocalb, idx)
-                        declared.append(nm)
-                    self.fn.drop()
-                    self._compile_body(stmts[i + 1:])
-                    for nm in reversed(declared):
-                        self.scope.unbind(nm)
-                    return
-                if not isinstance(target, ast.Name):
-                    raise SyntaxError(
-                        f"line {st.lineno}: only `NAME = EXPR` or "
-                        f"`obj.field = EXPR` assignment supported"
-                    )
-                name = target.id
-                if name in self.globals_by_name:
-                    # set global X = expr  (in C++: OPintb idx; expr; OPsetglobal)
-                    self._emit_intb_or_int(self.globals_by_name[name])
-                    self._compile_expr(st.value)
-                    self.fn.op(Op.OPsetglobal)
-                    if not last:
-                        self.fn.drop()
-                    continue
-                if self.scope.lookup(name) is not None:
-                    # set local
-                    loc = self.scope.lookup(name)
-                    self._emit_intb_or_int(loc)
-                    self._compile_expr(st.value)
-                    self.fn.op(Op.OPsetlocal2)
-                    if not last:
-                        self.fn.drop()
-                    continue
-                # New local binding via let-rest.
-                self._compile_expr(st.value)
-                idx = self.scope.declare(name)
-                new_locals_after_args = (idx + 1) - self.fn.nargs
-                if new_locals_after_args > self.nlocals_high_water:
-                    self.nlocals_high_water = new_locals_after_args
-                self.fn.opb(Op.OPsetlocalb, idx)
-                # The "rest" is the rest of the body.
-                self._compile_body(stmts[i + 1:])
-                self.scope.unbind(name)
-                return
-            # Other statement forms (handled by compile_stmt):
-            self._compile_stmt(st)
-            if not last:
-                self.fn.drop()
-
-    def _compile_attribute_set_chain(self, attr_target: ast.Attribute, value: ast.AST) -> None:
-        """`obj.field = EXPR`  (and chained `obj.a.b = EXPR`) — mirrors
-        mtl_comp's set-field codegen:
-            <get OBJ>
-            <OPfetchb field_idx>*    (n-1 fetches for inner fields)
-            <push last field idx>
-            <EXPR>
-            OPstore
-        """
-        # Walk attribute chain to find the root expression and field path.
-        fields: list[str] = []
-        cur: ast.AST = attr_target
-        while isinstance(cur, ast.Attribute):
-            fields.append(cur.attr)
-            cur = cur.value
-        fields.reverse()
-        # Root expression (e.g. `obj`).
-        self._compile_expr(cur)
-        # All but the last field are intermediate fetches.
-        for f in fields[:-1]:
-            if f not in self.struct_fields:
-                raise SyntaxError(f"unknown field {f!r}")
-            idx, _ = self.struct_fields[f]
-            if 0 <= idx <= 255:
-                self.fn.opb(Op.OPfetchb, idx)
-            else:
-                self.fn.int_(idx)
-                self.fn.op(Op.OPfetch)
-        last = fields[-1]
-        if last not in self.struct_fields:
-            raise SyntaxError(f"unknown field {last!r}")
-        last_idx, _ = self.struct_fields[last]
-        self._emit_intb_or_int(last_idx)
-        self._compile_expr(value)
-        self.fn.op(Op.OPstore)
-
-    def _compile_stmt(self, node: ast.stmt) -> None:
-        """Compile a statement that leaves exactly one value on the stack.
-        (return/assign are handled in _compile_body.)"""
+    def _top(self, node: ast.stmt) -> list[str]:
+        if isinstance(node, ast.FunctionDef):
+            return [self._fundef(node)]
+        if isinstance(node, ast.ClassDef):
+            return [self._classdef(node)]
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                raise _err(node, "top-level assignment must be `NAME = EXPR`")
+            return [f"var {node.targets[0].id} = {self._const(node.value)};;"]
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            return []                                   # module docstring
         if isinstance(node, ast.If):
-            # if X: ELSE Z
-            self._compile_expr(node.test)
-            else_label = self.new_label("else")
-            end_label = self.new_label("endif")
-            self.fn.else_(else_label)
-            self._compile_body(node.body)
-            self.fn.goto(end_label)
-            self.fn.label(else_label)
-            if node.orelse:
-                self._compile_body(node.orelse)
-            else:
-                self.fn.op(Op.OPnil)
-            self.fn.label(end_label)
-            return
-        if isinstance(node, ast.While):
-            loop = self.new_label("while")
-            end = self.new_label("endwhile")
-            self.fn.op(Op.OPnil)
-            self.fn.label(loop)
-            self._compile_expr(node.test)
-            self.fn.else_(end)
-            self.fn.drop()
-            self._compile_body(node.body)
-            self.fn.goto(loop)
-            self.fn.label(end)
-            return
-        if isinstance(node, ast.For):
-            # `for VAR in range(N): BODY` only (Python-idiomatic form
-            # that maps cleanly to MTL Form 2).
-            if not (isinstance(node.target, ast.Name)
-                    and isinstance(node.iter, ast.Call)
-                    and isinstance(node.iter.func, ast.Name)
-                    and node.iter.func.id == "range"):
-                raise SyntaxError(
-                    f"line {node.lineno}: only `for VAR in range(...)` supported"
-                )
-            args = node.iter.args
-            if len(args) == 1:
-                # range(N): start=0, stop=N
-                start_node = ast.Constant(value=0)
-                stop_node = args[0]
-            elif len(args) == 2:
-                start_node, stop_node = args
-            else:
-                raise SyntaxError(
-                    f"line {node.lineno}: range with step not yet supported"
-                )
-            var_name = node.target.id
-            self._compile_expr(start_node)
-            idx = self.scope.declare(var_name)
-            new_locals_after_args = (idx + 1) - self.fn.nargs
-            if new_locals_after_args > self.nlocals_high_water:
-                self.nlocals_high_water = new_locals_after_args
-            self.fn.opb(Op.OPsetlocalb, idx)
-            loop_check = self.new_label("for_check")
-            end_label = self.new_label("for_end")
-            self.fn.op(Op.OPnil)
-            self.fn.label(loop_check)
-            self.fn.opb(Op.OPgetlocalb, idx)
-            self._compile_expr(stop_node)
-            self.fn.op(Op.OPlt)
-            self.fn.else_(end_label)
-            self.fn.drop()
-            self._compile_body(node.body)
-            self.fn.opb(Op.OPgetlocalb, idx)
-            self.fn.intb(1)
-            self.fn.op(Op.OPadd)
-            self.fn.opb(Op.OPsetlocalb, idx)
-            self.fn.goto(loop_check)
-            self.fn.label(end_label)
-            self.scope.unbind(var_name)
-            return
-        if isinstance(node, ast.Match):
-            # `match X: case Cons1: ... case Cons2(p): ... case _: ...`
-            self._compile_expr(node.subject)
-            end_label = self.new_label("match_end")
-            self._compile_match_cases(node.cases, end_label)
-            return
-        if isinstance(node, ast.Expr):
-            # A statement that's just an expression — eval, leave on
-            # stack (caller will OPdrop if not last).
-            self._compile_expr(node.value)
-            return
-        raise SyntaxError(
-            f"line {getattr(node, 'lineno', '?')}: unsupported statement "
-            f"{ast.dump(node)[:60]}"
-        )
+            return self._ifdef(node)
+        raise _err(node, f"unsupported top-level statement {type(node).__name__}")
 
-    def _compile_match_cases(self, cases: list[ast.match_case], end_label: str) -> None:
-        """Walk the case list emitting tag-eq checks chained through
-        OPelse, mirroring mtl_comp._parse_matchcons.
-        """
-        for i, case in enumerate(cases):
-            pat = case.pattern
-            next_case = self.new_label(f"match_next_{i}")
-            bound_locals: list[str] = []
+    def _ifdef(self, node: ast.If) -> list[str]:
+        test, kw = node.test, "ifdef"
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            test, kw = test.operand, "ifndef"
+        if not isinstance(test, ast.Name):
+            raise _err(node, "top-level `if` must be `if NAME:` or `if not NAME:` (ifdef)")
+        out = [f"{kw} {self._name(node, test.id)} {{"]
+        for st in node.body:
+            out.extend("\t" + ln for ln in self._top(st))
+        out.append("}")
+        if node.orelse:
+            out.append("else {")
+            for st in node.orelse:
+                out.extend("\t" + ln for ln in self._top(st))
+            out.append("}")
+        return out
 
-            if isinstance(pat, ast.MatchAs) and pat.pattern is None and pat.name is None:
-                # `case _`: wildcard, drop the value and compile body.
-                self.fn.drop()
-                self._compile_body(case.body)
-                self.fn.label(end_label)
-                return
-            if isinstance(pat, ast.MatchClass):
-                # `case Cons(p)` or `case Cons()` — class pattern.
-                if not isinstance(pat.cls, ast.Name) or pat.cls.id not in self.constructors:
-                    raise SyntaxError(
-                        f"line {pat.col_offset}: unknown constructor in match case"
-                    )
-                tag, has_payload = self.constructors[pat.cls.id]
-                self.fn.op(Op.OPfirst)
-                self._emit_intb_or_int(tag)
-                self.fn.op(Op.OPeq)
-                self.fn.else_(next_case)
-                if has_payload:
-                    self.fn.opb(Op.OPfetchb, 1)
-                    if pat.patterns:
-                        sub = pat.patterns[0]
-                        if isinstance(sub, ast.MatchAs) and sub.pattern is None and sub.name:
-                            bn = sub.name
-                            idx = self.scope.declare(bn)
-                            new_locals_after_args = (idx + 1) - self.fn.nargs
-                            if new_locals_after_args > self.nlocals_high_water:
-                                self.nlocals_high_water = new_locals_after_args
-                            self.fn.opb(Op.OPsetlocalb, idx)
-                            bound_locals.append(bn)
-                        else:
-                            self.fn.drop()
-                    else:
-                        self.fn.drop()
-                else:
-                    self.fn.drop()
-            elif isinstance(pat, ast.MatchAs) and pat.pattern is None and pat.name:
-                # `case name` in Python — that's actually a binding,
-                # not a value match. For our purposes we interpret it
-                # as a constructor name match (if known).
-                if pat.name in self.constructors:
-                    tag, has_payload = self.constructors[pat.name]
-                    if has_payload:
-                        raise SyntaxError(
-                            f"constructor {pat.name!r} needs `Cons(_)` pattern"
-                        )
-                    self.fn.op(Op.OPfirst)
-                    self._emit_intb_or_int(tag)
-                    self.fn.op(Op.OPeq)
-                    self.fn.else_(next_case)
-                    self.fn.drop()
-                else:
-                    raise SyntaxError(
-                        f"unknown constructor {pat.name!r} in match case"
-                    )
-            else:
-                raise SyntaxError(
-                    f"unsupported match pattern: {ast.dump(pat)[:60]}"
-                )
+    # ---- types ------------------------------------------------------------
+    @staticmethod
+    def _class_body(node: ast.ClassDef) -> list[ast.stmt]:
+        return [s for s in node.body if not isinstance(s, ast.Pass)
+                and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
 
-            self._compile_body(case.body)
-            for nm in bound_locals:
-                self.scope.unbind(nm)
-            self.fn.goto(end_label)
-            self.fn.label(next_case)
+    def _classdef(self, node: ast.ClassDef) -> str:
+        body = self._class_body(node)
+        if not body:
+            return f"type {node.name};;"
+        if all(isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+               and s.value is None for s in body):
+            fields = []
+            for s in body:
+                t = self._annotation(s.annotation)
+                fields.append(s.target.id if t is None else f"{s.target.id}: {t}")
+            return f"type {node.name} = [{' '.join(fields)}];;"
+        if all(isinstance(s, ast.Assign) and len(s.targets) == 1
+               and isinstance(s.targets[0], ast.Name) for s in body):
+            conses = []
+            for s in body:
+                payload = self._sum_payload(s.value)
+                name = s.targets[0].id
+                conses.append(name if payload is None else f"{name} {payload}")
+            return f"type {node.name} = {' | '.join(conses)};;"
+        raise _err(node, "class body must be all `field: type` (struct) "
+                         "or all `Cons = ()` / `Cons = (type,)` (sum)")
 
-        # If no `_` wildcard fall-through: drop value, push nil.
-        self.fn.drop()
-        self.fn.op(Op.OPnil)
-        self.fn.label(end_label)
+    def _annotation(self, node: ast.AST | None) -> str | None:
+        """A Python annotation as an MTL type, or None (left to inference)."""
+        if isinstance(node, ast.Name):
+            if node.id in _TYPE_NAMES:
+                return _TYPE_NAMES[node.id]
+            if node.id in self.types:
+                return node.id
+            return None
+        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+                and node.value.id == "list"):
+            inner = self._annotation(node.slice)
+            return f"list {inner or '_'}"
+        return None
 
-    # ---- expressions ----------------------------------------------------
-    def _compile_expr(self, node: ast.AST) -> None:
+    def _sum_payload(self, value: ast.AST) -> str | None:
+        """`()` / None: no payload. `(int,)`: one, `I`. `(int, str)`: a
+        tuple, `[I S]`. An element we cannot name is `_` (inferred)."""
+        if isinstance(value, ast.Constant) and value.value in ((), None):
+            return None
+        if isinstance(value, (ast.Tuple, ast.List)):
+            if not value.elts:
+                return None
+            items = [self._annotation(e) or "_" for e in value.elts]
+            return items[0] if len(items) == 1 else f"[{' '.join(items)}]"
+        return self._annotation(value) or "_"
+
+    # ---- global values ----------------------------------------------------
+    def _const(self, node: ast.AST, in_list: bool = False) -> str:
         if isinstance(node, ast.Constant):
             v = node.value
             if v is None:
-                self.fn.op(Op.OPnil)
-            elif isinstance(v, bool):
-                self._emit_intb_or_int(1 if v else 0)
-            elif isinstance(v, int):
-                self._emit_intb_or_int(v)
-            elif isinstance(v, str):
-                idx = self.enc.add_global(v)
-                self._emit_get_global(idx)
+                return "nil"
+            if isinstance(v, bool):
+                return "1" if v else "0"
+            if isinstance(v, int):
+                return str(v) if v >= 0 or not in_list else f"({v})"
+            if isinstance(v, str):
+                return _mtl_string(v)
+            raise _err(node, f"unsupported constant {v!r}")
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            inner = self._const(node.operand, False)
+            return f"(-{inner})" if in_list else f"-{inner}"
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return "[" + " ".join(self._const(e, True) for e in node.elts) + "]"
+        raise _err(node, f"unsupported constant expression {type(node).__name__}")
+
+    # ---- functions --------------------------------------------------------
+    def _fundef(self, node: ast.FunctionDef) -> str:
+        a = node.args
+        if (a.vararg or a.kwarg or a.kwonlyargs or a.defaults or a.posonlyargs
+                or node.decorator_list):
+            raise _err(node, "functions take plain positional arguments only")
+        args = [self._name(node, x.arg) for x in a.args]
+        self.locals = list(args)
+        body, _ = self._block(node.body)
+        self.locals = []
+        head = " ".join([node.name] + args)
+        return f"fun {head} = {body};;"
+
+    def _block(self, stmts: list[ast.stmt]) -> tuple[str, int]:
+        """A statement list as an MTL program: `a; b; c`. An assignment to a
+        new name turns the rest of the list into a `let … in` body."""
+        parts: list[str] = []
+        prec = ATOM
+        for i, st in enumerate(stmts):
+            if isinstance(st, ast.Global):
+                continue
+            if isinstance(st, ast.Return):
+                text, prec = (("nil", ATOM) if st.value is None else self._expr(st.value))
+                parts.append(text)
+                break
+            if isinstance(st, ast.Assign):
+                if len(st.targets) != 1:
+                    raise _err(st, "only single-target assignment is supported")
+                bound = self._let_target(st.targets[0])
+                if bound is not None:
+                    text = self._let(st, st.targets[0], st.value, stmts[i + 1:], bound)
+                    parts.append(text)
+                    prec = EXPR
+                    break
+                text, prec = self._set(st, st.targets[0], st.value), EXPR
+            elif isinstance(st, ast.AugAssign):
+                op = ast.BinOp(left=self._as_load(st.target), op=st.op, right=st.value)
+                ast.copy_location(op, st)
+                if self._let_target(st.target) is not None:
+                    raise _err(st, "augmented assignment to an unbound name")
+                text, prec = self._set(st, st.target, op), EXPR
             else:
-                raise SyntaxError(f"unsupported constant {v!r}")
-            return
+                text, prec = self._stmt(st)
+            parts.append(text)
+        if not parts:
+            return "nil", ATOM
+        if len(parts) == 1:
+            return parts[0], prec
+        return "; ".join(parts), SEQ
+
+    @staticmethod
+    def _as_load(target: ast.AST) -> ast.AST:
+        node = ast.parse(ast.unparse(target), mode="eval").body
+        return ast.copy_location(node, target)
+
+    def _let_target(self, target: ast.AST) -> list[str] | None:
+        """Names a `let` would bind for this target, or None if the target
+        is an existing local/global or a field (a `set`)."""
+        if isinstance(target, ast.Name):
+            if target.id in self.locals or target.id in self.globals:
+                return None
+            return [target.id]
+        if isinstance(target, (ast.List, ast.Tuple)):
+            names: list[str] = []
+            for el in target.elts:
+                if isinstance(el, ast.Name):
+                    if el.id != "_":
+                        names.append(el.id)
+                elif isinstance(el, (ast.List, ast.Tuple)):
+                    names.extend(self._let_target(el) or [])
+                else:
+                    raise _err(target, "destructuring elements must be names or `_`")
+            return names
+        return None
+
+    def _pattern(self, target: ast.AST) -> str:
+        if isinstance(target, ast.Name):
+            return self._name(target, target.id)
+        return "[" + " ".join(self._pattern(e) for e in target.elts) + "]"
+
+    def _let(self, st: ast.stmt, target: ast.AST, value: ast.AST,
+             rest: list[ast.stmt], bound: list[str]) -> str:
+        val = self._wrap(value, EXPR)
+        pat = self._pattern(target)
+        self.locals.extend(bound)
+        body = self._paren(self._block(rest), EXPR)
+        del self.locals[len(self.locals) - len(bound):]
+        return f"let {val} -> {pat} in {body}"
+
+    def _set(self, st: ast.stmt, target: ast.AST, value: ast.AST) -> str:
+        if isinstance(target, ast.Name):
+            lhs = target.id
+        elif isinstance(target, ast.Attribute):
+            lhs = self._field_path(target)
+        else:
+            raise _err(st, "only `NAME = EXPR`, `obj.field = EXPR` or "
+                           "`[a, b] = EXPR` assignment is supported")
+        return f"set {lhs} = {self._wrap(value, EXPR)}"
+
+    def _field_path(self, node: ast.Attribute) -> str:
+        path: list[str] = []
+        cur: ast.AST = node
+        while isinstance(cur, ast.Attribute):
+            path.append(cur.attr)
+            cur = cur.value
+        if not isinstance(cur, ast.Name):
+            raise _err(node, "MTL reads and writes a field only through a variable")
+        return ".".join([cur.id] + list(reversed(path)))
+
+    # ---- statements -------------------------------------------------------
+    def _stmt(self, node: ast.stmt) -> tuple[str, int]:
+        if isinstance(node, ast.Expr):
+            return self._expr(node.value)
+        if isinstance(node, ast.If):
+            cond = self._wrap(node.test, EXPR)
+            then = self._paren(self._block(node.body), EXPR)
+            # Always an `else`: `else nil` is what a missing one compiles
+            # to (OPnil, an undefined type), and it rules out a dangling else.
+            other = self._paren(self._block(node.orelse), EXPR)
+            return f"if {cond} then {then} else {other}", EXPR
+        if isinstance(node, ast.While):
+            if node.orelse:
+                raise _err(node, "`while … else` is not supported")
+            cond = self._wrap(node.test, EXPR)
+            body = self._paren(self._block(node.body), EXPR)
+            return f"while {cond} do {body}", EXPR
+        if isinstance(node, ast.For):
+            return self._for(node), EXPR
+        if isinstance(node, ast.Match):
+            return self._match(node), EXPR
+        raise _err(node, f"unsupported statement {type(node).__name__}")
+
+    def _for(self, node: ast.For) -> str:
+        it = node.iter
+        if not (isinstance(node.target, ast.Name) and isinstance(it, ast.Call)
+                and isinstance(it.func, ast.Name) and it.func.id == "range"
+                and not it.keywords and 1 <= len(it.args) <= 2) or node.orelse:
+            raise _err(node, "only `for VAR in range(STOP)` or `range(START, STOP)` "
+                             "is supported")
+        start = "0" if len(it.args) == 1 else self._wrap(it.args[0], EXPR)
+        var = self._name(node, node.target.id)
+        self.locals.append(var)
+        stop = self._wrap(it.args[-1], ADD)
+        body = self._paren(self._block(node.body), EXPR)
+        self.locals.pop()
+        return f"for {var}={start}; {var}<{stop} do {body}"
+
+    def _match(self, node: ast.Match) -> str:
+        subject = self._wrap(node.subject, EXPR)
+        cases: list[str] = []
+        for case in node.cases:
+            if case.guard is not None:
+                raise _err(case.pattern, "match guards are not supported")
+            pat = case.pattern
+            if isinstance(pat, ast.MatchAs) and pat.pattern is None and pat.name is None:
+                body, _ = self._block(case.body)
+                cases.append(f"(_ -> {body})")
+                break                       # mtl: the wildcard ends the match
+            bound: list[str] = []
+            if isinstance(pat, ast.MatchAs) and pat.pattern is None:
+                if self.constructors.get(pat.name):
+                    raise _err(pat, f"constructor {pat.name!r} has a payload: "
+                                    f"write `case {pat.name}(x)` or `case {pat.name}(_)`")
+                head = self._name(pat, pat.name)
+            elif isinstance(pat, ast.MatchClass) and isinstance(pat.cls, ast.Name):
+                if pat.kwd_patterns:
+                    raise _err(pat, "keyword patterns are not supported")
+                cname = self._name(pat, pat.cls.id)
+                subs = [self._match_local(p, bound) for p in pat.patterns]
+                if len(subs) > 1:
+                    head = f"{cname} [{' '.join(subs)}]"
+                elif subs:
+                    head = f"{cname} {subs[0]}"
+                elif self.constructors.get(cname):
+                    head = f"{cname} _"
+                else:
+                    head = cname
+            else:
+                raise _err(pat, "a case must be a constructor, `Cons(x)` or `_`")
+            self.locals.extend(bound)
+            body, _ = self._block(case.body)
+            del self.locals[len(self.locals) - len(bound):]
+            cases.append(f"({head} -> {body})")
+        return f"match {subject} with " + " | ".join(cases)
+
+    def _match_local(self, pat: ast.pattern, bound: list[str]) -> str:
+        if isinstance(pat, ast.MatchAs) and pat.pattern is None:
+            if pat.name is None:
+                return "_"
+            bound.append(self._name(pat, pat.name))
+            return pat.name
+        if isinstance(pat, ast.MatchSequence):
+            return "[" + " ".join(self._match_local(p, bound) for p in pat.patterns) + "]"
+        raise _err(pat, "a constructor's payload pattern must be a name, `_` or `[a, b]`")
+
+    # ---- expressions ------------------------------------------------------
+    @staticmethod
+    def _paren(r: tuple[str, int], need: int) -> str:
+        text, prec = r
+        return text if prec >= need else f"({text})"
+
+    def _wrap(self, node: ast.AST, need: int) -> str:
+        return self._paren(self._expr(node), need)
+
+    def _expr(self, node: ast.AST) -> tuple[str, int]:
+        if isinstance(node, ast.Constant):
+            v = node.value
+            if v is None:
+                return "nil", ATOM
+            if isinstance(v, bool):
+                return ("1" if v else "0"), ATOM
+            if isinstance(v, int):
+                return (str(v), ATOM) if v >= 0 else (str(v), UNARY)
+            if isinstance(v, str):
+                return _mtl_string(v), ATOM
+            raise _err(node, f"unsupported constant {v!r}")
         if isinstance(node, ast.Name):
-            self._compile_name(node.id)
-            return
+            return self._ref(node), ATOM
         if isinstance(node, ast.BinOp):
             op = _BINOPS.get(type(node.op))
             if op is None:
-                raise SyntaxError(
-                    f"unsupported binop {type(node.op).__name__}"
-                )
-            self._compile_expr(node.left)
-            self._compile_expr(node.right)
-            self.fn.op(op)
-            return
+                raise _err(node, f"unsupported operator {type(node.op).__name__}")
+            sym, prec = op
+            return f"{self._wrap(node.left, prec)} {sym} {self._wrap(node.right, prec + 1)}", prec
         if isinstance(node, ast.UnaryOp):
             if isinstance(node.op, ast.USub):
-                # `-X` — keep parity with Metal's specialcase for `-INT`
-                if isinstance(node.operand, ast.Constant) and isinstance(node.operand.value, int):
-                    self.fn.int_(-node.operand.value)
-                    return
-                self._compile_expr(node.operand)
-                self.fn.op(Op.OPneg)
-                return
+                if (isinstance(node.operand, ast.Constant)
+                        and type(node.operand.value) is int and node.operand.value >= 0):
+                    return f"-{node.operand.value}", UNARY
+                inner = self._wrap(node.operand, UNARY)
+                return (f"-({inner})" if inner.startswith("-") else f"-{inner}"), UNARY
             if isinstance(node.op, ast.Invert):
-                self._compile_expr(node.operand)
-                self.fn.op(Op.OPnot)
-                return
+                return f"~{self._wrap(node.operand, UNARY)}", UNARY
             if isinstance(node.op, ast.Not):
-                self._compile_expr(node.operand)
-                self.fn.op(Op.OPnon)
-                return
-            raise SyntaxError(f"unsupported unaryop {type(node.op).__name__}")
+                return f"!{self._wrap(node.operand, NOT)}", NOT
+            raise _err(node, f"unsupported unary operator {type(node.op).__name__}")
         if isinstance(node, ast.Compare):
-            if len(node.ops) != 1 or len(node.comparators) != 1:
-                raise SyntaxError("chained comparisons not yet supported")
-            op = _CMPOPS.get(type(node.ops[0]))
-            if op is None:
-                raise SyntaxError(
-                    f"unsupported compare {type(node.ops[0]).__name__}"
-                )
-            self._compile_expr(node.left)
-            self._compile_expr(node.comparators[0])
-            self.fn.op(op)
-            return
+            if len(node.ops) != 1:
+                raise _err(node, "chained comparisons are not supported")
+            sym = _CMPOPS.get(type(node.ops[0]))
+            if sym is None:
+                raise _err(node, f"unsupported comparison {type(node.ops[0]).__name__}")
+            return (f"{self._wrap(node.left, CMP)} {sym} "
+                    f"{self._wrap(node.comparators[0], CMP + 1)}"), CMP
         if isinstance(node, ast.BoolOp):
-            # short-circuit `and` / `or`
-            jmp_op = Op.OPnon if isinstance(node.op, ast.Or) else None
-            skip_label = self.new_label("bool")
-            # First operand.
-            self._compile_expr(node.values[0])
-            for v in node.values[1:]:
-                self.fn.op(Op.OPdup)
-                if isinstance(node.op, ast.Or):
-                    self.fn.op(Op.OPnon)
-                self.fn.else_(skip_label)
-                self.fn.drop()
-                self._compile_expr(v)
-            self.fn.label(skip_label)
-            return
+            sym = " && " if isinstance(node.op, ast.And) else " || "
+            return sym.join(self._wrap(v, NOT) for v in node.values), LOGIC
         if isinstance(node, ast.IfExp):
-            # X if COND else Y  (ternary)
-            self._compile_expr(node.test)
-            else_label = self.new_label("ifx_else")
-            end_label = self.new_label("ifx_end")
-            self.fn.else_(else_label)
-            self._compile_expr(node.body)
-            self.fn.goto(end_label)
-            self.fn.label(else_label)
-            self._compile_expr(node.orelse)
-            self.fn.label(end_label)
-            return
+            return (f"if {self._wrap(node.test, EXPR)} then {self._wrap(node.body, EXPR)} "
+                    f"else {self._wrap(node.orelse, EXPR)}"), EXPR
         if isinstance(node, ast.Call):
-            return self._compile_call(node)
+            return self._call(node)
         if isinstance(node, ast.Attribute):
-            # `obj.field` — emit obj, then OPfetchb fieldidx.
-            self._compile_expr(node.value)
-            if node.attr in self.struct_fields:
-                idx, _ = self.struct_fields[node.attr]
-                if 0 <= idx <= 255:
-                    self.fn.opb(Op.OPfetchb, idx)
-                else:
-                    self.fn.int_(idx)
-                    self.fn.op(Op.OPfetch)
-            else:
-                raise SyntaxError(
-                    f"line {node.lineno}: unknown field {node.attr!r}"
-                )
-            return
+            return self._field_path(node), ATOM
         if isinstance(node, (ast.List, ast.Tuple)):
-            # tuple/array literal — same opcode shape as Metal.
-            for e in node.elts:
-                self._compile_expr(e)
-            n = len(node.elts)
-            if 0 <= n <= 255:
-                self.fn.opb(Op.OPdeftabb, n)
-            else:
-                self.fn.int_(n)
-                self.fn.op(Op.OPdeftab)
-            return
-        raise SyntaxError(
-            f"line {getattr(node, 'lineno', '?')}: unsupported expression "
-            f"{ast.dump(node)[:60]}"
-        )
+            return f"[{self._items(node.elts)}]", ATOM
+        raise _err(node, f"unsupported expression {type(node).__name__}")
 
-    def _compile_name(self, name: str) -> None:
-        if self.scope and (loc := self.scope.lookup(name)) is not None:
-            self.fn.opb(Op.OPgetlocalb, loc)
-            return
-        if name in self.globals_by_name:
-            self._emit_get_global(self.globals_by_name[name])
-            return
+    def _items(self, elts: list[ast.AST]) -> str:
+        items = [self._wrap(e, ATOM) for e in elts]
+        # `[x …` with x a field name is a struct creation to the parser.
+        if items and items[0] in self.fields:
+            items[0] = f"({items[0]})"
+        return " ".join(items)
+
+    def _ref(self, node: ast.Name) -> str:
+        name = self._name(node, node.id)
+        if name in self.locals or name in self.globals:
+            return name
         if name in self.constructors:
-            tag, has_payload = self.constructors[name]
-            if has_payload:
-                raise SyntaxError(
-                    f"constructor {name!r} needs a payload — use `{name}(value)`"
-                )
-            self._emit_intb_or_int(tag)
-            self.fn.opb(Op.OPdeftabb, 1)
-            return
-        if name in self.funs_by_name:
-            # A user-function NAME used as a value (i.e. `loopcb(handler)`,
-            # not `handler()`) is a function pointer — just push its
-            # funtable index. Matches MTL `#fname`.
-            fun_idx, _ = self.funs_by_name[name]
-            self._emit_intb_or_int(fun_idx)
-            return
-        if name in BUILTINS:
-            opcode, nargs = BUILTINS[name]
-            if nargs != 0:
-                raise SyntaxError(
-                    f"builtin {name!r} takes {nargs} args but used as a value"
-                )
-            self.fn.op(opcode)
-            return
-        raise SyntaxError(f"unknown name {name!r}")
+            if self.constructors[name]:
+                raise _err(node, f"constructor {name!r} needs a payload: `{name}(value)`")
+            return name
+        if name in self.funs:
+            return f"#{name}"                   # a function used as a value
+        if name in BUILTINS and BUILTINS[name][1] != 0:
+            return f"#{name}"
+        return name
 
-    def _compile_call(self, node: ast.Call) -> None:
+    def _call(self, node: ast.Call) -> tuple[str, int]:
         if not isinstance(node.func, ast.Name):
-            raise SyntaxError(
-                f"line {node.lineno}: only NAME(...) calls supported"
-            )
-        fname = node.func.id
-        # Compile-time intrinsics — evaluate now, emit the literal.
-        if fname == "ord" and len(node.args) == 1:
-            arg = node.args[0]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and len(arg.value) >= 1:
-                self._emit_intb_or_int(ord(arg.value[0]) & 0xFF)
-                return
-        # `lst(a, b, c)` builds an MTL cons list `a :: b :: c :: nil`.
-        # Empty `lst()` is nil. Right-assoc, matches the cons codegen
-        # in mtl_comp.py.
-        if fname == "lst":
-            if not node.args:
-                self.fn.op(Op.OPnil)
-                return
-            self._compile_expr(node.args[0])
-            for v in node.args[1:]:
-                self._compile_expr(v)
-            self.fn.op(Op.OPnil)
-            for _ in node.args:
-                self.fn.opb(Op.OPdeftabb, 2)
-            return
-        # `arr(a, b, c)` builds an MTL n-array `{a b c}` — same opcode
-        # shape as a tuple, just a different conceptual type.
-        if fname == "arr":
-            for a in node.args:
-                self._compile_expr(a)
-            n = len(node.args)
-            if 0 <= n <= 255:
-                self.fn.opb(Op.OPdeftabb, n)
-            else:
-                self.fn.int_(n)
-                self.fn.op(Op.OPdeftab)
-            return
-        # `call_(fn, a, b, c)` is MTL `call FN [a b c]` (dynamic dispatch).
-        if fname == "call_":
-            if not node.args:
-                raise SyntaxError("call_() needs at least one arg (the function)")
-            self._compile_expr(node.args[0])     # function value
-            for a in node.args[1:]:
-                self._compile_expr(a)
-            n = len(node.args) - 1
-            if 0 <= n <= 255:
-                self.fn.opb(Op.OPcallrb, n)
-            else:
-                self.fn.int_(n)
-                self.fn.op(Op.OPcallr)
-            return
-        # Sum-type constructor with payload — `done(p)`.
-        if fname in self.constructors:
-            tag, has_payload = self.constructors[fname]
-            if not has_payload:
-                raise SyntaxError(
-                    f"constructor {fname!r} has no payload — use bare `{fname}`"
-                )
-            if len(node.args) != 1:
-                raise SyntaxError(
-                    f"constructor {fname!r} takes 1 payload arg, got {len(node.args)}"
-                )
-            self._emit_intb_or_int(tag)
-            self._compile_expr(node.args[0])
-            self.fn.opb(Op.OPdeftabb, 2)
-            return
-        # Struct creation — `Tcp(stateT=0, locT=...)`.
-        if (node.keywords and not node.args
-                and any(kw.arg in self.struct_fields for kw in node.keywords)):
-            first = node.keywords[0].arg
-            _, size = self.struct_fields[first]
-            if 0 <= size <= 255:
-                self.fn.opb(Op.OPmktabb, size)
-            else:
-                self.fn.int_(size)
-                self.fn.op(Op.OPmktab)
+            raise _err(node, "only NAME(...) calls are supported")
+        fname = self._name(node, node.func.id)
+        args = node.args
+        if any(isinstance(a, ast.Starred) for a in args):
+            raise _err(node, "*args is not supported")
+        if node.keywords:
+            if args:
+                raise _err(node, "a struct is built from keywords only: T(x=1, y=2)")
+            fields = []
             for kw in node.keywords:
-                if kw.arg not in self.struct_fields:
-                    raise SyntaxError(
-                        f"line {node.lineno}: unknown struct field {kw.arg!r}"
-                    )
-                idx, _ = self.struct_fields[kw.arg]
-                self._compile_expr(kw.value)
-                if 0 <= idx <= 255:
-                    self.fn.opb(Op.OPsetstructb, idx)
-                else:
-                    self.fn.int_(idx)
-                    self.fn.op(Op.OPsetstruct)
-            return
-        # User function takes priority over builtin (mtl_comp v6 fix).
-        if fname in self.funs_by_name:
-            fun_idx, nargs = self.funs_by_name[fname]
-            if len(node.args) != nargs:
-                raise SyntaxError(
-                    f"{fname} takes {nargs} args, got {len(node.args)}"
-                )
-            for a in node.args:
-                self._compile_expr(a)
-            self._emit_intb_or_int(fun_idx)
-            self.fn.op(Op.OPexec)
-            return
-        if fname in BUILTINS:
-            opcode, nargs = BUILTINS[fname]
-            if len(node.args) != nargs:
-                raise SyntaxError(
-                    f"builtin {fname} takes {nargs} args, got {len(node.args)}"
-                )
-            for a in node.args:
-                self._compile_expr(a)
-            self.fn.op(opcode)
-            return
-        raise SyntaxError(f"line {node.lineno}: unknown function {fname!r}")
+                if kw.arg is None:
+                    raise _err(node, "**kwargs is not supported")
+                fields.append(f"{kw.arg}: {self._wrap(kw.value, ATOM)}")
+            return f"[{' '.join(fields)}]", ATOM
+        if fname == "ord" and len(args) == 1 and isinstance(args[0], ast.Constant) \
+                and isinstance(args[0].value, str) and len(args[0].value) == 1:
+            ch = args[0].value
+            if ch.isascii() and ch.isalnum():
+                return f"'{ch}'", ATOM
+            return str(ord(ch) & 0xFF), ATOM
+        if fname == "lst":
+            if not args:
+                return "nil", ATOM
+            return " :: ".join([self._wrap(a, LOGIC) for a in args] + ["nil"]), EXPR
+        if fname == "arr":
+            return f"{{{self._items(args)}}}", ATOM
+        if fname == "call_":
+            if not args:
+                raise _err(node, "call_() needs the function as its first argument")
+            return f"call {self._wrap(args[0], ATOM)} [{self._items(args[1:])}]", EXPR
+        if fname in self.locals:
+            raise _err(node, f"{fname!r} is a variable: call a function value "
+                             f"with call_({fname}, …)")
+        if fname in self.constructors:
+            if not self.constructors[fname]:
+                if args:
+                    raise _err(node, f"constructor {fname!r} has no payload")
+                return fname, ATOM
+            if len(args) != 1:
+                raise _err(node, f"constructor {fname!r} takes one payload argument")
+            return f"{fname} {self._wrap(args[0], ATOM)}", EXPR
+        if not args:
+            # A call with no argument is the bare name. Unless the name is
+            # known to take none, parenthesise it, so a function that wants
+            # arguments fails at `)` instead of taking its neighbours.
+            arity = (self.funs[fname] if fname in self.funs
+                     else BUILTINS.get(fname, (None, None))[1])
+            if arity == 0:
+                return fname, ATOM
+            return f"({fname})", ATOM
+        return " ".join([fname] + [self._wrap(a, ATOM) for a in args]), EXPR
+
+    @staticmethod
+    def _name(node: ast.AST, name: str) -> str:
+        if name in _MTL_KEYWORDS:
+            raise _err(node, f"{name!r} is an MTL keyword and cannot be used as a name")
+        return name
+
+
+def python_to_mtl(src: str) -> str:
+    """The Metal source for a Python program (raises SyntaxError)."""
+    return MtlEmitter().emit_module(src)
 
 
 def main() -> int:
@@ -914,17 +638,47 @@ def main() -> int:
         help="emit the bytecode body alone, without the 17-byte "
              "amber/Mind envelope mtl_compiler normally writes around it",
     )
+    ap.add_argument(
+        "--emit-mtl", action="store_true",
+        help="print the generated .mtl source and stop (nothing compiled, "
+             "nothing written)",
+    )
+    ap.add_argument(
+        "--types", action="store_true",
+        help="print the `Compiler : name : type` line of every declaration, "
+             "as mtl_comp.py --types does",
+    )
+    ap.add_argument(
+        "--check", action="store_true",
+        help="type-check only: write nothing",
+    )
     args = ap.parse_args()
     src_path = Path(args.input)
     out_path = Path(args.output) if args.output else src_path.with_suffix(".bin")
-    c = PyCompiler()
     try:
-        blob = c.compile_source(src_path.read_bytes().decode("utf-8"))
+        mtl = python_to_mtl(src_path.read_bytes().decode("utf-8"))
     except SyntaxError as e:
         print(f"compile error: {e}", file=sys.stderr)
         return 1
-    # Same envelope mtl_compiler and mtl_comp write — this module claims to
-    # produce the blob the C++ would emit, so it has to include it.
+    if args.emit_mtl:
+        sys.stdout.write(mtl)
+        return 0
+    c = Compiler()
+    try:
+        blob = c.compile_source(mtl)
+    except MtlError as e:
+        if args.types:
+            for line in c.type_lines:
+                print(line)
+        for line in e.lines:
+            print(line, file=sys.stderr)
+        print("compile error: no output written", file=sys.stderr)
+        return 1
+    if args.types:
+        for line in c.type_lines:
+            print(line)
+    if args.check:
+        return 0
     if not args.bare:
         blob = wire_wrap(blob)
     out_path.write_bytes(blob)
