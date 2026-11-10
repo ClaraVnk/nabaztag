@@ -431,6 +431,10 @@ configuration flash sector, next to the Wi-Fi password.
 │                            #  terrier.cyberloutre.fr — lives in a separate
 │                            #  private repo; the live site is the showcase.
 │                            #  The HACS integration is ClaraVnk/terrier-ha.)
+├── mirror/                  # Violet's Mir:ror (USB RFID reader) as a second
+│   ├── mirror.py            #    tag reader for a rabbit on Le Terrier: a tag
+│   ├── Containerfile        #    on it does what it does on the rabbit's nose.
+│   └── README.md            #    Stdlib Python, Alpine image, Quadlet unit.
 ├── docs/
 │   └── HISTORY.md           # the phase-by-phase journal (the former Roadmap)
 ├── repository.yaml          # declares this as an HA add-on repository
