@@ -26,6 +26,12 @@
 # (bytecode/patch_liveness.py). The verdict adds every port 80 open after
 # the stop: a BOSH post shows up there.
 #
+# --api PATH JSON (repeatable, needs --speak-at) posts JSON to the owner API's
+# /api/rabbits/<mac>/PATH at the same time, ten seconds apart -- `jingle
+# '{"name":"..."}'` (MU) or `ears '{"left":8,"right":8}'` (CH): the verdict's
+# `res:` lines then show the jingle or choreography taken from the session
+# (bytecode/patch_rsc_in_session.py), a port 80 open that it was fetched.
+#
 # --speak-at S --speak TEXT has the warren make the rabbit say TEXT S seconds
 # into boot 2, the way an owner's script does: an owner account and an API
 # token are made for the rabbit after the confirmation, and at S the API's
@@ -45,7 +51,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=()
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,6 +70,7 @@ while [ $# -gt 0 ]; do
     --up-at) UP_AT=$2; shift 2 ;;
     --speak-at) SPEAK_AT=$2; shift 2 ;;
     --speak) SPEAK=$2; shift 2 ;;
+    --api) APIS+=("$2" "$3"); shift 3 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -139,7 +146,16 @@ import json, sys, urllib.request
 r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/speak', method='POST',
   data=json.dumps({'text': sys.argv[1]}).encode(),
   headers={'Authorization': 'Bearer $TOKEN', 'Content-Type': 'application/json'})
-print('   speak:', urllib.request.urlopen(r, timeout=60).read().decode())" "$SPEAK" ) &
+print('   speak:', urllib.request.urlopen(r, timeout=60).read().decode())" "$SPEAK"
+    for ((i = 0; i < ${#APIS[@]}; i += 2)); do
+      sleep 10; echo "   [${APIS[i]} at $(date +%T.%3N)]"
+      podman exec "$NAME" python3 -c "
+import sys, urllib.request
+r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/'+sys.argv[1], method='POST',
+  data=sys.argv[2].encode(),
+  headers={'Authorization': 'Bearer $TOKEN', 'Content-Type': 'application/json'})
+print('   '+sys.argv[1]+':', urllib.request.urlopen(r, timeout=60).read().decode())" "${APIS[i]}" "${APIS[i+1]}"
+    done ) &
 fi
 if [ -n "$DOWN_AT" ]; then
   ( sleep "$DOWN_AT"; podman stop -t 1 "$NAME" >/dev/null; echo "   [terrier stopped at +${DOWN_AT}s]";
@@ -159,9 +175,9 @@ fi
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 if [ -n "$SPEAK_AT" ]; then
   echo "   the sound, rabbit side (boot 2):"
-  grep -a "res: \|exec ST\|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -14
+  grep -a "res: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
   echo "   the sound, terrier side:"
-  grep -a "inside the session\|serving resource\|GET /res/\|sent by URL" "$OUT/terrier.log" | sed 's/^/   /' | head -8
+  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL" "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"
