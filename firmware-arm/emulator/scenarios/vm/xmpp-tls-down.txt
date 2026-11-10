@@ -1,0 +1,21 @@
+# bytecode: bootloader
+#
+# The warren goes down under a TLS session and comes back much later.
+#
+# The stock gate tries the XMPP port three times, then falls back to BOSH
+# (XMPP over HTTP, port 80), which no warren serves, and only leaves BOSH
+# when a BOSH attempt fails -- an HTTP answer is not a failure. On
+# 2026-11-10 a rabbit sat there two hours and ten minutes.
+# bytecode/patch_liveness.py removes the fallback: three tries, a wait of
+# 5 s plus up to 30 s, three more, for ever.
+#
+# Run as boot 2 of tools/xmpp-tls-proof.sh with --down-at 100 --up-at 330:
+# the Terrier container stops 100 s in (its sockets close with it) and
+# starts again at 330 s. The verdict is a TLS session registered after the
+# restart, and no port 80 open in between.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 480000
+
+at 20000  expect RUN
+at 470000 expect RUN

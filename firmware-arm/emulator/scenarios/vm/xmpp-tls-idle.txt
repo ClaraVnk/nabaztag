@@ -1,0 +1,17 @@
+# bytecode: bootloader
+#
+# A rabbit nobody uses keeps its TLS session.
+#
+# With bytecode/patch_liveness.py the runtime reopens its session after 150 s
+# with nothing read from the warren, so the warren has to speak first: the
+# Terrier sends a space to any bound rabbit it has said nothing to for 45 s
+# (xmpp.KEEPALIVE_S). Eight idle minutes as boot 2 of tools/xmpp-tls-proof.sh:
+# the verdict is one TLS open for the whole run. Against a warren without the
+# keepalive the same run shows a reopen every 150 s or so -- harmless, and the
+# control that the timer works.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 560000
+
+at 20000  expect RUN
+at 550000 expect RUN

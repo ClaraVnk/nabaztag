@@ -20,6 +20,12 @@
 # so it is boot 3 that asks for bc.jsp on the TLS port (boot-mods/boot_tls.mtl,
 # port 5223: pass --tls-port 5223 for it to land on the Terrier).
 #
+# --down-at S --up-at S stops the Terrier container S seconds into boot 2 and
+# starts it again later: long enough for the rabbit to spend its three
+# connection attempts, which is where the stock gate fell back to BOSH
+# (bytecode/patch_liveness.py). The verdict adds every port 80 open after
+# the stop: a BOSH post shows up there.
+#
 # The rabbit's connections to port 80 (the ping server locate.jsp names, so
 # rfid.jsp) go to the Terrier's HTTP port (rabbit-vm --port80).
 #
@@ -31,7 +37,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,6 +52,8 @@ while [ $# -gt 0 ]; do
     --tls-port) TLS_PORT=$2; shift 2 ;;
     --scenario) SCENARIO2=$2; shift 2 ;;
     --third) THIRD=1; shift ;;
+    --down-at) DOWN_AT=$2; shift 2 ;;
+    --up-at) UP_AT=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -106,7 +114,12 @@ try: from terrier import tenant
 except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); print('   kx_decide', s.kx_decide('$MAC', True), s.kx_get('$MAC')['state'])"
 T0=$(date +%s)
+if [ -n "$DOWN_AT" ]; then
+  ( sleep "$DOWN_AT"; podman stop -t 1 "$NAME" >/dev/null; echo "   [terrier stopped at +${DOWN_AT}s]";
+    [ -n "$UP_AT" ] && { sleep $((UP_AT - DOWN_AT)); podman start "$NAME" >/dev/null; echo "   [terrier started at +${UP_AT}s]"; } ) &
+fi
 boot 2-confirmed proof-a ${SCENARIO2:-scenarios/vm/xmpp-tls.txt}
+wait
 echo "   terrier, since the owner confirmed:"
 podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode\|rfid\|RFID" | sed 's/^/   /' | head -16
 if [ -n "$THIRD" ]; then

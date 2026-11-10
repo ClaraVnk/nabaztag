@@ -72,6 +72,8 @@ python3 "$HERE/patch_tls.py" "$BC/sources/main.mtl"
 # flipped "xmpp-rfid:0" to 1 under the HMAC; rfid.jsp as before otherwise.
 echo "==> patch_rfid_xmpp.py  (RFID report over the XMPP session when it runs TLS)"
 python3 "$HERE/patch_rfid_xmpp.py" "$BC/sources/main.mtl"
+echo "==> patch_liveness.py  (no BOSH; a write is not a read; 150 s read timeout)"
+python3 "$HERE/patch_liveness.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
