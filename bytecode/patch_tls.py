@@ -138,6 +138,11 @@ fun XmppTcpRead t val msg xSession =
 		(
 			// The socket just opened: ClientHello first, the stream later.
 			set XmppTlsSock=t;
+			// What the last session left unsent was sealed with its keys. Left
+			// queued, the ClientHello waits behind it for a TCPWRITE that never
+			// comes -- an unflushed keepalive when the warren vanished, and the
+			// rabbit never got back in (emulator, xmpp-tls-vanish.txt).
+			set xSession.sDataToSend=[nil 0 0];
 			let tlsStart (webmac netMac) -> hello in
 			if hello==nil then XmppSessionIsDisconnected xSession
 			else XmppTcpSendRaw xSession hello;

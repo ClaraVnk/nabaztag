@@ -1,0 +1,27 @@
+# bytecode: bootloader
+#
+# The warren vanishes under a TLS session, and the rabbit must notice.
+#
+# 2026-11-10, a rabbit on Naboot 1.0.0.2, XMPP over TLS 1.3 for forty
+# minutes: it stopped fetching what it was handed, stopped answering the
+# Terrier's probes, and sat for an hour and fifty minutes with a violet
+# belly and no attempt to reconnect. Its DCC telemetry read live over JTAG
+# the whole time: associated, no receive errors, unicast frames from the AP
+# every second, its own frames acknowledged. The link was fine; the session
+# was dead and the bytecode never found out.
+#
+# server-vanish.txt is the same fault on plain XMPP, where the bytecode has
+# two ways to notice -- 60 s with nothing read, ten unacknowledged keepalives
+# -- and redials. This one asks whether those still fire when the session is
+# TLS: run as boot 2 of tools/xmpp-tls-proof.sh (the owner confirmed, so the
+# runtime opens the TLS port), the server vanishes at 90 s, and the verdict
+# is a second "gw: the rabbit opened" to the TLS port before the end.
+#
+#   tools/xmpp-tls-proof.sh ... --scenario scenarios/vm/xmpp-tls-vanish.txt
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 330000
+
+at 20000  expect RUN
+at 90000  server-vanish
+at 320000 expect RUN
