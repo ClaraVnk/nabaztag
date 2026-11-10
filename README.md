@@ -273,6 +273,12 @@ is the short version.
   rabbit's nose — the bound action runs, Home Assistant hears of it — and
   turning it upside down and back are two more tags to bind. On a real
   rabbit: a Nano:ztag on the Mir:ror, the rabbit said its sentence.
+- **A rabbit that speaks in its sleep goes back to sleep.** A tag shown
+  during quiet hours, or a reminder, made a sleeping rabbit play its sound
+  and then stay half awake -- ears up, nose lit, deaf to every later sleep
+  or wake command until unplugged (Violet never spoke to a sleeping
+  rabbit). `bytecode/patch_sleep_after_program.py` puts it back to sleep;
+  the bug and the fix are both reproduced in the emulator.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
