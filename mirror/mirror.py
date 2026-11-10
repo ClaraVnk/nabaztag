@@ -113,7 +113,9 @@ class Terrier:
 def run(terrier: Terrier, path: str) -> None:
     """Read one plugged-in Mir:ror until it is unplugged."""
     log.info("reading the Mir:ror on %s", path)
-    upright = None          # its first report says how it lies; that is not a flip
+    # It says nothing about how it lies when it is opened: every orientation
+    # report is a flip. Only a repeat of the last one is dropped.
+    upright = None
     with open(path, "rb", buffering=0) as dev:
         while True:
             event = parse(dev.read(REPORT))
@@ -127,7 +129,7 @@ def run(terrier: Terrier, path: str) -> None:
                 log.info("tag %s taken off", value)
             elif kind == "flip":
                 now = value == UPRIGHT
-                if upright is not None and now != upright:
+                if now != upright:
                     log.info("turned %s", "back up" if now else "upside down")
                     terrier.seen(value)
                 upright = now
