@@ -1,0 +1,25 @@
+# bytecode: bootloader
+#
+# The warren makes a rabbit speak, and the sound comes down the TLS session.
+#
+# Run as boot 2 of tools/xmpp-tls-proof.sh, the owner having confirmed the
+# key, with --speak-at 110 --speak "<a sentence>": the session runs TLS 1.3
+# PSK (bound about 80 s in), and 110 s in the Terrier's /speak renders the
+# sentence and pushes it.
+#
+# What the two warrens do with it, read in this log and the Terrier's:
+#
+#   control (a Terrier that never flips "xmpp-res:0"): `ST http://.../res/<t>`,
+#      a port 80 open, `serving resource <t>` in the Terrier's log -- the
+#      sound in the clear for anyone on the path;
+#   fix: `res: announced`, `res: received`, `res: ST res:N from the session`
+#      in this log, `inside the session as res:N` in the Terrier's, and no
+#      port 80 open after the boot's own bc.jsp and locate.jsp.
+#
+# Either way `audio: end of clip` says how many bytes reached the player.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 170000
+
+at 20000 expect RUN
+at 165000 expect RUN

@@ -74,6 +74,12 @@ echo "==> patch_rfid_xmpp.py  (RFID report over the XMPP session when it runs TL
 python3 "$HERE/patch_rfid_xmpp.py" "$BC/sources/main.mtl"
 echo "==> patch_liveness.py  (no BOSH; a write is not a read; 150 s read timeout)"
 python3 "$HERE/patch_liveness.py" "$BC/sources/main.mtl"
+# What the warren has the rabbit say rides inside that TLS session too (an
+# announce record, then the raw bytes, then `ST res:N`) when the warren
+# flipped "xmpp-res:0" to 1 under the HMAC; ST http://.../res/ as before
+# otherwise.
+echo "==> patch_res_in_session.py  (sounds inside the XMPP session when it runs TLS)"
+python3 "$HERE/patch_res_in_session.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
@@ -81,11 +87,12 @@ echo "==> preprocessing + compiling (with $CC)"
 
 # The literal the warren flips for a confirmed rabbit must be there exactly
 # once, or the Terrier leaves the policy alone and TLS stays optional; the
-# RFID one once too, or the tag never leaves rfid.jsp.
+# RFID one once too, or the tag never leaves rfid.jsp; the resource one once,
+# or every sound is still fetched over plain HTTP.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
-for lit in (b"xmpp-tls:0", b"xmpp-rfid:0"):
+for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")

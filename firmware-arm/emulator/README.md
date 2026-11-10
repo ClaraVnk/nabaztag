@@ -401,6 +401,11 @@ with `bytecode/patch_rfid_xmpp.py`, served by a Terrier that flips its
 `locate.jsp` names has no port, so `rfid.jsp` goes to port 80; rabbit-vm's
 `--port80 <N>`, which the script passes, sends those connections to the
 Terrier's HTTP port.
+`--scenario scenarios/vm/xmpp-res.txt --speak-at 110 --speak <text>` has the
+Terrier's `/speak` API make the rabbit talk 110 s into boot 2: with
+`bytecode/patch_res_in_session.py` and a Terrier that flips `xmpp-res:0`, the
+sound comes down the TLS session (`res:` lines, no port 80 open); with a
+Terrier that does not, it is fetched from `/res/` over plain HTTP as before.
 
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
