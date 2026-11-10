@@ -82,7 +82,7 @@ boot() {  # boot <label> <eeprom-name> [scenario]
   SC=${3:-scenarios/vm/xmpp-tls.txt}
   podman run --rm --network host -v "$HERE:/r:z" -v "$OUT/host:/host:z" -v "$OUT:/out:z" --entrypoint sh "$EMU" -c "
     cd /build/emulator
-    cp /r/scenarios/vm/xmpp-tls.txt /r/scenarios/vm/xmpp-rfid.txt scenarios/vm/
+    cp /r/scenarios/vm/*.txt scenarios/vm/
     test -f /out/rabbit-vm.boot || { python3 tools/bootbc.py /host/Nab.elf -o obj/boot.bc > /out/bootbc.log 2>&1 && make -s NABGCC=/build/nabgcc BYTECODE=obj/boot.bc vm >/out/make-boot.log 2>&1 && cp rabbit-vm /out/rabbit-vm.boot; }
     if ! test -f /host/$2.eeprom; then
       python3 mkconf.py --ssid Terrier --security open --server 127.0.0.1:$RABBIT_HTTP/vl --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o /host/$2.eeprom >/dev/null
