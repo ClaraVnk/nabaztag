@@ -247,21 +247,26 @@ is the short version.
 
 **Done — Naboot 1.0.0.3 (2026-11-10; proven in the emulator and on a real rabbit)**
 
-- **What the rabbit says travels encrypted.** Sounds the warren hands a TLS
-  rabbit -- AI answers included -- now come down its XMPP-over-TLS session
-  (`bytecode/patch_res_in_session.py`) instead of plain HTTP, with no firmware
-  change. On a real rabbit: a 122 KB answer, played whole, no `/res/` request
-  in the clear. Its jingles and choreographies follow the same path
-  (`bytecode/patch_rsc_in_session.py`), and it asks `locate.jsp` on the TLS
-  port too (`bytecode/patch_locate_tls.py`), falling back to plain HTTP once
-  when that port does not answer; proven in the emulator. "Talk to it"
-  streams the microphone inside the session too
-  (`bytecode/patch_mic_in_session.py`) instead of UDP; proven in the emulator,
-  whose microphone now records a known pattern
-  (`firmware-arm/emulator/stubs/audio.c`). Firmware updates come down the
-  session as well (`bytecode/patch_ota_in_session.py`): in the emulator the
-  1.0.0.3 image arrived in 4.4 s, passed the signature gate and reached
-  `flashFirmware`, with no `/ota/` request.
+- **Everything the rabbit exchanges travels encrypted.** What a TLS rabbit
+  used to fetch or send in the clear now rides its XMPP-over-TLS session,
+  with no firmware change, each proven in the emulator and then on a real
+  rabbit:
+  - what it says, AI answers included (`bytecode/patch_res_in_session.py`):
+    a 122 KB answer, played whole, no `/res/` request in the clear;
+  - its jingles and choreographies (`bytecode/patch_rsc_in_session.py`);
+  - `locate.jsp`, asked on the TLS port like `bc.jsp`
+    (`bytecode/patch_locate_tls.py`), falling back to plain HTTP once when
+    that port does not answer;
+  - the microphone behind "talk to it" (`bytecode/patch_mic_in_session.py`),
+    instead of UDP: 23 552 bytes captured from the session. The emulator's
+    microphone now records a known pattern
+    (`firmware-arm/emulator/stubs/audio.c`) to prove it;
+  - firmware updates (`bytecode/patch_ota_in_session.py`): the signed
+    1.0.0.3 image came down the session, passed the signature gate and was
+    written (`verify_ok=1 flash=1 flash_errors=0` in the next boot's
+    report), with no `/ota/` request.
+
+  Only radio and podcasts still stream in the clear (see Later).
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
