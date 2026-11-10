@@ -37,6 +37,13 @@
 # the Terrier captured -- inside the session (bytecode/patch_mic_in_session.py)
 # or over UDP.
 #
+# --ota FILE (needs --speak-at) stages FILE, a signed .sim, as the warren's
+# naboot-latest and, ten seconds after the other calls, presses the update
+# button on the rabbit's page as its owner would (log in, the form, its
+# CSRF token). The verdict shows the image coming down the session
+# (bytecode/patch_ota_in_session.py: `ota:` lines, the verifySig gate,
+# flashFirmware) or an /ota/ fetch over HTTP.
+#
 # --speak-at S --speak TEXT has the warren make the rabbit say TEXT S seconds
 # into boot 2, the way an owner's script does: an owner account and an API
 # token are made for the rabbit after the confirmation, and at S the API's
@@ -56,7 +63,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=()
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=() ; OTA=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,6 +83,7 @@ while [ $# -gt 0 ]; do
     --speak-at) SPEAK_AT=$2; shift 2 ;;
     --speak) SPEAK=$2; shift 2 ;;
     --api) APIS+=("$2" "$3"); shift 3 ;;
+    --ota) OTA=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -142,8 +150,14 @@ except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); o=s.create_owner('proof@warren.test','!',True)
 assert s.redeem_pair_code(s.mint_pair_code('$MAC'),o)=='$MAC'; print(s.create_api_token(o,'proof'))
 r=s.get_rabbit('$MAC'); c=dict(r['config'] or {}); c.update(stt_provider='openai', stt_key='proof-not-a-key')
-s.save_rabbit_config('$MAC', c)")
+s.save_rabbit_config('$MAC', c)
+from werkzeug.security import generate_password_hash; s.set_password(o, generate_password_hash('proof-password'))")
   echo "   owner and API token made for $MAC"
+fi
+if [ -n "$OTA" ]; then
+  podman exec "$NAME" mkdir -p /data/ota
+  podman cp "$OTA" "$NAME":/data/ota/naboot-latest.signed.sim
+  echo "   staged $(basename "$OTA") as naboot-latest"
 fi
 T0=$(date +%s)
 if [ -n "$SPEAK_AT" ]; then
@@ -162,7 +176,19 @@ r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/'+sys.argv[1], m
   data=sys.argv[2].encode(),
   headers={'Authorization': 'Bearer $TOKEN', 'Content-Type': 'application/json'})
 print('   '+sys.argv[1]+':', urllib.request.urlopen(r, timeout=60).read().decode())" "${APIS[i]}" "${APIS[i+1]}"
-    done ) &
+    done
+    if [ -n "$OTA" ]; then
+      sleep 10; echo "   [ota at $(date +%T.%3N)]"
+      podman exec "$NAME" python3 -c "
+import http.cookiejar, re, urllib.parse, urllib.request
+base='http://127.0.0.1:$UI'
+op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+tok=lambda p: re.search(r'name=_csrf value=\"([^\"]+)', op.open(base+p).read().decode()).group(1)
+post=lambda p, d: op.open(base+p, urllib.parse.urlencode(d).encode())
+post('/login', {'_csrf': tok('/login'), 'email': 'proof@warren.test', 'password': 'proof-password'})
+r=post('/rabbit/$MAC/ota', {'_csrf': tok('/rabbit/$MAC')})
+print('   ota:', r.status, r.geturl())"
+    fi ) &
 fi
 if [ -n "$DOWN_AT" ]; then
   ( sleep "$DOWN_AT"; podman stop -t 1 "$NAME" >/dev/null; echo "   [terrier stopped at +${DOWN_AT}s]";
@@ -182,9 +208,9 @@ fi
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 if [ -n "$SPEAK_AT" ]; then
   echo "   the sound, rabbit side (boot 2):"
-  grep -a "res: \|mic: \|microphone: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
+  grep -a "res: \|mic: \|ota: \|verifySig gate\|flashFirmware\|microphone: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
   echo "   the sound, terrier side:"
-  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
+  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: \|firmware image\|OTA: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"

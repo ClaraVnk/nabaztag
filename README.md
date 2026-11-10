@@ -258,7 +258,10 @@ is the short version.
   streams the microphone inside the session too
   (`bytecode/patch_mic_in_session.py`) instead of UDP; proven in the emulator,
   whose microphone now records a known pattern
-  (`firmware-arm/emulator/stubs/audio.c`).
+  (`firmware-arm/emulator/stubs/audio.c`). Firmware updates come down the
+  session as well (`bytecode/patch_ota_in_session.py`): in the emulator the
+  1.0.0.3 image arrived in 4.4 s, passed the signature gate and reached
+  `flashFirmware`, with no `/ota/` request.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
@@ -311,8 +314,6 @@ is the short version.
 - **Reclaim flash** — 3 412 bytes are spare in 1.0.0.3. `small_strings`
   (merged, not yet in an image) gives 840 back; the measured savings are in
   the history (Phase 8).
-- **Over-the-air updates inside the session** — an OTA image is still
-  downloaded over HTTP (it is signed, so only its privacy is at stake).
 - **Radio and podcasts inside the session** — they need playback while the
   stream arrives, with the warren pacing it.
 
