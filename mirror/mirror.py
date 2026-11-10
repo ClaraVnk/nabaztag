@@ -22,7 +22,7 @@ nothing.
 
 Configuration, from the environment:
 
-    TERRIER_TOKEN     an API token (the warren's Integration page); or
+    TERRIER_TOKEN     an API token (the warren's Home Assistant page); or
     TERRIER_TOKEN_FILE   a file holding it
     RABBIT_MAC        the rabbit the tags are for, 12 hex digits
     TERRIER_URL       default https://terrier.cyberloutre.fr

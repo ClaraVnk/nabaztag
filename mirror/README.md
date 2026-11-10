@@ -24,7 +24,7 @@ mean is in [`mirror.py`](mirror.py), read on a real one.
    Your user must be in `plugdev` (`groups`; else
    `sudo usermod -aG plugdev $USER` and log in again).
 
-2. An API token from the warren's **Integration** page, and the rabbit the
+2. An API token from the warren's **Home Assistant** page, and the rabbit the
    tags are for, in `~/.config/violet-mirror.env` (keep it to yourself:
    `chmod 600`):
 
