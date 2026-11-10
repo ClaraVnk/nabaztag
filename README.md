@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.2-8957e5?style=flat-square" alt="Naboot 1.0.0.2 custom firmware">
+  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.3-8957e5?style=flat-square" alt="Naboot 1.0.0.3 custom firmware">
   <a href="https://terrier.cyberloutre.fr/"><img src="https://img.shields.io/badge/warren-Le%20Terrier-8957e5?style=flat-square" alt="Le Terrier, the hosted warren"></a>
   <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
@@ -53,8 +53,8 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
-- 🔧 **Custom firmware — Naboot 1.0.0.2** (2026-11-09, every item
-  proven on a real rabbit): **WPA3-SAE** (and H2E, in beta), a per-rabbit
+- 🔧 **Custom firmware — Naboot 1.0.0.3** (2026-11-10, every item
+  proven on a real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
   **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed
   bytecode**, **TLS 1.3** for XMPP and for the boot itself, **binary OTA**
   pushed from the warren's page with the rabbit restarting by itself, the
@@ -92,7 +92,7 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   your automations.
 
 > ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** The
-> custom **Naboot** firmware (1.0.0.2) adds WPA3, a per-rabbit adoption key,
+> custom **Naboot** firmware (1.0.0.3) adds WPA3, a per-rabbit adoption key,
 > signed bytecode, TLS and over-the-air updates; **Le Terrier** is the public
 > warren. A stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on
 > every boot (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit
@@ -114,13 +114,13 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot 1.0.0.2** — the illustrated 5-minute flashing guide is
+1. **Download Naboot 1.0.0.3** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
-   is mode `naboot-1.0.0.2` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   123 420 of 126 976 bytes of flash. The signed file is also in
+   is mode `naboot-1.0.0.3` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   123 564 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.0.0.2.signed.sim`, with its sha256 and which way in from each
-   starting firmware), next to the previous 1.0.0.0, the 0.0.0.13 `lean`
+   (`naboot-1.0.0.3.signed.sim`, with its sha256 and which way in from each
+   starting firmware), next to the previous 1.0.0.2, 1.0.0.0, the 0.0.0.13 `lean`
    build and the `minimal` rescue build.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
@@ -245,6 +245,14 @@ is the short version.
   the whole-rabbit emulator, and a Metal toolchain in Python whose
   `mtl_comp.py --check` type-checks the real runtime bytecode.
 
+**Done — Naboot 1.0.0.3 (2026-11-10; proven in the emulator and on a real rabbit)**
+
+- **WPA3 in constant time.** The SAE password element costs the same
+  number of instructions whatever the password: 161 060 360 whether the
+  first point is at round 1 or round 12, measured under qemu-arm
+  (`firmware-arm/tools/cost/ct.sh`). Installed over the air on a real
+  rabbit, which came back over TLS.
+
 **Done — Naboot 1.0.0.2 (2026-11-09; proven in the emulator and on a real rabbit)**
 
 - **SAE hash-to-element** (H2E) whenever the access point offers it — **beta**:
@@ -364,12 +372,12 @@ configuration flash sector, next to the Wi-Fi password.
 
 ```
 .
-├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.2. Forks
+├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.3. Forks
 │   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
 │   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
 │   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
 │   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
-│   │                        #    {docker,podman} --mode naboot-1.0.0.2 (or
+│   │                        #    {docker,podman} --mode naboot-1.0.0.3 (or
 │   │                        #    minimal, lean, …).
 │   ├── releases/            #    the signed .sim images + their sha256 (README.md)
 │   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
