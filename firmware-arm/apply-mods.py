@@ -7020,6 +7020,47 @@ static void put_dec_uart(int32_t v)
 '''
 
 
+def patch_small_strings(root: Path) -> None:
+    """strcmp, strcpy and strlen as plain loops, not newlib's.
+
+    newlib's ARM string functions are written for speed: word-at-a-time,
+    unrolled, alignment cases -- strcmp alone is 548 bytes, strcpy 240,
+    strlen 96, measured in naboot-1.0.0.3's Nab.elf. Nothing on a hot path
+    calls them here: they compare configuration keys, copy SSIDs and measure
+    URLs, a few dozen bytes at a time. A byte loop does the same in about
+    twenty bytes each. A definition in an object file wins over the one in
+    libc.a, so no call site changes.
+
+    memcpy, memset and memmove keep newlib's: they move USB buffers, TLS
+    records and the bytecode, where speed is the point.
+
+    The loops carry no-tree-loop-distribute-patterns: GCC otherwise
+    recognises "walk to the NUL" as strlen and emits a call to strlen --
+    from inside strlen."""
+    src = root / "src/utils/smallstr.c"
+    if src.exists():
+        print(f"[skip] small_strings: {src} already present")
+        return
+    src.write_text(
+        "/* See patch_small_strings in apply-mods.py. */\n"
+        "#include <stddef.h>\n\n"
+        "#define PLAIN __attribute__((optimize(\"no-tree-loop-distribute-patterns\")))\n\n"
+        "PLAIN int strcmp(const char *a, const char *b)\n{\n"
+        "  const unsigned char *p = (const unsigned char *)a;\n"
+        "  const unsigned char *q = (const unsigned char *)b;\n"
+        "  while(*p && *p == *q) { p++; q++; }\n"
+        "  return (int)*p - (int)*q;\n}\n\n"
+        "PLAIN char *strcpy(char *d, const char *s)\n{\n"
+        "  char *r = d;\n"
+        "  while((*d++ = *s++) != 0)\n    ;\n"
+        "  return r;\n}\n\n"
+        "PLAIN size_t strlen(const char *s)\n{\n"
+        "  const char *p = s;\n"
+        "  while(*p)\n    p++;\n"
+        "  return (size_t)(p - s);\n}\n")
+    print(f"[ok]   small_strings: {src}")
+
+
 def patch_uart_no_sprintf(root: Path) -> None:
     """Take sprintf out of the serial console.
 
@@ -7455,7 +7496,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "lean-small", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -7574,6 +7615,8 @@ def main() -> int:
         # 1.0.0.3: 1.0.0.2 with SAE hunting-and-pecking in constant time
         # (crypto/p256.c, crypto/sae.c, #113); the steps are the same.
         "naboot-1.0.0.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        # 1.0.0.3 with small_strings, to measure it before a release takes it.
+        "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -7825,6 +7868,7 @@ def main() -> int:
         "md5_compact": patch_md5_compact,
         "share_sbox": patch_share_sbox,
         "prune_dead_funs": patch_prune_dead_funs,
+        "small_strings": patch_small_strings,
         "opt_size": patch_opt_size,
     }
     for step in steps:
