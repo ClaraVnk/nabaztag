@@ -20,6 +20,26 @@ since_tick = 0
 max_gap = 0
 trace_re = re.compile(r"^Trace \d+: 0x[0-9a-f]+ \[[0-9a-f]+/([0-9a-f]+)/")
 insn_re = re.compile(r"^0x([0-9a-f]+):")
+
+
+def objd_count(line):
+    """Instructions in a block that qemu >= 8 prints as raw bytes, without a
+    disassembler: `OBJD-T: <hex>` (Thumb, 2 bytes each, BL/BLX a 4-byte
+    pair starting 0b11110) or `OBJD-A: <hex>` (ARM, 4 bytes each). None if
+    the line is not one of those."""
+    kind, _, hexs = line.partition(":")
+    hexs = hexs.strip()
+    if kind == "OBJD-A":
+        return len(hexs) // 8
+    if kind != "OBJD-T":
+        return None
+    b = bytes.fromhex(hexs)
+    n = i = 0
+    while i + 1 < len(b):
+        hw = b[i] | (b[i + 1] << 8)
+        i += 4 if (hw >> 11) == 0b11110 else 2
+        n += 1
+    return n
 for line in sys.stdin:
     m = trace_re.match(line)
     if m:
@@ -39,6 +59,10 @@ for line in sys.stdin:
         continue
     if line.startswith("IN:"):
         cur = None
+        continue
+    k = objd_count(line)
+    if k is not None and cur is not None:
+        tb_len[cur] += k - 1          # the address line already counted one
         continue
     m = insn_re.match(line)
     if m:

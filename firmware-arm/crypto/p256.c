@@ -90,10 +90,16 @@ static uint32_t limbs_sub(fe r, const fe a, const fe b)
   return (uint32_t)borrow;
 }
 
+/* The empty asm hides a mask's value from the optimiser. Without it gcc 15
+   proves the mask is 0 or ~0 and turns the select back into a branch on
+   it -- tools/cost/ct.sh caught limbs_cmov doing exactly that. */
+#define CT_BARRIER(x) __asm__ ("" : "+r" (x))
+
 /* r = a if flag == 0, b if flag == 1. No branch on flag. */
 static void limbs_cmov(fe r, const fe a, const fe b, uint32_t flag)
 {
   uint32_t m = (uint32_t)0 - (flag & 1), i;
+  CT_BARRIER(m);
   for (i = 0; i < S; i++)
     r[i] = (a[i] & ~m) | (b[i] & m);
 }
@@ -114,14 +120,16 @@ static int limbs_eq(const fe a, const fe b)
   return acc == 0;
 }
 
-/* -1 if a < b, 0 if equal, 1 if a > b. */
+/* -1 if a < b, 0 if equal, 1 if a > b -- in the same time whatever the
+   values. It used to stop at the first differing limb, and what it compares
+   includes secrets: a scalar against n, a hash of the password against p.
+   Two full subtractions and their borrows say the same thing. */
 static int limbs_cmp(const fe a, const fe b)
 {
-  int i;
-  for (i = S - 1; i >= 0; i--) {
-    if (a[i] != b[i]) return a[i] > b[i] ? 1 : -1;
-  }
-  return 0;
+  fe t;
+  uint32_t lt = limbs_sub(t, a, b);
+  uint32_t gt = limbs_sub(t, b, a);
+  return (int)gt - (int)lt;
 }
 
 static int bit_of(const fe a, int i)
@@ -150,6 +158,23 @@ static void fe_sub(fe r, const fe a, const fe b)
 
 static void fe_dbl(fe r, const fe a) { fe_add(r, a, a); }
 
+/* 32 x 32 -> 64 without libgcc. The ARM7TDMI's Thumb set has no long
+   multiply, so `(uint64_t)a * b` became a call to __aeabi_lmul, whose
+   middle-product carry is a compare and a branch: one more or one fewer
+   block depending on the operands, and the operands are secret. Four 16-bit
+   products and an addition that cannot overflow do the same without one.
+   What no C can remove is the core's own multiplier, which finishes early
+   when the high bytes of its second operand are all zeros or all ones. */
+static uint64_t mul32(uint32_t a, uint32_t b)
+{
+  uint32_t al = a & 0xffff, ah = a >> 16, bl = b & 0xffff, bh = b >> 16;
+  uint32_t ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;
+  uint32_t mid = (ll >> 16) + (lh & 0xffff) + (hl & 0xffff);  /* < 3*2^16 */
+  uint32_t lo = (ll & 0xffff) | (mid << 16);
+  uint32_t hi = hh + (lh >> 16) + (hl >> 16) + (mid >> 16);
+  return ((uint64_t)hi << 32) | lo;
+}
+
 /* Montgomery multiplication, CIOS. r = a*b*R^-1 mod p. */
 static void fe_mul(fe r, const fe a, const fe b)
 {
@@ -161,7 +186,7 @@ static void fe_mul(fe r, const fe a, const fe b)
     uint64_t c = 0, s;
     uint32_t m;
     for (j = 0; j < S; j++) {
-      s = (uint64_t)t[j] + (uint64_t)a[j] * b[i] + c;
+      s = (uint64_t)t[j] + mul32(a[j], b[i]) + c;
       t[j] = (uint32_t)s;
       c = s >> 32;
     }
@@ -171,10 +196,10 @@ static void fe_mul(fe r, const fe a, const fe b)
 
     m = t[0] * N0INV;
     c = 0;
-    s = (uint64_t)t[0] + (uint64_t)m * P[0];
+    s = (uint64_t)t[0] + mul32(m, P[0]);
     c = s >> 32;
     for (j = 1; j < S; j++) {
-      s = (uint64_t)t[j] + (uint64_t)m * P[j] + c;
+      s = (uint64_t)t[j] + mul32(m, P[j]) + c;
       t[j - 1] = (uint32_t)s;
       c = s >> 32;
     }
@@ -509,14 +534,20 @@ int p256_add(p256_point *out, const p256_point *a, const p256_point *b,
   return jac_to_affine(out, &q, tick);
 }
 
+/* Constant time in x, for hunting-and-pecking, where x is a hash of the
+   password and whether it is a valid x-coordinate is the secret: every path
+   runs every operation, `out` is always written, and the answer is the
+   return value alone. (An x at or above p is computed on all the same and
+   refused at the end.) */
 int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
                     int y_bit, p256_tick tick)
 {
-  fe xm, rhs, y, t, three, bm, chk;
+  fe xm, rhs, y, t, three, bm, chk, zero, neg;
+  uint32_t ok;
 
   p256_ready();
   fe_from_bytes(xm, x);
-  if (limbs_cmp(xm, P) >= 0) return 0;
+  ok = (uint32_t)(limbs_cmp(xm, P) < 0);
   to_mont(xm, xm);
 
   fe_sqr(rhs, xm);
@@ -533,17 +564,15 @@ int p256_decompress(p256_point *out, const uint8_t x[P256_BYTES],
      the only way to know whether rhs was a square at all. */
   fe_pow(y, rhs, P_PLUS_1_DIV_4, tick);
   fe_sqr(chk, y);
-  if (!limbs_eq(chk, rhs)) return 0;
+  ok &= (uint32_t)limbs_eq(chk, rhs);
 
   from_mont(t, y);
-  if ((int)(t[0] & 1) != (y_bit & 1)) {
-    fe zero;
-    memset(zero, 0, sizeof zero);
-    fe_sub(t, zero, t);                 /* p - y, in plain form */
-  }
+  memset(zero, 0, sizeof zero);
+  fe_sub(neg, zero, t);                 /* p - y, in plain form */
+  limbs_cmov(t, t, neg, (t[0] ^ (uint32_t)y_bit) & 1);
   memcpy(out->x, x, P256_BYTES);
   fe_to_bytes(out->y, t);
-  return 1;
+  return (int)ok;
 }
 
 /* --- hash-to-element: the Simplified SWU map -------------------------- */
