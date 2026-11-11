@@ -135,7 +135,16 @@ def patch_vinterp_c(root: Path) -> None:
         '              nab_verify_nomem++;\n'
         '          }\n'
         '          else nab_verify_badargs++;\n'
-        '          if (ok) nab_verify_ok++;\n'
+        '          if (ok)\n'
+        '          {\n'
+        '            nab_verify_ok++;\n'
+        '            /* adoption/flash: remember the image this signature covers,\n'
+        '               so that OPflashFirmware will flash only it and nothing\n'
+        '               else. SHA-512 via crypto_hash, whose block loop already\n'
+        '               feeds the watchdog (patch_verify_wdt). */\n'
+        '            crypto_hash_sha512_tweet(nab_flash_fp,(const uint8_t*)VSTARTBIN(payload),VSIZEBIN(payload));\n'
+        '            nab_flash_armed=1;\n'
+        '          }\n'
         '          (void)VPULL();\n'
         '          VSTACKSET(0, INTTOVAL(ok));\n'
         '        }\n'
@@ -159,7 +168,25 @@ def patch_vinterp_c(root: Path) -> None:
     counters = ('int32_t nab_verify_calls;\n'
                 'int32_t nab_verify_ok;\n'
                 'int32_t nab_verify_nomem;\n'
-                'int32_t nab_verify_badargs;\n')
+                'int32_t nab_verify_badargs;\n'
+                '/* adoption/flash: the image a verifySig accepted (SHA-512), and\n'
+                '   whether one has been. OPflashFirmware flashes only a match, so a\n'
+                '   runtime bytecode cannot hand junk or an unsigned image to the\n'
+                '   flash -- the signature gate (fwota.mtl) is no longer the only one. */\n'
+                'int32_t nab_flash_armed;\n'
+                'uint8_t nab_flash_fp[64];\n'
+                'extern int crypto_hash_sha512_tweet(unsigned char *,const unsigned char *,unsigned long long);\n'
+                '/* 1 iff `img` is byte-for-byte the image the last verifySig accepted.\n'
+                '   crypto_hash (SHA-512) feeds the watchdog as verifySig does; the\n'
+                '   compare is constant time. OPflashFirmware gates on this. */\n'
+                'static int nab_fw_verified(const unsigned char *img, int len)\n'
+                '{\n'
+                '  unsigned char fp[64]; int i, d = 0;\n'
+                '  if (!nab_flash_armed) return 0;\n'
+                '  crypto_hash_sha512_tweet(fp, img, (unsigned long long)len);\n'
+                '  for (i = 0; i < 64; i++) d |= fp[i] ^ nab_flash_fp[i];\n'
+                '  return d == 0;\n'
+                '}\n')
     if '#include "nab_sig.h"' not in s:
         if inc_anchor in s:
             s = s.replace(inc_anchor, inc_anchor + '\n#include "nab_sig.h"', 1)
@@ -172,8 +199,22 @@ def patch_vinterp_c(root: Path) -> None:
     if 'nab_verify_calls' in s and 'int32_t nab_verify_calls;' not in s:
         s = s.replace('#include "nab_sig.h"\n',
                       '#include "nab_sig.h"\n\n' + counters, 1)
+
+    # OPflashFirmware: flash only the image the last verifySig accepted, byte
+    # for byte. The two magic words stay the "are you sure" they always were;
+    # the signature binding is added to the same guard, in C, so a runtime
+    # bytecode that skips fwota.mtl cannot reach the flash with junk. The guard
+    # line is stock (patch_flash_verify rewrites the body below it, not this
+    # line), so this composes whether or not flash_verify runs.
+    guard_old = ("          if ((firmware!=NIL)&&(v==0x13fb6754)&&(w==0x0407FE58))\n")
+    guard_new = ("          if ((firmware!=NIL)&&(v==0x13fb6754)&&(w==0x0407FE58)\n"
+                 "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware)))\n")
+    if s.count(guard_old) != 1:
+        sys.exit(f"FAIL {p}: OPflashFirmware's guard is not the shape this patch expects ({s.count(guard_old)})")
+    s = s.replace(guard_old, guard_new, 1)
+
     p.write_text(s)
-    print(f"[ok]   {p}: added OPverifySig case + nab_sig.h include")
+    print(f"[ok]   {p}: OPverifySig + nab_sig.h; flashFirmware bound to a verified image")
 
 
 def patch_stdlib_core(root: Path) -> None:
@@ -247,7 +288,7 @@ def patch_sign_open_aliasing(root: Path) -> None:
 
         FOR(i,n) m[i] = sm[i];
         FOR(i,32) m[i+32] = pk[i];     <-- the public key lands on sm[32..63]
-        crypto_hash(h,m,n);
+        crypto_hash_sha512_tweet(h,m,n);
         reduce(h);
         scalarmult(p,q,h);
         scalarbase(q,sm + 32);         <-- and this needs sm[32..63]
