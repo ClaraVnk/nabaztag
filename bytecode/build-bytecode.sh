@@ -103,6 +103,10 @@ python3 "$HERE/patch_mic_in_session.py" "$BC/sources/main.mtl"
 # the image, then `FW res:N <sig>`, when the warren flipped "xmpp-ota:0".
 echo "==> patch_ota_in_session.py  (firmware updates inside the session)"
 python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
+# A radio or a podcast comes down the session as well, pulled by the rabbit
+# and played as it arrives: `ST live:N`, when the warren flipped "xmpp-live:0".
+echo "==> patch_live_in_session.py  (radio and podcasts inside the session)"
+python3 "$HERE/patch_live_in_session.py" "$BC/sources/main.mtl"
 # Blanks ahead of a stanza (a whitespace keepalive) no longer swallow it
 # and every stanza after it.
 echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
@@ -142,11 +146,13 @@ esac
 # or every sound is still fetched over plain HTTP; the program-resource one
 # once, or jingles and choreographies are; the microphone one once, or what
 # is said to the rabbit still crosses the internet in UDP; the update one
-# once, or every firmware image is still fetched over plain HTTP.
+# once, or every firmware image is still fetched over plain HTTP; the stream
+# one once, or the radio and the podcasts are.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
-for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0"):
+for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
+            b"xmpp-live:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")

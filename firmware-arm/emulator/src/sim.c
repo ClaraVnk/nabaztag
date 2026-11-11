@@ -245,6 +245,8 @@ void sim_note_fetch(void)
  *   at <ms> server-drop           the warren's TCP connections close
  *   at <ms> rfid <16 hex>|none    a tag is on the reader (eight bytes), or
  *                                 none is any more
+ *   at <ms> button down|up        the head button: down then up within half
+ *                                 a second is the click that stops a sound
  *   at <ms> server-close          …after announcing </stream:stream>, which
  *                                 is what a server shutting down does
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
@@ -274,6 +276,10 @@ void sim_note_fetch(void)
  *                                 is the property a negative test is really
  *                                 about and cannot be satisfied by accident
  *
+ *   decoder <kbit/s>               the audio decoder takes a sound at this
+ *                                  bit rate, as a VS1003 does, instead of
+ *                                  swallowing all it is offered: what a
+ *                                  stream needs for its buffering to be seen
  *   config-mode                    the head button is held at power-on: the
  *                                  rabbit becomes an access point and serves
  *                                  its configuration pages (phone.c joins it)
@@ -340,6 +346,8 @@ int sim_load(const char *path)
       sim.realtime = 1;
     } else if(!strcmp(tok[0], "config-mode")) {
       sim.config_mode = 1;
+    } else if(!strcmp(tok[0], "decoder") && n >= 2) {
+      sim.decoder_kbps = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "segment") && n >= 2) {
       sim.segment = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "tick") && n >= 2) {
@@ -538,6 +546,9 @@ int sim_load(const char *path)
           }
           e->arg = 1;
         }
+      } else if(!strcmp(tok[2], "button") && n >= 4) {
+        e->kind = SIM_EV_BUTTON;
+        e->arg = !strcmp(tok[3], "down");
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "http-big") && n >= 4) {

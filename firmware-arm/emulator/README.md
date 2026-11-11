@@ -466,6 +466,22 @@ Terrier's `/speak` API make the rabbit talk 110 s into boot 2: with
 `bytecode/patch_res_in_session.py` and a Terrier that flips `xmpp-res:0`, the
 sound comes down the TLS session (`res:` lines, no port 80 open); with a
 Terrier that does not, it is fetched from `/res/` over plain HTTP as before.
+`--scenario scenarios/vm/xmpp-live.txt --fake-radio 128 --at 100 podcast
+'{"feed":"http://127.0.0.1:<BASE+81>/feed.xml","episode":1}'` plays a
+station: `tools/fake_radio.py` is the upstream (an endless stream at that
+bit rate, and a file), the Terrier relays it, and `--at <s> <api> <json>`
+puts the owner's calls on a clock. With `bytecode/patch_live_in_session.py`
+and a Terrier that flips `xmpp-live:0` the rabbit pulls the stream through
+its TLS session (`live:` lines, no port 80 open); otherwise it fetches
+`/pod/<token>` over HTTP as before. The scenario's `decoder 128` makes the
+emulated VS1003 take its sound at the bit rate, as the real one's DREQ
+does -- the stub used to swallow everything at once, so a stream never
+filled anything and its buffering could not be seen -- and the verdict
+counts the times the decoder ran dry, gives the heap after each collection,
+and checks every byte the decoder was fed against what the upstream served
+(each four bytes of the fake stream are their own position).
+`scenarios/vm/xmpp-live-stops.txt` adds the head button (`at <ms> button
+down|up`), a dropped session and a sleep.
 
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed

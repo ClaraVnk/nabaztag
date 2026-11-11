@@ -82,6 +82,7 @@ enum {
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
+  SIM_EV_BUTTON,        /* the head button goes down, or comes back up     */
   SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
   SIM_EV_INJECT_PROBE,  /* a probe request with an oversized SSID (config mode) */
   SIM_EV_DHCP_ROGUE,    /* an attacker's unsolicited DHCP ACK */
@@ -133,6 +134,7 @@ struct sim_scenario {
   int              realtime;     /* pace the loop to the wall clock */
   int              run_entries;  /* how many times ieee80211_state reached RUN */
   int              config_mode;  /* the head button is held at power-on */
+  uint32_t         decoder_kbps; /* the bit rate the decoder plays at, 0 = bottomless */
   uint32_t         segment;      /* the phone's TCP segment size, 0 = default */
   int              resets;       /* how often the firmware asked for a reset */
   int              last_reset_reason;

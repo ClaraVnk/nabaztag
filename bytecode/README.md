@@ -105,6 +105,13 @@ stay out of the repo; see `nabaztag-violet/DOCS.md`, *Bytecodes*.)
   an announce record, the raw bytes, then `ST res:N`, instead of an
   `ST http://…/res/<token>` anyone on the path can fetch, when the warren flips
   `xmpp-res:0` under the HMAC.
+- ✅ A radio or a podcast comes down that session as well, and plays as it
+  arrives (`patch_live_in_session.py`): `ST live:N`, then the rabbit asks the
+  warren for the bytes its player has room for, 49 152 at most in hand, and
+  the sound starts after 16 384. Instead of `ST http://…/pod/<token>` over
+  plain HTTP, when the warren flips `xmpp-live:0` under the HMAC. Proven in
+  the emulator (`../firmware-arm/emulator/scenarios/vm/xmpp-live.txt`), not
+  yet on a rabbit.
 - ⏳ Serve the hybrid from the add-on, add a **UDP/4000 receiver** + an on-server
   wake-word engine (openWakeWord, "hey Nabi") that hands the utterance to the
   existing STT → conversation-agent → TTS loop. Live-test on the device (a bad
