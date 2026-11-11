@@ -7618,6 +7618,64 @@ def patch_violet_hardening(root: Path) -> None:
         print(f"[ok]   {p}: {n} string-length clamps cannot overflow")
 
 
+def patch_strip_factory_test(root: Path) -> None:
+    """Remove Violet's factory test mode from the bootloader (2.8 KB of flash).
+
+    Holding the head button for more than seven seconds at power-on in config
+    mode turned the rabbit white and mute, then each click ran a production
+    test (LEDs, ears, RFID, a tone, the microphone). Nobody uses it and it is
+    a trap for whoever holds the button too long. With it go the RECLIB block
+    (record to a RIFF, only the microphone test called it), the tone
+    generator and the `midi_start` blob whose one use is commented out.
+
+    What config mode did besides is kept exactly: `loop` still waits for the
+    button to be released, turns the LEDs blue and only then runs the Wi-Fi.
+
+    Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    p = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s, nl = read_flat(p)
+    if "const TESTDELAY=7000;;" not in s:
+        print(f"[skip] {p}: the factory test mode is already gone")
+        return
+
+    def cut(text: str, start: str, end: str, what: str, keep_start: bool = False) -> str:
+        if text.count(start) != 1:
+            sys.exit(f"FAIL {p}: expected one {what}, found {text.count(start)}")
+        i = text.index(start)
+        j = text.index(end, i) + len(end)
+        return text[:i + (len(start) if keep_start else 0)] + text[j:]
+
+    # The record library: its last function is recriff, closed by the ifdef's brace.
+    i = s.index("ifdef RECLIB {") if s.count("ifdef RECLIB {") == 1 else sys.exit(
+        f"FAIL {p}: the RECLIB block is not where this patch expects it")
+    j = s.index("}\n", s.index("fun recriff", i)) + 2
+    s = s[:i] + s[j:]
+    # The MIDI blob.
+    s = cut(s, "var midi_start=", ";;\n", "midi_start")
+    # The test variables, the tone generator and its callback; `start` stays.
+    s = cut(s, "var start;;\n", "const TESTDELAY=7000;;\n", "test variable block", keep_start=True)
+    # The test branches of loop.
+    head = "\telse if start!=nil then\n"
+    if s.count(head) != 1 or "fun main=" not in s:
+        sys.exit(f"FAIL {p}: loop is not the shape this patch expects")
+    i = s.index(head)
+    j = s.index("fun main=", i)
+    s = s[:i] + (
+        "\telse if start!=nil then\n"
+        "\t(\n"
+        "\t\tif !button2 then\n"
+        "\t\t(\n"
+        "\t\t\tsetleds 0xff;\n"
+        "\t\t\tset start=nil\n"
+        "\t\t)\n"
+        "\t)\n"
+        "\telse wifiRun;\n"
+        "\t0;;\n\n\n") + s[j:]
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: factory test mode, record library and MIDI blob removed")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -7806,7 +7864,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "lean-small", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -7927,6 +7985,9 @@ def main() -> int:
         "naboot-1.0.0.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.3 with small_strings, to measure it before a release takes it.
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
+        # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
+        # to measure each before a release takes them.
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8154,6 +8215,7 @@ def main() -> int:
         "usb_descriptor_bounds": patch_usb_descriptor_bounds,
         "mixed_gtk": patch_mixed_gtk,
         "violet_hardening": patch_violet_hardening,
+        "strip_factory_test": patch_strip_factory_test,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,

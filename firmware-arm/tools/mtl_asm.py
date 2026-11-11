@@ -129,6 +129,10 @@ class Op:
     OPrfidRead = 148; OPrfidWrite = 149;  OPi2cRead = 150;   OPi2cWrite = 151
     OPverifySig = 152
     OPpageRender = 153  # Phase 8: render a ROM HTML page with marker substitution
+    # The wpa3 steps give 153 to netSaePw instead (phase8-rom, the only mode
+    # with pageRender, has no WPA3): one number, two names, never both in
+    # one bootloader. Without this name the compiler refused wifiAuth.
+    OPnetSaePw = 153
     # apply-mods.py numbers these after what is there (add_core_opcode);
     # in lean-wpa3-kx/-tls and the emulator's default step list netSaePw is
     # 153, so the adoption and TLS opcodes land here.
