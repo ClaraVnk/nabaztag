@@ -27,7 +27,7 @@ ARG MTL_LINUX_COMMIT=7e557a15373523f819e49d57e7a9c5419327b651
 # fix to crypto_sign_open that every flashed mode carries; vm_bounds likewise.
 # Without them a whole-rabbit run cannot reach an OTA's signature gate at all,
 # and what it tests upstream of the gate is not the VM the rabbit runs.
-ARG MOD_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,eapol_replay,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,adoption_kx,tls_psk,link_liveness,crash_report
+ARG MOD_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,eapol_replay,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,adoption_kx,tls_psk,link_liveness,crash_report,ccmp_replay_count
 
 RUN dnf -y install --setopt=install_weak_deps=False \
       gcc make git python3 ca-certificates libasan libubsan diffutils \

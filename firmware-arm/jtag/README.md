@@ -34,6 +34,11 @@ where it stopped. Unplug and replug the rabbit afterwards.
 `lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
 works on any rabbit, bricked or not.
 
+A firmware with `ccmp_replay_count` ends the line with `N… p…/…/… V…/…`:
+CCMP frames examined, frames a replay check would have refused, and the
+radio's two IV words for the last one. `./listen.sh | ./ccmp-pn.py` decodes
+them and says whether the refusal (`ccmp_replay_enforce`) is safe to turn on.
+
 ![wiring](wiring.svg)
 
 The picture is generated: `./mkwiring.py -o wiring.svg`.
