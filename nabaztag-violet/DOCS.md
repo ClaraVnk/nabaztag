@@ -112,6 +112,41 @@ Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
 > silently breaks the (IP-scoped) firewall rule (this cost us hours). On a flat
 > home network there's nothing to do.
 
+## WPA3 and WPA2 Wi-Fi — flash Naboot
+
+A stock Nabaztag:tag only speaks the Wi-Fi of 2006 (WEP, WPA), which most
+current boxes and access points no longer offer. **Naboot**, this project's
+free firmware, gives it **WPA3 (SAE) and WPA2**, and it works with this
+add-on: the Wi-Fi is the firmware's business, not the server's.
+
+1. **Flash Naboot 1.0.0.3** from your phone, through the rabbit's own
+   configuration page — the illustrated guide is at
+   <https://terrier.cyberloutre.fr/naboot>, the signed image in
+   [`firmware-arm/releases/`](https://github.com/ClaraVnk/nabaztag/tree/main/firmware-arm/releases)
+   (`naboot-1.0.0.3.signed.sim`). Flashing is at your own risk; a failed
+   flash is recoverable over JTAG.
+2. **Configure it**: head button held while plugging it in (belly **blue**),
+   join its `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1` — Naboot's own
+   setup page. Choose your network and **WPA3 or WPA2**, enter the key, then
+   under **Advanced → Server** set the **Boot URL host** to
+   `<HAOS_IP>/vl`, and connect.
+3. The log shows the same as above: `serving bootcode → … → bound and idle`.
+
+Later firmware updates can be pushed from Home Assistant through `/api/ota`
+(see *Control API*), no more trips to the configuration page.
+
+**What stays on the public warren for now:** the per-rabbit adoption key and
+the **TLS-encrypted** session are only spoken by
+[Le Terrier](https://terrier.cyberloutre.fr/). With this add-on, the rabbit
+talks to Home Assistant **in the clear on your local network**, as a stock
+rabbit always did. WPA3 with H2E-only access points is in beta.
+
+> **A rabbit already adopted on Le Terrier** (its colours confirmed) only
+> accepts a bytecode signed with its key, which this add-on cannot produce:
+> it will not boot here as it is. Reset its configuration first — head button
+> held at power-up, then `http://192.168.0.1/reset` — and set it up again as
+> above. Wi-Fi, server and key are all forgotten.
+
 ## Control API (Home Assistant)
 
 Reached on host port **8099** (container `:8080`). If a single rabbit is connected
