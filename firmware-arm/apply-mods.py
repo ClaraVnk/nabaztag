@@ -7924,6 +7924,70 @@ def patch_no_wep_boot(root: Path) -> None:
     print(f"[ok]   {q}: WEP key parser, radio button and auth select removed")
 
 
+def patch_share_page_css(root: Path) -> None:
+    """One stylesheet for the four config pages instead of four (~1.9 KB).
+
+    modernize_pages gives each page its own <style>, 4.5 KB in all, most of it
+    the same charter written four times. pages/shared.css is their union
+    (2.9 KB); it is stored once as `page_css` and spliced into each page when
+    it is served. page_a is already a list of fragments filled by pagefill, so
+    the stylesheet is one more marker; the three plain pages become functions that strcatlist their two
+    halves around it, built per request like page_a and collected after.
+
+    What differed between the pages is carried by three hooks: `class=c` on
+    the body of the two centred pages (done, error), `class=e` on the error
+    title, and a padding on the upgrade page's fieldset.
+
+    Requires modernize_pages; run it after every step that edits the pages.
+    Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "var page_css=" in t:
+        print(f"[skip] {q}: the pages already share one stylesheet")
+        return
+    css = (Path(__file__).resolve().parent / "pages" / "shared.css").read_text().strip()
+    if '"' in css or "\\" in css:
+        sys.exit("FAIL pages/shared.css: a quote or a backslash would need escaping in the Metal literal")
+    block = re.compile(r"<style>\n.*?\n</style>", re.S)
+    before = len(t)
+
+    # page_a: a list; the stylesheet becomes one of its fragments.
+    m = re.search(r'^var page_a="(.*?)::nil;;[ \t]*\n', t, re.M | re.S)
+    if m is None or len(block.findall(m.group(0))) != 1:
+        sys.exit(f"FAIL {q}: page_a is not the modernised page this patch expects")
+    # (A global's initialiser cannot name another global, so the fragment is a
+    # <STYLE> marker and pagefill, which already walks page_a, fills it in.)
+    t = t[:m.start()] + block.sub(lambda _: '"::"<STYLE>"::"', m.group(0), count=1) + t[m.end():]
+    fill = '["<FIRMWARE>" webip FIRMWARE]::\n'
+    if t.count(fill) != 1:
+        sys.exit(f"FAIL {q}: the pagefill marker list is not where this patch expects it")
+    t = t.replace(fill, fill + '\t\t\t["<STYLE>" page_css]::\n', 1)
+
+    # The three plain pages: string -> function around the stylesheet.
+    hooks = {
+        "page_done": (("<body>", "<body class=c>"),),
+        "page_u": (("<fieldset>", "<fieldset style=padding:16px>"),),
+        "page_error": (("<body>", "<body class=c>"), ("<h1>", "<h1 class=e>")),
+    }
+    for name, subs in hooks.items():
+        m = re.search(rf'^var {name}="(.*?)";;[ \t]*\n', t, re.M | re.S)
+        if m is None or len(block.findall(m.group(1))) != 1:
+            sys.exit(f"FAIL {q}: {name} is not the modernised page this patch expects")
+        head, tail = block.split(m.group(1), maxsplit=1)
+        for old, new in subs:
+            if tail.count(old) != 1:
+                sys.exit(f"FAIL {q}: expected one {old} in {name}, found {tail.count(old)}")
+            tail = tail.replace(old, new, 1)
+        t = (t[:m.start()] + f'fun {name}=strcatlist "{head}"::page_css::"{tail}"::nil;;\n'
+             + t[m.end():])
+
+    i = t.index("var page_a=")
+    t = t[:i] + f'var page_css="<style>\n{css}\n</style>";;\n\n' + t[i:]
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: four stylesheets -> one ({before} -> {len(t)} source bytes)")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -8235,7 +8299,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8477,6 +8541,7 @@ def main() -> int:
         "stub_soft_codecs": patch_stub_soft_codecs,
         "no_wep": patch_no_wep,
         "no_wep_boot": patch_no_wep_boot,
+        "share_page_css": patch_share_page_css,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
