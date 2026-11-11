@@ -33,11 +33,9 @@ Compiler : const IEEE80211_AUTH_OPEN : I
 Compiler : const IEEE80211_AUTH_SHARED : I
 Compiler : const FIRMWARE : S
 Compiler : strstr : fun [S S I] I
-Compiler : itoanil : fun [list I] list I
 Compiler : listlen : fun [list u0] I
 Compiler : listrem : fun [list u0 u0] list u0
 Compiler : slistlen : fun [list S] I
-Compiler : listnth : fun [list u0 I] u0
 Compiler : listreplacestr : fun [list S S S] list S
 Compiler : listtostr : fun [list I] S
 Compiler : atoibin2 : fun [S] S
@@ -56,12 +54,10 @@ Compiler : webip : fun [S] S
 Compiler : _webmac : fun [S I] list S
 Compiler : webmac : fun [S] S
 Compiler : setleds : fun [I] I
-Compiler : MACecho : fun [S I I] S
-Compiler : SEQecho : fun [S I I] S
-Compiler : IPecho : fun [S I I] S
+Compiler : MACecho : fun [u0 u1 u2] u0
+Compiler : SEQecho : fun [u0 u1 u2] u0
+Compiler : IPecho : fun [u0 u1 u2] u0
 Compiler : itoh4 : fun [I] S
-Compiler : dump : fun [S] S
-Compiler : dumpscan : fun [list [S S S u0 u1 u2 u3]] list [S S S u0 u1 u2 u3]
 Compiler : const CONF_SERVERURL : I
 Compiler : const CONF_NETDHCP : I
 Compiler : const CONF_NETIP : I
@@ -130,7 +126,6 @@ Compiler : udpsend : fun [S I S I S S] I
 Compiler : var ludp : w0
 Compiler : remudp : fun [list [u0 u1] u0] list [u0 u1]
 Compiler : regudp : fun [w0 w1] list [w0 w1]
-Compiler : unregudp : fun [w0] list [w0 w1]
 Compiler : resetudp : fun [] list [w0 w1]
 Compiler : cbnetudp : fun [S w0] w1
 Compiler : const TFIN : I
@@ -196,7 +191,7 @@ Compiler : mkdhcp : fun [I S S S] S
 Compiler : mkdhcpans : fun [I S S S] S
 Compiler : extractdhcp : fun [S I I I S S S S] [I I S S S S]
 Compiler : mkdhcpip : fun [S] S
-Compiler : cbnetdhcp : fun [S S S] u0
+Compiler : cbnetdhcp : fun [S u0 S] u1
 Compiler : cbnetdhcp67 : fun [S S u0] u1
 Compiler : startdhcp : fun [] I
 Compiler : startdhcpserver : fun [] I
@@ -248,10 +243,11 @@ Compiler : tcpread : fun [Tcp S Sock] I
 Compiler : tcpevent : fun [Tcp I S Sock] I
 Compiler : cbsrv : fun [Tcp u0 u1 fun [S] S] I
 Compiler : starthttpsrv : fun [I fun [S] S] I
+Compiler : var page_css : S
 Compiler : var page_a : list S
-Compiler : var page_done : S
-Compiler : var page_u : S
-Compiler : var page_error : S
+Compiler : page_done : fun [] S
+Compiler : page_u : fun [] S
+Compiler : page_error : fun [] S
 Compiler : filterweb : fun [S] S
 Compiler : webcrypt : fun [I] S
 Compiler : isinscan : fun [S list [S u0 u1 u2 u3 u4 u5]] I
@@ -288,6 +284,7 @@ Compiler : const HTTP_SOLVE : I
 Compiler : const HTTP_REACH : I
 Compiler : const HTTP_CONNECTED : I
 Compiler : var lasthttpevent : w0
+Compiler : const HTTP_MAX_NORMAL : I
 Compiler : cnxH : fun [Httpreq] w0
 Compiler : inputH : fun [Httpreq] w0
 Compiler : outputH : fun [Httpreq] w0
@@ -296,7 +293,9 @@ Compiler : cbH : fun [Httpreq] w0
 Compiler : typeH : fun [Httpreq] w0
 Compiler : stateH : fun [Httpreq] w0
 Compiler : startH : fun [Httpreq] w0
-Compiler : Httpreq : struct (8)
+Compiler : sizeH : fun [Httpreq] w0
+Compiler : Httpreq : struct (9)
+Compiler : httpover : fun [Httpreq] I
 Compiler : tcpread : fun [Tcp S Httpreq] w0
 Compiler : tcpwrite : fun [Tcp Httpreq] w0
 Compiler : var http_prefurl : S
@@ -310,7 +309,6 @@ Compiler : httpenable : fun [Httpreq I] I
 Compiler : httpstate : fun [Httpreq] I
 Compiler : httpstart : fun [Httpreq] I
 Compiler : const http_sep : S
-Compiler : httpgetheader : fun [S] S
 Compiler : httpgetcontent : fun [S] S
 Compiler : const WAV_IDLE : I
 Compiler : const WAV_RUN : I
@@ -335,7 +333,6 @@ Compiler : _wavstartnow : fun [] I
 Compiler : wavstartlocal : fun [list S] I
 Compiler : itobin4 : fun [I] S
 Compiler : itobin2 : fun [I] S
-Compiler : mkwav : fun [I I I] S
 Compiler : const RT2501_S_BROKEN : I
 Compiler : const RT2501_S_IDLE : I
 Compiler : const RT2501_S_SCAN : I
@@ -359,14 +356,11 @@ Compiler : wifiInit : fun [I] I
 Compiler : var laststate : w0
 Compiler : wifibyssid : fun [[S u0 u1 u2 u3 u4 u5] S] I
 Compiler : var retrytime : w0
-Compiler : _wifiwepkey : fun [S I I] list I
-Compiler : wifiwepkey : fun [S] S
 Compiler : wifiAuth : fun [] I
 Compiler : Hx : fun [I] I
 Compiler : uppermac : fun [I] S
 Compiler : wifiRun : fun [] I
 Compiler : wifiReady : fun [] I
-Compiler : wifiConnected : fun [] I
 Compiler : const BOOT_HTTPTIMEOUT : I
 Compiler : const BOOT_WIFITIMEOUT : I
 Compiler : var httpboot : w0
@@ -374,53 +368,52 @@ Compiler : const GREEN : I
 Compiler : const AMBER : I
 Compiler : const BLACK : I
 Compiler : boot_leds : fun [] I
+Compiler : const CONF_KXKEY : I
+Compiler : const CONF_KXFLAG : I
+Compiler : const CONF_KXCOLORS : I
+Compiler : const KX_SHOW : I
+Compiler : const KX_WAIT : I
+Compiler : var kxdone : w0
+Compiler : var kxhttp : w0
+Compiler : var kxshow : w0
+Compiler : var kxwait : w0
+Compiler : kx_hexdigit : fun [I] I
+Compiler : kx_ishex : fun [S I] I
+Compiler : kx_unhex : fun [S] S
+Compiler : _kx_hex : fun [S I] list S
+Compiler : kx_hex : fun [S] S
+Compiler : kx_color : fun [I] I
+Compiler : kx_leds : fun [] I
+Compiler : kx_showing : fun [] I
+Compiler : kx_busy : fun [] I
+Compiler : _kxcbhttp : fun [u0 S] I
+Compiler : kx_url : fun [S S] S
+Compiler : kx_step : fun [S] I
+Compiler : kx_ready : fun [] I
+Compiler : kx_trailer : fun [S S] S
+Compiler : kx_accept : fun [S S] I
 Compiler : getbytecode : fun [S] S
 Compiler : _bootcbhttp : fun [u0 S] I
+Compiler : const BOOT_TLS_PORT : I
+Compiler : const BOOT_TLS_DONE : I
+Compiler : var boottlsreq : w0
+Compiler : var boottlsfail : w0
+Compiler : boottls_wanted : fun [] I
+Compiler : boottls_queue : fun [Httpreq S] I
+Compiler : boottls_push : fun [Tcp Httpreq] I
+Compiler : boottls_take : fun [Httpreq S] I
+Compiler : boottls_end : fun [Tcp Httpreq] I
+Compiler : boottls_event : fun [Tcp I S Httpreq] I
+Compiler : boottls_open : fun [S Httpreq] I
+Compiler : boottls_request : fun [S fun [Httpreq S] I] Httpreq
 Compiler : boot_url : fun [S] S
 Compiler : boot_loop : fun [] I
-Compiler : var lrec : w0
-Compiler : var recording : I
-Compiler : sqrt_ : fun [I I I] I
-Compiler : sqrt : fun [I] I
-Compiler : var buff : w0
-Compiler : var buffx : w0
-Compiler : var buffy : w0
-Compiler : cbrec : fun [S] I
-Compiler : itobin4 : fun [I] S
-Compiler : liststrlen : fun [list S I] I
-Compiler : mkriff : fun [list S] list S
-Compiler : recstart : fun [] I
-Compiler : recstop : fun [] I
-Compiler : recriff : fun [] list S
-Compiler : var midi_start : S
 Compiler : var start : w0
-Compiler : var tests : I
-Compiler : var lastclic : w0
-Compiler : var tstart : w0
-Compiler : var lasttime0 : w0
-Compiler : var lastcount0 : w0
-Compiler : var count0 : w0
-Compiler : var lasttime1 : w0
-Compiler : var lastcount1 : w0
-Compiler : var count1 : w0
-Compiler : var coltests : tab I
-Compiler : var fifoind : w0
-Compiler : var fifotest : w0
-Compiler : var recbutton : w0
-Compiler : var sample441 : w0
-Compiler : var sample221 : w0
-Compiler : var sample881 : w0
-Compiler : var tab_osc : tab I
-Compiler : osc : fun [I] I
-Compiler : mksample : fun [I I] S
-Compiler : _wavtestcb : fun [u0] I
-Compiler : const TESTDELAY : I
 Compiler : const MDNS_BOOT_IP : S
 Compiler : const MDNS_BOOT_PORT : I
 Compiler : const MDNS_BOOT_MAC : S
-Compiler : var mdns_boot_pkt : w0
+Compiler : var mdns_boot_pkt : S
 Compiler : var mdns_boot_last : I
-Compiler : mdns_boot_build_pkt : fun [] S
 Compiler : mdns_boot_announce : fun [] I
 Compiler : mdns_boot_tick : fun [] I
 Compiler : loop : fun [] I
