@@ -35,10 +35,16 @@ Now:
     216,175 bytes down, the signature gate reached at 70% of the heap,
     before the patch and after.
 
-Not touched: HTTP_STREAM (sounds, the .bin OTA) hands each segment to its
-callback and keeps nothing after the header block; the header block itself
-(everything up to the first blank line) is still unbounded, and so is
-locate.jsp over TLS (LocateTlsTake), whose peer holds the adoption key.
+HTTP_STREAM (sounds, the .bin OTA) hands each segment to its callback and
+keeps nothing after the header block, but the header block itself -- every
+byte up to the first blank line -- was accumulated without a limit, by a
+strcat per segment: a response whose headers never end is the same reset
+(emulator: the gateway's `http-bighead` on the request for a sound). It stops
+at HTTP_MAX_HEADERS, 8192: the connection is closed and the callback gets the
+nil that ends a stream. A real header block is a few hundred bytes.
+
+Not touched: locate.jsp over TLS (LocateTlsTake), whose peer holds the
+adoption key.
 
 Applied to http.mtl and fwota.mtl in a sources directory, after
 build-bytecode.sh has copied fwota.mtl there. Idempotent.
@@ -60,6 +66,7 @@ TYPE_NEW = (
     "// this many bytes the request is dropped instead (the callback gets nil).\n"
     "// See bytecode/patch_http_cap.py for how the figure was chosen.\n"
     "const HTTP_MAX_NORMAL=16384;;\n"
+    "const HTTP_MAX_HEADERS=8192;;\t// the header block of a streamed answer\n"
     "//  - sizeH : bytes received so far ; maxH : this request's own ceiling (nil = HTTP_MAX_NORMAL)\n"
     "type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH aliveH sonH redirLevelH sizeH maxH];;\n"
     "\n"
@@ -149,6 +156,33 @@ def _apply(path: Path, edits: list[tuple[str, str, str]]) -> bool:
     return True
 
 
+HEAD_OLD = ("\t\t\tlet strcat hd httpreq.inputH input -> s in\n"
+            "\t\t\tlet strstr s \"\\13\\10\\13\\10\" 0 -> i in\n"
+            "\t\t\tif i==nil then\n"
+            "\t\t\t\tset httpreq.inputH=s::nil\n")
+HEAD_NEW = ("\t\t\tif httpover httpreq then nil else\t// http-cap: header block too long, already ended\n"
+            "\t\t\tlet strcat hd httpreq.inputH input -> s in\n"
+            "\t\t\tlet strstr s \"\\13\\10\\13\\10\" 0 -> i in\n"
+            "\t\t\tif i==nil then\n"
+            "\t\t\t(\n"
+            "\t\t\t\tif (strlen s)>HTTP_MAX_HEADERS then\n"
+            "\t\t\t\t(\n"
+            "\t\t\t\t\tset httpreq.inputH=nil;\n"
+            "\t\t\t\t\tset httpreq.sizeH=1;\n"
+            "\t\t\t\t\tset httpreq.maxH=0;\t// marks the request as over (httpover)\n"
+            "\t\t\t\t\tclosetcp cnx;\n"
+            "\t\t\t\t\tcall httpreq.cbH [httpreq nil];\n"
+            "\t\t\t\t\tnil\n"
+            "\t\t\t\t)\n"
+            "\t\t\t\telse (set httpreq.inputH=s::nil; nil)\n"
+            "\t\t\t)\n")
+STREAM_END_OLD = ("\t\telse\n"
+                  "\t\t\tcall httpreq.cbH [httpreq nil] // HTTP_STREAM or HTTP_DIRECT\n")
+STREAM_END_NEW = ("\t\telse if httpover httpreq then nil\t// http-cap: already ended\n"
+                  "\t\telse\n"
+                  "\t\t\tcall httpreq.cbH [httpreq nil] // HTTP_STREAM or HTTP_DIRECT\n")
+
+
 def patch(sources: Path) -> None:
     http, fwota = sources / "http.mtl", sources / "fwota.mtl"
     for f in (http, fwota):
@@ -157,7 +191,9 @@ def patch(sources: Path) -> None:
     if _apply(http, [("Httpreq type", TYPE_OLD, TYPE_NEW),
                      ("redirect's redirLevelH", REDIR_OLD, REDIR_NEW),
                      ("HTTP_NORMAL end of answer", END_OLD, END_NEW),
-                     ("HTTP_NORMAL buffering", KEEP_OLD, KEEP_NEW)]):
+                     ("HTTP_NORMAL buffering", KEEP_OLD, KEEP_NEW),
+                     ("HTTP_STREAM header block", HEAD_OLD, HEAD_NEW),
+                     ("HTTP_STREAM end of stream", STREAM_END_OLD, STREAM_END_NEW)]):
         print(f"[ok]   {http}: HTTP_NORMAL answers counted, dropped past their ceiling")
     if _apply(fwota, [("FW_MAX_BYTES", FW_CONST_OLD, FW_CONST_NEW),
                       ("the hex .sim request", FW_REQ_OLD, FW_REQ_NEW)]):

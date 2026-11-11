@@ -293,6 +293,8 @@ void sim_note_fetch(void)
  *   at <ms> http-big <bytes>       from now on the gateway answers every
  *                                  HTTP request itself, 200 and a body of
  *                                  that many bytes; 0 turns it off
+ *   at <ms> http-bighead <bytes>   the same, but as one header line that
+ *                                  never ends: no blank line, ever
  *   at <ms> data [group]           the AP sends one protected data frame,
  *                                  next packet number of the pairwise key,
  *                                  or of the group key to the broadcast
@@ -553,6 +555,9 @@ int sim_load(const char *path)
         e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "http-big") && n >= 4) {
         e->kind = SIM_EV_HTTP_BIG;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "http-bighead") && n >= 4) {
+        e->kind = SIM_EV_HTTP_BIGHEAD;
         e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "data") || !strcmp(tok[2], "replay")) {
         /* `data [group]`: one protected data frame from the AP, with the

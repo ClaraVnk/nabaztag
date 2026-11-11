@@ -55,6 +55,7 @@ void gw_dhcp_rogue(uint32_t rogue);
 /* From now on the gateway answers every non-XMPP connection itself, with a
  * 200 and a body of `bytes` bytes; 0 hands them back to the warren. */
 void gw_http_big_set(uint32_t bytes);
+void gw_http_big_head_set(uint32_t bytes);
 void gw_server_drop(void);
 void gw_server_close(int graceful);
 /* The warren's sockets die and the rabbit never sees the FIN: whatever it

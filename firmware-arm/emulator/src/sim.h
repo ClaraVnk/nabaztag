@@ -98,6 +98,7 @@ enum {
   SIM_EV_EXPECT_SAE_REFUSED,    /* assert >= n PSK attempts refused on a SAE network */
   SIM_EV_EXPECT_SAE,    /* assert which SAE derivation the AP saw */
   SIM_EV_HTTP_BIG,      /* the gateway answers HTTP itself, with a huge body */
+  SIM_EV_HTTP_BIGHEAD,  /* the same, as a header block that never ends */
   SIM_EV_AP_DATA,       /* the AP sends one protected data frame          */
   SIM_EV_AP_REPLAY,     /* a protected data frame already received, again */
   SIM_EV_EXPECT_REPLAY, /* assert the firmware's CCMP replay counters     */

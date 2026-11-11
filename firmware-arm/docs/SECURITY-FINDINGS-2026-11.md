@@ -110,9 +110,19 @@ version, for the reason given under its heading.
     six and thirty-eight times in two minutes, no reset; a whole boot
     (kx.jsp, bc.jsp, locate.jsp, XMPP dialled) and the hex OTA to the
     signature gate are unchanged. Cost: 128 bytes of flash (111,716 to
-    111,844), 181 of runtime bytecode. Left as it was: the HTTP_STREAM header block (unbounded until
-    its blank line) and the two TLS fetches, whose peer holds the adoption
-    key.
+    111,844), 181 of runtime bytecode. Left as it was: the two TLS fetches,
+    whose peer holds the adoption key.
+
+15. **The header block of a streamed answer was accumulated without limit.**
+    HTTP_STREAM (sounds fetched by URL, the `.bin` OTA) keeps nothing after
+    the headers, but it kept every byte until their blank line, a strcat per
+    segment. A response whose headers never end is the same reset as item
+    14. Reproduced with the gateway's `http-bighead` on the request for a
+    sound (the adoption announcement, fetched over plain HTTP): reset twelve
+    seconds in. The block now stops at 8,192 bytes -- connection closed, the
+    stream's callback handed the nil that ends it. Runtime only
+    (`bytecode/patch_http_cap.py`); the bootloader streams nothing on its
+    own.
 
 ## Measured in 1.1.0.0, refusal to be turned on after
 

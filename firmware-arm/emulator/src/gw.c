@@ -482,10 +482,21 @@ static struct gw_conn conns[GW_MAX_CONNECTIONS];
  * http.mtl's HTTP_NORMAL kept every segment until the connection closed;
  * the heap is 204,800 words. */
 static uint32_t gw_http_big;
+/* http-bighead: the same, but the bytes are one header line that never ends,
+ * so the response's header block has no blank line: what http.mtl's
+ * HTTP_STREAM branch accumulates while it looks for one. */
+static int gw_http_big_head;
+
+void gw_http_big_head_set(uint32_t bytes)
+{
+  gw_http_big_head = bytes != 0;
+  gw_http_big_set(bytes);
+}
 
 void gw_http_big_set(uint32_t bytes)
 {
   gw_http_big = bytes;
+  if(!bytes) gw_http_big_head = 0;
   if(bytes)
     sim_log("gw: from now on every HTTP request gets a %u-byte body, from "
             "the gateway itself", bytes);
@@ -731,9 +742,13 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
        * now, the body from gw_poll, one segment per pass. */
       static const char head[] = "HTTP/1.0 200 OK\r\nContent-Type: "
                                  "application/octet-stream\r\n\r\n";
+      static const char endless[] = "HTTP/1.0 200 OK\r\nX-Pad: ";
       c->big = 2;
       c->big_left = gw_http_big;
-      tcp_send(c, 0x10 | 0x08, (const uint8_t *)head, (uint32_t)(sizeof(head) - 1));
+      if(gw_http_big_head)
+        tcp_send(c, 0x10 | 0x08, (const uint8_t *)endless, (uint32_t)(sizeof(endless) - 1));
+      else
+        tcp_send(c, 0x10 | 0x08, (const uint8_t *)head, (uint32_t)(sizeof(head) - 1));
     }
   }
 

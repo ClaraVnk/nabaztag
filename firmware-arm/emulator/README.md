@@ -189,6 +189,7 @@ at 90000 expect RUN
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
 | `at <ms> http-big <bytes>` | from now on the gateway answers every HTTP request itself: 200, then a body of that many bytes (`0` hands requests back to the warren) (`./rabbit-vm`) |
+| `at <ms> http-bighead <bytes>` | the same, but as one header line that never ends: the response has no blank line, which is what a streamed request (`ST <url>`, the `.bin` OTA) accumulates while it looks for one |
 | `at <ms> expect-no-reset` | assert the firmware never asked for a processor reset (a VM out of memory does) (`./rabbit-vm`) |
 | `at <ms> data [group]` | the AP sends one protected data frame with the next packet number of the pairwise key, or of the group key to the broadcast address |
 | `at <ms> replay [group] [retry]` | the last such frame again, with the packet number it had: an attacker's replay, or with `retry` (the Retry bit) the AP's own retransmission |

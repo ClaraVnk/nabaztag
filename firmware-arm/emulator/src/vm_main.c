@@ -175,6 +175,7 @@ void sim_run_events(void)
       case SIM_EV_EXPECT_DATA_UP:
         sim_audit_event(e); break;
       case SIM_EV_HTTP_BIG: gw_http_big_set((uint32_t)e->arg); break;
+      case SIM_EV_HTTP_BIGHEAD: gw_http_big_head_set((uint32_t)e->arg); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
           sim_log("ok   %u plaintext data frame(s) refused on the protected "
