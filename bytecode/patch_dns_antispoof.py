@@ -14,10 +14,11 @@ reply could turn into deep recursion and unbounded growth of the SRV/cache
 lists -- a reboot. Both counts are clamped to DNS_MAX_RR, which is far more
 records than any answer the rabbit asks for.
 
-Not fixed here (a structural change left for its own batch): `cbnetdns`
-parses the message before it matches the id, so an unsolicited packet on the
-query port still appends to the global SRV list even though its callback is
-never called. The random id makes a match unlikely; the reorder closes it.
+And `cbnetdns` parsed the message before it matched the id, so an unsolicited
+packet on the query port appended to the global SRV list even though its
+callback was never called -- the SRV list feeds the XMPP connection. The
+parse is moved inside the id match now, so only a reply to a request we sent
+is ever parsed.
 
 Applied to dns.mtl; independent of every other patch. Idempotent.
 """
@@ -46,6 +47,16 @@ ID2_NEW = "(dnsChangeIdInTrame x.reqD (set dnsid=(random 65536)))"
 ID3_OLD = "\tset dnsid=if dnsid==nil then time_ms%9999 else dnsid+1;\t// ON MET l'ID pour identifier par la suite\n"
 ID3_NEW = "\tset dnsid=(random 65536);\t// dns-antispoof: unpredictable query id\n"
 
+# Parse the reply only after its id matches a request we sent.
+REORDER_OLD = ("\tlet strgetword msg 0 -> id in\n"
+               "\tlet parsemsg msg -> [ ip ttl ] in\n"
+               "\tlet hd select ldnsreq id #selectbyid -> x in\n"
+               "\tif x!=nil then\n")
+REORDER_NEW = ("\tlet strgetword msg 0 -> id in\n"
+               "\tlet hd select ldnsreq id #selectbyid -> x in\n"
+               "\tif x!=nil then\n"
+               "\tlet parsemsg msg -> [ ip ttl ] in\t// dns-antispoof: parse only a reply we asked for\n")
+
 
 def patch(path: Path) -> bool:
     raw = path.read_bytes()
@@ -61,7 +72,8 @@ def patch(path: Path) -> bool:
                          ("the answer walk", NBANS_OLD),
                          ("the dnsreq id", ID1_OLD),
                          ("the retry id", ID2_OLD),
-                         ("the DnsSrv id", ID3_OLD)):
+                         ("the DnsSrv id", ID3_OLD),
+                         ("cbnetdns", REORDER_OLD)):
         if text.count(needle) != 1:
             sys.exit(f"FAIL {path}: expected one {what}, found {text.count(needle)}")
     text = text.replace(PARSE_ANCHOR, PARSE_PROTO + PARSE_ANCHOR, 1)
@@ -70,7 +82,8 @@ def patch(path: Path) -> bool:
     text = text.replace(ID1_OLD, ID1_NEW, 1)
     text = text.replace(ID2_OLD, ID2_NEW, 1)
     text = text.replace(ID3_OLD, ID3_NEW, 1)
-    for s in (PARSE_PROTO, NBQU_NEW, NBANS_NEW, ID1_NEW, ID2_NEW, ID3_NEW):
+    text = text.replace(REORDER_OLD, REORDER_NEW, 1)
+    for s in (PARSE_PROTO, NBQU_NEW, NBANS_NEW, ID1_NEW, ID2_NEW, ID3_NEW, REORDER_NEW):
         assert s.isascii(), "what we insert must be ASCII: the sources are latin-1"
     path.write_bytes(text.encode(encoding))
     print(f"[ok]   {path}: DNS query ids are random and reply record counts bounded")
