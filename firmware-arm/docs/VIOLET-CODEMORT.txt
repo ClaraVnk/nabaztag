@@ -286,7 +286,7 @@ Ordre conseille : #2 -> #12 -> #7(dump) -> #5 -> #4 -> #11 -> #14 -> #8a,
 chaque step mesure (mtl_compiler ou arm-none-eabi-size) et passe dans
 rabbit-vm avant le lapin, un clic par step.
 
-Fichiers de travail (dev-loutre) : ~/codemort/ls/{Nab.elf,Nab.map,nm.txt,
+Fichiers de travail (machine de build) : ~/codemort/ls/{Nab.elf,Nab.map,nm.txt,
 dis.txt,syms.txt,src/,mtl/}, ~/codemort/{refs.py,opc.py,mtl.py,variants.py},
 ~/codemort/mtlbuild/{base,va,vb,vc}.{mtl,bin,lst}. Rien dans le depot n'a
 ete modifie.

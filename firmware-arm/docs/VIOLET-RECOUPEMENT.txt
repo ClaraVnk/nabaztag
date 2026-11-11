@@ -2,7 +2,7 @@ RECOUPEMENT AVEC LES RÉIMPLÉMENTATIONS
 Phase 5 — confirmer/infirmer les interprétations, combler les zones grises
 2026-11-11
 
-Sources comparées (clonées dans /tmp/p5 sur dev-loutre) :
+Sources comparées (clonées dans /tmp/p5 sur la machine de build) :
   - OpenJabNab (github.com/OpenJabNab/OpenJabNab) : serveur « warren » de
     référence (C++/Qt) ET bundle des sources bytecode d'origine (bootcode/sources).
   - uplg/nabgcc et RedoXyde/nabgcc : les ancêtres C du firmware (le portage GCC).

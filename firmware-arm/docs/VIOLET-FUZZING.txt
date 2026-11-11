@@ -12,7 +12,7 @@ usbh_get_descriptor_all ligne 371) ; seul l'environnement (tampons de taille
 EXACTE alloués sur le tas) est ajouté pour que les redzones d'ASan voient les
 débordements. Fichier : /tmp/harness.c.
 
-Toolchain : le runtime ASan n'est pas installé sur dev-loutre, mais l'image
+Toolchain : le runtime ASan n'est pas installé sur la machine de build, mais l'image
 podman de l'émulateur (localhost/nabaztag-emulator) l'a. Compilation et exécution
 dans cette image (réutilisée, non reconstruite) :
   gcc -fsanitize=address,undefined -g -O0 harness.c -o h
