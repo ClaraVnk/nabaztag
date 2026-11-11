@@ -467,9 +467,39 @@ struct gw_conn {
   uint32_t snd_nxt;   /* the next sequence number we will send */
   uint32_t rcv_nxt;   /* the next sequence number we expect */
   int      fin_sent;
+  uint32_t down;      /* bytes of TCP payload sent to the rabbit on it */
+  /* http-big: the gateway answers this connection itself. */
+  int      big;       /* 1 waiting for the request, 2 sending, 3 done */
+  uint32_t big_left;  /* bytes of the response still to send */
 };
 
 static struct gw_conn conns[GW_MAX_CONNECTIONS];
+
+/* http-big: from the moment a scenario says so, every connection the rabbit
+ * opens to anything but the XMPP port is answered here, with a 200 and a
+ * body of this many bytes -- a server, or a host on the path, that answers
+ * a request with far more than the rabbit can hold. 0 = off, proxy as usual.
+ * http.mtl's HTTP_NORMAL kept every segment until the connection closed;
+ * the heap is 204,800 words. */
+static uint32_t gw_http_big;
+
+void gw_http_big_set(uint32_t bytes)
+{
+  gw_http_big = bytes;
+  if(bytes)
+    sim_log("gw: from now on every HTTP request gets a %u-byte body, from "
+            "the gateway itself", bytes);
+  else
+    sim_log("gw: HTTP requests go to the warren again");
+}
+
+/* How much a connection carried down, said once when it ends: the size of
+ * the largest legitimate answer is read off these lines. */
+static void conn_report(const struct gw_conn *c, const char *how)
+{
+  sim_log("gw: port %u %s, %u bytes down%s", c->dest_port, how, c->down,
+          c->big == 2 ? " -- the rabbit hung up on the oversized answer" : "");
+}
 
 /**
  * @brief How many connections to the XMPP port are open.
@@ -535,6 +565,7 @@ static void tcp_send(struct gw_conn *c, uint8_t flags, const uint8_t *data,
   if(flags & 0x02) c->snd_nxt++;           /* a SYN takes a sequence number */
   c->snd_nxt += length;
   if(flags & 0x01) c->snd_nxt++;           /* and so does a FIN */
+  c->down += length;
 
   send_ip(c->dest_ip, c->rabbit_ip, 6, segment, 20 + length, 1);
 }
@@ -613,6 +644,16 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     c->dest_port = dport;
     c->rcv_nxt = seq + 1;
     c->snd_nxt = 0x1000;                   /* any starting point will do */
+    c->fd = -1;
+    if(gw_http_big && dport != gw_xmpp_port) {
+      c->big = 1;
+      c->state = TCP_OPEN;
+      gw_stats.tcp_opened++;
+      sim_log("gw: the rabbit opened %s:%u -> port %u, answered by the "
+              "gateway (http-big)", ipstr(src), sport, dport);
+      tcp_send(c, 0x02 | 0x10, NULL, 0);   /* SYN-ACK */
+      return;
+    }
     c->fd = host_connect(dport);
     if(c->fd < 0) {
       gw_stats.tcp_refused++;
@@ -685,11 +726,22 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     }
     c->rcv_nxt += data_length;
     tcp_send(c, 0x10, NULL, 0);
+    if(c->big == 1) {
+      /* The request, whatever it asks for: the status line and headers
+       * now, the body from gw_poll, one segment per pass. */
+      static const char head[] = "HTTP/1.0 200 OK\r\nContent-Type: "
+                                 "application/octet-stream\r\n\r\n";
+      c->big = 2;
+      c->big_left = gw_http_big;
+      tcp_send(c, 0x10 | 0x08, (const uint8_t *)head, (uint32_t)(sizeof(head) - 1));
+    }
   }
 
   if(flags & 0x01) {                       /* FIN */
     c->rcv_nxt++;
     sim_log("gw: the rabbit closed %s:%u", ipstr(src), sport);
+    conn_report(c, "closed by the rabbit");
+    if(c->big) c->big = 3;
     tcp_send(c, 0x10, NULL, 0);
     if(c->fd >= 0) shutdown(c->fd, SHUT_WR);
     if(!c->fin_sent) {
@@ -703,6 +755,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
 
   if(flags & 0x04) {                       /* RST */
     sim_log("gw: the rabbit reset %s:%u", ipstr(src), sport);
+    conn_report(c, "reset by the rabbit");
     conn_drop(c);
   }
 }
@@ -794,6 +847,23 @@ void gw_poll(void)
     ssize_t n;
 
     if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
+    if(c->big == 3 && c->state == TCP_CLOSING) { conn_drop(c); continue; }
+    if(c->big == 2) {
+      /* The oversized body: filler, a segment a pass, then a FIN. */
+      uint32_t chunk = c->big_left > GW_MSS ? GW_MSS : c->big_left;
+      if(chunk) {
+        memset(buffer, 'A', chunk);
+        tcp_send(c, 0x10 | 0x08, buffer, chunk);
+        c->big_left -= chunk;
+      } else {
+        c->big = 3;
+        c->fin_sent = 1;
+        conn_report(c, "served in full by the gateway");
+        tcp_send(c, 0x01 | 0x10, NULL, 0);
+        gw_stats.tcp_closed++;
+      }
+      continue;
+    }
     if(c->fd < 0) continue;
 
     n = read(c->fd, buffer, sizeof(buffer));
@@ -806,6 +876,7 @@ void gw_poll(void)
       if(!c->fin_sent) {
         c->fin_sent = 1;
         sim_log("gw: the warren closed %s:%u", ipstr(c->rabbit_ip), c->rabbit_port);
+        conn_report(c, "closed by the warren");
         tcp_send(c, 0x01 | 0x10, NULL, 0);
         gw_stats.tcp_closed++;
       }

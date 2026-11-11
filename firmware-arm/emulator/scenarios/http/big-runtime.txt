@@ -1,0 +1,25 @@
+# The runtime bytecode's half of scenarios/vm/http-big-boot.txt.
+#
+# Not under scenarios/vm/: it needs a runtime bytecode built with
+# bytecode/patch_http_cap.py (bytecode/build-bytecode.sh applies it), and
+# the image tools/vm-check.sh links by default is the add-on's, which
+# predates it. Build one and link it:
+#
+#   bash bytecode/build-bytecode.sh <violet bootcode tree> "" runtime.hybrid
+#   make NABGCC=<tree> BYTECODE=runtime.hybrid vm
+#   ./rabbit-vm scenarios/http/big-runtime.txt --eeprom obj/conf/vm-open.eeprom
+#
+# The first thing a runtime does once associated is GET locate.jsp, an
+# HTTP_NORMAL request; the gateway answers it with a megabyte. Without the
+# patch: reset, reason 1. With it the request stops at 16 KB, the rabbit
+# hangs up, _configcbhttp gets nil and asks again, for as long as the
+# answers stay oversized -- and no reset.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 120000
+
+at 0      http-big 1000000
+at 20000  expect RUN
+at 110000 expect RUN
+at 115000 expect-no-reset

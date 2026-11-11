@@ -209,6 +209,10 @@ void sim_run_events(void)
       case SIM_EV_EXPECT_EAPOL_BADLEN:
       case SIM_EV_EXPECT_TKIP_REFUSED:
       case SIM_EV_EXPECT_SAE_REFUSED:
+      case SIM_EV_AP_DATA:
+      case SIM_EV_AP_REPLAY:
+      case SIM_EV_EXPECT_REPLAY:
+      case SIM_EV_EXPECT_DATA_UP:
         sim_audit_event(e); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
@@ -419,6 +423,7 @@ int main(int argc, char **argv)
      * inside rt2501_receive() by eapol_input(); anything else would go up to
      * netCb() and into the TCP/IP stack, which this harness does not run. */
     while((r = rt2501_receive()) != NULL) {
+      sim.data_up++;
       sim_log("data: %u bytes from %02x:%02x:%02x:%02x:%02x:%02x", r->length,
               r->source_mac[0],r->source_mac[1],r->source_mac[2],
               r->source_mac[3],r->source_mac[4],r->source_mac[5]);
@@ -517,6 +522,7 @@ int main(int argc, char **argv)
   if(vap_stats.plain_injected || ieee80211_plain_dropped)
     printf("plaintext injected  %u, refused %u\n", vap_stats.plain_injected,
            ieee80211_plain_dropped);
+  sim_replay_summary();
   printf("entropy pool        credit %u, %s\n", nab_rng_credit(),
          nab_rng_ready() ? "ready" : "not ready");
   {

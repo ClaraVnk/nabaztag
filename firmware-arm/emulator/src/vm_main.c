@@ -162,7 +162,12 @@ void sim_run_events(void)
       case SIM_EV_EXPECT_EAPOL_BADLEN:
       case SIM_EV_EXPECT_TKIP_REFUSED:
       case SIM_EV_EXPECT_SAE_REFUSED:
+      case SIM_EV_AP_DATA:
+      case SIM_EV_AP_REPLAY:
+      case SIM_EV_EXPECT_REPLAY:
+      case SIM_EV_EXPECT_DATA_UP:
         sim_audit_event(e); break;
+      case SIM_EV_HTTP_BIG: gw_http_big_set((uint32_t)e->arg); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
           sim_log("ok   %u plaintext data frame(s) refused on the protected "
@@ -375,6 +380,7 @@ int main(int argc, char **argv)
     rec_check();
 
     while((r = rt2501_receive()) != NULL) {
+      sim.data_up++;
       netCb(r->data, r->length, r->source_mac);
       hcd_free(r);
       play_check(0);
@@ -436,6 +442,7 @@ int main(int argc, char **argv)
            phone_stats.uploads_finished ? "" : " (not finished)");
   printf("tcp bytes up/down   %u / %u\n", gw_stats.bytes_from_rabbit,
          gw_stats.bytes_to_rabbit);
+  sim_replay_summary();
   printf("audio clips played  %u (%u bytes)\n", hw_audio_clips(), hw_audio_bytes());
   printf("ears at count       %u / %u\n", hw_ear_position(0), hw_ear_position(1));
   printf("ear commands        %u / %u\n", hw_ear_commands(0), hw_ear_commands(1));
