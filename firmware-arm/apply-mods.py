@@ -7788,6 +7788,41 @@ def patch_no_tkip_code(root: Path) -> None:
     print(f"[ok]   {p}: TKIP IV on transmit removed")
 
 
+def patch_stub_soft_codecs(root: Path) -> None:
+    """Stub the four software audio codec opcodes nothing calls (~3 KB).
+
+    adp2wav, wav2adp, alaw2wav and wav2alaw convert between PCM, IMA ADPCM and
+    A-law/mu-law on the ARM7. The microphone is encoded by the VS1003 in
+    hardware, and neither the bootloader nor the runtime bytecode names them
+    (reclib.mtl's only calls sit in a block comment). The opcodes stay -- a
+    bytecode that used one must not run into a missing case -- but each now
+    drops its arguments and answers nil; the codecs and their three tables
+    (alaw, mulaw, exposant) fall to --gc-sections. The ADPCM decoder recVol
+    uses is not touched.
+
+    Patches vinterp.c. Idempotent.
+    """
+    p = root / "src/vm/vinterp.c"
+    s, nl = read_flat(p)
+    if "/* stub_soft_codecs */" in s:
+        print(f"[skip] {p}: the software codec opcodes are already stubs")
+        return
+    for op, nargs in (("OPadp2wav", 5), ("OPwav2adp", 5), ("OPalaw2wav", 6), ("OPwav2alaw", 6)):
+        head = f"      case {op}:\n"
+        if s.count(head) != 1:
+            sys.exit(f"FAIL {p}: expected one case {op}, found {s.count(head)}")
+        i = s.index(head)
+        end = "        break;\n"
+        j = s.index(end, i) + len(end)
+        if f"Audio{op[2].upper()}{op[3:]}(" not in s[i:j]:
+            sys.exit(f"FAIL {p}: case {op} is not the shape this patch expects")
+        s = (s[:i] + head +
+             f"        VDROPN({nargs - 1}); VSTACKSET(0,NIL);  /* stub_soft_codecs */\n" +
+             end + s[j:])
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: adp2wav/wav2adp/alaw2wav/wav2alaw answer nil; the codecs are unlinked")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -8099,7 +8134,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8335,6 +8370,7 @@ def main() -> int:
         "strip_eapol_dump": patch_strip_eapol_dump,
         "uart_silent": patch_uart_silent,
         "no_tkip_code": patch_no_tkip_code,
+        "stub_soft_codecs": patch_stub_soft_codecs,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
