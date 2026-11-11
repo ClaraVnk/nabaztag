@@ -34,11 +34,10 @@ RUN dnf -y install --setopt=install_weak_deps=False \
  && dnf clean all && rm -rf /var/cache/dnf
 
 WORKDIR /build
-RUN git clone https://github.com/RedoXyde/nabgcc.git \
- && cd nabgcc \
- && git checkout "$NABGCC_COMMIT" \
- && git clone https://github.com/RedoXyde/mtl_linux.git mtl/mtl_linux \
- && cd mtl/mtl_linux && git checkout "$MTL_LINUX_COMMIT"
+# nabgcc and its mtl/mtl_linux compiler are vendored in the repo at the commits
+# named above (firmware-arm/vendor/, see its README), so the image builds with
+# no network and survives the upstream repositories disappearing.
+COPY firmware-arm/vendor/nabgcc /build/nabgcc
 
 # nabgcc's src/net/aes128.c is a stub: every function is empty, while
 # eapol.c calls it to unwrap the WPA2 group key. The emulator must use the

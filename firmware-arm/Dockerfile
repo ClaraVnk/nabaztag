@@ -27,11 +27,10 @@ ARG NABGCC_COMMIT=2c05b53fe4b17506cfff6570b9f1624ff7c2cdc3
 ARG MTL_LINUX_COMMIT=7e557a15373523f819e49d57e7a9c5419327b651
 
 WORKDIR /build
-RUN git clone https://github.com/RedoXyde/nabgcc.git \
- && cd nabgcc \
- && git checkout "$NABGCC_COMMIT" \
- && git clone https://github.com/RedoXyde/mtl_linux.git mtl/mtl_linux \
- && cd mtl/mtl_linux && git checkout "$MTL_LINUX_COMMIT"
+# nabgcc and its mtl/mtl_linux compiler are vendored in the repo at the commits
+# named above (vendor/, see vendor/README.md), so the firmware builds with no
+# network and survives the upstream repositories disappearing.
+COPY vendor/nabgcc /build/nabgcc
 
 # Drop our crypto module + vendored TweetNaCl + the embedded public key.
 # .c files go under src/crypto/ (compiled in via the existing src/**/*.c
