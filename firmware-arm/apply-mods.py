@@ -7723,6 +7723,71 @@ def patch_uart_silent(root: Path) -> None:
     print(f"[ok]   {p}: HIDE_VM_OUTPUT defined, the VM writes nothing to the UART")
 
 
+def patch_no_tkip_code(root: Path) -> None:
+    """Remove the pairwise-TKIP code no_tkip_pairwise made unreachable (~1.6 KB).
+
+    Since no_tkip_pairwise the rabbit refuses a network whose only pairwise
+    cipher is TKIP, and message 1/4 is refused before any computation. What
+    served that cipher stayed linked: the HMAC-MD5 MIC (five `else hmac_md5`
+    branches, the only callers of MD5 in C), the RC4 unwrap of the group key
+    in the group handshake, the pairwise TKIP key install, and the TKIP IV on
+    transmit. They go, and MD5 and rc4.o fall to --gc-sections.
+
+    The five MIC branches become `return`, not nothing: on the receive side an
+    empty branch would leave the zeroed MIC field to be compared with the
+    frame's own, and a frame carrying a zero MIC would pass. Unreachable, but
+    it fails closed this way.
+
+    Kept: the TKIP *group* key of a mixed WPA/WPA2 AP, which arrives AES-wrapped
+    in a KDE and is installed by eapol_install_msg3_gtk.
+
+    Requires no_tkip_pairwise. Patches eapol.c and ieee80211.c. Idempotent.
+    """
+    p = root / "src/net/eapol.c"
+    s, nl = read_flat(p)
+    if "/* no_tkip_code */" in s:
+        print(f"[skip] {p}: the pairwise-TKIP code is already gone")
+    else:
+        s, n = re.subn(r"\n  else\n    hmac_md5\([^;]*\);\n",
+                       "\n  else\n    return;  /* no_tkip_code */\n", s)
+        if n != 5:
+            sys.exit(f"FAIL {p}: expected 5 HMAC-MD5 MIC branches, found {n}")
+        old = ("    else\n"
+               "      rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_TKIP);\n")
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: the pairwise TKIP key install is not where this patch expects it")
+        s = s.replace(old, "", 1)
+        a = "    case IEEE80211_CIPHER_TKIP: // Decrypt RC4\n"
+        b = "    case IEEE80211_CIPHER_CCMP:\n"
+        if s.count(a) != 1 or b not in s[s.index(a):]:
+            sys.exit(f"FAIL {p}: the RC4 group-key case is not where this patch expects it")
+        i = s.index(a)
+        s = s[:i] + s[s.index(b, i):]
+        for decl in ("  uint8_t key[32];\n  struct rc4_context rc4;\n", '#include "net/rc4.h"\n'):
+            if s.count(decl) != 1:
+                sys.exit(f"FAIL {p}: expected one {decl.strip()!r}")
+            s = s.replace(decl, "", 1)
+        write_flat(p, s, nl)
+        print(f"[ok]   {p}: HMAC-MD5 MIC, RC4 unwrap and pairwise TKIP install removed")
+
+    p = root / "src/net/ieee80211.c"
+    s, nl = read_flat(p)
+    a = ("          case IEEE80211_CIPHER_TKIP:\n"
+         "            {\n"
+         "              struct ieee80211_tkip_iv iv;\n")
+    b = ("          case IEEE80211_CIPHER_CCMP:\n"
+         "            {\n"
+         "              struct ieee80211_ccmp_iv iv;\n")
+    if a not in s:
+        print(f"[skip] {p}: no TKIP IV on transmit")
+        return
+    if s.count(a) != 1 or s.count(b) != 1 or s.index(b) < s.index(a):
+        sys.exit(f"FAIL {p}: the transmit IV switch is not the shape this patch expects")
+    s = s[:s.index(a)] + s[s.index(b):]
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: TKIP IV on transmit removed")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -8034,7 +8099,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8161,6 +8226,10 @@ def main() -> int:
         sys.exit("FAIL step list: adoption_kx draws the adoption key through "
                  "ieee80211_rng_key_bytes, which entropy_pool provides. A key "
                  "from the timer is the 2026-11-08 audit's S1; add entropy_pool.")
+    if "no_tkip_code" in steps and "no_tkip_pairwise" not in steps:
+        sys.exit("FAIL step list: no_tkip_code removes the code that serves a "
+                 "TKIP pairwise cipher; without no_tkip_pairwise that cipher "
+                 "is still negotiated. Add no_tkip_pairwise.")
     if "rx_protected" in steps and "wpa2_gtk" not in steps:
         sys.exit("FAIL step list: rx_protected sets eapol_secure where message 3 "
                  "ends, text wpa2_gtk owns; add wpa2_gtk.")
@@ -8265,6 +8334,7 @@ def main() -> int:
         "strip_factory_test": patch_strip_factory_test,
         "strip_eapol_dump": patch_strip_eapol_dump,
         "uart_silent": patch_uart_silent,
+        "no_tkip_code": patch_no_tkip_code,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
