@@ -3872,6 +3872,194 @@ int32_t sysFlash(uint8_t* firmware,int32_t len)
     print(f"[ok]   {q}: a flash that wrote nothing serves the error page")
 
 
+def patch_flash_precheck(root: Path) -> None:
+    """Refuse, before anything is erased, an image that cannot be a firmware.
+
+    docs/OTA-ANTIBRICK.md, section 3. The signature says who built the image
+    and that it arrived whole; it does not say the file is a Nab.bin. Nothing
+    between verifySig and the first erase looks at the image at all, and the
+    writer takes any length: 126,977 bytes and it erases the configuration
+    sector, 200,000 and it issues erase commands past the end of the flash.
+    The first erase is where a refusal stops being free, so everything that
+    can be decided from the bytes is decided here:
+
+    - the length: at least four sectors, at most the 31 the linker script
+      gives the image (0x1F000, sector 31 is the configuration);
+    - the reset vector: `ldr pc,[pc,#n]`, which is what every image this
+      toolchain has produced starts with, loading an ARM address that lies
+      inside the image itself.
+
+    A refusal answers 0xE1 to the bytecode (the OTA path reports it as
+    /vl/otafail?e=000000E1) and leaves the flash untouched.
+
+    Deliberately NOT here: any comparison with the version in place. A
+    tester has to be able to flash an older signed image back; the six
+    images in releases/ start the same way and pass (two of them uploaded
+    through scenarios/vm/config-upload.txt, the oldest and the newest).
+
+    The bootloader's upload page is fixed in the same step, because its
+    failure branch could not be reached: it showed the error page when
+    flashFirmware answered nil, and the opcode never answers nil -- on a
+    refusal the image is still on the stack, on a failure the address is.
+    A successful flash does not return at all, so whatever comes back is a
+    failure, and the page now says so.
+    """
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_fw_plausible" in t:
+        print(f"[skip] {q}: flashFirmware already looks at the image first")
+    else:
+        a = "  return d == 0;\n}\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: no nab_fw_verified to put the precheck after "
+                     "(run the vinterp step first)")
+        t = t.replace(a, a + (
+            "/* flash_precheck: 1 iff `img` can be this board's firmware. Runs before\n"
+            "   the first erase, which is the last moment a refusal costs nothing.\n"
+            "   No version check: an older signed image must stay flashable. */\n"
+            "static int nab_fw_plausible(const unsigned char *img, int len)\n"
+            "{\n"
+            "  uint32_t v, t;\n"
+            "  if (len < 0x4000 || len > 0x1F000) return 0;\n"
+            "  v = img[0] | (img[1] << 8) | (img[2] << 16) | ((uint32_t)img[3] << 24);\n"
+            "  if ((v & 0xFFFFF000) != 0xE59FF000) return 0;  /* ldr pc,[pc,#n] */\n"
+            "  v = 8 + (v & 0xFFF);\n"
+            "  if (v > 0x100) return 0;\n"
+            "  t = img[v] | (img[v+1] << 8) | (img[v+2] << 16) | ((uint32_t)img[v+3] << 24);\n"
+            "  return t >= 0x08000020 && t < 0x08000000 + (uint32_t)len && !(t & 3);\n"
+            "}\n"), 1)
+        a = ("              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware)))\n")
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: OPflashFirmware's guard is not the shape this patch expects")
+        t = t.replace(a, (
+            "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+            "              &&(nab_fw_plausible((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+            "                 ||((VSTACKSET(0,INTTOVAL(0xE1))),0)))\n"), 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: flashFirmware checks length and reset vector before the first erase")
+
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "######### flash REFUSED" in t:
+        print(f"[skip] {q}: httpflash already treats any return as a failure")
+        return
+    a = """		if (flashFirmware firm 0x13fb6754 0x0407FE58)==nil then
+		(
+			// A successful flash never gets here: the chip resets itself
+			// from inside the opcode. Getting here means the erase or a
+			// word did not take and the old firmware is still in place.
+			Secholn "######### flash FAILED, firmware unchanged";
+			setleds 0xff0000;
+			page_error
+		)
+		else nil
+	)"""
+    if a not in t:
+        # An image without flash_verify has no failure branch to repair, and
+        # the emulator's tree has no bootloader step at all.
+        print(f"[skip] {q}: no flash_verify failure branch in httpflash to repair")
+        return
+    write_flat(q, t.replace(a, """		flashFirmware firm 0x13fb6754 0x0407FE58;
+		// A successful flash never gets here: the chip resets itself from
+		// inside the opcode. Whatever it answered, getting here means the
+		// image was refused before the first erase.
+		Secholn "######### flash REFUSED, firmware unchanged";
+		setleds 0xff0000;
+		page_error
+	)""", 1), nl)
+    print(f"[ok]   {q}: httpflash shows the error page whenever flashFirmware returns")
+
+
+def patch_flash_no_return(root: Path) -> None:
+    """Once the first sector is erased, finish the flash or die trying.
+
+    docs/OTA-ANTIBRICK.md, section 3. flash_verify made the writer notice a
+    sector that did not erase or a word that did not take -- and then return
+    the address to its caller. The caller is sysFlash, in the flash, and by
+    then the flash is sectors 0..k-1 of the new image followed by the rest of
+    the old one: the return lands in code that is no longer there, the image
+    that would have fixed it is in a heap nobody will read again, and the
+    next power-up finds half a firmware. A write error that was survivable
+    is turned into a brick by reporting it.
+
+    The image is in RAM, the writer is in RAM, and the power is on. So:
+
+    - a sector that fails is erased and written again, four times, with the
+      watchdog fed before each attempt;
+    - if a sector still will not take, the rest are written anyway, and the
+      whole image is gone over again, three passes -- a pass costs nothing
+      for the sectors that took, because:
+    - a sector that already holds the bytes it is asked to hold is skipped,
+      before any erase. Writing the image that is already there erases
+      nothing at all, and a pass after a failure only touches what failed;
+    - flash_uc does not return. When it has done what it can it resets, with
+      the address of the last sector that refused in nab_flash_error, which
+      crash_report puts in the next boot URL if there is a next boot.
+
+    The watchdog: write_uc_flash_sec "stops" it with set_bit(TBGCON,0x80),
+    but TBGCON takes a write only after 0x5A has been written to it (see
+    wdt_start and reset_uc, which both do), so that halt is probably ignored
+    and the 2.09 s window probably keeps running across all thirty-odd
+    sectors with interrupts off. Nobody has measured which. Feeding it
+    between sectors is right under both readings: it is the same two writes
+    to WDTCON the interpreter makes before every opcode, done at the point
+    where the sector writer has put TBGCON back as it found it.
+
+    What this does not change is a power cut: the image in RAM goes with the
+    power. emulator/flashsim measures both, before and after.
+    """
+    q = root / "src/utils/mem.c"
+    t, nl = read_flat(q)
+    if "flash_no_return" in t:
+        print(f"[skip] {q}: flash_uc already finishes what it starts")
+        return
+    a = """  int32_t address=0;
+  while(nb_byte>0)
+  {
+    if(write_uc_flash_sec(address,data,(nb_byte<4096)?nb_byte:4096,temp))
+      return address ? address : -1;  /* the address that failed; 0 means 0 */
+    nb_byte-=4096;
+    data+=4096;
+    address+=4096;
+  }
+"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: flash_uc is not the shape flash_verify leaves "
+                 "(run flash_verify first)")
+    t = t.replace(a, """  /* flash_no_return: see apply-mods.py. Nothing below returns to the
+   * caller, because after the first erase the caller is not there. */
+  int32_t address, left, bad=0;
+  uint32_t n, i;
+  uint8_t *src, pass, tries;
+  for(pass=0; pass<3; pass++)
+  {
+    bad=0;
+    for(address=0, src=data, left=nb_byte; left>0;
+        address+=4096, src+=4096, left-=4096)
+    {
+      n=(left<4096)?(uint32_t)left:4096;
+      /* A sector that already holds these bytes is left alone. */
+      for(i=0; i<n && ((uint8_t*)address)[i]==src[i]; i++);
+      if(i==n) continue;
+      for(tries=0; tries<4; tries++)
+      {
+        /* TBGCON as the sector writer leaves it on success, then the
+         * interpreter's own CLR_WDT. */
+        clr_bit(TBGCON,0x80);
+        put_value(WDTCON,0xC3);
+        put_value(WDTCON,0x3C);
+        if(!write_uc_flash_sec(address,src,n,temp)) break;
+      }
+      if(tries==4) bad=address ? address : -1;
+    }
+    if(!bad) break;
+  }
+  { extern int32_t nab_flash_error; nab_flash_error=bad; }
+""", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: flash_uc retries, skips what is already written, and never returns")
+
+
 def patch_rx_recovery(root: Path) -> None:
     """Stop a burst of receive errors from killing the radio until the mains.
 
@@ -8299,7 +8487,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8465,6 +8653,16 @@ def main() -> int:
             "and into the power-up block that persist_counters creates -- it "
             "must come after persist_counters."
         )
+    # flash_no_return rewrites the loop flash_verify leaves in flash_uc and
+    # stores into nab_flash_error, which flash_verify declares; and a writer
+    # that never comes back needs every refusal made before it is called.
+    if "flash_no_return" in steps:
+        for dep in ("flash_verify", "flash_precheck"):
+            if dep not in steps or steps.index(dep) > steps.index("flash_no_return"):
+                sys.exit(f"FAIL step list: flash_no_return must come after {dep}.")
+    if "flash_precheck" in steps and "vinterp" not in steps:
+        sys.exit("FAIL step list: flash_precheck extends the guard vinterp puts "
+                 "on flashFirmware.")
     if "persist_counters" in steps:
         order = steps.index("persist_counters")
         for dep in ("stdlib", "flash_verify"):
@@ -8547,6 +8745,8 @@ def main() -> int:
         "eapol_msg2_ie": patch_eapol_msg2_ie,
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,
+        "flash_precheck": patch_flash_precheck,
+        "flash_no_return": patch_flash_no_return,
         "usb_robustness": patch_usb_robustness,
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
