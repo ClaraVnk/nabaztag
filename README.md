@@ -494,8 +494,9 @@ of Le Terrier, and new work goes to the
 rather than here.
 
 > `legacy/nabaztag-server/` is a different, older add-on: the first one, built on
-> OpenJabNab. It is no longer offered in the store and its image cannot be
-> patched — if you still have it installed, **uninstall it** (see its
+> OpenJabNab. It is no longer offered in the store -- its manifest is kept as
+> `config.yaml.retired`, which the Supervisor does not read -- and its image
+> cannot be patched — if you still have it installed, **uninstall it** (see its
 > [`DOCS.md`](legacy/nabaztag-server/DOCS.md)).
 
 ### How it works
