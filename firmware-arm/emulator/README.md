@@ -188,6 +188,12 @@ at 90000 expect RUN
 | `at <ms> expect-eapol-badlen <n>` / `expect-tkip-refused <n>` / `expect-sae-refused <n>` | assert the firmware's own counters (`eapol_bad_length`, `ieee80211_tkip_refused`, `ieee80211_sae_refused`): at least `n`, and fail when the build has no such step |
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
+| `at <ms> http-big <bytes>` | from now on the gateway answers every HTTP request itself: 200, then a body of that many bytes (`0` hands requests back to the warren) (`./rabbit-vm`) |
+| `at <ms> expect-no-reset` | assert the firmware never asked for a processor reset (a VM out of memory does) (`./rabbit-vm`) |
+| `at <ms> data [group]` | the AP sends one protected data frame with the next packet number of the pairwise key, or of the group key to the broadcast address |
+| `at <ms> replay [group] [retry]` | the last such frame again, with the packet number it had: an attacker's replay, or with `retry` (the Retry bit) the AP's own retransmission |
+| `at <ms> expect-replay <u> <g> <r>` | assert `ccmp_replay_count`'s counters exactly: unicast and group frames whose packet number did not increase, and retransmissions; fails when the build has no such step |
+| `at <ms> expect-data-up <n>` | assert exactly `n` data frames were handed up by the driver (`./rabbit`: EAPOL is consumed below, nothing else sends data) |
 | `realtime` | pace the loop to the wall clock |
 | `fetch <ms> <event>` | any of the above, `<ms>` after the rabbit starts downloading a sound |
 
@@ -247,6 +253,60 @@ is an open one. The check carries its author's own doubt —
 it has to agree with.
 
 ## What it already answers
+
+**How much an HTTP answer may weigh, 2026-11-11.** Both HTTP clients -- the
+bootloader's and the runtime's -- kept an HTTP_NORMAL answer whole until the
+connection closed. `at <ms> http-big <bytes>` makes the gateway answer every
+request itself with a body of that size, and the transcript says how much
+went down each connection (`gw: port 8080 closed by the rabbit, 165259 bytes
+down`), which is also how the largest legitimate answers were read off a
+normal boot (`tools/plain_warren.py`: kx.jsp 119 bytes, bc.jsp 112,349,
+locate.jsp 178).
+
+```
+                        bootloader (lean-reclaim)         runtime (112 KB hybrid)
+1,000,000 bytes         reset at 768 KB received          reset at 666 KB received
+complete answer         220,000 resets, 180,000 does not  200,000 resets, 100,000 does not
+with the ceiling        hangs up at 165,259, asks again   hangs up at 18,259, asks again
+                        (6 times in 2 min, no reset)      (38 times in 2 min, no reset)
+```
+
+`scenarios/vm/http-big-boot.txt` runs under the bootloader of the image
+under test (so it fails on an image without `http_cap`), and
+`scenarios/http/big-runtime.txt` under a runtime built with
+`bytecode/patch_http_cap.py`. The hex `.sim` OTA is the one large
+HTTP_NORMAL download left and has its own ceiling; `scenarios/ota/
+self-start.txt` still reaches the signature gate with it (216,175 bytes
+down, `naboot-stable`). `tools/patch_ota_test.py` no longer applies to a tree
+`build-bytecode.sh` has patched -- `patch_locate_tls.py` rewrote the line it
+anchors on -- so that run replaced the `httprequest ... configurl` call by
+hand.
+
+**A CCMP frame played twice, 2026-11-11.** The virtual AP now gives every
+protected data frame a packet number, per key, and delivers it the way the
+radio would: in the receive descriptor's Iv and Eiv words, the CCMP header
+the RT2573 strips from the frame (PN0 PN1 rsvd KeyID | PN2..PN5), which is
+how Linux's rt73usb reads the same chip. **That layout is the driver's
+account, not a measurement of this board.** `data` sends a frame, `replay`
+sends the last one again with the number it had, `replay retry` does the
+same with the Retry bit, as an AP that missed the acknowledgement does.
+
+```
+without ccmp_replay_count   [20000] the last unicast data frame again, PN 3 (a replay)
+                            [20050] data: 36 bytes            <- handed up a second time
+with it                     [21000] ok   replays counted: 1 unicast, 0 group, 0 retransmitted
+                            [25000] ok   replays counted: 1 unicast, 1 group, 1 retransmitted
+                            [25000] ok   9 data frame(s) handed up    <- counted, not refused
+with ccmp_replay_enforce    [25000] ok   6 data frame(s) handed up    <- the three copies dropped
+```
+
+`scenarios/ccmp-replay.txt` goes on through two group rekeys, a pairwise
+rekey and a retransmitted message 3 without one false count; with the reset
+on key install taken out, the same scenario counts 3 group and 6 unicast
+frames that were never replayed. `scenarios/enforce/ccmp-replay.txt` is the
+refusal, in no default step list: what the emulator cannot say is whether
+those two words hold a packet number on a real rabbit, and the count mode
+exists to find out (`../jtag/ccmp-pn.py`).
 
 **Why a rabbit stays "connected" to an access point that has forgotten it,
 2026-11-08.** Two of the four needs-the-mains failures measured over JTAG
@@ -757,7 +817,9 @@ stubs/audio.c     the VLSI decoder, as a file you can listen to
 patches/          the simulated register window and one interpreter trace
 mkconf.py         writes the configuration page
 mkbc.py           turns a bytecode image into the array the VM links
-scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones
+scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones;
+                  http/, ota/ and enforce/ need a bytecode or a step list of
+                  their own, which their headers name
 ```
 
 The seam is `rt2501_tx()` and `ieee80211_input()`. Above it, everything is the
