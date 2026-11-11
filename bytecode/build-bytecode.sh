@@ -96,6 +96,11 @@ python3 "$HERE/patch_mic_in_session.py" "$BC/sources/main.mtl"
 # the image, then `FW res:N <sig>`, when the warren flipped "xmpp-ota:0".
 echo "==> patch_ota_in_session.py  (firmware updates inside the session)"
 python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
+# Blanks ahead of a stanza (a whitespace keepalive) no longer swallow it
+# and every stanza after it.
+echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
+python3 "$HERE/patch_xml_leading_blank.py" "$BC/sources/xmlparser.mtl"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"

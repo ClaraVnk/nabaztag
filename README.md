@@ -287,6 +287,10 @@ is the short version.
   or wake command until unplugged (Violet never spoke to a sleeping
   rabbit). `bytecode/patch_sleep_after_program.py` puts it back to sleep;
   the bug and the fix are both reproduced in the emulator.
+- **Blanks no longer deafen a rabbit.** Violet's XML parser kept a blank
+  ahead of a stanza as the rest of its buffer and dropped the stanza, then
+  every one after it: one whitespace keepalive and the rabbit acted on
+  nothing until unplugged. `bytecode/patch_xml_leading_blank.py` skips them.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
