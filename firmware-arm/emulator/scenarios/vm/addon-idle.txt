@@ -1,0 +1,11 @@
+# A confirmed rabbit left alone for seven minutes, for tools/addon-tls-proof.sh
+# --idle. The runtime closes a session it has read nothing from for 150 s
+# (bytecode/patch_liveness.py); a server that keepalives keeps it, one that
+# does not sees it reconnect, ears and all, every three minutes or so.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 430000
+
+at 20000  expect RUN
+at 420000 expect RUN
+at 425000 expect-no-reset
