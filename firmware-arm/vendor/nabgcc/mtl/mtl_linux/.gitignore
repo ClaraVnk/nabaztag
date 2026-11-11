@@ -1,0 +1,6 @@
+obj/
+mtl_simu
+mtl_compiler
+libvcomp.a
+*.bin
+*.mtl
