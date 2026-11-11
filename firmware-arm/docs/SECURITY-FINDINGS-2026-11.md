@@ -43,6 +43,28 @@ for a dedicated batch for the reasons given.
 7. **The .bin OTA buffer was the server's Content-Length, unbounded.** A huge
    size ran the VM out of memory (a reboot). Refused past the flash size now.
 
+8. **Pre-association out-of-bounds read in the beacon parser (HIGH).** While
+   scanning, `ieee80211_input_mgt` read a 16-bit suite count out of a beacon's
+   RSN and vendor-WPA elements and walked that many 4-byte suites with no
+   bound against the frame — a forged beacon with count 0x7fff read ~256 KB
+   past it, from radio range, before any association. Bounded against
+   frame_end now. Found by the Violet audit; proven with its ASan harness
+   (overflow unbounded, clean bounded). Violet-original, in the uplg and
+   RedoXyde ports too.
+
+9. **Heap write overflow copying USB descriptors (HIGH).**
+   `usbh_get_descriptor_all` copied each descriptor into a fixed-size struct
+   using the device's own bLength (up to 255), overrunning the heap on write.
+   Needs physical access to the USB port (a tampered dongle), but the one
+   write corruption the audit found. Each copy is clamped to its destination.
+   Proven with the ASan harness (WRITE overflow, clean clamped).
+
+10. **DNS replies were easy to forge and could exhaust the heap.** Query ids
+    were sequential (an off-path host could predict the next and race a forged
+    A/SRV record — the SRV answer is the XMPP server), and `parsemsg` walked
+    nbqu/nbans (up to 65535) by recursion. Random ids now, record counts
+    clamped. Resolution still works end to end in the emulator.
+
 ## Deferred (confirmed by code, left for a dedicated batch)
 
 These are real but either touch a hot, recently-stabilised path where a rushed
@@ -56,12 +78,13 @@ hardware validation, rather than enlarging the pre-flash lot.
   fix is in the 802.11 receive path that WPA3/EAPOL only just stabilised, and
   TLS-over-XMPP already rejects a replayed payload for a confirmed rabbit.
 
-- **DNS responses are unauthenticated** (`dns.mtl`: sequential 16-bit id,
-  fixed source port, no check of the sender, and `parsemsg` runs before the
-  id is matched). Moderate — a LAN host can forge an A record, as it could a
-  DHCP reply (now fixed). Deferred: the fix (random id, sender check, parse
-  only after a match) is more involved than DHCP's, over the SRV/cache/retry
-  paths; the DHCP fix already protects which DNS server the rabbit trusts.
+- **DNS parse-before-match** (`dns.mtl` `cbnetdns`): the random id and the
+  record-count clamp are fixed (item 10), but the message is still parsed
+  before the id is matched, so an unsolicited packet on the query port still
+  appends to the global SRV list though its callback is never called. The
+  random id makes a match unlikely; the reorder (parse only after a match,
+  plus a sender check) is left for its own batch over the SRV/cache/retry
+  paths.
 
 - **HTTP_NORMAL buffers a response without limit** (`http.mtl`). A server or
   a host on the path can exhaust the heap (a reboot). Deferred: the OTA `.bin`
@@ -82,8 +105,9 @@ hardware validation, rather than enlarging the pre-flash lot.
 - **Minor robustness, Violet-original:** `sysCmp` clamps to the longer string
   (a small over-read in VM-bounded heap); `sysI2cRead` passes a NULL buffer to
   `read_i2c` (likely an unreachable path); ADPCM `StepIndex` is taken from the
-  data unclamped (a step table over-read on a malicious resource). All low
-  impact.
+  data unclamped (a step table over-read on a malicious resource); `eapol.c`
+  reads a fixed 32 bytes of key data without checking `key_data_length`
+  (post-auth); a latent signed-integer overflow in `OPstrsub`. All low impact.
 
 - **TLS nits, no exploit with a PSK:** a bad server Finished answers alert 50
   where 51 is specified; EncryptedExtensions is accepted zero or many times.
