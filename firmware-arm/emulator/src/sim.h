@@ -83,6 +83,7 @@ enum {
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
   SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
+  SIM_EV_INJECT_PROBE,  /* a probe request with an oversized SSID (config mode) */
   SIM_EV_EXPECT_PLAIN_DROPPED, /* assert >= n plaintext frames refused */
   SIM_EV_FORGED_MSG1,   /* a message 1 the AP did not send           */
   SIM_EV_RESEND_MSG3,   /* the AP retransmits message 3              */

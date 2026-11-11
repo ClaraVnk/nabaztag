@@ -198,6 +198,7 @@ void sim_run_events(void)
       case SIM_EV_REAUTH:     vap_reauth(e->ap); break;
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_INJECT_PROBE: vap_inject_probe((uint32_t)e->arg); break;
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:
       case SIM_EV_EAPOL_OVERSIZED:

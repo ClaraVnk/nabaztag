@@ -69,6 +69,9 @@ void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
 /* A frame from the phone that joined a rabbit in config mode: see phone.c. */
 void vap_inject(const uint8_t *frame, uint32_t length);
+/* A probe request from a station in radio range, with an SSID element of
+ * `ssid_len` bytes, to a rabbit that is its own AP (config mode). */
+void vap_inject_probe(uint32_t ssid_len);
 /* An attacker's plaintext data frame from the AP's address; `eapol` makes
  * it an EAPOL-Key message 1. */
 void vap_inject_plain(int ap, int eapol);

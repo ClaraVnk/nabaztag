@@ -460,6 +460,9 @@ int sim_load(const char *path)
           if(!strcmp(tok[i], "eapol")) e->arg = 1;
           else e->ap = ap_by_bssid(tok[i]);
         }
+      } else if(!strcmp(tok[2], "inject-probe-ssid") && n >= 4) {
+        e->kind = SIM_EV_INJECT_PROBE;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect-plain-dropped") && n >= 4) {
         e->kind = SIM_EV_EXPECT_PLAIN_DROPPED;
         e->arg = (int)strtol(tok[3], NULL, 10);

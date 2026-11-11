@@ -1,0 +1,12 @@
+# Finding #3: a probe request whose SSID element is longer than 32 bytes
+# overruns the 33-byte stack buffer in ieee80211_input_mgt() while the rabbit
+# is its own access point (config mode). Any station in radio range can send
+# it. Before probe_ssid_bound the firmware copied all 255 bytes and read them
+# back (grep "Received probe request with SSID"); after, it stops at
+# IEEE80211_SSID_MAXLEN (32). Run: ./run.sh --vm scenarios/vm/probe-ssid-overflow.txt --no-eeprom
+
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 15000
+at 6000 inject-probe-ssid 255
