@@ -16,10 +16,14 @@
 # Usage: build-bytecode.sh <bootcode-dir> [compiler] [out.bin]
 #   <bootcode-dir>  the stock Violet bootcode tree (has sources/, preproc.pl)
 #                   e.g. /root/violet-bootcode in the nabi-build container.
-#   [compiler]      Metal compiler. Default: RedoXyde mtl_linux's *patched* build,
-#                   which knows the custom verifySig opcode (152). The plain
-#                   mtl_compiler errors "unknown label 'verifySig'" on fwota, and
-#                   the bundled compiler/mtl_linux/mtl_comp is 64-bit and SEGFAULTS.
+#   [compiler]      Metal compiler. Default: this repo's
+#                   firmware-arm/tools/mtl_comp.py -- a Python compiler
+#                   byte-identical to RedoXyde's C++ mtl_compiler (gated by
+#                   tools/run-tests.sh) that already knows the verifySig opcode
+#                   (152) fwota needs, so the bytecode builds from the repo
+#                   alone, no external binary. Pass a path ending in .py to use
+#                   another Python compiler, or any other path for a native
+#                   mtl_compiler binary (invoked `CC -s IN OUT`).
 #   [out.bin]       output (default: <bootcode-dir>/bootcode_hybrid.bin)
 #
 # All patch scripts are idempotent; re-running on an already-patched tree is safe.
@@ -27,12 +31,15 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BC="${1:?give the Violet bootcode dir (the one with sources/ and preproc.pl)}"
-CC="${2:-/root/mtl_linux/mtl_compiler_patched}"
+CC="${2:-$HERE/../firmware-arm/tools/mtl_comp.py}"
 OUT="${3:-$BC/bootcode_hybrid.bin}"
 
 [ -d "$BC/sources" ]         || { echo "no $BC/sources — is this a bootcode tree?"; exit 1; }
 [ -f "$BC/sources/main.mtl" ] || { echo "no sources/main.mtl"; exit 1; }
-[ -x "$CC" ]                 || { echo "compiler not executable: $CC"; exit 1; }
+case "$CC" in
+  *.py) [ -f "$CC" ] || { echo "compiler not found: $CC"; exit 1; } ;;
+  *)    [ -x "$CC" ] || { echo "compiler not executable: $CC"; exit 1; } ;;
+esac
 grep -q "fun dnsreq" "$BC/sources/dns.mtl" || { echo "sources/dns.mtl: no dnsreq — not stock Violet?"; exit 1; }
 
 echo "==> copying our modules into sources/"
@@ -118,7 +125,10 @@ python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
-"$CC" -s "$BC/bootcode.mtl" "$OUT"
+case "$CC" in
+  *.py) python3 "$CC" "$BC/bootcode.mtl" -o "$OUT" ;;
+  *)    "$CC" -s "$BC/bootcode.mtl" "$OUT" ;;
+esac
 
 # The literal the warren flips for a confirmed rabbit must be there exactly
 # once, or the Terrier leaves the policy alone and TLS stays optional; the
