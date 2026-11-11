@@ -96,6 +96,11 @@ enum {
   SIM_EV_EXPECT_TKIP_REFUSED,   /* assert >= n networks refused for pairwise TKIP */
   SIM_EV_EXPECT_SAE_REFUSED,    /* assert >= n PSK attempts refused on a SAE network */
   SIM_EV_EXPECT_SAE,    /* assert which SAE derivation the AP saw */
+  SIM_EV_HTTP_BIG,      /* the gateway answers HTTP itself, with a huge body */
+  SIM_EV_AP_DATA,       /* the AP sends one protected data frame          */
+  SIM_EV_AP_REPLAY,     /* a protected data frame already received, again */
+  SIM_EV_EXPECT_REPLAY, /* assert the firmware's CCMP replay counters     */
+  SIM_EV_EXPECT_DATA_UP,/* assert how many data frames the driver handed up */
 };
 
 struct sim_event {
@@ -103,6 +108,7 @@ struct sim_event {
   int      kind;
   int      ap;          /* index into the AP table, -1 = all     */
   int      arg;         /* reason code, count, expected state... */
+  int      arg2, arg3;  /* expect-replay: group, retransmissions */
   int      fired;
   /* Set by the "fetch <ms>" form: at_ms is a delay, counted from the moment
    * the rabbit starts downloading a resource, and the event is not due until
@@ -130,6 +136,7 @@ struct sim_scenario {
   uint32_t         segment;      /* the phone's TCP segment size, 0 = default */
   int              resets;       /* how often the firmware asked for a reset */
   int              last_reset_reason;
+  uint32_t         data_up;      /* data frames the driver handed up (./rabbit) */
 };
 
 extern struct sim_scenario sim;
@@ -148,6 +155,8 @@ void sim_note_failure(const char *why);
    3, oversized EAPOL, and the key-install assertions -- are the same for
    ./rabbit and ./rabbit-vm, so one handler serves both. 1 when e was one. */
 int sim_audit_event(struct sim_event *e);
+/* One summary line of ccmp_replay_count's counters, when the build has them. */
+void sim_replay_summary(void);
 /* Fill a buffer from an xorshift seeded with `seed`; zeros when seed is 0.
  * Stands in for what external RAM holds at power-up. */
 void sim_fill_noise(uint8_t *buf, uint32_t len, uint32_t seed);
