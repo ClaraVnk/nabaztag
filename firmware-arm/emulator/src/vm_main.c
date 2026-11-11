@@ -122,6 +122,7 @@ void sim_run_events(void)
       case SIM_EV_UPLOAD:
         phone_start_upload();
         break;
+      case SIM_EV_BUTTON:      hw_press(2, e->arg); break;
       case SIM_EV_RFID:
         hw_clear_tags();
         if(e->arg) hw_present_tag(e->tag);
@@ -309,6 +310,7 @@ int main(int argc, char **argv)
   gw_init(warren);
   hw_eeprom_open(eeprom);
   hw_audio_dir(audio_dir);
+  hw_audio_rate(sim.decoder_kbps);
 
   /* The entropy pool, as main.c starts it; the retained RAM is zeros here. */
   {

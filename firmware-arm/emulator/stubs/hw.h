@@ -25,6 +25,7 @@ uint16_t    hw_ear_position(int ear);
 uint32_t    hw_ear_commands(int ear);
 
 void hw_audio_dir(const char *dir);
+void hw_audio_rate(uint32_t kbps);
 uint32_t hw_audio_clips(void);
 uint32_t hw_audio_bytes(void);
 
