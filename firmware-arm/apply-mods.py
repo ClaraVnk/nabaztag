@@ -8950,6 +8950,10 @@ def main() -> int:
     if "no_wep" in steps and "no_tkip_pairwise" not in steps:
         sys.exit("FAIL step list: no_wep refuses a WEP network inside the refusal "
                  "no_tkip_pairwise installs; add no_tkip_pairwise.")
+    if ("no_tkip_code" in steps and "ccmp_replay_count" in steps
+            and steps.index("ccmp_replay_count") < steps.index("no_tkip_code")):
+        sys.exit("FAIL step list: no_tkip_code must come before ccmp_replay_count, "
+                 "which rewrites the key installs it removes one of.")
     if "no_tkip_code" in steps and "no_tkip_pairwise" not in steps:
         sys.exit("FAIL step list: no_tkip_code removes the code that serves a "
                  "TKIP pairwise cipher; without no_tkip_pairwise that cipher "
