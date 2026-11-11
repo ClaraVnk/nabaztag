@@ -34,6 +34,8 @@ void hw_press(int which, int down);
  * the upload, the hex decoding, the signature -- was accepted. */
 uint32_t hw_flash_writes(void);
 int32_t  hw_flash_last_size(void);
+/* Write the image flashFirmware hands over to this file (flashsim reads it). */
+void hw_flash_out(const char *path);
 void hw_present_tag(const uint8_t *id);
 void hw_clear_tags(void);
 

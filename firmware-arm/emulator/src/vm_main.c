@@ -14,6 +14,7 @@
  * hardware underneath — a radio that answers, LEDs and motors that report
  * what they were told, a flash page that remembers, and a clock.
  */
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,11 @@ extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
  * for a step list without it. The VM sets nab_reset_reason=1 when it runs
  * out of memory, just before it asks for the reset. */
 extern int32_t nab_reset_reason;
+
+/* Where sim_flash_done() (below) takes the run when the rabbit flashes. */
+static jmp_buf flash_jmp;
+static int flash_jmp_armed;
+static int cpu_gone;
 /* The verifySig opcode's own tally (apply-mods' vinterp step). Weak, so a
  * VM built without the opcode still links. */
 extern int32_t nab_verify_calls __attribute__((weak));
@@ -238,6 +244,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
+    else if(!strcmp(argv[i], "--flash-out") && i + 1 < argc) hw_flash_out(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
@@ -255,6 +262,8 @@ int main(int argc, char **argv)
         "  --port80      the warren's port that connections to port 80 go to\n"
         "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
         "                rabbit in config mode (scenario: config-mode, upload)\n"
+        "  --flash-out   keep the image the rabbit hands to flashFirmware, as the\n"
+        "                bytes flash_uc would write (flashsim/ takes it from there)\n"
         "  --trace-net   log every packet, not just what happened to it\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
@@ -347,6 +356,21 @@ int main(int argc, char **argv)
 
   while(sim_now() < sim.stop_ms) {
     struct rt2501buffer *r;
+
+    /* sim_flash_done() comes back to here, from inside interpGo. */
+    flash_jmp_armed = 1;
+    if(setjmp(flash_jmp)) continue;
+    if(cpu_gone) {
+      vap_poll();
+      phone_poll();
+      gw_poll();
+      hw_tick();
+      while((r = rt2501_receive()) != NULL) hcd_free(r);
+      sim_run_events();
+      sim_advance(sim.tick_ms);
+      sim_pace();
+      continue;
+    }
 
     VPUSH(VCALLSTACKGET(_sys_start, SYS_CBLOOP));
     if(VSTACKGET(0) != NIL)
@@ -445,6 +469,21 @@ int main(int argc, char **argv)
   gw_close();
   hw_eeprom_flush();
   return sim_failures() == 0 ? 0 : 1;
+}
+
+/*
+ * flash_uc does not return on a rabbit: it writes the image and resets. The
+ * stub in stubs/hw.c writes nothing, and what comes after a real write is
+ * flashsim's subject, not this program's -- so the rabbit simply stops
+ * running here. The scenario goes on to its end, so that its expect lines
+ * are still evaluated, with nobody home: no bytecode, no frames taken in.
+ */
+void sim_flash_done(void)
+{
+  sim_log("flash_uc does not return: the rabbit would write the image and "
+          "reset here; the run goes on without it");
+  cpu_gone = 1;
+  if(flash_jmp_armed) longjmp(flash_jmp, 1);
 }
 
 /* The hardware's own reset. A real rabbit comes back from this with its radio
