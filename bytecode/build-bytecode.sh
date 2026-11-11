@@ -106,6 +106,11 @@ python3 "$HERE/patch_xml_leading_blank.py" "$BC/sources/xmlparser.mtl"
 echo "==> patch_dhcp_xid.py  (DHCP replies checked)"
 python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
 
+# DNS query ids are random (harder to forge a reply, which the SRV path turns
+# into the XMPP server) and reply record counts are bounded (no reboot).
+echo "==> patch_dns_antispoof.py  (random DNS ids, bounded counts)"
+python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
