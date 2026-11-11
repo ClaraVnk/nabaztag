@@ -1,0 +1,30 @@
+# bytecode: bootloader
+#
+# The ways a stream pulled through the session stops, and comes back. See
+# xmpp-live.txt for the set-up; run with
+#
+#   --at 100 podcast '{"feed":"http://127.0.0.1:<BASE+81>/feed.xml","episode":1}'
+#   --at 190 podcast '{"feed":"http://127.0.0.1:<BASE+81>/feed.xml","episode":1}'
+#   --at 330 sleep '{"asleep":true}'
+#
+#   160 s  the head button: the rabbit stops (`live: stopped here`) and
+#          tells the warren, which closes its upstream (`stopped at the
+#          rabbit`);
+#   190 s  the station again;
+#   240 s  the session drops (the warren's sockets close). The rabbit stops
+#          everything and redials 5 to 35 s later; the relay waits, keeping
+#          up with the station meanwhile, and sends `ST live:N` again on the
+#          new session (`its stream continues on this session`): `live:
+#          playing` a second time, the station as it is by then;
+#   330 s  the rabbit is put to sleep: `live: cut`, then it lies down.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+decoder 128
+stop 400000
+
+at 20000 expect RUN
+at 160000 button down
+at 160300 button up
+at 240000 server-drop
+at 395000 expect RUN
+at 395000 expect-no-reset
