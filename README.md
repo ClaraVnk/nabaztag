@@ -61,7 +61,15 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   fixes of a security audit, a crash report in the boot URL, and a modern
   config UI — in 123 420 of 126 976 bytes of flash.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
-  anyone can adopt a rabbit without running their own server.
+  anyone can adopt a rabbit without running their own server. Violet's
+  services with the 2006 voices (clock, weather, alarm, Ztamps, rabbits in
+  love), and what OpenJabNab offered and more: reminders -- a treatment
+  reminder waits for a press on the head and warns a relative otherwise --,
+  the morning agenda from a private iCal address, birthdays, the name day,
+  a bad joke a day, a bedtime story, weather warnings and pollen on the
+  belly, and the next departures from any French network or Swiss stop
+  (open data, live where published). Answers from the owner's own AI, a
+  Home Assistant integration, and a token API for every setting.
 - 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
   rabbit as proper Home Assistant **devices and entities** (a light, a switch,
   selects, sensors, buttons) rather than REST calls. It works against Le
