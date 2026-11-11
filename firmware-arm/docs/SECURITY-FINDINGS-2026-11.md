@@ -175,5 +175,6 @@ version, for the reason given under its heading.
 - **RFID tag lost during a TLS reconnect** — a tag presented in the exact
   window of a session reconnect is dropped, no retry. Minor UX.
 
-A systematic audit of the original Violet code ran separately and drove items
-8, 9 and 11; a flash-space study (dead/unused code) is under way next.
+A systematic audit of the original Violet code ran separately (the `VIOLET-*`
+files beside this one) and drove items 8, 9 and 11. The flash-space study
+that followed is `VIOLET-CODEMORT.txt`.
