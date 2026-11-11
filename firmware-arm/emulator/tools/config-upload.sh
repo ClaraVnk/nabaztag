@@ -22,7 +22,7 @@ set -euo pipefail
 RUNTIME=${RUNTIME:-podman}
 TAG=${TAG:-nabaztag-emulator}
 SCENARIO=${SCENARIO:-scenarios/vm/config-upload.txt}
-DEFAULT_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,tls_psk,link_liveness,crash_report
+DEFAULT_STEPS=vbc,vinterp,stdlib,x25519_wdt,sign_open_alias,verify_wdt,vm_bounds,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,audio_halfduplex,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,adoption_kx,tls_psk,link_liveness,crash_report,flash_precheck
 STEPS=${STEPS:-$DEFAULT_STEPS}
 
 if [ $# -lt 2 ]; then sed -n '2,22p' "$0"; exit 2; fi

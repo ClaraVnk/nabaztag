@@ -718,6 +718,47 @@ gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
 way, as the runtime OTA's hex path does for images of 117 KB and up. The
 config page does not: see the scenario's header for the figures.
 
+## The flash itself, and a power cut in the middle of it
+
+`./rabbit-vm` stops where the image is handed to `flash_uc`: the writer is
+ARM code that runs from RAM against the Oki flash controller, and a host
+build has neither. `flashsim/` is that other half. It takes the *built*
+image -- `Nab.elf`, the bytes a rabbit runs -- and executes it on an ARM7
+model (Unicorn, pinned in `flashsim/Containerfile`): the reset vector and
+cstartup up to `main()`, then the resident image's own `flash_uc` writing
+another image through a model of the controller, with the watchdog counted
+beside it, and a reset on whatever the flash holds afterwards.
+
+```sh
+podman build -t nabaztag-flashsim flashsim
+fs() { podman run --rm -v "$PWD/../bin:/img:z" nabaztag-flashsim "$@"; }
+
+fs boot  /img/lean-reclaim/Nab.elf                 # does this image reach main()?
+fs flash --resident /img/old/Nab.elf --image /img/new/Nab.elf
+fs flash --resident /img/old/Nab.elf --image /img/new/Nab.elf \
+         --fault prog-weak:0x1f8:1 --fault erase-weak:0x5000:1
+fs sweep --resident /img/old/Nab.elf --image /img/new/Nab.elf --mid
+```
+
+`flash` says how the writer ended (a reset, or a return to a caller that is
+no longer there), what the flash holds, and whether a reset on it reaches
+`main()` with `.data` in place. `--fault` makes a word or a sector fail a
+given number of times, or for good (`stuck:`). `sweep` cuts the power after
+every operation -- an erase, or a four-byte word -- counts the instants that
+leave a flash that is neither image, and emulates the reset on a sample of
+them. `--image` also takes a plain `Nab.bin` (a release lifted out of its
+`.sim`), for which `main()` is taken to be the first Thumb code reached.
+
+The two halves chain: `./rabbit-vm ... --upload x.sim --flash-out out.bin`
+keeps the image that got through the bootloader, `verifySig` and
+`flashFirmware`'s own checks, and `flashsim flash --image out.bin` writes
+exactly those bytes. In `rabbit-vm` the processor is taken away at that
+point, as on a rabbit, where `flash_uc` ends in a reset and never returns.
+
+What the model is and is not -- the two operation times are parameters, a
+half-finished erase is a guess -- is in `../docs/OTA-ANTIBRICK.md`, with
+the measurements it was written for.
+
 ## What it does not do yet
 
 **DHCP under `./rabbit-vm`.** The rabbit ARPs for `0.0.0.0` for ever and never
@@ -815,6 +856,7 @@ src/sim.c         the virtual clock and the scenario parser
 stubs/hw.c        the EEPROM, the LEDs, the ears, the buttons, the tags
 stubs/audio.c     the VLSI decoder, as a file you can listen to
 patches/          the simulated register window and one interpreter trace
+flashsim/         the built image's flash writer and reset, on an ARM7 model
 mkconf.py         writes the configuration page
 mkbc.py           turns a bytecode image into the array the VM links
 scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones;
