@@ -101,6 +101,11 @@ python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
 echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
 python3 "$HERE/patch_xml_leading_blank.py" "$BC/sources/xmlparser.mtl"
 
+# A DHCP reply is trusted only in a window after we asked and with our id;
+# without it an unsolicited ACK could rewrite the rabbit's IP/gateway/DNS.
+echo "==> patch_dhcp_xid.py  (DHCP replies checked)"
+python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"

@@ -51,6 +51,7 @@ void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);
 /** @brief Called once per main-loop pass: moves socket traffic to the rabbit. */
 void gw_poll(void);
 
+void gw_dhcp_rogue(uint32_t rogue);
 void gw_server_drop(void);
 void gw_server_close(int graceful);
 /* The warren's sockets die and the rabbit never sees the FIN: whatever it

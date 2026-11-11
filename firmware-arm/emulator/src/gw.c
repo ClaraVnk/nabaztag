@@ -316,6 +316,43 @@ static void handle_dhcp(const uint8_t *udp_payload, uint32_t length)
   }
 }
 
+/* An attacker's unsolicited DHCP ACK: it points the rabbit's gateway and DNS
+ * at `rogue`, with a transaction id of zero -- not one the rabbit sent, and
+ * sent at an arbitrary moment with no request in flight. Before the
+ * dhcp-antispoof bytecode, cbnetdhcp took any reply whose chaddr held the
+ * rabbit's MAC; after, this one is dropped (id mismatch, and out of window). */
+void gw_dhcp_rogue(uint32_t rogue)
+{
+  static const uint8_t rabbit_mac[6] = { 0x00, 0x19, 0xdb, 0x00, 0xbe, 0xef };
+  uint8_t out[300];
+  uint8_t udp[8 + sizeof(out)];
+  uint8_t *options = out + 240;
+  uint32_t n;
+
+  memset(out, 0, sizeof(out));
+  out[0] = 2; out[1] = 1; out[2] = 6;       /* reply, ethernet, 6-byte MAC */
+  /* out[4..7], the transaction id, stays 0: deliberately not the rabbit's. */
+  wr32(out + 16, rabbit_ip);                /* yiaddr */
+  wr32(out + 20, rogue);                    /* siaddr */
+  memcpy(out + 28, rabbit_mac, 6);          /* chaddr: the rabbit, so it looks for it */
+  out[236] = 0x63; out[237] = 0x82; out[238] = 0x53; out[239] = 0x63;
+  *options++ = 53; *options++ = 1; *options++ = 5;             /* ACK */
+  *options++ = 1;  *options++ = 4; wr32(options, gw_mask); options += 4;
+  *options++ = 3;  *options++ = 4; wr32(options, rogue);   options += 4;  /* router */
+  *options++ = 6;  *options++ = 4; wr32(options, rogue);   options += 4;  /* DNS */
+  *options++ = 51; *options++ = 4; wr32(options, 86400);  options += 4;
+  *options++ = 54; *options++ = 4; wr32(options, rogue);   options += 4;  /* server id */
+  *options++ = 0xff;
+  n = (uint32_t)(options - out);
+
+  wr16(udp, 67); wr16(udp + 2, 68);
+  wr16(udp + 4, (uint16_t)(8 + n)); wr16(udp + 6, 0);
+  memcpy(udp + 8, out, n);
+  sim_log("attacker: unsolicited DHCP ACK, gateway/DNS -> %s, transaction id 0",
+          ipstr(rogue));
+  send_ip(rogue, 0xffffffff, 17, udp, 8 + n, 1);
+}
+
 /* --- DNS -------------------------------------------------------------- */
 
 /**

@@ -152,6 +152,7 @@ void sim_run_events(void)
         break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
       case SIM_EV_INJECT_PROBE: vap_inject_probe((uint32_t)e->arg); break;
+      case SIM_EV_DHCP_ROGUE: gw_dhcp_rogue(0x0a090909u); break;  /* 10.9.9.9 */
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:
       case SIM_EV_EAPOL_OVERSIZED:
