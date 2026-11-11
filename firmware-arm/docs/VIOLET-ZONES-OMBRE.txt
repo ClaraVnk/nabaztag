@@ -1,0 +1,638 @@
+ZONES D'OMBRE DU CODE D'ORIGINE VIOLET (firmware Nabaztag:tag + langage Metal)
+Questions ouvertes sur le code d'origine — 2026-11-11
+
+Périmètre : code Violet 2006 (Sylvain Huet pour la VM/Metal, Sébastien Bourdeauducq
+pour le pilote radio rt2501/ieee80211/eapol, « Violet » pour le HAL, Romain Cochet et
+« AS » pour les bibliothèques Metal 2007) et portage GCC RedoXyde 2015-2017.
+Nos ajouts (adoption_kx, TLS, SAE/WPA3, verifySig, liveness, etc.) sont exclus.
+
+Pour chaque point : (a) ce que le code fait, (b) notre meilleure hypothèse,
+(c) la question à poser.
+
+Convention : fichier:fonction. Les .c sont sous nabgcc/src, les .mtl sous
+tree-ota/sources (runtime) ou nabgcc/mtl/boot (bootloader).
+
+
+=====================================================================
+1. CHARGEUR DE BYTECODE (vloader.c)
+=====================================================================
+
+1.1  « FIXME: Find what this thing does » n°1 : vmemInit((n+3)>>2)
+     (vloader.c:loaderInit)
+
+(a) loaderInit copie TOUT le bytecode (globals + code + table des fonctions,
+    n octets) au début du tas de la VM (_bytecode est un alias de _vmem_heap,
+    vloader.h). Puis vmemInit((n+3)>>2) initialise le tas avec _vmem_start =
+    _vmem_heapindex = n/4 mots : le tas commence APRES la copie du bytecode.
+    Plus bas, une fois les globales décodées, seul le code + la table des
+    fonctions (n' < n octets) est recopié à l'offset 0, et vmemSetstart((n'+3)>>2)
+    pose un faux en-tête TYPE_BINARY non marqué sur l'intervalle [n'/4, ancien
+    _vmem_start[ : le reste de l'image (la zone des globales, déjà consommée)
+    devient un objet mort que le premier GC compacte.
+(b) Le code ne vit donc pas en ROM mais dans les premiers mots du tas, sous
+    _vmem_start, zone que le GC ne parcourt jamais. C'est ce qui permet à
+    OPbytecode de remplacer le programme à chaud : le nouveau bytecode (une
+    chaîne du tas) est recopié par-dessus l'ancien code, et vmemInit repart de
+    zéro (la pile est jetée, les objets aussi).
+(c) Question : était-ce voulu de faire cohabiter code et tas dans la même
+    SRAM externe (pas d'exécution depuis la flash), et pourquoi charger les
+    globales depuis la copie RAM plutôt que depuis la ROM directement ?
+    Y avait-il une contrainte (flash lente, bytecode chiffré à la volée) ?
+
+1.2  « FIXME » n°2 : _sys_start=_vmem_stack-1 puis SYS_NB NIL empilés
+     (vloader.c:loaderInit, vloader.h:SYS_*)
+
+(a) Six cases NIL sont empilées tout au fond de la pile avant les globales.
+    Elles sont adressées par VCALLSTACKGET(_sys_start, i) :
+      SYS_CBPLAY(0)  callback audio, posé par playStart (vinterp.c:OPplayStart)
+      SYS_CBUDP(1)   jamais écrit ni lu dans le firmware (reliquat simulateur)
+      SYS_CBTCP(2)   callback trame réseau brute, posé par netCb (OPnetCb)
+      SYS_CBLOOP(3)  callback de boucle, posé par loopcb (OPloopcb)
+      SYS_ENV(4)     « environnement » envget/envset, survit à OPbytecode
+      SYS_CBREC(5)   callback micro, posé par recStart (OPrecStart)
+    Étant sur la pile, elles sont racines du GC : les fermetures qu'elles
+    référencent restent vivantes.
+(b) C'est le mécanisme d'« interruptions » de la VM : le C n'appelle jamais
+    une fonction Metal par son nom, il empile les arguments puis la valeur
+    lue dans la case SYS_x, et lance interpGo (main.c boucle, vnet.c:netCb,
+    vaudio.c:audioPlayTryFeed / audioRecFeed_end).
+(c) Questions : SYS_CBUDP et les opcodes udp*/tcp* (OPudpStart..OPtcpEnable,
+    absents du switch de vinterp.c mais présents dans le compilateur) étaient-ils
+    pour le simulateur PC uniquement ? Y a-t-il eu une version du firmware avec
+    une pile TCP en C ?
+
+1.3  Format d'encodage des globales (vloader.c:loaderInitRec)
+
+(a) Chaque valeur est un int32 little-endian l :
+      l == -1              nil
+      bit0 == 0            entier déjà encodé VM (valeur = l>>1)
+      bit0 == 1, bit1 == 0 chaîne, longueur = l>>2, octets bruts à la suite,
+                           sans padding
+      bit0 == 1, bit1 == 1 tuple de l>>2 éléments, encodés récursivement, puis
+                           VMKTAB(n) les ramasse depuis la pile
+    Le même encodage pointeur/entier que la VM (bit 0 = pointeur).
+(b) Les constantes du programme (chaînes, tables de palettes, MIDI de
+    const_data.mtl) sont donc des objets de tas ordinaires créés au chargement,
+    pas des données ROM : ~12 Ko de globales dans la boot (0x30a8 en tête de
+    bc.c), bien plus dans le runtime.
+(c) Question : pourquoi des « tuples » dans les globales alors que le langage
+    distingue tuples, listes et tableaux ? Tout (liste, [a b], {..}) est-il un
+    simple bloc TYPE_TAB ?
+
+1.4  loaderSizeBC et l'en-tête global (vloader.c:loaderSizeBC)
+
+(a) Image = [int32 n : taille de la zone globales, EN COMPTANT ces 4 octets]
+    [globales] [int32 b : taille du code] [code] [uint16 nbfun]
+    [nbfun x int32 : offset de chaque fonction dans le code].
+    Prologue de fonction : 1 octet narg, 1 short nloc, puis opcodes. La
+    fonction 0 est main (d'où « proto main 0 » en tête de chaque source).
+(b) L'enveloppe « amber » + 8 hexa de longueur + données + « Mind » que
+    vérifie boot:getbytecode est une couche de transport HTTP ajoutée par-dessus
+    (réponse de bc.jsp), pas une partie du format VM.
+(c) Questions : d'où vient « amber…Mind » (clin d'œil ?), et le serveur Violet
+    signait-il ou chiffrait-il les bytecodes servis, ou la seule protection
+    était-elle l'URL avec login/mot de passe (boot:boot_url &l=&p=) ?
+
+
+=====================================================================
+2. GESTION MÉMOIRE ET RAMASSE-MIETTES (vmem.c, vmem.h)
+=====================================================================
+
+2.1  Modèle de valeurs et d'objets
+
+(a) Mot VM 32 bits : bit0=0 entier 31 bits (INTTOVAL = i<<1), bit0=1 pointeur
+    (PNTTOVAL = (index mot<<1)|1), NIL = -1. En-tête d'objet = 3 mots :
+      [0] size<<8 | ext<<1 | type   (type : 0 TYPE_BINARY, 1 TYPE_TAB ; ext : 7
+          bits « types externes », toujours 0)
+      [1] HEADER_GC : bit0 = marque ; après la passe 2 : nouvelle adresse<<1
+      [2] HEADER_LIST : chaînage de la pile de marquage
+    Binaire : size = longueur en octets ; alloué sur ((size+4)>>2) mots, le
+    dernier mot mis à 0 : toute chaîne a donc au moins un octet nul derrière
+    elle (vmemAllocBin). Table : size = (nmots<<2)-1, VSIZE = nmots.
+(b) Le zéro terminal garanti est ce qui rend légaux les strcmp/strcpy C de
+    vlog.c (sysListswitchstr, sysAtoi, sysHtoi) sur des chaînes VM qui ne sont
+    pourtant pas terminées côté langage (strlen = taille allouée).
+(c) Questions : le champ « ext » (vmem.h HEADER_EXT, et le commentaire
+    « ## ajouter ici la gestion des types externes » dans vmemGCfourth) devait
+    servir à quoi ? Des handles (sockets, fichiers) avec finaliseur ?
+    Pourquoi deux encodages de taille différents entre binaire et table ?
+
+2.2  Le GC en quatre passes et les deux « attention, hack »
+     (vmem.c:vmemGCfirst..fourth, vmemGC)
+
+(a) Mark-compact par glissement (famille Lisp2), racines = toute la pile
+    (_vmem_stack..0 : cases SYS, globales, locales, temporaires), le code sous
+    _vmem_start n'est jamais visité.
+      first  : marque (bit0 de HEADER_GC) en itérant via HEADER_LIST, sans
+               récursion C.
+      second : parcours linéaire du tas, calcule la nouvelle adresse de chaque
+               bloc marqué et l'écrit dans HEADER_GC (newpos<<1), ce qui efface
+               la marque.
+      third  : re-parcourt le graphe depuis la pile ; chaque pointeur rencontré
+               est remplacé par HEADER_GC|1 (« attention, hack ») : le mot de
+               réacheminement, lu avec |1, EST le pointeur VM taggé vers la
+               future adresse. HEADER_MARK remet bit0 à 1, donc le même mot sert
+               à la fois de marque et d'adresse de destination.
+      fourth : glisse les blocs marqués vers le bas (memcpy si pas de
+               recouvrement, sinon boucle mot à mot « GC : BIG MOVE »), remet
+               HEADER_GC à 0, saute les morts.
+    Entre chaque passe : play_check(1) pour continuer à nourrir le VS1003
+    (vmem.c:vmemGC) — le GC est découpé pour ne pas faire décrocher l'audio.
+    Déclenchement : vmem_check, quand il reste moins de VMEM_GCTHRESHOLD (16)
+    mots après l'allocation demandée ; deuxième échec = « ?OM Error », VM
+    cassée (_vmem_broken) et reboot. Tout vmemPush peut déclencher un GC.
+(b) Le « hack » est l'astuce classique qui évite une table de réacheminement
+    séparée ; le danger est côté C : tout index de tas pris avant une
+    allocation est périmé après (nous en avons payé le prix : voir nos
+    commentaires dans OPverifySig / OPtlsOut, hors périmètre). Le code
+    d'origine respecte cette règle presque partout (OPstrcat relit p,q après
+    VMALLOCBIN) mais pas dans audioRecFeed_begin qui rend un pointeur brut.
+(c) Questions : le GC a-t-il été écrit spécifiquement pour le lapin (contrainte
+    audio) ou hérité d'un interpréteur antérieur de Sylvain Huet ? Pourquoi 16
+    mots de seuil seulement, et pourquoi la pile et le tas partagent un seul
+    bloc VMEM_LENGTH = 1024*200 mots (800 Ko) alors que le commentaire dit
+    « 128kwords -> 512ko » : la SRAM externe du Nabaztag:tag fait combien ?
+
+2.3  OPgc et la pression mémoire côté Metal
+
+(a) OPgc force un GC et rend le pourcentage utilisé ; le runtime ne l'appelle
+    pas de lui-même sauf en debug.
+(b) Les listes « attention à la taille de la liste » (arp.mtl:arpreq,
+    dns.mtl:cbnetdns) grossissent sans borne ; le GC les garde tant qu'elles
+    sont accessibles.
+(c) Question : y avait-il une politique de fuite acceptée (le lapin reboote de
+    toute façon chaque nuit / à chaque nouveau bytecode) ?
+
+
+=====================================================================
+3. INTERPRÉTEUR (vinterp.c)
+=====================================================================
+
+3.1  Boucle, pile et cadre d'appel (vinterp.c:interpGo, OPexec, OPret, TFCtest)
+
+(a) Machine à pile pure. La pile descend depuis la fin du tas
+    (_vmem_top[--_vmem_stack]). OPexec attend sur la pile : args puis
+    « valeur fonction ». Celle-ci est soit un entier (numéro de fonction ;
+    négatif = -opcode d'une primitive passée en valeur, ex. #playFeed), soit un
+    tuple [numéro liste_d_arguments_fixés] fabriqué par fixargN (OPfixarg) :
+    la liste est dépilée en arguments supplémentaires. Cadre : nloc NIL, puis
+    pc, pcbase, callstack, callstackres ; callstack = base d'adressage des
+    locales/arguments (VCALLSTACKGET(callstack,i)), callstackres = où écrire le
+    résultat. OPret recopie le résultat et restaure. TFCtest détecte qu'il ne
+    reste que des OPret (éventuellement via OPgoto) après l'appel et recycle le
+    cadre : appel terminal garanti, d'où les boucles récursives du Metal
+    (listlen, conc, rev...) qui ne débordent pas.
+    Entrée depuis le C : callstack=1 ; dès qu'un OPret ramène callstack>0,
+    interpGo rend la main avec le résultat au sommet.
+    Opérandes : OPintb 1 octet, OPint 4 octets LE, OPgoto/OPelse offset 16 bits
+    relatif au début de la fonction (pcbase), variantes « b » = index 1 octet.
+    OPelse ne saute que si la valeur dépilée vaut 0 : nil (-1) est VRAI.
+(b) Le langage est un ML réduit (let/in, match, tuples, types somme) compilé
+    vers ce jeu d'opcodes ; les primitives sont inlinées comme opcodes
+    directs (stdlib_core.cpp corecode = nombre d'arguments), une primitive en
+    valeur devient un numéro négatif.
+(c) Questions : « VLISP — Lowcost IS Powerfull » : quelle est la filiation
+    (un Lisp antérieur de Sylvain Huet, puis « Metal » ML-like en 2006 ?) et
+    le nom Metal signifie-t-il quelque chose ? La sémantique « nil est vrai
+    dans un if » était-elle assumée ?
+
+3.2  « FIXME: 20170822: Really necessary ? » (vinterp.c:OPnetAuth)
+
+(a) OPnetAuth reçoit le tuple de scan [ssid mac bssid rssi channel rateset
+    encryption] et n'appelle netAuth que si (crypt&0xF0)==encrypt, où crypt
+    est l'octet « encryption » du scan (quartet haut = type : 0x10 WEP, 0x20
+    WPA, 0x40 WPA2 ; quartet bas = chiffrements TKIP/CCMP offerts, bits
+    pairwise 0x01/0x02 et group 0x04/0x08) et encrypt la valeur de la config
+    passée par wifi.mtl:wificrypttype. Si ça ne correspond pas, rien n'est fait
+    et le Metal attend pour toujours (notre patch ajoute un timeout).
+(b) La date 2017-08-22 est RedoXyde (ajout du WPA2 et de la sélection
+    TKIP/CCMP, ieee80211.c:ieee80211_associate « this hack is quite fragile »).
+    Mais les constantes Metal d'origine (boot.0.0.0.2 : IEEE80211_CRYPT_WEP64=1,
+    WEP128=2, WPA=3) ne sont PAS l'encodage C (0x11, 0x12, 0x20) : dans le
+    firmware Violet, soit ce test n'existait pas, soit les deux encodages
+    coïncidaient. De même l'octet CONF_WIFICRYPT de conf.bin valait 1 (WEP) ou
+    2 (WPA) chez Violet (boot:updateconf « if crypt==2 then compute pmk »),
+    alors que Naboot y stocke 16/32/64.
+(c) Questions : quel était l'encodage d'origine de l'octet « encryption » du
+    scan et de CONF_WIFICRYPT ? Le firmware Violet comparait-il config et scan
+    ou faisait-il confiance au scan ? Le WPA2/CCMP était-il déjà supporté par
+    le firmware Violet livré, ou seulement WPA-TKIP ?
+
+3.3  OPbytecode : remplacement à chaud du programme (vinterp.c:OPbytecode)
+
+(a) Arrête audio et enregistrement, sauve la chaîne SYS_ENV dans audioFifoPlay
+    (donc env ≤ 4096 octets !), loaderInit(nouvelle image) qui réinitialise
+    tas et pile, réinjecte env, empile 0 et appelle interpGo (fonction 0 =
+    main du nouveau programme), puis « return » : les cadres du bootloader
+    sont abandonnés. L'ancienne boucle C de main.c continue ensuite d'appeler
+    SYS_CBLOOP du nouveau programme.
+(b) Le « passage de témoin » boot → runtime se limite à une chaîne sérialisée
+    (env.mtl:envmake/envrestore : ip, masque, passerelle, dns, liste des scans
+    wifi en hexa). Tout le reste (état 802.11, clés) reste côté C.
+(c) Questions : la limite 4 Ko d'env était-elle connue ? Pourquoi passer par
+    le tampon audio plutôt qu'un tampon dédié ? Et pourquoi le runtime
+    re-scanne-t-il (wifiInit) au lieu de faire confiance à env si env==nil ?
+
+3.4  Opcodes sans implémentation ou bavards
+
+(a) OPudpStart..OPtcpEnable (83-91, 97, 135) et OPstrright (simulateur) ne
+    sont pas dans le switch → « Unknown opcode », cont=0, la VM continue au
+    pc suivant comme si de rien n'était (pas d'erreur fatale). OPi2cRead passe
+    data=NULL à read_i2c puis VMALLOCSTR(NULL,bufsize) (vlog.c:sysI2cRead) :
+    inutilisable tel quel.
+(b) Reliquat du simulateur PC (mtl_linux/src/simu) où la pile IP était celle
+    de l'hôte ; i2cRead/i2cWrite semblent inachevés (commentaires en français
+    « Adresse du lapin »).
+(c) Question : qui a ajouté i2cRead/Write et pour quel périphérique
+    (le lecteur RFID CRX14 est déjà géré par rfid.c) ?
+
+
+=====================================================================
+4. L'ANALYSEUR XML MAISON (xmlparser.mtl, Romain Cochet, novembre 2007)
+=====================================================================
+
+4.1  Sémantique de ParseXML et du couple [inXml EndStrS]
+
+(a) ParseXML XML rend [inXml:Content EndStrS:S]. inXml est le PREMIER nœud
+    trouvé en tête de chaîne (ContentElement [nameS attribute content] ou
+    ContentText), EndStrS est tout ce qui suit ce nœud et n'a pas encore été
+    analysé. Les enfants sont obtenus en rappelant ParseXML sur le texte
+    intérieur (ToAnalyseNow) tant que EndStrS != nil, puis ReverseElements
+    remet la liste à l'endroit. L'extérieur (ToAnalyseAfter, après la balise
+    fermante) devient EndStrS du résultat. Un élément <a .../> auto-fermé donne
+    content:nil.
+    « if (strlen EndStrS)==0 then set EndStrS=nil » : normalise la chaîne vide
+    en nil parce que tous les appelants testent « != nil » (boucle while des
+    enfants, XmppTcpReadPlain) ; strlen "" vaut 0 mais "" != nil est vrai, la
+    boucle tournerait à vide sinon.
+    « pas de Ending "<m" : n'était pas traité [AS 5dec07] » : si l'on reçoit
+    une balise ouvrante tronquée (le '>' n'est pas encore arrivé sur le TCP),
+    ToAnalyseAfter = XML entier et inXml reste nil : le paquet est rendu tel
+    quel pour être réessayé quand la suite arrivera (ContentText XML, EndStrS
+    nil → ParseXMLPacket le remet dans EndStrS).
+(b) Ce n'est pas un parseur XML mais un découpeur de stanzas sur flux TCP :
+    il cherche « </Name> » par strfind, donc
+      - pas d'imbrication du même nom (<m><m></m></m> : documenté dans l'en-tête),
+      - pas d'entités, pas de CDATA, pas de commentaires, pas de prologue
+        <?xml ?> (traité comme une balise nommée « ?xml » : la fermeture
+        n'existe pas, donc rendu comme texte),
+      - attributs : première occurrence de '=' puis guillemet simple ou double,
+        pas d'échappement, un espace en tête est consommé un par un
+        (récursion par caractère),
+      - texte avant une balise = ContentText ; les blancs aussi (d'où notre
+        correctif « xml-leading-blank », hors périmètre),
+      - complexité quadratique (strsub/strcat à chaque niveau), ce qui pèse
+        sur des stanzas de plusieurs Ko (ressources en base64).
+    ParseXMLPacket (« n'accepte que des paquets XML bien formés ») sert de
+    garde : si le premier nœud est du texte, on le remet dans EndStrS et
+    inXml=nil, l'appelant attend la suite.
+(c) Questions : Romain Cochet et « AS » étaient-ils en interne chez Violet
+    (AS = ?) ; le passage HTTP ping → XMPP (fin 2007) a-t-il été fait avec un
+    serveur ejabberd et quelles stanzas « non standard » le lapin devait-il
+    absorber (keepalive espace, <stream:features>) ? Le choix d'un parseur
+    maison plutôt qu'un opcode C était-il une contrainte de taille de flash ?
+
+4.2  Le lien avec le gate XMPP (main.mtl:XmppTcpReadPlain)
+
+(a) Le flux TCP est accumulé dans sGate.pBuffer ; tant que ParseXMLPacket y
+    trouve un élément complet, il est passé à XmppGateRead, le reste revient
+    dans pBuffer. L'ouverture <stream:stream …> est traitée à part par strstr
+    (« id=' »), jamais par le parseur, car la balise ne se ferme qu'en fin de
+    session.
+(b) Un seul octet de texte parasite entre deux stanzas (espace keepalive)
+    rend inXml=ContentText et bloque la boucle : c'est la cause racine que
+    nous avons trouvée (keepalive). Chez Violet le serveur n'envoyait
+    probablement jamais de blanc entre stanzas.
+(c) Question : le keepalive « " " toutes les 8 s » (XmppTcpIdleTime) était
+    envoyé par le lapin ; le serveur Violet en envoyait-il aussi ?
+
+
+=====================================================================
+5. MODÈLE D'EXÉCUTION : COMMENT LE BYTECODE PILOTE LE FIRMWARE
+=====================================================================
+
+5.1  Ordre de démarrage (main.c:main)
+
+(a) init matériel (PLL, IO, IRQ, flash, SPI, LEDs TLC via SPI1, I2C, VS1003,
+    PWM moteurs, UART, USB hôte OHCI, pilote rt2501) → vmemInit(0) →
+    loaderInit(dumpbc) (bc.c = bytecode du BOOTLOADER compilé dans le firmware,
+    31 588 octets) → push 0, interpGo : exécute main du boot (boot.mtl:main :
+    confInit, wifiInit, loopcb #loop, netstart, startdnsclient, sndVol, LEDs).
+    Puis boucle infinie : appel de SYS_CBLOOP ; pendant ≥ 50 ms :
+    play_check(0), rec_check(), usbhost_events(), et chaque trame rt2501
+    reçue → vnet.c:netCb → SYS_CBTCP (fonction Metal net.mtl:net) ; toutes
+    les 4 itérations (~200 ms) rt2501_timer → ieee80211_timer (timeouts
+    802.11 comptés en ticks de 200 ms : AUTH/ASSOC 10 = 2 s, EAPOL/RUN 600 =
+    2 min). loop Metal est donc appelé ~20 fois par seconde ; time_ms vient
+    de l'interruption timer 1 ms, time des secondes.
+(b) Il n'y a ni ordonnanceur ni interruption côté VM : TOUT (TCP, DNS, DHCP,
+    XMPP, oreilles, bouton, audio) est une machine à états polled dans
+    loop (main.mtl:loop : wifiRun, buttonloop, match run with …,
+    XmppSessionRun, checkdhcp, wavtime, updatevol). L'audio est le seul
+    « temps réel » : le C tire les octets via SYS_CBPLAY quand le FIFO
+    descend sous valtrytofeed (1024), y compris pendant un GC.
+(c) Questions : la cadence 50 ms et le quantum 1 s de réception
+    (sysTimems()-t<1000) sont-ils des réglages empiriques ? Y a-t-il eu une
+    tentative de faire tourner la pile IP en C (le driver de Bourdeauducq a
+    des hooks) avant de la faire en Metal ?
+
+5.2  Le bootloader Metal et le passage au runtime (boot.0.0.0.x.mtl)
+
+(a) boot:main lit le bouton (master = bouton appuyé au démarrage → mode point
+    d'accès « NabaztagXX » 192.168.0.1 avec serveur DHCP et serveur HTTP de
+    configuration sur le port 80, pages 1..4 : sauver, flasher, rebooter,
+    upgrade ; tests usine si le bouton reste appuyé 7 s : TESTDELAY, coltests).
+    Sinon : wifiRun (scan, auth, dhcp), puis boot_loop : GET
+    <serveur>/bc.jsp?v=<FIRMWARE>&m=<mac>&l=<login>&p=<pwd>&h=<HARDWARE> ;
+    la réponse « amber » + len + bytecode + « Mind » est passée à l'opcode
+    bytecode après envset envmake. Timeouts : BOOT_HTTPTIMEOUT 10 s,
+    BOOT_WIFITIMEOUT 20 s puis réseau suivant de la liste des scans.
+    FIRMWARE="\0\0\0\2" chez Violet (version envoyée en forme d'IP
+    « 0.0.0.2 »), HARDWARE=4 (5 en simulateur).
+(b) Le lapin n'a aucun programme applicatif en flash : sans serveur il reste
+    en boot (LEDs orange). C'est la raison d'être de tout le projet.
+(c) Questions : signification de h=4 (numéro de carte LLC2_x ?) et de la
+    forme « version en IP » ; la liste des versions boot 0.0.0.2 → 0.0.0.13 :
+    lesquelles sont de Violet, lesquelles de RedoXyde ? (uncrypt du firmware
+    apparaît en 0.0.0.6, la page « confReset » en 0.0.0.13.) Existait-il un
+    mode de secours sans serveur ?
+
+5.3  Exécution d'un « programme » reçu du serveur (main.mtl)
+
+(a) Une trame = chaîne binaire : 0x7f puis suite de blocs [code 1 octet]
+    [longueur 3 octets big-endian][données], terminée par 0xff
+    (main.mtl:pingextract). Codes : 3 délai de ping, 4 sources/infos
+    (infoUpdate / newInfoUpdate, sous-format 0xFF = ancien), 9 reboot, 10
+    programme, 11 changement de mode (0 réveil, 1 sommeil). Le code 10 est
+    déchiffré par « uncrypt val 1 nil 0x47 47 » puis découpé en lignes
+    « CLÉ valeur » (filterconfig). Les ressources (MU, CH, MC) sont
+    téléchargées d'abord (rscFromProgram, runRscLoadNext), puis
+    runEvalOneCommand exécute séquentiellement : MU/MC musique locale, ST/SP
+    streaming HTTP (SP « protégé » = cookie), SI/SE id de flux, MS, MW attendre
+    la fin du son, CH chorégraphie (msgchorstart), SL langue, CU appel d'URL,
+    SG Google say, IS/IE début/fin interactif, WT attente, PL palette, CL
+    couleur, IC config interactif (eval_IC_msg), RS/RT (micro), SV volume.
+    Une chorégraphie est une chaîne d'octets : CH_frame_duration(1)
+    tempo(×10 ms), CH_set_led_color(7) led r g b (+2 octets ?), set_motor(8)
+    oreille pos dir, set_leds_color(9), set_led_off(10), set_led_palette(14),
+    randmidi(16), avance(17), ifne(18), attend(19), setmotordir(20) ; chaque
+    pas consomme 2 + n octets (runChorCmd).
+(b) Le format « 2 octets + n » (chorindex=chorindex+2+n) suggère un octet de
+    temps relatif + un code + paramètres ; CH_set_led_color consomme 6 octets
+    pour 4 utilisés.
+(c) Questions : la spécification du format chorégraphique (les deux octets
+    inutilisés de set_led_color, ifne/attend jamais implémentés côté lapin ?)
+    et du langage de programme « CLÉ valeur » existe-t-elle encore ?
+    Le chiffrement uncrypt 0x47/47 : une obfuscation pour que les
+    programmes ne soient pas lisibles en clair sur le réseau ?
+
+5.4  Oreilles (ears.mtl) et le « [AS 24oct07] »
+
+(a) Codeur à 17 trous dont un espacement double marque le zéro ; la
+    calibration (earResetRun) fait tourner l'oreille et détecte un intervalle
+    entre trous > 600 ms et < 10 s ; EARS_OFFZERO=2 décale le zéro mécanique
+    vers « oreilles au ciel » ; 5 s sans impulsion = oreille cassée (brokenE).
+    La détection de manipulation (earDetectRun) attend 2 s sans mouvement
+    puis refait un tour pour mesurer la position absolue.
+    main.mtl:controlrfid : « set chortimescale=10; // recopié d'avant, mais
+    pourquoi ? Nécessaire ? [AS 24oct07] ».
+(b) Le tempo de chorégraphie (chortimescale) n'est fixé que par le premier
+    pas CH_frame_duration ; la chorégraphie RFID embarquée n'en ayant
+    peut-être pas, on force 10 (= 100 ms par unité).
+(c) Questions : d'où vient le 600 ms / 10 s de reconnaissance du trou double
+    (vitesse moteur nominale ?) ; « sur le v2 c'est la position 10 qui est en
+    bas » (fun startSleep) : différence v1/v2 des oreilles ? AS = ?
+
+
+=====================================================================
+6. AUDIO (vaudio.c, hal/audio.c, audiolib.mtl, reclib.mtl)
+=====================================================================
+
+6.1  Les trois « FIXME (maybe) » de audioPlayStart
+
+(a) OPplayStart appelle audioPlayStart(44100,16,2,trytofeed) ; freq/bps/stereo
+    sont ignorés : le VS1003 décode lui-même l'en-tête du flux (MP3, WAV PCM,
+    IMA ADPCM, MIDI). Le seul paramètre utile est trytofeed (seuil de
+    réalimentation du FIFO logiciel de 4096 octets, 1024 par défaut).
+(b) La signature a été figée dans le compilateur (playStart 2 args côté Metal :
+    trytofeed et callback) et dans la VM pour un futur DAC PCM jamais venu.
+(c) Question : y a-t-il eu un prototype sans VS1003 (PCM logiciel) qui
+    expliquerait ces paramètres ?
+
+6.2  Chaîne de lecture (vaudio.c:audioPlayFeed/TryFeed, audio.c:play_check)
+
+(a) Metal : playStart 1024 #_wavplaycb ; le C appelle _wavplaycb avec le
+    nombre d'octets libres ; _wavplaycb pousse via playFeed depuis wav_fifo
+    (liste de chaînes reçues en HTTP_STREAM) ; playFeed nil = fin de fichier
+    (play_eof → play_state 2 → stop quand le FIFO est vide). play_check pousse
+    sur le SDI tant que DREQ est haut, OHCI désactivé pendant ce temps.
+    Démarrage : 80 000 octets de pré-tampon (WAV_BUFFER_STARTSIZE), pause du
+    TCP au-delà de 400 000 (httpenable 0/1), fin détectée 500 ms après le
+    dernier appel (WAV_END_TIMEOUT), 2048 zéros ajoutés en queue
+    (wavgetzeros) pour vider le décodeur.
+(b) Les constantes sont dimensionnées pour des MP3 à ~32-64 kbit/s sur une
+    ADSL de 2007 ; le « ##httpenable » est un contrôle de flux manuel par
+    arrêt des ACK TCP (tcp.mtl:enabletcp : la trame est simplement ignorée,
+    le serveur retransmet).
+(c) Questions : le patch WMA (audio.c:patchwma, 10 écritures SCI) : d'où
+    vient-il (VLSI) et pourquoi est-il réappliqué à chaque play_start ?
+    CLOCKF 0xc000 (×4) au lieu de 0xc430 commenté : réglage empirique ?
+
+6.3  Enregistrement et ADPCM (audio.c:rec_start/rec_check, vaudio.c)
+
+(a) rec_start(freq,gain) met le VS1003 en mode ADPCM (SM_ADPCM|SM_ADPCM_HP,
+    AICTRL0 = 192000/freq, AICTRL1 = gain, 0 = AGC). rec_check lit HDAT1
+    (mots disponibles, tronqués à 128) et vide HDAT0 dans une chaîne VM
+    allouée par audioRecFeed_begin, puis appelle SYS_CBREC. Bloc IMA ADPCM
+    « VS1003 » = 256 octets : prédicteur 16 bits, index de pas 16 bits, 252
+    octets = 505 échantillons ; reclib.mtl:mkriff écrit l'en-tête WAV 8 kHz
+    format 0x11 correspondant (4055 octets/s, 505 samples/block). audioRecVol
+    décode un bloc pour estimer l'énergie (LEDs du ventre pendant
+    l'enregistrement). Le codec C (mydecode/myencode, adp2wav/wav2adp) est
+    l'IMA standard mais n'est utilisé que pour recVol ; les conversions
+    a-law/mu-law (alaw2wav…) ne sont appelées nulle part dans le Metal
+    d'origine.
+(b) Le lapin envoyait des WAV ADPCM 8 kHz au serveur (record.jsp) ; les
+    tables a-law/mu-law et wav2adp semblent des restes d'une piste VoIP /
+    streaming micro jamais livrée.
+(c) Questions : y avait-il un projet de téléphonie/visiophonie (a-law ↔
+    micro, « itmode ») ? Pourquoi 8 kHz et gain 0 ? Et l'ampli coupé
+    pendant l'enregistrement : larsen ou alimentation ?
+
+6.4  Volume (audiolib.mtl:updatevol, vaudio.c:audioVol)
+
+(a) button3 = 255 - ADC (potentiomètre sous le lapin) ; volfrombutton
+    applique une courbe 255-((255-v)²>>8) ; sndVol v → set_vlsi_volume(v/2)
+    (atténuation VS1003 en demi-dB) ; l'ampli est coupé sous 0x7f.
+(b) Loi quadratique pour un rendu logarithmique perçu.
+(c) Question : la coupure ampli à mi-course est-elle une protection
+    (consommation) ou un « mute » voulu ?
+
+
+=====================================================================
+7. CONSTANTES « MAGIQUES »
+=====================================================================
+
+7.1  conf.bin (config.mtl, vlog.c:sysLoad/sysSave, mem.c:write_uc_flash)
+
+(a) « Fichier » unique = dernier secteur de 4 Ko de la flash interne
+    (0x1F000 dans les 128 Ko ; le linker réserve 124 Ko au code). sysLoad/
+    sysSave ignorent le nom de fichier (« pour le firmware, le fichier ouvert
+    est toujours l'eeprom ») ; écriture = relecture des 4 Ko, patch, réécriture
+    du secteur, IRQ coupées (buffer_temp 4 Ko en SRAM externe). Offsets :
+      0   SERVERURL 41  (chaîne, « r.nabaztag.com/vl »)
+      41  NETDHCP 1 | 42 NETIP 4 | 46 NETMASK 4 | 50 NETGATEWAY 4 | 54 NETDNS 4
+      58  WIFISSID 32 | 90 WIFIAUTH 1 (0 open, 1 shared) | 91 WIFICRYPT 1
+      92  WIFIKEY0 64 (WEP hexa ou passphrase WPA)
+      156 PROXYENABLE 1 | 157 PROXYIP 4 | 161 PROXYPORT 2
+      163 LOGIN 6 | 169 PWD 6 (seuls 4 octets sont écrits par useparammac)
+      175 WIFIPMK 32 (PBKDF2 calculé une fois par netPmk à la config)
+      207 MAGIC 1 = 0x47 ; CONF_LENGTH 208
+      208 'd' + mot de passe XMPP 12 car. (main.mtl:GetXmppPassword, ajout 2007)
+    Si le magic n'est pas 0x47 (0x48 dans la version commentée du runtime),
+    la boot réécrit conf0 par défaut.
+(b) 0x47 = 'G' ; 0x48 = 'H' pour une génération de format suivante jamais
+    activée (le runtime ne vérifie plus). LOGIN/PWD sur 6 octets mais
+    écrits sur 4 : l'identifiant était probablement une MAC tronquée ou un
+    numéro de série.
+(c) Questions : à quoi servaient login/pwd (&l=&p= de bc.jsp) et pourquoi 6
+    octets ? Le proxy HTTP était-il un vrai besoin client ? Un conf.bin de
+    référence Violet (avec ses valeurs d'usine) existe-t-il encore ?
+
+7.2  Les deux cookies 0x13fb6754 / 0x0407FE58 (vinterp.c:OPflashFirmware,
+     OPreboot)
+
+(a) flashFirmware firm v w n'écrit que si v==0x13fb6754 && w==0x0407FE58 ;
+    reboot v w n'agit que si v==0x0407FE58 && w==0x13fb6754 (ordre inversé).
+    Seul le bootloader les émet (boot:httpflash, cbhttp page 3).
+(b) Garde-fou contre un bytecode serveur accidentel ou malveillant qui
+    appellerait l'opcode (les constantes étant dans le source, c'est un
+    « mot de passe faible », pas une sécurité). 0x0407FE58 ressemble à une
+    date (04/07, « FE58 » ?), 0x13fb6754 à un hash.
+(c) Question : origine de ces deux nombres, et l'inversion volontaire ?
+
+7.3  Chiffrement « crypt/uncrypt » 0x47 / 47 (vlog.c:encode8/decode8, inv8)
+
+(a) Chiffre de flux octet par octet : v' = alpha + v·inv8[key>>1] (mod 256),
+    clé suivante = 2v+1 ; inv8 = table des inverses impairs modulo 256.
+    Déchiffrement inverse. Utilisé pour les programmes (code 10) avec
+    key=0x47, alpha=47, et par RedoXyde (boot ≥ 0.0.0.6, utils/mkfirmware.php)
+    pour les images firmware envoyées par la page de flash (« *violet* » en
+    délimiteur, puis « -violet- »).
+(b) Obfuscation anti-sniffing maison de Sylvain Huet ; le même 0x47 que le
+    magic de conf.bin (la « clé maison » de Violet ?).
+(c) Question : les firmwares Violet distribués l'étaient-ils aussi sous cette
+    forme hexa chiffrée, et le serveur chiffrait-il d'autres choses (bytecode) ?
+
+7.4  Autres constantes
+
+  - sysRand (vlog.c) : LCG rndval*0x1234567+11, 16 bits. Graine = time_ms au
+    boot. Question : conscient que les IDs DNS/TCP (opentcp : 1024 + compteur
+    & 16383, ISN fixe "\0\0\1\0") sont prévisibles ? Aucune conséquence en
+    2006 ?
+  - tcp.mtl : MSS 1460 (\5\$b4), fenêtre fixe 0x16d0 = 5840, TCPMAX 1024
+    octets par segment émis, 10 retransmissions à 1 s (tcptime) puis
+    fermeture, pas de fenêtre glissante (un segment en vol : locksendT).
+  - dns.mtl : port local 1597, timeout 5 s (7 s pour SRV), cache en liste.
+  - http.mtl : HTTP/1.0, User-Agent « MTL », Icy-MetaData:1 (streaming
+    Shoutcast), 3 redirections 302 max.
+  - XMPP : ping 60 s, idle 8 s, BOSH hold=15 wait=7, reconnexion 12/22 s.
+  - audio : 80 000 / 400 000 / 500 ms / 15 s (voir 6.2).
+  - ears : 17 trous, 2 s, 5 s, 600 ms-10 s, offset 2.
+  - button : double-clic 500 ms, clic long 1500 ms.
+  - boot : réseau AP 192.168.0.1 (runtime : 192.168.2.1 dans net_vars.mtl !).
+  - main.c : le bouton n'est pas en interruption (push_button_interrupt
+    désactivé, « Hack to force Master mode » commenté : return
+    counter_timer_s<3 forçait le mode AP les 3 premières secondes).
+  - VMEM_LENGTH 1024*200 mots à 0xD0010000 ; USB/hcd pool 32 Ko à 0xD0008000.
+  Questions : pourquoi 1597 et 0x16d0 ; le réseau AP a-t-il changé entre
+  bootloader (192.168.0.x) et runtime (192.168.2.x) ?
+
+
+=====================================================================
+8. AUTRES FIXME / TODO / FONCTIONS VIDES DU CODE D'ORIGINE
+=====================================================================
+
+8.1  Pilote radio (Bourdeauducq 2006 + RedoXyde 2017)
+
+  - ieee80211.c:ieee80211_associate « this hack is quite fragile » : choix
+    CCMP quand TKIP et CCMP sont offerts, par manipulation de bits de
+    ieee80211_encryption ; remis « normal » juste avant le break. RedoXyde.
+  - ieee80211.c ~3008 « encryption_overhead = 16 /* FIXME May be 20... ? */ »
+    pour CCMP (IV 8 + MIC 8 ; 20 serait avec ICV).
+  - eapol.c:817 « if WPA2 then secure=1 //FIXME » ; 824/974 key_length
+    commentés ; 1034 « // FIXME » avant l'installation du GTK TKIP. Le
+    handshake 4-way a été écrit pour WPA-TKIP et étendu à WPA2 « au jugé ».
+  - eapol.c/hash.c : en-têtes Doxygen « @brief FIXME » = RedoXyde n'a pas
+    documenté PBKDF2/PRF.
+  - rt2501usb.c:rt2501_rx_callback : à l'origine, une erreur bulk-in
+    mettait rt2501_connected=0 pour toujours (RT2501_S_BROKEN jusqu'au
+    débranchement) ; nous l'avons borné (hors périmètre, mais c'est « le bug
+    du débranche-rebranche » connu des utilisateurs Violet).
+  Questions : qui a écrit le driver rt2501 (Sébastien Bourdeauducq, stagiaire
+  ou prestataire ?), existait-il un firmware Violet WPA2 ? Le « lapin sourd
+  qu'il faut débrancher » était-il un ticket connu chez Violet ?
+
+8.2  USB (Oki 2003-2005 + Violet)
+
+  - hcd.h « reserved[116] FIXME: Remove this ? », « rh_device FIXME ? » ;
+    usbctrl.c « FIXME Check mode value ». Le stack OHCI est le code d'exemple
+    Oki ML67Q4051/ML60842 modifié par Violet (« Custom changes »).
+  Question : le ML60842 (contrôleur USB hôte externe) était-il un choix
+  contraint par le dongle Ralink déjà sélectionné ?
+
+8.3  Metal runtime
+
+  - net.mtl:net « buttoncheckevent; // don't understand why there should be a
+    buttoncheckevent here » (commenté).
+  - main.mtl 996 « TODO FIGER EN VERT », 1473 « SEPARER EN DEUX FONCTION »,
+    2188/2193 « TODO!! » (reconnexion après sClosed / sRegistrationError
+    jamais écrite : le lapin restait planté, d'où notre xmppReconnectRun),
+    2425/2709/2785/2787/2829 gestion d'erreurs XMPP non faite.
+  - audiolib.mtl : fonction mkwav commentée ; env.mtl : envmake « unused »
+    dans le runtime ; config.mtl : conf0 et le test du magic commentés ;
+    leds.mtl : LEDS_STATE_XMPP_CONNECTED « ne rien faire ».
+  - info.mtl : tempo « 0.5*log2 du nombre d'itérations » : formule empirique
+    des animations de services.
+  Question : la version XMPP du firmware (fin 2007) a-t-elle été livrée en
+  l'état, avec ces TODO, à cause de la fermeture/vente de Violet ?
+
+8.4  Chaîne de compilation
+
+  - mtl_linux : compilateur C++ (vcomp) + simulateur (simu) de Violet, avec
+    bootstrap.cpp et stdlib_core.cpp (131 primitives « core »). Les sources
+    du compilateur Metal existent-elles sous une autre forme (Windows
+    d'origine, doc du langage, grammaire) ? Y a-t-il un manuel Metal interne ?
+
+
+=====================================================================
+9. LISTE COURTE DES QUESTIONS À POSER (par ordre d'importance)
+=====================================================================
+
+ 1. Filiation du langage : VLISP → Metal ; existe-t-il une doc/grammaire, et
+    le compilateur Windows d'origine ?
+ 2. Pourquoi code et tas partagent la SRAM externe (vmemInit/vmemSetstart),
+    et taille réelle de la SRAM (800 Ko de VMEM_LENGTH vs « 512ko ») ?
+ 3. Le GC entrelacé avec play_check : contrainte audio dès la conception ?
+    Le champ « ext » et les types externes prévus ?
+ 4. Les cases SYS_* : SYS_CBUDP et les opcodes TCP/UDP non implémentés sont-ils
+    uniquement simulateur ? Y a-t-il eu une pile IP en C ?
+ 5. Encodage d'origine de CONF_WIFICRYPT et de l'octet « encryption » du scan ;
+    WPA2 supporté par Violet ou non ; le test (crypt&0xF0)==encrypt.
+ 6. xmlparser.mtl : pourquoi un parseur maison en Metal ; qui sont Romain
+    Cochet et « AS » ; le serveur XMPP de l'époque et ses keepalives.
+ 7. Format des trames 0x7f/codes 1..11, du langage « CLÉ valeur » et des
+    chorégraphies (octets inutilisés, ifne/attend) : spec disponible ?
+ 8. Les cookies 0x13fb6754/0x0407FE58, le magic 0x47, la clé 0x47/47 de
+    crypt : origine et intention.
+ 9. conf.bin : rôle de login/pwd (bc.jsp &l=&p=), proxy, et la différence
+    192.168.0.1 (boot) / 192.168.2.1 (runtime) en mode AP.
+10. Audio : paramètres 44100/16/2 ignorés, patch WMA, CLOCKF 0xc000, 8 kHz
+    ADPCM, tables a-law/mu-law jamais appelées : quel projet derrière ?
+11. Oreilles : 600 ms-10 s de détection du trou double, « v2 position 10 en
+    bas », 5 s = cassée.
+12. Le lapin « sourd » qu'il faut débrancher (erreur USB RX définitive) :
+    connu chez Violet ? Et l'auteur du pilote rt2501.
+13. Les TODO!! de la reconnexion XMPP : livré tel quel ? Historique des
+    versions boot 0.0.0.2 → 0.0.0.13.
+14. Le serveur signait-il/chiffrait-il le bytecode servi ; « amber…Mind ».
