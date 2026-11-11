@@ -7823,6 +7823,107 @@ def patch_stub_soft_codecs(root: Path) -> None:
     print(f"[ok]   {p}: adp2wav/wav2adp/alaw2wav/wav2alaw answer nil; the codecs are unlinked")
 
 
+def patch_no_wep(root: Path) -> None:
+    """Remove WEP: the rabbit no longer joins a WEP network (~750 B).
+
+    WEP has been broken since 2001 and a key falls in minutes. A network
+    configured as WEP is now refused where a TKIP-only one already is (IDLE,
+    the bootloader retries; never a fall-back to an open association), and
+    what served it goes: shared-key authentication (the challenge reply), the
+    WEP key install, the WEP IV on transmit, the cipher mapping, and in the
+    bootloader the hex key parser, the WEP radio button and the "WEP auth"
+    select of the config page. A scan still labels such a network "WEP".
+
+    The bootloader half is no_wep_boot. Requires no_tkip_pairwise (it extends
+    that refusal). Patches ieee80211.c. Idempotent.
+    """
+    p = root / "src/net/ieee80211.c"
+    s, nl = read_flat(p)
+    if "/* no_wep */" in s:
+        print(f"[skip] {p}: WEP is already gone")
+    else:
+        def sub1(pattern: str, repl: str, text: str, what: str) -> str:
+            out, n = re.subn(pattern, lambda m: repl, text, flags=re.S)
+            if n != 1:
+                sys.exit(f"FAIL {p}: expected one {what}, found {n}")
+            return out
+
+        # 1. Refuse the network, beside the TKIP refusal.
+        s = sub1(r"\tif\(\(ieee80211_encryption&0xF0\) == IEEE80211_CRYPT_WPA\n",
+                 "\tif((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WEP  /* no_wep */\n"
+                 "\t   || (ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA\n",
+                 s, "TKIP refusal (no_tkip_pairwise)")
+        # 2. The key install in the association switch.
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*ieee80211_authmode = authmode;\n.*?"
+                 r"RT2501_CIPHER_WEP64\);\n[ \t]*\}\n[ \t]*break;\n",
+                 "", s, "WEP key install")
+        # 3. Shared-key authentication: the two functions, their call, the request.
+        a = "static void ieee80211_send_challenge_reply("
+        b = "static void ieee80211_send_probe_response("
+        if s.count(a) != 1 or s.count(b) != 1 or s.index(b) < s.index(a):
+            sys.exit(f"FAIL {p}: the shared-key functions are not where this patch expects them")
+        s = s[:s.index(a)] + s[s.index(b):]
+        s = sub1(r"[ \t]*/\* Shared key authentication \*/\n.*?ieee80211_input_shared_auth\(.*?\);\n",
+                 "\t\t\t\t\t\tieee80211_state = IEEE80211_S_IDLE;  /* no shared-key auth */\n",
+                 s, "shared-key auth call")
+        s = sub1(r"\t\} else \{\n[ \t]*/\* Shared key authentication: algo\[2\], seq\[2\], status\[2\] \*/\n"
+                 r"(?:[ \t]*auth->auth\[\d\] = [^\n]*SHARED[^\n]*\n){4}\t\}\n",
+                 "\t}\n", s, "shared-key auth request")
+        # 4. Transmit: the IV and the overhead.
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*fr->txd\.Iv = nab_rand\(\) & 0x00ffffff;\n"
+                 r"[ \t]*fr->txd\.IvOffset = sizeof\(struct ieee80211_frame\);\n[ \t]*break;\n",
+                 "", s, "WEP IV on transmit")
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*encryption_overhead = 8;[^\n]*\n[ \t]*break;\n",
+                 "", s, "WEP overhead")
+        # 5. The cipher mapping (its default fell through into WPA).
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*switch\(crypt\)\n.*?Unknown WEP Crypt\"\);\n"
+                 r"[ \t]*break;\n[ \t]*\};\n",
+                 "", s, "WEP cipher mapping")
+        if "IEEE80211_CRYPT_WEP64" in s or "CIPHER_WEP" in s:
+            sys.exit(f"FAIL {p}: a WEP use is left behind")
+        write_flat(p, s, nl)
+        print(f"[ok]   {p}: WEP refused; shared-key auth, key install and IV removed")
+
+
+def patch_no_wep_boot(root: Path) -> None:
+    """The bootloader half of no_wep: no WEP key parser, no WEP in the config page.
+
+    Separate because the emulator builds the C with a bootloader lifted from a
+    firmware image, and its own tree keeps the stock pages. Requires
+    modernize_pages (it edits that page). Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "fun wifiwepkey val=" not in t:
+        print(f"[skip] {q}: no WEP left in the bootloader")
+        return
+    i = t.index("fun _wifiwepkey val i len=")
+    j = t.index("fun wifiAuth=", i)
+    t = t[:i] + t[j:]
+    for old, new, what in (
+        ("\t\tlet if crypt==IEEE80211_CRYPT_WEP then confGetWifiauth else 0-> auth in\n"
+         "\t\tlet if crypt==IEEE80211_CRYPT_WEP then wifiwepkey confGetWifikey0\n"
+         "\t\t\telse if crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2 then confGetWifipmk -> key in\n",
+         "\t\tlet 0-> auth in\n"
+         "\t\tlet if crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2 then confGetWifipmk -> key in\n",
+         "wifiAuth key choice"),
+        ('<label><input type=radio name=m "::"<ENC-WEP>"::" value=\\""::"<ENC-VWEP>"::"\\">WEP</label>\n', "",
+         "WEP radio button"),
+        ('<label><small>WEP auth</small><select name=l>"::"<AUTH>"::"</select></label>\n', "",
+         "WEP auth select"),
+        ("static IP, WEP auth</summary>", "static IP</summary>", "Advanced summary"),
+        ('\t\t\t["<ENC-WEP>" if crypt==IEEE80211_CRYPT_WEP then "checked"]::\n', "", "ENC-WEP marker"),
+        ('\t\t\t["<ENC-VWEP>" itoa IEEE80211_CRYPT_WEP]::\n', "", "ENC-VWEP marker"),
+        ('\t\t\t["<AUTH>" webSelectList auth [IEEE80211_AUTH_OPEN "OpenSystem"]::[IEEE80211_AUTH_SHARED "SharedKey"]::nil]::\n',
+         "", "AUTH marker"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: WEP key parser, radio button and auth select removed")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -8134,7 +8235,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8261,6 +8362,9 @@ def main() -> int:
         sys.exit("FAIL step list: adoption_kx draws the adoption key through "
                  "ieee80211_rng_key_bytes, which entropy_pool provides. A key "
                  "from the timer is the 2026-11-08 audit's S1; add entropy_pool.")
+    if "no_wep" in steps and "no_tkip_pairwise" not in steps:
+        sys.exit("FAIL step list: no_wep refuses a WEP network inside the refusal "
+                 "no_tkip_pairwise installs; add no_tkip_pairwise.")
     if "no_tkip_code" in steps and "no_tkip_pairwise" not in steps:
         sys.exit("FAIL step list: no_tkip_code removes the code that serves a "
                  "TKIP pairwise cipher; without no_tkip_pairwise that cipher "
@@ -8371,6 +8475,8 @@ def main() -> int:
         "uart_silent": patch_uart_silent,
         "no_tkip_code": patch_no_tkip_code,
         "stub_soft_codecs": patch_stub_soft_codecs,
+        "no_wep": patch_no_wep,
+        "no_wep_boot": patch_no_wep_boot,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
