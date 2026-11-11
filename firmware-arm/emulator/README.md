@@ -278,10 +278,7 @@ under test (so it fails on an image without `http_cap`), and
 `bytecode/patch_http_cap.py`. The hex `.sim` OTA is the one large
 HTTP_NORMAL download left and has its own ceiling; `scenarios/ota/
 self-start.txt` still reaches the signature gate with it (216,175 bytes
-down, `naboot-stable`). `tools/patch_ota_test.py` no longer applies to a tree
-`build-bytecode.sh` has patched -- `patch_locate_tls.py` rewrote the line it
-anchors on -- so that run replaced the `httprequest ... configurl` call by
-hand.
+down, `naboot-stable`).
 
 **A CCMP frame played twice, 2026-11-11.** The virtual AP now gives every
 protected data frame a packet number, per key, and delivers it the way the
