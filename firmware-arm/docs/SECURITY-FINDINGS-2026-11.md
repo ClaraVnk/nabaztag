@@ -65,12 +65,32 @@ for a dedicated batch for the reasons given.
     nbqu/nbans (up to 65535) by recursion. Random ids now, record counts
     clamped. Resolution still works end to end in the emulator.
 
+11. **Small robustness fixes in Violet-original C (audit).** Four at once: the
+    beacon RSN case advanced `frame_current` twice, so every element after an
+    RSN one was misparsed (the extra advance removed, make check still green);
+    `sysCmp` compared the longer remainder, not the shorter (an over-read);
+    the ADPCM step index came from the data unclamped (a step-table over-read
+    on a crafted resource); and `OPstrsub`/`OPstrcpy`/`OPload` tested
+    `start+len>size`, which overflows a signed int — rephrased as
+    `len>size-start`. All low impact, all proven to compile and pass make check.
+
+12. **Mixed-mode WPA2 group key refused.** `rsn_find_gtk` capped the GTK at 16
+    bytes, but a TKIP group key is 32; on a mixed AP (CCMP pairwise, TKIP
+    group) message 3 swallowed the failure and the rabbit went broadcast-deaf.
+    The destination is the 32-byte `gtk.b` union now. A CCMP key still writes
+    the same 16 bytes, so a CCMP-only network is byte for byte unchanged.
+
+13. **A DNS reply was parsed before its id matched.** `cbnetdns` parsed every
+    packet on the query port before matching the id, so an unsolicited one
+    still appended to the global SRV list (which feeds the XMPP connection)
+    though its callback never ran. The parse is moved inside the id match.
+    Resolution still works end to end.
+
 ## Deferred (confirmed by code, left for a dedicated batch)
 
-These are real but either touch a hot, recently-stabilised path where a rushed
-change risks more than the bug, carry low practical impact, or are minor
-robustness. They are grouped so a later batch can take them with their own
-hardware validation, rather than enlarging the pre-flash lot.
+Two findings touch a hot or unmeasured path where a rushed change risks more
+than the bug. They are left for their own batch with its own hardware
+validation, rather than enlarging the pre-flash lot.
 
 - **No CCMP replay check on receive** (`ieee80211.c`/`rt2501usb.c`; the
   RXD's Iv/Eiv, labelled "for replay attack checking", are never read).
@@ -78,42 +98,27 @@ hardware validation, rather than enlarging the pre-flash lot.
   fix is in the 802.11 receive path that WPA3/EAPOL only just stabilised, and
   TLS-over-XMPP already rejects a replayed payload for a confirmed rabbit.
 
-- **DNS parse-before-match** (`dns.mtl` `cbnetdns`): the random id and the
-  record-count clamp are fixed (item 10), but the message is still parsed
-  before the id is matched, so an unsolicited packet on the query port still
-  appends to the global SRV list though its callback is never called. The
-  random id makes a match unlikely; the reorder (parse only after a match,
-  plus a sender check) is left for its own batch over the SRV/cache/retry
-  paths.
-
 - **HTTP_NORMAL buffers a response without limit** (`http.mtl`). A server or
   a host on the path can exhaust the heap (a reboot). Deferred: the OTA `.bin`
-  path, the one that pulls large bodies, is bounded now (fix 7); a general
-  cap on `http.mtl` wants its own measurement.
+  path, the one that pulls large bodies, is bounded now (fix 7); a general cap
+  on `http.mtl` needs a running byte count (a struct field) and its own
+  measurement of the legitimate bytecode fetch (~110 KB).
 
-- **Mixed-mode WPA2 group key refused** (`rsn_find_gtk` caps the GTK at 16
-  bytes; a TKIP group key is 32, and message 3 swallows the failure →
-  broadcast-deaf). Low — an edge config (CCMP pairwise, TKIP group) rare on
-  modern APs. Deferred: the fix is in the EAPOL GTK install path.
+## Documented, not fixed (dead, no impact, or minor UX)
 
-- **Beacon RSN element double-advance** (`ieee80211.c`: the RSN case advances
-  `frame_current` and the loop advances it again). Low — the elements after
-  RSN are misparsed, but the SAE scenarios pass regardless, so the practical
-  impact is limited to specific element orders. Deferred: removing it changes
-  the scan parser and wants regression testing.
+- **`sysI2cRead` passes a NULL buffer to `read_i2c`** — dead code: the
+  `i2cRead` opcode is never emitted by the runtime bytecode (grep of every
+  `.mtl`), so the path is unreachable.
 
-- **Minor robustness, Violet-original:** `sysCmp` clamps to the longer string
-  (a small over-read in VM-bounded heap); `sysI2cRead` passes a NULL buffer to
-  `read_i2c` (likely an unreachable path); ADPCM `StepIndex` is taken from the
-  data unclamped (a step table over-read on a malicious resource); `eapol.c`
-  reads a fixed 32 bytes of key data without checking `key_data_length`
-  (post-auth); a latent signed-integer overflow in `OPstrsub`. All low impact.
+- **`eapol.c` reads a fixed 32 bytes of key data without checking
+  `key_data_length`** — low: post-auth (the MIC is verified first) and the read
+  stays inside the static receive buffer, not a true out-of-bounds.
 
 - **TLS nits, no exploit with a PSK:** a bad server Finished answers alert 50
   where 51 is specified; EncryptedExtensions is accepted zero or many times.
 
 - **RFID tag lost during a TLS reconnect** — a tag presented in the exact
-  window of a session reconnect is dropped, no retry. Minor.
+  window of a session reconnect is dropped, no retry. Minor UX.
 
-A systematic audit of the original Violet code is under way separately and
-will drive the next batch.
+A systematic audit of the original Violet code ran separately and drove items
+8, 9 and 11; a flash-space study (dead/unused code) is under way next.
