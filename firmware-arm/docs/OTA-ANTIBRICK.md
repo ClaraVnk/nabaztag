@@ -250,7 +250,7 @@ emulator, before the signature.
 
 ## 4. What is proven, and on what
 
-`emulator/flashsim/flashsim.py`, on the built `Nab.elf` of `lean-reclaim`
+`../emulator/flashsim/flashsim.py`, on the built `Nab.elf` of `lean-reclaim`
 before (`base`, 111,716 B) and after (`nr`, 112,044 B) the two steps. The
 resident image is booted, then its own `flash_uc` -- the copy cstartup put
 in RAM -- writes the other image.
@@ -275,7 +275,7 @@ not boot. Going back to an older signed image: `nr` writes
 `naboot-stable` (107,904 B) and `naboot-1.0.0.3` (123,564 B) and both
 boot; the window is the same two seconds as going forward.
 
-The rest of the path, in `rabbit-vm` (`scenarios/vm/config-upload.txt`, the
+The rest of the path, in `rabbit-vm` (`../emulator/scenarios/vm/config-upload.txt`, the
 bootloader lifted from the new image, `--flash-out` handing the bytes that
 got through to `flashsim`):
 
@@ -295,7 +295,7 @@ image before the two steps: the random bytes reach `flash_uc`, the resident
 writer burns them and the reset finds no instruction at 0; the padded image
 reaches it too and its 32nd erase is the configuration sector.
 
-`make check` (35 scenarios) passes before and after. `tools/vm-check.sh`
+`make check` (35 scenarios) passes before and after. `../emulator/tools/vm-check.sh`
 with no warren behind it gives the same 21 passes before and after; its two
 failures are the same two (`config-upload` run without an upload, which is
 what the table above is, and `server-vanish`, which needs a Terrier).
