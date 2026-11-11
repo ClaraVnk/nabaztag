@@ -139,6 +139,7 @@ class Op:
     OPkxBegin = 154;  OPkxFinish = 155;   OPkxUse = 156;     OPkxCheck = 157
     OPtlsStart = 158; OPtlsIn = 159;      OPtlsOut = 160;    OPtlsState = 161
     OPtlsClose = 162
+    OPresetInfo = 163  # crash_report: the reset report the boot URL carries
 
 
 # Opcodes that take a 1-byte unsigned operand.
@@ -476,6 +477,7 @@ _MNEM_TO_OP = {name: code for code, name in
                    154: "OPkxBegin", 155: "OPkxFinish", 156: "OPkxUse",
                    157: "OPkxCheck", 158: "OPtlsStart", 159: "OPtlsIn",
                    160: "OPtlsOut", 161: "OPtlsState", 162: "OPtlsClose",
+                   163: "OPresetInfo",
                }.items()}
 
 

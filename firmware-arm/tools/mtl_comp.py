@@ -221,6 +221,8 @@ NATIVES: list[tuple[str | None, str, int, str]] = [
     ("tlsOut", "OPtlsOut", 1, "fun[S]S"),
     ("tlsState", "OPtlsState", 0, "fun[]I"),
     ("tlsClose", "OPtlsClose", 0, "fun[]S"),
+    # apply-mods.py crash_report, numbered as in the naboot modes
+    ("resetInfo", "OPresetInfo", 0, "fun[]S"),
 ]
 
 # mnemonic name → (opcode, nargs), for mtl_pyc.py and anything else that

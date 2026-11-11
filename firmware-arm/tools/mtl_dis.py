@@ -85,6 +85,7 @@ OPCODES: dict[int, str] = {
     154: "OPkxBegin", 155: "OPkxFinish", 156: "OPkxUse", 157: "OPkxCheck",
     158: "OPtlsStart", 159: "OPtlsIn", 160: "OPtlsOut", 161: "OPtlsState",
     162: "OPtlsClose",
+    163: "OPresetInfo",
 }
 
 
@@ -164,7 +165,7 @@ BUILTIN_NAMES: dict[int, str] = {
     150: "i2cRead", 151: "i2cWrite", 152: "verifySig",
     153: "pageRender",
     154: "kxBegin", 155: "kxFinish", 156: "kxUse", 157: "kxCheck",
-    158: "tlsStart", 159: "tlsIn", 160: "tlsOut", 161: "tlsState", 162: "tlsClose",
+    158: "tlsStart", 159: "tlsIn", 160: "tlsOut", 161: "tlsState", 162: "tlsClose", 163: "resetInfo",
     55: "fixarg",
 }
 
