@@ -325,6 +325,15 @@ int main(int argc, char **argv)
   /* From here on it is main.c's sequence, in main.c's order. */
   sim_log("vmemInit");
   vmemInit(0);
+  /* Test fixture only: model a rabbit that has handed over to the runtime
+     (OPbytecode sets this latch on real hardware). With it set, OPload must
+     hide the adoption key and OPsave must refuse -- the key-leak proof runs
+     the runtime directly, so there is no bootloader to set it. */
+  if (getenv("NAB_FORCE_LATCH")) {
+    extern uint8_t nab_kx_latched;
+    nab_kx_latched = 1;
+    sim_log("NAB_FORCE_LATCH: nab_kx_latched=1 (post-handover model)");
+  }
   sim_log("loaderInit");
   loaderInit((uint8_t *)dumpbc);
   sim_log("bytecode loaded: %u functions", _bc_nbfun);

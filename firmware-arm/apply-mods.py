@@ -486,10 +486,15 @@ def patch_adoption_kx(root: Path) -> None:
       kxCheck data mac   -> 1 if mac is HMAC-SHA-256(key, data)
 
     All three refuse once OPbytecode has run -- the bootloader has handed
-    over to the warren's runtime -- and from then on `load` of conf.bin
-    returns zeros where the key is stored (bytes 224 to 256). Not 208: the
-    runtime keeps its XMPP password there (main.mtl, 208-220), and hiding
-    or overwriting it made a rabbit re-register on hardware, 2026-11-08.
+    over to the warren's runtime -- and from then on `load` returns zeros
+    where the key is stored (bytes 224 to 256) and `save` refuses to write
+    there, whatever filename the opcode names: there is one flash page, and
+    sysLoad/sysSave ignore the name, so keying the guard on "conf.bin" (as
+    the first version did) let a runtime bytecode read the key back under
+    any other name, and write it under any name at all -- the runtime that
+    runs these opcodes is the warren's, not ours. Not 208: the runtime
+    keeps its XMPP password there (main.mtl, 208-220), and hiding or
+    overwriting it made a rabbit re-register on hardware, 2026-11-08.
     """
     if not (root / "src/net/nab_kx.c").exists():
         sys.exit("FAIL adoption_kx: nab_kx.c missing -- x25519_wdt must run first")
@@ -576,19 +581,34 @@ def patch_adoption_kx(root: Path) -> None:
             sys.exit(f"FAIL {q}: OPbytecode is not the shape adoption_kx expects")
         t = t.replace(a, a + "        nab_kx_latched=1;   /* adoption_kx: the runtime is the warren's */\n", 1)
     b = ("            len=sysLoad(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n")
-    if "conf.bin" not in t:
+    if "whatever filename the load names" not in t:
         if t.count(b) != 1:
             sys.exit(f"FAIL {q}: OPload is not the shape adoption_kx expects")
         t = t.replace(b, b + (
-            "            /* adoption_kx: after the hand-over the key is not readable. */\n"
-            "            if (nab_kx_latched && len>0 && !strcmp((char*)VSTARTBIN(q),\"conf.bin\"))\n"
+            "            /* adoption_kx: after the hand-over the key is not readable,\n"
+            "               whatever filename the load names -- one flash page, and no\n"
+            "               runtime load has reason to read bytes 224..256. */\n"
+            "            if (nab_kx_latched && len>0)\n"
             "            {\n"
             "              int32_t i;\n"
             "              for (i=0;i<len;i++)\n"
             "                if (start+i>=224 && start+i<257) VSTARTBIN(p)[index+i]=0;\n"
             "            }\n"), 1)
+    sv = ("            len=sysSave(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n")
+    if "the key region is not writable" not in t:
+        if t.count(sv) != 1:
+            sys.exit(f"FAIL {q}: OPsave is not the shape adoption_kx expects")
+        t = t.replace(sv, (
+            "            /* adoption_kx: after the hand-over the key region is not\n"
+            "               writable, whatever filename -- no runtime save touches\n"
+            "               224..256, so a bytecode cannot overwrite the key or forge\n"
+            "               the confirmed flag. */\n"
+            "            if (nab_kx_latched && len>0 && start<257 && start+len>224)\n"
+            "              len=0;\n"
+            "            else\n"
+            "              len=sysSave(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n"), 1)
     q.write_text(t)
-    print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
+    print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load and save")
 
 
 def patch_tls_psk(root: Path) -> None:
