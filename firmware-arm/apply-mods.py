@@ -7988,6 +7988,96 @@ def patch_share_page_css(root: Path) -> None:
     print(f"[ok]   {q}: four stylesheets -> one ({before} -> {len(t)} source bytes)")
 
 
+def patch_http_cap(root: Path) -> None:
+    """The bootloader drops an HTTP_NORMAL answer past HTTP_MAX_NORMAL bytes.
+
+    The bootloader's HTTP client (boot.0.0.0.13.mtl, `tcpread`) kept every
+    segment of an HTTP_NORMAL answer in `httpreq.inputH` until the
+    connection closed, with no limit; bc.jsp and kx.jsp are fetched that
+    way, in plain HTTP unless the owner confirmed a key. A server, or any
+    host on the path, that answers with more than the VM's 204,800-word
+    heap holds runs it out of memory: a reset, and a Nabaztag comes back
+    from a soft reset with its radio asleep. Measured in the emulator
+    (scenarios/vm/http-big-boot.txt, the gateway's `http-big`), on the
+    lean-reclaim bootloader of 2026-11-11: a megabyte resets the rabbit at
+    768 KB received; so does a complete answer of 220,000 bytes (the
+    segments, then two copies of the body, with the previous attempt's
+    still live); 180,000 bytes do not.
+
+    Now `Httpreq` carries `sizeH`, the bytes received so far. Past
+    HTTP_MAX_NORMAL the segments are let go, the connection is closed and
+    the callback gets nil -- what it gets when the name does not resolve or
+    the write fails, and `getbytecode nil` is nil -- so boot_loop asks again
+    after BOOT_HTTPTIMEOUT as it does for any answer that is not a
+    bytecode. Segments still in flight on the closed socket and its close
+    event are ignored, so the callback runs once.
+
+    HTTP_MAX_NORMAL is 163840 (160 KB). The largest legitimate answer is
+    bc.jsp: 112,349 bytes on 2026-11-11 for a 112,232-byte runtime
+    (tools/plain_warren.py; an HMAC trailer adds 68), against 119 for
+    kx.jsp. The ceiling leaves the bytecode 46% to grow and stays under
+    the 180,000 bytes this heap was measured to hold -- six answers of
+    163,059 bytes in two minutes, no reset. A bytecode past that could not
+    be fetched by this bootloader with or without a ceiling.
+
+    Not touched: bc.jsp over TLS (boot_tls's boottls_take keeps its own
+    list -- the peer there holds the adoption key and serves the bytecode
+    anyway), the HTTP_STREAM header block, and the config-mode server's
+    upload buffer, which has to take a 250 KB .sim.
+
+    The runtime bytecode has its own copy of this client and its own fix:
+    bytecode/patch_http_cap.py. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "HTTP_MAX_NORMAL" in t:
+        print(f"[skip] {q}: HTTP_NORMAL answers are already capped")
+        return
+    for old, new, what in (
+        ("type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH];;\n",
+         "// http_cap: an HTTP_NORMAL answer is kept whole until the connection\n"
+         "// closes; past this many bytes the request is dropped (apply-mods.py).\n"
+         "const HTTP_MAX_NORMAL=163840;;\n"
+         "type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH];;\n"
+         "fun httpover httpreq= httpreq.sizeH!=nil && httpreq.sizeH>HTTP_MAX_NORMAL;;\n",
+         "Httpreq type"),
+        ("\t\tif httpreq.typeH==HTTP_NORMAL then call httpreq.cbH [httpreq strcatlist rev httpreq.inputH nil]"
+         "\t// on retourne ce qui a \u00e9t\u00e9 re\u00e7u\n",
+         "\t\tif httpreq.typeH==HTTP_NORMAL then\n"
+         "\t\t(\n"
+         "\t\t\tif httpover httpreq then nil\t// http_cap: already answered with nil\n"
+         "\t\t\telse call httpreq.cbH [httpreq strcatlist rev httpreq.inputH nil]\n"
+         "\t\t)\n",
+         "HTTP_NORMAL end of answer"),
+        ("\t\tif httpreq.typeH==HTTP_NORMAL then set httpreq.inputH=input::httpreq.inputH"
+         "\t// on bufferise ce qui a \u00e9t\u00e9 re\u00e7u\n",
+         "\t\tif httpreq.typeH==HTTP_NORMAL then\n"
+         "\t\t(\n"
+         "\t\t\t// http_cap: count before keeping; past the ceiling the request\n"
+         "\t\t\t// is closed and answered once, late segments are dropped.\n"
+         "\t\t\tif httpover httpreq then nil\n"
+         "\t\t\telse\n"
+         "\t\t\t(\n"
+         "\t\t\t\tset httpreq.sizeH=(if httpreq.sizeH==nil then 0 else httpreq.sizeH)+strlen input;\n"
+         "\t\t\t\tif httpover httpreq then\n"
+         "\t\t\t\t(\n"
+         "\t\t\t\t\tset httpreq.inputH=nil;\n"
+         "\t\t\t\t\tclosetcp cnx;\n"
+         "\t\t\t\t\tcall httpreq.cbH [httpreq nil];\n"
+         "\t\t\t\t\tnil\n"
+         "\t\t\t\t)\n"
+         "\t\t\t\telse (set httpreq.inputH=input::httpreq.inputH; nil)\n"
+         "\t\t\t)\n"
+         "\t\t)\n",
+         "HTTP_NORMAL buffering"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: HTTP_NORMAL answers counted, dropped past 160 KB")
+
+
 def patch_mixed_gtk(root: Path) -> None:
     """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
 
@@ -8299,7 +8389,7 @@ def main() -> int:
         "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
         # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
         # to measure each before a release takes them.
-        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,dcc_telemetry,linker_keep,gc_sections",
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,dcc_telemetry,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -8573,6 +8663,7 @@ def main() -> int:
         "share_sbox": patch_share_sbox,
         "prune_dead_funs": patch_prune_dead_funs,
         "small_strings": patch_small_strings,
+        "http_cap": patch_http_cap,
         "opt_size": patch_opt_size,
     }
     for step in steps:

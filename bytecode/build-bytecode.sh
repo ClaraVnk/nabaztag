@@ -118,6 +118,12 @@ python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
 echo "==> patch_dns_antispoof.py  (random DNS ids, bounded counts)"
 python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
 
+# An HTTP_NORMAL answer is counted as it arrives and dropped past 16 KB (the
+# hex .sim OTA request carries its own, larger ceiling): a server or a host
+# on the path can no longer fill the heap, which was a reboot.
+echo "==> patch_http_cap.py  (HTTP_NORMAL answers bounded)"
+python3 "$HERE/patch_http_cap.py" "$BC/sources"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
