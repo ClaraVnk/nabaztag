@@ -6,7 +6,7 @@ on:
   schedule:
     - cron: "41 5 * * 1"  # Mondays 05:41 UTC
   workflow_dispatch:
-  # A change to an image (Dependabot's included) is built and scanned before
+  # A change to an image (Renovate's included) is built and scanned before
   # it merges, not discovered on Monday.
   pull_request:
     paths:
@@ -20,6 +20,10 @@ permissions:
 env:
   OSV_SCANNER: ghcr.io/google/osv-scanner:v2.6.0
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   image:
     name: Image scan (nabaztag-violet, report only)
@@ -27,6 +31,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build the add-on image
         run: podman build -t nabaztag-violet:scan nabaztag-violet
       - name: Scan its packages (osv-scanner)
@@ -56,11 +62,13 @@ jobs:
           if-no-files-found: ignore
 
   upstream:
-    name: Pinned upstreams not covered by Dependabot (report only)
+    name: Pinned upstreams not covered by Renovate (report only)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compare the pinned whisper.cpp release with the latest one
         env:
           GH_TOKEN: ${{ github.token }}
