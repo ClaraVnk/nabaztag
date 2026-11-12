@@ -27,6 +27,9 @@ one or two roots that anchor that host's chain as a session resource
 
     ST https://host/path#r<N>@<YYYYMMDDHHMMSS>
 
+A plain http stream comes as `ST http://host/path#s<N>`: fetched by the
+stock client as always, named <N> so that it can be stopped too.
+
 The fragment never reaches the host (it is cut before the request): <N> is
 the resource holding the roots, DER end to end; the time is the warren's,
 for the certificates' dates.
@@ -152,7 +155,18 @@ var HttpsPolicy="xmpp-https:0";;
 fun HttpsOn= (strget HttpsPolicy 11)==49;;
 
 fun HttpsPlay val=
-	if val==nil || (strlen val)<9 || strcmp (strsub val 0 8) "https://" then 0
+	if val==nil then 0
+	else let strstr val "#s" 0 -> k in
+	if k!=nil && !strcmp (strsub val 0 7) "http://" then
+	(
+		// A plain http stream the rabbit fetches itself, named so that the
+		// warren's cut can stop it: no new opcode, any firmware.
+		Secho "https: ST plain "; Secho val; Secho " at "; Iecholn time_ms;
+		wavstarthttp (strsub val 0 k) #_cbWavError;
+		set wav_live=atoi strsub val k+2 nil;
+		1
+	)
+	else if (strlen val)<9 || strcmp (strsub val 0 8) "https://" then 0
 	else
 	(
 		Secho "https: ST "; Secho val; Secho " at "; Iecholn time_ms;
