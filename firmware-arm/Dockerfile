@@ -2,7 +2,14 @@
 # Target SoC: OKI ML67Q4051 (ARM7TDMI). Output: firmware0.0.0.13.sim ready to
 # upload via the rabbit's config-mode page (no opening required).
 
-FROM debian:bookworm
+# Debian, the one exception to the Alpine-or-Rocky rule, and pinned by digest:
+# this image is the compiler of every signed release. bookworm's gcc 12.2 and
+# newlib 3.3 are what `releases/README.md` rebuilds byte-identically from;
+# Rocky 10 ships gcc 14.1 and newlib 4.5 (measured 2026-11-12), which make
+# another binary, in a flash with 3.4 KB to spare. Nothing here runs in
+# production -- only the signed image leaves. A toolchain change is a firmware
+# change: done by hand, measured for size, proven in the emulator.
+FROM docker.io/library/debian:bookworm@sha256:366a6da5efcceffbaa19c560a101b97b87a1a9664eeeac8bc3d24395ddbf14f3
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gcc-arm-none-eabi \
