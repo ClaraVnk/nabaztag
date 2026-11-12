@@ -140,6 +140,9 @@ class Op:
     OPtlsStart = 158; OPtlsIn = 159;      OPtlsOut = 160;    OPtlsState = 161
     OPtlsClose = 162
     OPresetInfo = 163  # crash_report: the reset report the boot URL carries
+    # tls_certs (Naboot 1.2.0.0): the rabbit's own HTTPS, after crash_report
+    OPhttpsStart = 164; OPhttpsIn = 165;  OPhttpsOut = 166;  OPhttpsState = 167
+    OPhttpsClose = 168
 
 
 # Opcodes that take a 1-byte unsigned operand.
@@ -478,6 +481,8 @@ _MNEM_TO_OP = {name: code for code, name in
                    157: "OPkxCheck", 158: "OPtlsStart", 159: "OPtlsIn",
                    160: "OPtlsOut", 161: "OPtlsState", 162: "OPtlsClose",
                    163: "OPresetInfo",
+                   164: "OPhttpsStart", 165: "OPhttpsIn", 166: "OPhttpsOut",
+                   167: "OPhttpsState", 168: "OPhttpsClose",
                }.items()}
 
 

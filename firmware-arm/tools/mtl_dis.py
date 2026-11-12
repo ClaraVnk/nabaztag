@@ -86,6 +86,9 @@ OPCODES: dict[int, str] = {
     158: "OPtlsStart", 159: "OPtlsIn", 160: "OPtlsOut", 161: "OPtlsState",
     162: "OPtlsClose",
     163: "OPresetInfo",
+    # apply-mods.py tls_certs (Naboot 1.2.0.0)
+    164: "OPhttpsStart", 165: "OPhttpsIn", 166: "OPhttpsOut", 167: "OPhttpsState",
+    168: "OPhttpsClose",
 }
 
 

@@ -128,6 +128,9 @@ python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
 echo "==> patch_http_cap.py  (HTTP_NORMAL answers bounded)"
 python3 "$HERE/patch_http_cap.py" "$BC/sources"
 
+echo "==> patch_https_play.py  (https:// streams played by the rabbit itself, Naboot 1.2.0.0)"
+python3 "$HERE/patch_https_play.py" "$BC/sources"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
