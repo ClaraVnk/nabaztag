@@ -31,6 +31,10 @@ The fragment never reaches the host (it is cut before the request): <N> is
 the resource holding the roots, DER end to end; the time is the warren's,
 for the certificates' dates.
 
+Stopping: the stream is named like a live one (wav_live = the roots' id), so
+the warren's `<res ... id='N' len='0' live='cut'/>` stops it through
+XmppLiveMark, the stop live-in-session already has.
+
 One https request at a time (nab_tls's session 1). A redirect to another
 https host is followed; its chain must end at one of the same roots, or the
 handshake fails and the callback gets nil, which ends the stream as a 404
@@ -161,6 +165,10 @@ fun HttpsPlay val=
 			set HttpsRoots=strcatlist roots;
 			set HttpsNow=strsub val j+1 14;
 			wavstarthttp (strsub val 0 i) #_cbWavError;
+			// Named like a live stream, so the warren's `live='cut'` for
+			// this id stops it (XmppLiveMark): a new ST does not stop a
+			// stream on this hardware, and the warren no longer relays it.
+			set wav_live=atoi strsub val i+2 j-i-2;
 			0
 		);
 		1
