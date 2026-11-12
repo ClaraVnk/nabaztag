@@ -210,7 +210,22 @@ class KeyStore:
                 return None
             return {"key": bytes.fromhex(r["key"]), "colors": list(r["colors"]),
                     "state": r["state"], "created": r.get("created"),
-                    "decided": r.get("decided")}
+                    "decided": r.get("decided"),
+                    "served": frozenset(r.get("served") or ())}
+
+    def note_served(self, mac: str, policies) -> None:
+        """The session policies of the bytecode bc.jsp last served this
+        rabbit: what its session may be sent until its next boot. Kept on
+        disk, so an add-on restart does not send a rabbit what it cannot
+        read, or hold back what it can."""
+        mac = mac.lower()
+        served = sorted(policies)
+        with self._lock:
+            r = self._rows.get(mac)
+            if r is None or (r.get("served") or []) == served:
+                return
+            r["served"] = served
+            self._save_locked()
 
     def offer(self, mac: str, key: bytes, colors: list[int]) -> bool:
         mac = mac.lower()
@@ -287,15 +302,68 @@ def sign_bytecode(blob: bytes, key: bytes) -> bytes:
     return blob + b"Hmac" + tag.encode()
 
 
+# What else the runtime moves inside its TLS session once told to, one
+# literal each, compiled as 0 (nabaztag bytecode/patch_*_in_session.py):
+#   rfid  a tag on the reader as a stanza, not GET rfid.jsp
+#   res   `ST res:N`: a sound sent down the session before the command
+#   rsc   MU, MC and CH res:N likewise
+#   mic   `RS session`: the microphone as <mic len=N/> + raw bytes
+#   ota   `FW res:N <sig>`: the plain image down the session
+# `live` (radio and podcasts pulled through the session) stays off: this
+# add-on does not relay streams, the rabbit fetches them itself.
+SESSION_POLICIES = ("rfid", "res", "rsc", "mic", "ota")
+
+
+def session_policies(blob: bytes) -> frozenset[str]:
+    """The policies seal() turns on in this bytecode: those it carries
+    exactly once."""
+    return frozenset(p for p in SESSION_POLICIES
+                     if blob.count(b"xmpp-%s:0" % p.encode()) == 1)
+
+
 def seal(blob: bytes, row: dict | None) -> bytes:
-    """What bc.jsp sends: for a confirmed key, TLS required and then the
-    HMAC, so the HMAC covers the policy; the bytecode as it is otherwise.
-    Only the TLS policy is set. The other session policies of the runtime
-    (rfid, sounds, microphone, updates, radio inside the session) stay off:
-    this add-on serves those over the LAN as it always has."""
+    """What bc.jsp sends: for a confirmed key, TLS required and every
+    session policy on (session_policies), then the HMAC, so the HMAC covers
+    them; the bytecode as it is otherwise."""
     if row is None or row.get("state") != "confirmed":
         return blob
+    for p in session_policies(blob):
+        blob = blob.replace(b"xmpp-%s:0" % p.encode(), b"xmpp-%s:1" % p.encode())
     return sign_bytecode(require_tls(blob), row["key"])
+
+
+# --------------------------------------------------------------------------- #
+# A firmware update down the session
+# --------------------------------------------------------------------------- #
+SIM_MAGIC = b"-violet-"
+SIM_SIG = b"-sig-"
+
+
+def _deobfuscate(buf: bytes, key: int = 0x47, alpha: int = 47) -> bytes:
+    """`decode8` from nabgcc src/vm/vlog.c, as the bytecode's `uncrypt bin 0
+    nil 0x47 47` runs it; a copy of firmware-arm/signing/simpayload.py."""
+    out = bytearray(len(buf))
+    for i, c in enumerate(buf):
+        v = (((c - alpha) & 0xFF) * key) & 0xFF
+        out[i] = v
+        key = (v + v + 1) & 0xFF
+    return bytes(out)
+
+
+def sim_image(blob: bytes) -> tuple[bytes, bytes]:
+    """(plain image, 64-byte signature) of a signed .sim, what `FW res:N
+    <sig>` hands the rabbit: it verifies the signature over the plain image
+    itself before it flashes, as it does for an image fetched by URL.
+    ValueError when the file is not a signed .sim."""
+    if not blob.startswith(SIM_MAGIC) or not blob.endswith(SIM_SIG):
+        raise ValueError("not a signed .sim")
+    opened = blob.rfind(SIM_SIG, 0, len(blob) - len(SIM_SIG))
+    sig_hex = blob[opened + len(SIM_SIG):-len(SIM_SIG)] if opened >= 0 else b""
+    inner = blob[:opened] if opened >= 0 else b""
+    if len(sig_hex) != 128 or not inner.endswith(SIM_MAGIC):
+        raise ValueError("malformed signed .sim")
+    payload = bytes.fromhex(inner[len(SIM_MAGIC) + 8:-len(SIM_MAGIC)].decode("ascii"))
+    return _deobfuscate(payload), bytes.fromhex(sig_hex.decode("ascii"))
 
 
 # --------------------------------------------------------------------------- #
@@ -306,6 +374,18 @@ def seal(blob: bytes, row: dict | None) -> bytes:
 RECORD_BYTES = 4096
 # HTTP answers go in smaller records, as Le Terrier writes them.
 HTTP_RECORD_BYTES = 1024
+
+# A resource down the session (patch_res_in_session.py): the bytecode's
+# XMPP_RES_BUDGET and XMPP_RES_KEEP. A longer one is read and dropped, so it
+# goes by URL; a program never names more than the rabbit keeps.
+RES_NS = "violet:nabaztag:res"
+RES_MAX_BYTES = 200_000
+RES_KEEP = 3
+# The microphone inside the session (patch_mic_in_session.py), between
+# stanzas: <mic xmlns='violet:nabaztag:mic' len='N'/> then N raw IMA-ADPCM
+# bytes. A recorder buffer is a few hundred bytes.
+MIC_HEAD = b"<mic xmlns='violet:nabaztag:mic' len='"
+MIC_MAX_CHUNK = 16384
 
 
 def tls_context(store: KeyStore) -> tuple[ssl.SSLContext, threading.local]:

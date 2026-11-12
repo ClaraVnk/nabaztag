@@ -266,6 +266,9 @@ XMPP_IDLE_S = float(os.environ.get("XMPP_IDLE_S") or _OPTS.get("xmpp_idle_s") or
 # this, it is ignoring what we push (_check_sound_ack).
 SOUND_ACK_S = 10
 _SID = itertools.count(1)
+# Resource ids for the TLS sessions, one counter for the whole add-on, so a
+# reconnect never meets an id it saw before.
+_RES_IDS = itertools.count(1)
 
 
 def _ago(seconds: float) -> str:
@@ -1210,6 +1213,10 @@ class XmppSession(threading.Thread):
         # Set when a sound is pushed to an idle rabbit, cleared by the bind
         # that answers it (see _check_sound_ack).
         self._sound_at = None
+        # The microphone inside the session (MIC_HEAD): the raw bytes still
+        # owed, and an undecoded tail that may start an announce.
+        self._mic_left = 0
+        self._raw = b""
 
     # -- who is talking ---------------------------------------------------- #
     @property
@@ -1238,6 +1245,15 @@ class XmppSession(threading.Thread):
                 return
         self._mac = value
 
+    def rides(self, policy: str) -> bool:
+        """Whether this session may carry `policy` (adoption.SESSION_POLICIES):
+        it is the TLS session of the rabbit whose key opened it, and the
+        bytecode its last boot was served reads that policy there."""
+        if self.tls_mac is None or self.mac != self.tls_mac:
+            return False
+        row = KEYS.get(self.tls_mac)
+        return row is not None and policy in row["served"]
+
     def _refuse(self):
         try:
             with self._send_lock:
@@ -1248,18 +1264,22 @@ class XmppSession(threading.Thread):
         self.close()
 
     # -- low level --------------------------------------------------------- #
+    def _write(self, raw: bytes):
+        """Write under the send lock, which the caller holds. Over TLS one
+        record per sendall, never more than the rabbit's one-record buffer
+        (max_fragment_length 2^12): that is also how the rabbit tells an
+        announce from the bytes it announces."""
+        self.last_tx = time.time()
+        if self.tls_mac is not None:
+            for i in range(0, len(raw), adoption.RECORD_BYTES):
+                self.conn.sendall(raw[i:i + adoption.RECORD_BYTES])
+        else:
+            self.conn.sendall(raw)
+
     def send(self, data: str):
-        raw = data.encode("utf-8")
         try:
             with self._send_lock:
-                self.last_tx = time.time()
-                if self.tls_mac is not None:
-                    # One record per sendall, never more than the rabbit's
-                    # one-record buffer (max_fragment_length 2^12).
-                    for i in range(0, len(raw), adoption.RECORD_BYTES):
-                        self.conn.sendall(raw[i:i + adoption.RECORD_BYTES])
-                else:
-                    self.conn.sendall(raw)
+                self._write(data.encode("utf-8"))
             log.debug("-> rabbit %s: %s", self.addr[0], data[:300])
         except OSError:
             self._alive = False
@@ -1269,18 +1289,99 @@ class XmppSession(threading.Thread):
         return f"{self.mac or '0000'}@{self.domain}/{self.resource}"
 
     # -- command push ------------------------------------------------------ #
-    def send_violet_packet(self, raw: bytes):
+    def _packet_stanza(self, raw: bytes) -> str:
         with self._send_lock:
             self.msg_nb += 1
             nb = self.msg_nb
         b64 = base64.b64encode(raw).decode("ascii")
-        stanza = (
+        return (
             f"<message from='net.openjabnab.platform@{self.domain}/services' "
             f"to='{self.mac}@{self.domain}/{self.resource}' id='ojn-{nb}'>"
             f"<packet xmlns='violet:packet' format='1.0' ttl='604800'>{b64}</packet>"
             f"</message>"
         )
-        self.send(stanza)
+
+    def send_violet_packet(self, raw: bytes):
+        self.send(self._packet_stanza(raw))
+
+    def _resources_in_session(self, program: str):
+        """The program with each of this add-on's /res/ resources that the
+        rabbit will take from its session renamed res:N, and those
+        resources, [(N, bytes)], in order: ST when its runtime reads sounds
+        there (res), MU, MC and CH when it reads a program's resources there
+        too (rsc). Together they fit the rabbit's store, so none is evicted
+        by the next one before the program runs. Anything else -- another
+        host's URL, a resource over the budget -- stays a URL."""
+        keys = (({"ST"} if self.rides("res") else set())
+                | ({"MU", "MC", "CH"} if self.rides("res") and self.rides("rsc") else set()))
+        if not keys:
+            return program, []
+        prefix = resource_url("")
+        lines = program.split("\n")
+        sent, named, total = [], {}, 0
+        for i, line in enumerate(lines):
+            key, _, url = line.partition(" ")
+            url = url.strip()
+            if key not in keys or not url.startswith(prefix):
+                continue
+            if url in named:
+                lines[i] = f"{key} res:{named[url]}"
+                continue
+            with RES_LOCK:
+                entry = RESOURCES.get(url[len(prefix):])
+            if entry is None:
+                continue
+            data = entry[1]
+            if total + len(data) > adoption.RES_MAX_BYTES or len(sent) >= adoption.RES_KEEP:
+                log.info("rabbit %s: resource of %d bytes does not fit its store, sent by URL",
+                         self.mac, len(data))
+                continue
+            rid = next(_RES_IDS)
+            named[url] = rid
+            sent.append((rid, data))
+            total += len(data)
+            lines[i] = f"{key} res:{rid}"
+        return "\n".join(lines), sent
+
+    def _send_with_resources(self, program: str):
+        """The program, its resources first when they go down the session:
+        each announced in a record of its own, its bytes, then the program,
+        under one hold of the send lock so nothing comes between them."""
+        program, sent = self._resources_in_session(program)
+        if not sent:
+            self.send_violet_packet(message_packet(program))
+            return
+        stanza = self._packet_stanza(message_packet(program)).encode("utf-8")
+        try:
+            with self._send_lock:
+                for rid, data in sent:
+                    self._write(f"<res xmlns='{adoption.RES_NS}' id='{rid}' "
+                                f"len='{len(data)}'/>".encode("ascii"))
+                    self._write(data)
+                self._write(stanza)
+            log.info("rabbit %s: %s inside the session", self.mac,
+                     ", ".join(f"{len(d)} bytes as res:{r}" for r, d in sent))
+        except OSError:
+            self._alive = False
+
+    def send_firmware(self, image: bytes, sig: bytes):
+        """A firmware update inside the session (patch_ota_in_session.py):
+        the announce with fw='1', the plain image, then `FW res:N <signature
+        as 128 hex digits>`. The rabbit verifies the signature itself before
+        it flashes, exactly as for an image fetched by URL."""
+        rid = next(_RES_IDS)
+        head = (f"<res xmlns='{adoption.RES_NS}' id='{rid}' len='{len(image)}' "
+                f"fw='1'/>").encode("ascii")
+        stanza = self._packet_stanza(message_packet(f"FW res:{rid} {sig.hex()}")).encode("utf-8")
+        try:
+            with self._send_lock:
+                self._write(head)
+                self._write(image)
+                self._write(stanza)
+            log.info("rabbit %s: firmware image of %d bytes inside the session as res:%d",
+                     self.mac, len(image), rid)
+        except OSError:
+            self._alive = False
 
     def send_program(self, program: str):
         """Push a code-0x0A program (newline-separated 'KEY value' commands).
@@ -1298,7 +1399,7 @@ class XmppSession(threading.Thread):
             if self.resource == "idle" and self._sound_at is None:
                 at = self._sound_at = time.time()
                 threading.Timer(SOUND_ACK_S, self._check_sound_ack, args=(at,)).start()
-        self.send_violet_packet(message_packet(program))
+        self._send_with_resources(program)
 
     def _free_the_speaker(self):
         """Stop a capture of ours so a sound can be heard, and owe it back."""
@@ -1409,7 +1510,10 @@ class XmppSession(threading.Thread):
         WAKE["streaming"] = True
         WAKE["cooldown"] = 0.0
         log.info("auto-listen: starting mic stream on %s", self.mac)
-        self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+        # Inside the TLS session when its runtime streams there, encrypted
+        # with everything else; over UDP on the LAN otherwise.
+        self.send_program("RS session" if self.rides("mic")
+                          else f"RS {_server_ip()} {MIC_UDP_PORT}")
         _save_state()
 
     def _should_clear_mic(self) -> bool:
@@ -1717,6 +1821,21 @@ class XmppSession(threading.Thread):
                           {"mac": self.mac, "type": "button", "clic": clic, "action": action})
             return
 
+        if "violet:nabaztag:rfid" in f:
+            # A tag on the reader, reported inside the session instead of by
+            # plain rfid.jsp (patch_rfid_xmpp.py; seal() tells a confirmed
+            # rabbit to). The rabbit is the one whose key opened this TLS
+            # session -- never a MAC read from the stanza. No runtime sends
+            # this on the plain port, so nothing is fired there.
+            mt = re.search(r"<tag>\s*([0-9A-Fa-f]{2,32})\s*</tag>", f)
+            if self.tls_mac is None or self.mac != self.tls_mac:
+                log.warning("rabbit %s: rfid stanza outside its TLS session, ignored", self.addr[0])
+            elif mt:
+                log.info("rabbit %s: RFID tag=%s inside the session", self.mac, mt.group(1))
+                fire_ha_event("nabaztag_event",
+                              {"mac": self.mac, "type": "rfid", "tag": mt.group(1)})
+            return
+
         if "violet:nabaztag:ears" in f:
             # The rabbit sends <ears><left>L</left><right>R</right></ears> when the
             # ears are turned by hand (positions ~0..16).
@@ -1806,7 +1925,7 @@ class XmppSession(threading.Thread):
         self.conn.settimeout(15)
         try:
             if self._first:
-                self._feed(self._first.decode("utf-8", "replace"))
+                self._take(self._first)
                 self._first = b""
             while self._alive:
                 try:
@@ -1824,7 +1943,7 @@ class XmppSession(threading.Thread):
                 if not chunk:
                     break
                 self.last_rx = time.time()
-                self._feed(chunk.decode("utf-8", "replace"))
+                self._take(chunk)
                 # Here too, not only on a timeout: the rabbit writes a blank
                 # of its own every few seconds, so its socket is never quiet
                 # long enough for one, and the first keepalive went out after
@@ -1842,6 +1961,51 @@ class XmppSession(threading.Thread):
                 pass
             up = _ago(time.time() - self.connected_at) if self.connected_at else "?"
             log.info("XMPP disconnect %s (mac=%s) — was online %s", self.addr[0], self.mac, up)
+
+    def _take(self, chunk: bytes):
+        """What the socket gave: the microphone's raw bytes to mic_feed, the
+        rest to the XML parser. Only a session that streams its microphone
+        here (rides "mic") is searched; every other one is all XML."""
+        if not self._mic_left and not self._raw and not self.rides("mic"):
+            self._feed(chunk.decode("utf-8", "replace"))
+            return
+        head = adoption.MIC_HEAD
+        data, xml = self._raw + chunk, bytearray()
+        self._raw = b""
+        while data:
+            if self._mic_left:
+                part, data = data[:self._mic_left], data[self._mic_left:]
+                self._mic_left -= len(part)
+                got = mic_feed(part, self.addr[0])
+                if got and got[0] % 50 == 1:
+                    log.info("rabbit %s: mic inside the session, %d chunks, %d bytes",
+                             self.mac, *got)
+                continue
+            i = data.find(head)
+            if i == -1:
+                # Keep a tail that may be the beginning of an announce.
+                keep = next((k for k in range(min(len(head) - 1, len(data)), 0, -1)
+                             if head.startswith(data[-k:])), 0)
+                xml += data[:len(data) - keep]
+                self._raw = data[len(data) - keep:]
+                break
+            xml += data[:i]
+            end = data.find(b"'/>", i)
+            if end == -1:
+                if len(data) - i > len(head) + 16:
+                    xml += data[i:]            # not an announce after all
+                else:
+                    self._raw = data[i:]
+                break
+            n = data[i + len(head):end]
+            if not n.isdigit() or int(n) > adoption.MIC_MAX_CHUNK:
+                log.warning("rabbit %s: a malformed microphone announce, closing", self.mac)
+                self._alive = False
+                return
+            self._mic_left = int(n)
+            data = data[end + 3:]
+        if xml:
+            self._feed(xml.decode("utf-8", "replace"))
 
     def _feed(self, data: str):
         """Incremental XMPP parser: extracts complete top-level stanzas.
@@ -2099,6 +2263,9 @@ class BootHandler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_error(500, "bootcode missing")
                 return
+            if row is not None:
+                KEYS.note_served(mac, adoption.session_policies(data)
+                                 if row["state"] == "confirmed" else ())
             data = adoption.seal(data, row)
             log.info("serving bootcode %s (%d bytes%s) to %s [%s]",
                      os.path.basename(path_bc), len(data),
@@ -2496,9 +2663,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if b is None:
                     warn = "trigger requested but no connected bunny — staged only"
                 else:
-                    b.send_program(f"FW {staged_url}")
+                    image = None
+                    if b.rides("res") and b.rides("ota"):
+                        # Down its TLS session, as the plain image and its
+                        # signature; nobody on the LAN sees or swaps it.
+                        try:
+                            image, sig = adoption.sim_image(blob)
+                        except ValueError as exc:
+                            log.warning("OTA: %s not sent inside the session: %s", name, exc)
+                    if image is not None:
+                        b.send_firmware(image, sig)
+                        log.info("OTA: pushed %s to %s inside its session", name, b.mac)
+                    else:
+                        b.send_program(f"FW {staged_url}")
+                        log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
                     triggered = True
-                    log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
             return self._json(200, {
                 "ok": True,
                 "staged": target,
@@ -2736,23 +2915,29 @@ def udp_mic_server():
             continue
         if data[:3] != b"snd":
             continue
-        if not WAKE["on"]:
-            # Belt + suspenders: even if the rabbit didn't honor our RT for
-            # some reason, the server-side wake pipeline (STT, hallucination
-            # filter) stays idle when listening is off. Don't accumulate
-            # bytes we'd just throw away — and don't log them as ongoing
-            # mic activity either.
-            continue
-        with MIC_LOCK:
-            MIC_STREAM["adpcm"] += data[3:]
-            MIC_STREAM["packets"] += 1
-            MIC_STREAM["ts"] = time.time()
-            MIC_STREAM["src"] = addr[0]
-            n, total = MIC_STREAM["packets"], len(MIC_STREAM["adpcm"])
+        got = mic_feed(data[3:], addr[0])
         now = time.time()
-        if now - last_log > 2:
-            log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", n, total, addr[0])
+        if got and now - last_log > 2:
+            log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", *got, addr[0])
             last_log = now
+
+
+def mic_feed(data: bytes, src: str):
+    """IMA-ADPCM from the rabbit's microphone, by UDP or inside its TLS
+    session: (packets, bytes) so far, or None when it was dropped."""
+    if not WAKE["on"]:
+        # Belt + suspenders: even if the rabbit didn't honor our RT for
+        # some reason, the server-side wake pipeline (STT, hallucination
+        # filter) stays idle when listening is off. Don't accumulate
+        # bytes we'd just throw away — and don't log them as ongoing
+        # mic activity either.
+        return None
+    with MIC_LOCK:
+        MIC_STREAM["adpcm"] += data
+        MIC_STREAM["packets"] += 1
+        MIC_STREAM["ts"] = time.time()
+        MIC_STREAM["src"] = src
+        return MIC_STREAM["packets"], len(MIC_STREAM["adpcm"])
 
 
 # --------------------------------------------------------------------------- #

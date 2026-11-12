@@ -24,7 +24,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 TMP = tempfile.mkdtemp(prefix="nabaztag-violet-test-")
-BODY = b"\x00" * 40 + b"xmpp-tls:0" + b"\x01" * 40
+# The policies as the runtime carries them, each once (bytecode/patch_*.py).
+BODY = (b"\x00" * 40 + b"xmpp-tls:0" + b"xmpp-rfid:0" + b"xmpp-res:0" + b"xmpp-rsc:0"
+        + b"xmpp-mic:0" + b"xmpp-ota:0" + b"xmpp-live:0" + b"\x01" * 40)
 TLS_RUNTIME = b"amber" + b"%08x" % len(BODY) + BODY + b"Mind"
 HYBRID = b"amber" + b"%08x" % 4 + b"oldz" + b"Mind"
 for name, data in (("bootcode.tls", TLS_RUNTIME), ("bootcode.hybrid", HYBRID)):
@@ -116,6 +118,31 @@ class Seal(unittest.TestCase):
         n = int(out[5:13], 16)
         tag = hmac.new(key, out[13:13 + n], hashlib.sha256).hexdigest().encode()
         self.assertTrue(out.endswith(b"Hmac" + tag))
+
+    def test_confirmed_turns_the_session_policies_on_but_not_live(self):
+        out = adoption.seal(TLS_RUNTIME, {"state": "confirmed", "key": bytes(32)})
+        for p in ("rfid", "res", "rsc", "mic", "ota"):
+            self.assertIn(b"xmpp-%s:1" % p.encode(), out)
+        self.assertIn(b"xmpp-live:0", out)
+        self.assertEqual(adoption.session_policies(TLS_RUNTIME),
+                         {"rfid", "res", "rsc", "mic", "ota"})
+
+    def test_a_policy_carried_twice_is_left_alone(self):
+        body = BODY + b"xmpp-res:0"
+        blob = b"amber" + b"%08x" % len(body) + body + b"Mind"
+        self.assertNotIn("res", adoption.session_policies(blob))
+        self.assertEqual(adoption.seal(blob, {"state": "confirmed", "key": bytes(32)}).count(b"xmpp-res:0"), 2)
+
+    def test_the_sim_image_is_what_the_signer_signs(self):
+        sys.path.insert(0, os.path.join(HERE, "..", "..", "firmware-arm", "signing"))
+        import simpayload
+        payload = os.urandom(300)
+        sig = os.urandom(64)
+        sim = (b"-violet-" + b"%08x" % (2 * len(payload)) + payload.hex().encode() + b"-violet-"
+               + b"-sig-" + sig.hex().encode() + b"-sig-")
+        self.assertEqual(adoption.sim_image(sim), (simpayload.deobfuscate(payload), sig))
+        with self.assertRaises(ValueError):
+            adoption.sim_image(sim[:-5])
 
     def test_pending_or_none_changes_nothing(self):
         self.assertEqual(adoption.seal(TLS_RUNTIME, None), TLS_RUNTIME)
@@ -284,6 +311,19 @@ class EndToEnd(unittest.TestCase):
         self.assertIn(b"id='ka-", b.recv(4096))
         sess.close()
 
+    def test_bc_records_what_the_session_may_carry(self):
+        rpub = adoption.public_key(bytes.fromhex(EXCHANGES[0]["rpriv"]))
+        self._get(f"/vl/kx.jsp?m={MAC}&p={rpub.hex()}")
+        self._get(f"/vl/bc.jsp?m={MAC}")
+        self.assertEqual(server.KEYS.get(MAC)["served"], frozenset())
+        self._adopt_pending()
+        self._get(f"/vl/bc.jsp?m={MAC}")
+        self.assertEqual(server.KEYS.get(MAC)["served"], {"rfid", "res", "rsc", "mic", "ota"})
+
+    def _adopt_pending(self):
+        row = self._api("/api/adoption")[1]["keys"][0]
+        self._api("/api/adoption/confirm", {"mac": MAC, "fingerprint": row["fingerprint"]})
+
     def test_keepalive_is_a_whole_stanza(self):
         a, b = socket.socketpair()
         sess = server.XmppSession(a, ("127.0.0.1", 1))
@@ -293,6 +333,160 @@ class EndToEnd(unittest.TestCase):
         got = b.recv(4096)
         self.assertTrue(got.startswith(b"<iq ") and got.endswith(b"</iq>"))
         self.assertIn(b"getrunningstate", got)
+
+
+
+class _Reader(threading.Thread):
+    """Drains the rabbit's end while the session writes: a socket pair
+    holds a few KB, and a resource does not fit."""
+
+    def __init__(self, sock):
+        super().__init__(daemon=True)
+        self.sock, self.got = sock, b""
+        self.start()
+
+    def run(self):
+        self.sock.settimeout(0.5)
+        while True:
+            try:
+                b = self.sock.recv(65536)
+            except (socket.timeout, OSError):
+                return
+            if not b:
+                return
+            self.got += b
+
+    def result(self):
+        self.join()
+        return self.got
+
+
+class InSession(unittest.TestCase):
+    """What a confirmed rabbit's TLS session carries (the socket here is a
+    plain pair: the framing is the same, TLS only wraps it)."""
+
+    def setUp(self):
+        for row in server.KEYS.listing():
+            server.KEYS.forget(row["mac"])
+        server.KEYS.offer(MAC, bytes(32), [0] * 5)
+        server.KEYS.decide(MAC, True)
+        server.KEYS.note_served(MAC, adoption.SESSION_POLICIES)
+        self.a, self.b = socket.socketpair()
+        self.sess = server.XmppSession(self.a, ("127.0.0.1", 1), tls_mac=MAC)
+        self.sess.resource = "idle"
+        self.sess._sound_at = 0     # no sound-ack timer in these tests
+
+    def tearDown(self):
+        self.a.close()
+        self.b.close()
+
+    def _sent_program(self, program):
+        packets = []
+        orig = server.message_packet
+        server.message_packet = lambda p: (packets.append(p), orig(p))[1]
+        reader = _Reader(self.b)
+        try:
+            self.sess.send_program(program)
+        finally:
+            server.message_packet = orig
+        return packets[-1], reader.result()
+
+    def test_a_sound_goes_down_the_session(self):
+        data = os.urandom(9000)
+        url = server.resource_url(server.store_resource(data))
+        prog, wire = self._sent_program(f"ST {url}")
+        self.assertRegex(prog, r"^ST res:\d+$")
+        rid = prog.split(":")[1]
+        head = f"<res xmlns='violet:nabaztag:res' id='{rid}' len='9000'/>".encode()
+        self.assertTrue(wire.startswith(head + data))
+        self.assertTrue(wire[len(head) + len(data):].startswith(b"<message"))
+
+    def test_choreography_and_jingle_too_but_not_another_hosts_url(self):
+        ch = server.resource_url(server.store_resource(b"chor"))
+        prog, wire = self._sent_program(f"MU http://example.org/a.mp3\nCH {ch}\nMU {ch}")
+        lines = prog.split("\n")
+        self.assertEqual(lines[0], "MU http://example.org/a.mp3")
+        self.assertRegex(lines[1], r"^CH res:\d+$")
+        self.assertEqual(lines[2].split(" ")[1], lines[1].split(" ")[1])
+        self.assertEqual(wire.count(b"<res "), 1)
+
+    def test_over_the_budget_it_stays_a_url(self):
+        url = server.resource_url(server.store_resource(b"x" * (adoption.RES_MAX_BYTES + 1)))
+        prog, wire = self._sent_program(f"ST {url}")
+        self.assertEqual(prog, f"ST {url}")
+        self.assertNotIn(b"<res ", wire)
+
+    def test_a_runtime_served_without_the_policy_gets_urls(self):
+        server.KEYS.note_served(MAC, ())
+        url = server.resource_url(server.store_resource(b"abc"))
+        self.assertEqual(self._sent_program(f"ST {url}")[0], f"ST {url}")
+
+    def test_the_plain_port_gets_urls(self):
+        sess = server.XmppSession(self.a, ("127.0.0.1", 1))
+        sess._mac = MAC
+        self.assertFalse(sess.rides("res"))
+
+    def test_firmware_down_the_session(self):
+        packets = []
+        orig = server.message_packet
+        server.message_packet = lambda p: (packets.append(p), orig(p))[1]
+        reader = _Reader(self.b)
+        try:
+            self.sess.send_firmware(b"\x11" * 5000, b"\x22" * 64)
+        finally:
+            server.message_packet = orig
+        wire = reader.result()
+        rid = packets[0].split()[1].split(":")[1]
+        head = f"<res xmlns='violet:nabaztag:res' id='{rid}' len='5000' fw='1'/>".encode()
+        self.assertTrue(wire.startswith(head + b"\x11" * 5000))
+        self.assertEqual(packets[0], f"FW res:{rid} " + "22" * 64)
+
+    def test_the_microphone_is_lifted_off_the_stream(self):
+        server.WAKE["on"] = True
+        server.MIC_STREAM["adpcm"] = bytearray()
+        try:
+            audio = bytes(range(256)) * 2
+            seen = []
+            self.sess._handle_stanza = lambda f: seen.append(f)
+            wire = (b"<presence/>" + adoption.MIC_HEAD + b"512'/>" + audio
+                    + b"<iq type='result' id='x'/>")
+            for i in range(0, len(wire), 7):     # the announce split anywhere
+                self.sess._take(wire[i:i + 7])
+            self.assertEqual(bytes(server.MIC_STREAM["adpcm"]), audio)
+            self.assertEqual(seen, ["<presence/>", "<iq type='result' id='x'/>"])
+        finally:
+            server.WAKE["on"] = False
+
+    def test_listening_asks_for_the_session(self):
+        prog, _ = self._sent_program_of(self.sess._start_listen)
+        self.assertEqual(prog, "RS session")
+
+    def _sent_program_of(self, fn):
+        packets = []
+        orig, save = server.message_packet, server._save_state
+        server.message_packet = lambda p: (packets.append(p), orig(p))[1]
+        server._save_state = lambda: None
+        reader = _Reader(self.b)
+        try:
+            fn()
+        finally:
+            server.message_packet, server._save_state = orig, save
+            server.WAKE["on"] = server.WAKE["streaming"] = False
+        return packets[-1], reader.result()
+
+    def test_rfid_only_inside_its_own_session(self):
+        fired = []
+        orig = server.fire_ha_event
+        server.fire_ha_event = lambda t, d: fired.append(d)
+        try:
+            self.sess._mac = MAC
+            self.sess._handle_stanza("<message><rfid xmlns='violet:nabaztag:rfid'><tag>d0021a0352</tag></rfid></message>")
+            plain = server.XmppSession(self.a, ("127.0.0.1", 1))
+            plain._mac = "0019dbaabbcc"
+            plain._handle_stanza("<message><rfid xmlns='violet:nabaztag:rfid'><tag>d0021a0352</tag></rfid></message>")
+        finally:
+            server.fire_ha_event = orig
+        self.assertEqual(fired, [{"mac": MAC, "type": "rfid", "tag": "d0021a0352"}])
 
 
 if __name__ == "__main__":

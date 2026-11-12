@@ -159,11 +159,18 @@ the exchange, and the key becomes the rabbit's:
    - its XMPP session runs inside **TLS 1.3** on port **5223**, and from the
      next boot on, so does the bytecode download. Nobody on the network can
      read what it says or hears, or send it commands;
+   - what it plays comes down that session too: the add-on's sounds and
+     choreographies (up to 200 KB, three at a time), its microphone stream
+     (`RS session` instead of UDP), the RFID tags it reads, and the firmware
+     images pushed by `/api/ota`, which it still verifies itself before it
+     flashes;
    - the plain port refuses that rabbit's MAC.
 
 A stock rabbit, or a Naboot one before you answer, is served exactly as
-before. Sounds, the microphone stream and OTA images still travel over the
-LAN in the clear: only the session and the bytecode are encrypted.
+before. What stays outside the session: radio and podcast streams, and any
+sound on another host's URL, which the rabbit fetches itself; a sound over
+200 KB, sent by URL as before; and a push-to-talk recording (head button
+held), which the runtime still posts to `record.jsp` over plain HTTP.
 
 The keys are in `/data/adoption-keys.json`, kept by Home Assistant's
 backups. **Losing that file locks a confirmed rabbit out**: it refuses every

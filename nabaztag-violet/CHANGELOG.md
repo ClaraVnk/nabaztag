@@ -10,6 +10,11 @@
   key and its session runs inside TLS 1.3 on port **5223**, the bytecode
   download too from the next boot. See *Adoption key and TLS* in the
   documentation. A stock rabbit is served exactly as before.
+- **Everything else inside the session too.** For a confirmed rabbit the
+  add-on's sounds and choreographies (`ST`/`MU`/`MC`/`CH res:N`, up to
+  200 KB), the microphone (`RS session`), RFID tags and `/api/ota` images
+  (`FW res:N <signature>`) travel inside its TLS session, as on Le Terrier.
+  Radio, podcasts and other hosts' URLs stay URLs.
 - **A new runtime for Naboot rabbits** (`bootcode.tls`, 114 082 bytes, built
   from OpenJabNab 640257f by `bytecode/build-bytecode.sh`): the TLS client,
   plus everything since the hybrid -- a session that notices a dead server,

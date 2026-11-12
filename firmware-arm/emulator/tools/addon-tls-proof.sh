@@ -12,7 +12,19 @@
 #   3  the bootloader (1.0.0.2 and later) asks for bc.jsp on the TLS port.
 #
 #   tools/addon-tls-proof.sh --emulator <image> --elf <Nab.elf> --out <dir> [--say S]
-#       [--idle] [--keepalive S]
+#       [--idle] [--keepalive S] [--mic] [--ota <signed.sim>] [--stress]
+#
+# What a confirmed rabbit is sent comes down its TLS session: the sound of
+# --say as `ST res:N`, no GET /res/. --mic turns the microphone on fifteen
+# seconds after the sound (`RS session`) and reads what the add-on captured
+# ten seconds later. --ota stages a signed image and pushes it five seconds
+# after that: `FW res:N <sig>`, the rabbit's verifySig gate and flash.
+#
+# --stress fills the rabbit's resource store: four long sentences three
+# seconds apart, each some 60 KB, so three are kept (the 200 000-byte
+# budget) while one still plays -- the worst case patch_res_in_session.py
+# allows -- and the microphone is on after them. The verdict prints the
+# heap after every garbage collection (#GC used=) and any out-of-memory.
 #
 # --idle runs boot 3 on scenarios/vm/addon-idle.txt, seven quiet minutes, and
 # counts the XMPP connections: one when the add-on keepalives, more when it
@@ -20,7 +32,7 @@
 #
 # The TLS port is 5223 on the host: boot 3's bootloader knows no other.
 set -u
-EMU= ; ELF= ; OUT= ; SAY=100 ; IDLE= ; KA=45
+EMU= ; ELF= ; OUT= ; SAY=100 ; IDLE= ; KA=45 ; MIC= ; OTA= ; STRESS=
 BASE=${BASE:-19300}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,6 +43,9 @@ while [ $# -gt 0 ]; do
     --base) BASE=$2; shift 2 ;;
     --idle) IDLE=1; shift ;;
     --keepalive) KA=$2; shift 2 ;;
+    --mic) MIC=1; shift ;;
+    --ota) OTA=$2; shift 2 ;;
+    --stress) STRESS=1; MIC=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -43,6 +58,7 @@ mkdir -p "$OUT/data" "$OUT/host"
 OUT="$(cd "$OUT" && pwd)"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log
 cp "$ELF" "$OUT/host/Nab.elf"
+[ -n "$OTA" ] && cp "$OTA" "$OUT/data/proof.signed.sim"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
@@ -86,10 +102,27 @@ FP=$(api /api/adoption | python3 -c "import json,sys; k=json.load(sys.stdin)['ke
 set -- $FP
 api /api/adoption/confirm "{\"mac\":\"$1\",\"fingerprint\":\"$2\"}" | cut -c1-120 | sed 's/^/   /'
 T1=$(date +%s)
-( sleep "$SAY"; echo "   [say at +${SAY}s]"; api "/api/say?text=Bonjour%20depuis%20le%20TLS" "" | sed 's/^/   say: /' ) &
-boot 2-confirmed
+LONG="Il%20etait%20une%20fois%20un%20lapin%20qui%20parlait%20au%20terrier%20par%20un%20tunnel%20chiffre%2C%20et%20qui%20racontait%20la%20meteo%20du%20jour%2C%20les%20nouvelles%20du%20matin%20et%20les%20histoires%20du%20soir%20a%20toute%20la%20maison."
+( sleep "$SAY"; echo "   [say at +${SAY}s]"; api "/api/say?text=Bonjour%20depuis%20le%20TLS" "" | sed 's/^/   say: /'
+  if [ -n "$STRESS" ]; then
+    for i in 1 2 3 4; do sleep 3; echo "   [long say $i]"; api "/api/say?text=$LONG" "" | cut -c1-60 | sed 's/^/   say: /'; done
+  fi
+  if [ -n "$MIC" ]; then
+    sleep 15; echo "   [mic on]"; api "/api/mic?on=1" "{}" | cut -c1-100 | sed 's/^/   mic: /'
+    sleep 10; api /api/status | python3 -c "import json,sys; print('   captured:', json.load(sys.stdin).get('mic'))"
+    api "/api/mic?on=0" "{}" >/dev/null
+  fi
+  if [ -n "$OTA" ]; then
+    sleep 5; echo "   [ota]"; api "/api/ota?path=/data/proof.signed.sim&trigger=1" "{}" | cut -c1-160 | sed 's/^/   ota: /'
+  fi ) &
+boot 2-confirmed ${MIC:+scenarios/vm/addon-session.txt}
 wait
-podman logs --since "@$T1" "$NAME" 2>&1 | grep -a "serving bootcode\|locate\|registered\|TLS\|plain port\|refused\|serving resource\|disconnect" | sed 's/^/   /' | head -12
+podman logs --since "@$T1" "$NAME" 2>&1 | grep -a "serving bootcode\|locate\|registered\|TLS\|plain port\|refused\|serving resource\|disconnect\|inside the session\|OTA:\|auto-listen" | sed 's/^/   /' | head -16
+echo "   rabbit side, boot 2:"
+grep -a "res: \|mic: \|ota: \|verifySig gate\|flashFirmware\|microphone: \|exec ST\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
+echo "   heap after each GC, boot 2 (peak, count), and out of memory:"
+grep -a "#GC" "$OUT/vm-2-confirmed.log" | sed -E 's/.*used=([0-9]+)%.*/\1/' | sort -n | tail -1 | sed 's/^/   peak used=/;s/$/%/'
+echo "   GCs: $(grep -ac '#GC' "$OUT/vm-2-confirmed.log"), out of memory: $(grep -ac '?OM' "$OUT/vm-2-confirmed.log")"
 T2=$(date +%s)
 boot 3-tls-boot ${IDLE:+scenarios/vm/addon-idle.txt}
 podman logs --since "@$T2" "$NAME" 2>&1 | grep -a "serving bootcode\|HTTP over TLS\|registered\|TLS\|refused" | sed 's/^/   /' | head -10

@@ -1,0 +1,14 @@
+# bytecode: bootloader
+#
+# What a confirmed rabbit's TLS session carries from the Home Assistant
+# add-on. Run as boot 2 of tools/addon-tls-proof.sh with --mic and --ota:
+# at about 100 s the add-on makes it speak (`ST res:N`, the sound inside the
+# session, no GET /res/), fifteen seconds later turns the microphone on
+# (`RS session`: <mic len=N/> announces between stanzas), and fifteen after
+# that pushes a signed image (`FW res:N <sig>`, the plain image inside the
+# session, verified by the rabbit before it flashes).
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 250000
+
+at 20000 expect RUN
