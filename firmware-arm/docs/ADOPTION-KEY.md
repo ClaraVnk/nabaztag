@@ -268,7 +268,7 @@ its own:
 |---|---|---|---|
 | `locate.jsp` | boot, before XMPP | none (read; the TLS policy under the HMAC makes it harmless, above) | HTTP |
 | `rfid.jsp` | a tag on the reader | **yes**: the owner's mapped action | **inside the session** |
-| `record.jsp` (POST, a WAV) | a long press of the head button (`_controlrecord`) | would be | HTTP, not served by the Terrier (a POST: 501) |
+| `record.jsp` (POST, a WAV) | a long press of the head button (`_controlrecord`) | would be | **not sent by a confirmed rabbit**: the long press goes inside the session as `<clic>3</clic>` (`bytecode/patch_btn_in_session.py`, policy `xmpp-btn`); still HTTP on a plain session, not served by the Terrier |
 | `itmode.jsp` (start, btn, ear, rfid, reco, done) | interactive mode, entered on a server command the Terrier never sends | would be | HTTP, not served by the Terrier |
 | `sendMailXMPP.jsp` | XMPP register/login failure reports | none | HTTP, not served by the Terrier |
 | `violet:nabaztag:button`, `violet:nabaztag:ears` | head, ears | yes | XMPP already, so inside TLS since `patch_tls.py` |
@@ -311,8 +311,9 @@ Terrier's HTTP port, are new), four runs side by side:
 - the Terrier's `main` with the new runtime: nothing flips `xmpp-rfid:0`,
   so `rfid.jsp`, vouched for, as the control.
 
-Not yet: `record.jsp` and the interactive mode, which the Terrier does not
-serve; an HTTP request an attacker forges in a rabbit's name for them is
+Not yet: the interactive mode, which the Terrier does not serve, and
+`record.jsp` for a rabbit on a plain session (a confirmed one sends its long
+press inside the session instead, `patch_btn_in_session.py`); an HTTP request an attacker forges in a rabbit's name for them is
 answered 404 or 501 today. Stage B would carry them the same way if the
 Terrier ever serves them.
 

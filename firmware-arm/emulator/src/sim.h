@@ -82,6 +82,7 @@ enum {
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
+  SIM_EV_BUTTON,        /* the head button is pressed, or released */
   SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
   SIM_EV_EXPECT_PLAIN_DROPPED, /* assert >= n plaintext frames refused */
   SIM_EV_FORGED_MSG1,   /* a message 1 the AP did not send           */
