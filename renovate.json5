@@ -41,6 +41,13 @@
       groupName: "GitHub Actions",
     },
     {
+      // The firmware's compiler stays put: its image is pinned by digest so a
+      // signed release rebuilds byte-identically, and a toolchain change is a
+      // firmware change, made by hand (firmware-arm/Dockerfile says why).
+      matchFileNames: ["firmware-arm/Dockerfile"],
+      enabled: false,
+    },
+    {
       // amd64 and arm64 of the add-on move together.
       matchFileNames: ["nabaztag-violet/**"],
       matchDatasources: ["docker"],
