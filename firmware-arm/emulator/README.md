@@ -739,8 +739,8 @@ uses it to prove the microphone inside the TLS session.
 
 **The rest of the body.** The RFID reader has a scenario-driven tag list
 (`at <ms> rfid <16 hex>`, `rfid none`) and no protocol: `rfid_read` returns
-zeros. Nothing presses a button yet; the hook is there (`hw_press`), the
-scenario directive is not.
+zeros. The head button is `at <ms> button down` and `at <ms> button up`
+(`hw_press`): held past the runtime's threshold it is a long click.
 
 ## Layout
 

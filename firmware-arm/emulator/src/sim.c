@@ -517,6 +517,18 @@ int sim_load(const char *path)
           }
           e->arg = 1;
         }
+      } else if(!strcmp(tok[2], "button") && n >= 4) {
+        /* The head button, as a hand works it: `button down` then, a moment
+           later, `button up`. Held past the runtime's long-press threshold it
+           is a long click (BUTTON_LCLIC), which the stock runtime turns into
+           a recording posted to record.jsp. */
+        e->kind = SIM_EV_BUTTON;
+        if(!strcmp(tok[3], "down")) e->arg = 1;
+        else if(!strcmp(tok[3], "up")) e->arg = 0;
+        else {
+          fprintf(stderr, "%s:%d: button takes down or up, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "expect-sae") && n >= 4) {
