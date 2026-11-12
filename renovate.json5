@@ -14,6 +14,10 @@
   labels: ["dependencies"],
   prConcurrentLimit: 5,
   dependencyDashboard: true,
+  // Renovate merges by itself once every check is green, rather than through
+  // GitHub's auto-merge: that needs branch protection, which a private
+  // repository on a free plan does not have.
+  platformAutomerge: false,
   ignorePaths: ["legacy/**"],
   customManagers: [
     {
