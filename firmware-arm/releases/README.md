@@ -19,6 +19,22 @@ release the community downloads, plus the **minimal rescue** build to roll back 
 when a flash goes wrong. Both are reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
+## `naboot-1.1.0.0-beta.signed.sim` — beta, at your own risk
+
+| | |
+|---|---|
+| **Status** | **Beta.** Not the release: Le Terrier offers 1.0.0.3, and this image only to a rabbit whose owner asked for it. **Ask Clara directly** to try it, with the runtime bytecode that goes with it. |
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.1.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3 with the fixes of the 2026-11 security review ([`../docs/SECURITY-FINDINGS-2026-11.md`](../docs/SECURITY-FINDINGS-2026-11.md)), the safer flash writer ([`../docs/OTA-ANTIBRICK.md`](../docs/OTA-ANTIBRICK.md)) and 15 KB of dead code removed. **No WEP.** |
+| **Firmware version** | `1.1.0.0` |
+| **Build mark** | `z=2611121004` |
+| **Size** | 112 572 of 126 976 bytes (14 404 free) |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `1f1132a063abd87cb8daff25c99a20ba7cee25c4b295a5d3d684051152aafe5c` |
+
+Proven in the emulator before anyone flashed it. CCMP replays are counted
+and reported over the JTAG telemetry, not refused yet: see the findings.
+
 ## `naboot-1.0.0.3.signed.sim` — the release
 
 | | |

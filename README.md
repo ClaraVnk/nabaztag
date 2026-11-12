@@ -71,9 +71,11 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   longer returns into half-written code
   ([`OTA-ANTIBRICK.md`](firmware-arm/docs/OTA-ANTIBRICK.md)). And 15 KB of
   flash taken back from dead code: WEP, the factory test mode, the software
-  codecs, pairwise TKIP. Build it with `--mode naboot-1.1.0.0`; there is no
-  published image yet. It expects a runtime bytecode newer than the public
-  one: **ask Clara directly** if you want to try it on a rabbit.
+  codecs, pairwise TKIP. The signed image is
+  [`naboot-1.1.0.0-beta.signed.sim`](firmware-arm/releases/naboot-1.1.0.0-beta.signed.sim)
+  (or build it with `--mode naboot-1.1.0.0`). Le Terrier does not offer it:
+  the stable release stays 1.0.0.3. **Ask Clara directly** if you want to try
+  it on a rabbit, with the runtime bytecode that goes with it.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server. Violet's
   services with the 2006 voices (clock, weather, alarm, Ztamps, rabbits in
