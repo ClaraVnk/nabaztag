@@ -22,7 +22,7 @@ CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng pki chachapoly
+.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng pki chachapoly tls-cert
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -152,6 +152,18 @@ pki: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
 chachapoly: $(CRYPTO_H)
 	@echo "== ChaCha20-Poly1305, RFC 8439 and OpenSSL"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_chachapoly test_chachapoly.c ../crypto/chachapoly.c && /tmp/t_chachapoly
+
+# The certificate session (NAB_TLS_CERTS) live against openssl s_server:
+# Let's Encrypt-shaped and RSA chains, both suites, 16 KB records, and what
+# must be refused. Needs openssl and python3 with cryptography.
+tls-cert: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
+	@echo "== TLS 1.3 with a certificate, against openssl s_server"
+	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TN_DIR) -c -o /tmp/tn_tlsc.o $(TN_DIR)/tweetnacl.c
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -DNAB_TLS_CERTS -o /tmp/t_tls_cert_client tls_cert_client.c \
+		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c ../crypto/chachapoly.c \
+		../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c \
+		../crypto/nab_sha384.c /tmp/tn_tlsc.o
+	@python3 tls_cert_interop.py --client /tmp/t_tls_cert_client
 
 all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng pki chachapoly
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"

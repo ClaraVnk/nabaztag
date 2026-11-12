@@ -15,23 +15,40 @@ static uint32_t mont_n0(uint32_t n0)
   return (uint32_t)0 - x;
 }
 
+/* The watchdog (CLR_WDT on the rabbit, see nab_tls.c). A Montgomery
+   product of 4096 bits is ~1.7 M instructions in Thumb (no 64-bit multiply):
+   between two ticks there must never be many of them, so the arithmetic
+   feeds it itself (tools/cost, 2026-11-12: 21.7 M without a tick before). */
+extern void nab_verify_tick(void);
+
 void nab_bn_init(nab_bn_ctx *c, const uint8_t *mod, uint32_t len)
 {
+  int i, j, start;
   while (len > 1 && !*mod) { mod++; len--; }
   c->n = (int)((len + 3) / 4);
   nab_bn_from_bytes(c->m, c->n, mod, len);
   c->n0 = mont_n0(c->m[0]);
-  /* R^2 mod m by doubling 1 into place: 2 * 32 * n doublings. */
   memset(c->rr, 0, sizeof c->rr);
-  c->rr[0] = 1;
-  for (int i = 0; i < 64 * c->n; i++) {
+  /* R^2 mod m by doubling. When m fills its top limb (every modulus and
+     prime here), R mod m = R - m is m's two's complement, and only 32n
+     doublings are left instead of 64n. */
+  if (c->m[c->n - 1] & 0x80000000u) {
+    for (i = 0; i < c->n; i++) c->rr[i] = ~c->m[i];
+    for (i = 0; i < c->n && ++c->rr[i] == 0; i++) {}
+    start = 32 * c->n;
+  } else {
+    c->rr[0] = 1;
+    start = 0;
+  }
+  for (i = start; i < 64 * c->n; i++) {
     uint32_t carry = 0;
-    for (int j = 0; j < c->n; j++) {
+    for (j = 0; j < c->n; j++) {
       uint32_t v = c->rr[j];
       c->rr[j] = (v << 1) | carry;
       carry = v >> 31;
     }
     if (carry || nab_bn_cmp(c->rr, c->m, c->n) >= 0) nab_bn_sub(c->rr, c->rr, c->m, c->n);
+    if ((i & 127) == 127) nab_verify_tick();
   }
 }
 
@@ -107,6 +124,7 @@ void nab_bn_mul(const nab_bn_ctx *c, uint32_t *r, const uint32_t *a, const uint3
     v = (uint64_t)t[n] + carry;
     t[n - 1] = (uint32_t)v;
     t[n] = t[n + 1] + (uint32_t)(v >> 32);
+    if (n > 32 && (i & 15) == 15) nab_verify_tick();   /* RSA sizes only */
   }
   if (t[n] || nab_bn_cmp(t, c->m, n) >= 0) nab_bn_sub(t, t, c->m, n);
   memcpy(r, t, 4 * (uint32_t)n);

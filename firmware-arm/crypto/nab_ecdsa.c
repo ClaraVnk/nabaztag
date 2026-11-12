@@ -149,7 +149,7 @@ int nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
     int a = (u1b[i / 8] >> (7 - i % 8)) & 1, b = (u2b[i / 8] >> (7 - i % 8)) & 1;
     dbl(&E.r, &E.r);
     if (a || b) add(&E.r, &E.r, a && b ? &E.gq : a ? &E.g : &E.q);
-    if (tick && !(i & 15)) tick();
+    if (tick && !(i & 1)) tick();          /* ~0.45 M instructions a bit on P-384 */
   }
   if (zero(E.r.z)) return 0;
 

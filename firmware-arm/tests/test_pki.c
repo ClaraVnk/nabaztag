@@ -120,3 +120,7 @@ int main(void)
 
 /* tweetnacl.o wants one; nothing here draws from it. */
 void randombytes(unsigned char *x, unsigned long long n) { memset(x, 0, (size_t)n); }
+
+/* nab_bn.c feeds the watchdog; here it counts nothing. */
+void nab_verify_tick(void);
+void nab_verify_tick(void) {}

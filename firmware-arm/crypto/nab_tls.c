@@ -12,6 +12,12 @@
 #include "net/nab_tls.h"
 #include "net/sha256.h"
 #include "net/cmac.h"
+#ifdef NAB_TLS_CERTS
+#include "net/chachapoly.h"
+#include "net/nab_pki.h"
+int crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned char *n, const unsigned char *p);
+int crypto_scalarmult_curve25519_tweet_base(unsigned char *q, const unsigned char *n);
+#endif
 
 /* The watchdog: CLR_WDT on the hardware, see patch_verify_wdt. A 4 KB
    record is ~3.4 M instructions of GCM; the interpreter feeds the watchdog
@@ -44,7 +50,7 @@ struct tls {
   uint8_t early[32];        /* Early Secret until the handshake secret exists */
   uint8_t c_hs[32], s_hs[32];
   uint8_t master[32];
-  uint8_t ckey[16], civ[12], skey[16], siv[12];
+  uint8_t ckey[32], civ[12], skey[32], siv[12];   /* 16 of 32 used with AES */
   uint32_t cseq_hi, cseq_lo, sseq_hi, sseq_lo;   /* 5.3, 64-bit */
 
   uint8_t pending[64];      /* client Finished record (58) or an alert (24) */
@@ -53,6 +59,7 @@ struct tls {
      session with a certificate needs 16 KB records and the whole chain. */
   uint8_t *rx, *hs;
   uint32_t rxcap, hscap;
+  uint8_t suite;            /* 0 TLS_AES_128_GCM_SHA256, 1 TLS_CHACHA20_POLY1305_SHA256 */
 #ifdef NAB_TLS_CERTS
   uint8_t certs;            /* 0: PSK with the warren; 1: a certificate is expected */
   uint8_t proved;           /* 1 chain trusted, 2 CertificateVerify checked */
@@ -141,9 +148,9 @@ static void derive_secret(uint8_t out[32], const uint8_t secret[32], const char 
   expand_label(out, 32, secret, label, h, 32);
 }
 
-static void traffic_keys(uint8_t key[16], uint8_t iv[12], const uint8_t secret[32])
+static void traffic_keys(uint8_t key[32], uint8_t iv[12], const uint8_t secret[32])
 {
-  expand_label(key, 16, secret, "key", NULL, 0);
+  expand_label(key, T.suite ? 32 : 16, secret, "key", NULL, 0);
   expand_label(iv, 12, secret, "iv", NULL, 0);
 }
 
@@ -230,6 +237,18 @@ static int gcm(const uint8_t key[16], const uint8_t iv[12],
 }
 
 /* The per-record nonce: the IV xor the 64-bit sequence number, right-aligned (5.3). */
+/* The session's AEAD: AES-128-GCM, or ChaCha20-Poly1305 when the server
+   chose it (a session with a certificate offers it first: about six
+   times cheaper on this processor, tools/cost). */
+static int aead(const uint8_t *key, const uint8_t iv[12], const uint8_t *aad, uint32_t aadlen,
+                uint8_t *buf, uint32_t len, uint8_t tag[16], int enc)
+{
+#ifdef NAB_TLS_CERTS
+  if (T.suite) return chachapoly(key, iv, aad, aadlen, buf, len, tag, enc);
+#endif
+  return gcm(key, iv, aad, aadlen, buf, len, tag, enc);
+}
+
 static void nonce(uint8_t out[12], const uint8_t iv[12], uint32_t hi, uint32_t lo)
 {
   memcpy(out, iv, 12);
@@ -250,7 +269,7 @@ static void seal(uint8_t *out, const uint8_t *in, uint32_t len, uint8_t type)
   if (in != out + 5) memmove(out + 5, in, len);
   out[5 + len] = type;
   nonce(nn, T.civ, T.cseq_hi, T.cseq_lo);
-  gcm(T.ckey, nn, out, 5, out + 5, len + 1, out + 5 + len + 1, 1);
+  aead(T.ckey, nn, out, 5, out + 5, len + 1, out + 5 + len + 1, 1);
   seq_inc(&T.cseq_hi, &T.cseq_lo);
 }
 
@@ -352,7 +371,7 @@ static int on_server_hello(const uint8_t *m, uint32_t n)
 {
   static const uint8_t hrr[8] = { 0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11 };
   uint32_t p, extlen, saw_version = 0, saw_psk = 0;
-  uint8_t derived[32];
+  uint8_t derived[32], ikm[32];
   if (T.srv_keys) return fail(A_UNEXPECTED_MESSAGE);
   /* legacy_version, random, session id echo (empty, as ours), suite, compression */
   if (n < 2 + 32 + 1 + 2 + 1 + 2 || m[0] != 3 || m[1] != 3) return fail(A_DECODE_ERROR);
@@ -360,8 +379,15 @@ static int on_server_hello(const uint8_t *m, uint32_t n)
   p = 34;
   if (m[p] != 0) return fail(A_ILLEGAL_PARAMETER);
   p++;
-  if (m[p] != 0x13 || m[p + 1] != 0x01) return fail(A_ILLEGAL_PARAMETER);
+  if (m[p] != 0x13 || m[p + 1] != 0x01) {
+#ifdef NAB_TLS_CERTS
+    if (!(T.certs && m[p] == 0x13 && m[p + 1] == 0x03))
+#endif
+    return fail(A_ILLEGAL_PARAMETER);
+  }
+  T.suite = m[p + 1] == 0x03;                     /* what we offered: ours, or AES */
   p += 2;
+  memset(ikm, 0, sizeof ikm);
   if (m[p] != 0) return fail(A_ILLEGAL_PARAMETER);
   p++;
   extlen = get16(m + p); p += 2;
@@ -373,7 +399,21 @@ static int on_server_hello(const uint8_t *m, uint32_t n)
     if (type == 0x002b) {                         /* supported_versions: 0x0304 */
       if (len != 2 || m[p] != 3 || m[p + 1] != 4) return fail(A_PROTOCOL_VERSION);
       saw_version = 1;
-    } else if (type == 0x0029) {                  /* pre_shared_key: our one identity */
+#ifdef NAB_TLS_CERTS
+    } else if (type == 0x0033 && T.certs) {       /* key_share: X25519, 32 bytes (4.2.8) */
+      static const uint8_t zero[32] = {0};
+      if (len != 36 || get16(m + p) != 0x001d || get16(m + p + 2) != 32)
+        return fail(A_ILLEGAL_PARAMETER);
+      crypto_scalarmult_curve25519_tweet(ikm, T.eph, m + p + 4);
+      memset(T.eph, 0, sizeof T.eph);
+      if (ct_eq(ikm, zero, 32)) return fail(A_ILLEGAL_PARAMETER);   /* a low-order point */
+      saw_psk = 1;                                /* the key exchange this mode needs */
+#endif
+    } else if (type == 0x0029
+#ifdef NAB_TLS_CERTS
+               && !T.certs
+#endif
+               ) {                                /* pre_shared_key: our one identity */
       if (len != 2 || get16(m + p) != 0) return fail(A_ILLEGAL_PARAMETER);
       saw_psk = 1;
     } else {
@@ -394,7 +434,8 @@ static int on_server_hello(const uint8_t *m, uint32_t n)
     uint8_t empty[32], hs[32];
     sha256(empty, NULL, 0);
     expand_label(derived, 32, T.early, "derived", empty, 32);
-    extract(hs, derived, 32, zero, 32);
+    extract(hs, derived, 32, ikm, 32);            /* zeros, or the X25519 secret */
+    memset(ikm, 0, sizeof ikm);
     derive_secret(T.c_hs, hs, "c hs traffic");
     derive_secret(T.s_hs, hs, "s hs traffic");
     expand_label(derived, 32, hs, "derived", empty, 32);
@@ -414,6 +455,9 @@ static int on_finished(const uint8_t *m, uint32_t n)
 {
   uint8_t fk[32], h[32], want[32], fin[4 + 32];
   if (T.srv_keys != 1) return fail(A_UNEXPECTED_MESSAGE);
+#ifdef NAB_TLS_CERTS
+  if (T.certs && T.proved != 2) return fail(A_UNEXPECTED_MESSAGE);   /* no Finished without both */
+#endif
   if (n != 32) return fail(A_DECODE_ERROR);
   /* 4.4.4: verify_data = HMAC(finished_key(s_hs), TH(CH..EncryptedExtensions)).
      The caller hashes a message after this handler, so the transcript is right here. */
@@ -451,6 +495,160 @@ static int on_finished(const uint8_t *m, uint32_t n)
   return 0;
 }
 
+#ifdef NAB_TLS_CERTS
+/* --- a server with a certificate ----------------------------------------- */
+
+static const struct nab_tls_anchor *ANCHORS;
+static uint32_t NANCHORS;
+/* Up to four certificates of the chain, parsed in place in hs[]. */
+#define CHAIN_MAX 4
+static nab_cert CHAIN[CHAIN_MAX] SECTION_EXTBSS;
+
+void nab_tls_anchors(const struct nab_tls_anchor *a, uint32_t n) { ANCHORS = a; NANCHORS = n; }
+
+/* Signed by one of the built-in roots? Found by the issuer's name, proven
+   by the root's key: a name alone is what anyone can write. */
+static int anchored(const nab_cert *c)
+{
+  for (uint32_t i = 0; i < NANCHORS; i++) {
+    const struct nab_tls_anchor *a = &ANCHORS[i];
+    nab_span alg = { a->alg, a->alg_len }, par = { a->param, a->param_len }, key = { a->key, a->key_len };
+    if (c->issuer.len != a->subject_len || memcmp(c->issuer.p, a->subject, a->subject_len)) continue;
+    if (nab_x509_signed_by(c, &alg, &par, &key, nab_verify_tick)) return 1;
+  }
+  return 0;
+}
+
+/* 4.4.2: the chain, leaf first, each link signed by the next, the last by
+   an anchor; the leaf names the host; every certificate in date. */
+static int on_certificate(const uint8_t *m, uint32_t n)
+{
+  uint32_t p, end, k = 0;
+  if (T.srv_keys != 1 || T.proved) return fail(A_UNEXPECTED_MESSAGE);
+  if (n < 4 || m[0] != 0) return fail(A_DECODE_ERROR);          /* no request context */
+  end = 4 + (((uint32_t)m[1] << 16) | ((uint32_t)m[2] << 8) | m[3]);
+  if (end != n) return fail(A_DECODE_ERROR);
+  for (p = 4; p < end && k < CHAIN_MAX; k++) {
+    uint32_t cl, el;
+    if (end - p < 3) return fail(A_DECODE_ERROR);
+    cl = ((uint32_t)m[p] << 16) | ((uint32_t)m[p + 1] << 8) | m[p + 2];
+    p += 3;
+    if (end - p < cl + 2) return fail(A_DECODE_ERROR);
+    if (nab_x509_parse(&CHAIN[k], m + p, cl)) return fail(42);  /* bad_certificate */
+    p += cl;
+    el = get16(m + p);
+    p += 2 + el;
+    if (p > end) return fail(A_DECODE_ERROR);
+  }
+  if (!k) return fail(A_DECODE_ERROR);
+  if (!nab_x509_names_host(&CHAIN[0], T.host)) return fail(42);
+  for (uint32_t i = 0; i < k; i++) {
+    if (!nab_x509_valid_at(&CHAIN[i], T.now)) return fail(45);  /* certificate_expired */
+    if (anchored(&CHAIN[i])) break;
+    if (i + 1 == k || !CHAIN[i + 1].ca || !nab_x509_issued_by(&CHAIN[i], &CHAIN[i + 1])
+        || !nab_x509_signed_by(&CHAIN[i], &CHAIN[i + 1].key_alg, &CHAIN[i + 1].key_param,
+                               &CHAIN[i + 1].key, nab_verify_tick))
+      return fail(48);                                           /* unknown_ca */
+  }
+  /* The leaf's key, kept: hs[] is overwritten by the next message. */
+  if (CHAIN[0].key_alg.len > sizeof T.key_alg || CHAIN[0].key_param.len > sizeof T.key_param
+      || CHAIN[0].key.len > sizeof T.key) return fail(42);
+  memcpy(T.key_alg, CHAIN[0].key_alg.p, CHAIN[0].key_alg.len); T.alg_len = CHAIN[0].key_alg.len;
+  memcpy(T.key_param, CHAIN[0].key_param.p, CHAIN[0].key_param.len); T.param_len = CHAIN[0].key_param.len;
+  memcpy(T.key, CHAIN[0].key.p, CHAIN[0].key.len); T.key_len = CHAIN[0].key.len;
+  T.proved = 1;
+  return 0;
+}
+
+/* 4.4.3: the server's signature over 64 spaces, the context string, a zero
+   and the transcript up to the Certificate. */
+static int on_certificate_verify(const uint8_t *m, uint32_t n)
+{
+  static const char ctx[] = "TLS 1.3, server CertificateVerify";   /* with its zero */
+  static const uint8_t P256[8] = {0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07};
+  static const uint8_t P384[5] = {0x2b,0x81,0x04,0x00,0x22};
+  uint8_t content[64 + sizeof ctx + 32], h[48];
+  uint32_t scheme, sl, hl;
+  int how;
+  nab_span alg = { T.key_alg, T.alg_len }, par = { T.key_param, T.param_len }, key = { T.key, T.key_len };
+  if (T.proved != 1) return fail(A_UNEXPECTED_MESSAGE);
+  if (n < 4) return fail(A_DECODE_ERROR);
+  scheme = get16(m); sl = get16(m + 2);
+  if (4 + sl != n) return fail(A_DECODE_ERROR);
+  switch (scheme) {
+  case 0x0403: hl = 32; how = NAB_SIG_ECDSA;
+    if (par.len != sizeof P256 || memcmp(par.p, P256, sizeof P256)) return fail(A_ILLEGAL_PARAMETER);
+    break;
+  case 0x0503: hl = 48; how = NAB_SIG_ECDSA;
+    if (par.len != sizeof P384 || memcmp(par.p, P384, sizeof P384)) return fail(A_ILLEGAL_PARAMETER);
+    break;
+  case 0x0804: hl = 32; how = NAB_SIG_PSS; break;
+  case 0x0805: hl = 48; how = NAB_SIG_PSS; break;
+  default: return fail(A_ILLEGAL_PARAMETER);       /* not one we offered */
+  }
+  memset(content, 0x20, 64);
+  memcpy(content + 64, ctx, sizeof ctx);
+  th_now(content + 64 + sizeof ctx);
+  if (hl == 32) sha256(h, content, sizeof content);
+  else nab_sha384(h, content, sizeof content);
+  if (!nab_pki_verify(&alg, &par, &key, how, m + 4, sl, h, hl, nab_verify_tick))
+    return fail(51);                               /* decrypt_error */
+  T.proved = 2;
+  return 0;
+}
+
+int nab_tls_start_cert(const char *host, const char now[14], const uint8_t random[32],
+                       const uint8_t secret[32], uint8_t *out, uint32_t cap)
+{
+  static const uint8_t zero[32] = {0};
+  static const uint8_t fixed[] = {
+    0x00,0x2b,0x00,0x03,0x02,0x03,0x04,                    /* supported_versions: 1.3 */
+    0x00,0x0a,0x00,0x04,0x00,0x02,0x00,0x1d,               /* supported_groups: x25519 */
+    /* signature_algorithms: what nab_pki checks -- ECDSA P-256 and P-384,
+       RSA-PSS; PKCS#1 for the certificates only (4.2.3) */
+    0x00,0x0d,0x00,0x0e,0x00,0x0c,0x04,0x03,0x05,0x03,0x08,0x04,0x08,0x05,0x04,0x01,0x05,0x01,
+  };
+  uint32_t hl = (uint32_t)strlen(host), n;
+  uint8_t *m, *e;
+  S = &T1;
+  memset(&T, 0, sizeof T);
+  T.rx = RX1; T.rxcap = sizeof RX1; T.hs = HS1; T.hscap = sizeof HS1;
+  T.certs = 1;
+  sha256_init(&T.th);
+  if (hl == 0 || hl >= sizeof T.host) return 0;
+  n = 5 + 4 + 2 + 32 + 1 + 2 + 4 + 2 + 2 + (9 + hl) + sizeof fixed + 42;
+  if (cap < n) return 0;
+  memcpy(T.host, host, hl + 1);
+  memcpy(T.now, now, 14);
+  memcpy(T.eph, secret, 32);
+  extract(T.early, NULL, 0, zero, 32);              /* 7.1: no PSK, 0^32 */
+
+  out[0] = 22; out[1] = 3; out[2] = 1;              /* record: handshake, 0x0301 (5.1) */
+  m = out + 5;
+  m[0] = 1;
+  m[4] = 3; m[5] = 3;
+  memcpy(m + 6, random, 32);
+  m[38] = 0;
+  put16(m + 39, 4);
+  m[41] = 0x13; m[42] = 0x03;                       /* TLS_CHACHA20_POLY1305_SHA256 first */
+  m[43] = 0x13; m[44] = 0x01;                       /* then TLS_AES_128_GCM_SHA256 */
+  m[45] = 1; m[46] = 0;
+  e = m + 49;
+  put16(e, 0x0000); put16(e + 2, hl + 5); put16(e + 4, hl + 3); e[6] = 0; put16(e + 7, hl);
+  memcpy(e + 9, host, hl); e += 9 + hl;             /* server_name (RFC 6066 3) */
+  memcpy(e, fixed, sizeof fixed); e += sizeof fixed;
+  put16(e, 0x0033); put16(e + 2, 38); put16(e + 4, 36); put16(e + 6, 0x001d); put16(e + 8, 32);
+  crypto_scalarmult_curve25519_tweet_base(e + 10, T.eph);
+  e += 42;                                          /* key_share */
+  put16(m + 47, (uint32_t)(e - (m + 49)));
+  m[1] = 0; put16(m + 2, (uint32_t)(e - m) - 4);
+  put16(out + 3, (uint32_t)(e - m));
+  sha256_update(&T.th, m, (uint32_t)(e - m));
+  T.state = NAB_TLS_HANDSHAKE;
+  return (int)(5 + (e - m));
+}
+#endif
+
 /* One handshake message: type, body. The transcript is updated here for
    every message but Finished, which checks it first. */
 static int on_handshake(uint8_t type, const uint8_t *hdr, uint32_t n)
@@ -468,8 +666,23 @@ static int on_handshake(uint8_t type, const uint8_t *hdr, uint32_t n)
     return 0;
   case 20:                                        /* finished */
     return on_finished(m, n);
+#ifdef NAB_TLS_CERTS
+  case 11:                                        /* Certificate */
+    if (!T.certs) return fail(A_UNEXPECTED_MESSAGE);
+    if (on_certificate(m, n) < 0) return -1;
+    sha256_update(&T.th, hdr, 4 + n);
+    return 0;
+  case 15:                                        /* CertificateVerify: over CH..Certificate */
+    if (!T.certs) return fail(A_UNEXPECTED_MESSAGE);
+    if (on_certificate_verify(m, n) < 0) return -1;
+    sha256_update(&T.th, hdr, 4 + n);
+    return 0;
+  case 13:                                        /* CertificateRequest: we have none to give */
+    return fail(A_UNEXPECTED_MESSAGE);
+#else
   case 11: case 13: case 15:                      /* Certificate, CertificateRequest, CertificateVerify */
     return fail(A_UNEXPECTED_MESSAGE);            /* 4.2.11: not with a PSK */
+#endif
   case 24:                                        /* key_update: not supported, 4.6.3 */
     return fail(A_UNEXPECTED_MESSAGE);
   default:
@@ -571,7 +784,7 @@ int nab_tls_next(void)
       uint32_t plen = len - 16, ct;
       memcpy(aad, T.rx, 5);
       nonce(nn, T.siv, T.sseq_hi, T.sseq_lo);
-      if (!gcm(T.skey, nn, aad, 5, body, plen, body + plen, 0)) return fail(A_BAD_RECORD_MAC);
+      if (!aead(T.skey, nn, aad, 5, body, plen, body + plen, 0)) return fail(A_BAD_RECORD_MAC);
       seq_inc(&T.sseq_hi, &T.sseq_lo);
       /* 5.4: the content type is the last non-zero byte. */
       while (plen && body[plen - 1] == 0) plen--;
