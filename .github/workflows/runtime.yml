@@ -1,0 +1,51 @@
+name: Runtime
+
+# The rabbit's runtime bytecode, rebuilt from this repository alone: Violet's
+# sources as vendored (firmware-arm/vendor/openjabnab), every patch of
+# bytecode/ in build-bytecode.sh's order, compiled by tools/mtl_comp.py. It
+# fails if a patch no longer applies, if a policy literal the warren flips is
+# not there exactly once, or if the image does not compile. The image is kept
+# as an artifact with its SHA-256 in the summary, to compare with what a
+# warren serves.
+on:
+  pull_request:
+    paths: ["bytecode/**", "firmware-arm/vendor/openjabnab/**", "firmware-arm/tools/**", ".github/workflows/runtime.yml"]
+  push:
+    branches: [main]
+    paths: ["bytecode/**", "firmware-arm/vendor/openjabnab/**", "firmware-arm/tools/**", ".github/workflows/runtime.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Runtime from the vendored sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Build
+        run: |
+          cp -a firmware-arm/vendor/openjabnab/bootcode "$RUNNER_TEMP/tree"
+          bash bytecode/build-bytecode.sh "$RUNNER_TEMP/tree" "$PWD/firmware-arm/tools/mtl_comp.py" "$RUNNER_TEMP/runtime.hybrid"
+          {
+            echo "## Runtime"
+            echo '```'
+            ls -l "$RUNNER_TEMP/runtime.hybrid"
+            sha256sum "$RUNNER_TEMP/runtime.hybrid"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime
+          path: ${{ runner.temp }}/runtime.hybrid
