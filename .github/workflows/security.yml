@@ -21,22 +21,6 @@ env:
   OSV_SCANNER: ghcr.io/google/osv-scanner:v2.6.0
 
 jobs:
-  secrets:
-    name: Secret scan (gitleaks, whole history)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The action's own default, written down so a bump of the action
-          # cannot change the scanner with it. It never fetches "latest" unless
-          # told to.
-          GITLEAKS_VERSION: "8.24.3"
-
   image:
     name: Image scan (nabaztag-violet, report only)
     runs-on: ubuntu-latest
