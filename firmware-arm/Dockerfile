@@ -2,7 +2,7 @@
 # Target SoC: OKI ML67Q4051 (ARM7TDMI). Output: firmware0.0.0.13.sim ready to
 # upload via the rabbit's config-mode page (no opening required).
 
-FROM debian:bookworm
+FROM debian:trixie
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gcc-arm-none-eabi \
