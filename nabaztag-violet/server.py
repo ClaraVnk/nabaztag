@@ -14,6 +14,8 @@ sent base64-encoded inside <message><packet xmlns='violet:packet'>…</packet>.
 """
 import base64
 import contextlib
+import io
+import ssl
 import hmac
 import json
 import logging
@@ -26,8 +28,11 @@ import threading
 from collections import OrderedDict
 import time
 import itertools
+import queue
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+
+import adoption
 
 # --------------------------------------------------------------------------- #
 # Configuration (from /data/options.json or env)
@@ -45,6 +50,18 @@ LOG_LEVEL = (os.environ.get("LOG_LEVEL") or _OPTS.get("log_level") or "Info").up
 HTTP_PORT = int(os.environ.get("HTTP_PORT", _OPTS.get("http_port", 80)))
 XMPP_PORT = int(os.environ.get("XMPP_PORT", _OPTS.get("xmpp_port", 5222)))
 API_PORT = int(os.environ.get("API_PORT", _OPTS.get("api_port", 8080)))
+# TLS 1.3 with the adoption key, for Naboot rabbits whose owner confirmed the
+# colours (adoption.py). 5223 is the port the rabbit falls back to when
+# locate.jsp names none, so it is the one to keep.
+XMPP_TLS_PORT = int(os.environ.get("XMPP_TLS_PORT", _OPTS.get("xmpp_tls_port", 5223)))
+# Where the adoption keys live. Losing this file locks every confirmed rabbit
+# out until its configuration is reset (head button at power-up, /reset).
+ADOPTION_KEYS_FILE = os.environ.get("ADOPTION_KEYS_FILE", "/data/adoption-keys.json")
+# Nothing heard for this long from a bound rabbit's side of the wire: send it
+# something. The runtime with bytecode/patch_liveness.py closes and reopens
+# its session after 150 s without reading anything (ear recalibration and
+# all), so the server speaks first, as Le Terrier does.
+KEEPALIVE_S = float(os.environ.get("KEEPALIVE_S") or 45)
 # Which bytecode to serve at /vl/bc.jsp. The bytecode and the locate format are
 # a matched pair: 'ojn' (OpenJabNab) expects the locate WITH the xmpp port (what
 # we now send); 'violet' is the original; 'pub' is the live community server's
@@ -77,6 +94,24 @@ def _resolve_bootcode():
     return "/data/bootcode.hybrid"
 
 BOOTCODE_FILE = _resolve_bootcode()
+
+
+def _resolve_bootcode_tls():
+    """The runtime for rabbits that ran the adoption exchange: it carries the
+    TLS client (bytecode/patch_tls.py) and calls opcodes that only Naboot's
+    firmware has, so it goes to no other rabbit -- a stock one would stop on
+    the first of them. Same order of authority as the hybrid."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    explicit = os.environ.get("BOOTCODE_TLS_FILE")
+    if explicit:
+        return explicit
+    for cand in ("/data/bootcode.tls", os.path.join(here, "bootcode.tls")):
+        if os.path.exists(cand):
+            return os.path.normpath(cand)
+    return ""
+
+
+BOOTCODE_TLS_FILE = _resolve_bootcode_tls()
 # Where /api/ota stages signed .sim files. The rabbit fetches them at the
 # matching /ota/<basename> URL when the server sends a FW program command.
 OTA_DIR = os.environ.get("OTA_DIR", "/data/ota")
@@ -203,6 +238,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("nabaztag")
 
+# The adoption keys (adoption.py). Read once; an unreadable file stops the
+# add-on rather than being replaced by an empty one.
+KEYS = adoption.KeyStore(ADOPTION_KEYS_FILE)
+
+_MAC_RE = re.compile(r"[0-9a-f]{12}")
+
+
+def mac_from_query(q: dict) -> str | None:
+    """The rabbit's MAC from bc.jsp's m= or locate.jsp's sn=, twelve hex
+    digits, whatever separators the build put in."""
+    for k in ("m", "sn"):
+        v = (q.get(k, [""])[0] or "").replace(":", "").replace("-", "").lower()
+        if _MAC_RE.fullmatch(v):
+            return v
+    return None
+
 # Registry of connected rabbits: mac -> XmppSession
 BUNNIES: dict[str, "XmppSession"] = {}
 BUNNIES_LOCK = threading.Lock()
@@ -216,6 +267,11 @@ XMPP_IDLE_S = float(os.environ.get("XMPP_IDLE_S") or _OPTS.get("xmpp_idle_s") or
 # this, it is ignoring what we push (_check_sound_ack).
 SOUND_ACK_S = 10
 _SID = itertools.count(1)
+# Resource ids for the TLS sessions, one counter for the whole add-on, so a
+# reconnect never meets an id it saw before.
+_RES_IDS = itertools.count(1)
+# How long a sound inside the session waits for the one before it to start.
+RES_PACE_S = 40
 
 
 def _ago(seconds: float) -> str:
@@ -595,6 +651,27 @@ def fire_ha_event(etype: str, data: dict):
             urllib.request.urlopen(req, timeout=5).read()
         except Exception as exc:  # noqa
             log.warning("HA event %s failed: %s", etype, exc)
+    threading.Thread(target=_post, daemon=True).start()
+
+
+def notify_ha(title: str, message: str, notification_id: str):
+    """A persistent notification in Home Assistant (fire-and-forget)."""
+    token = _supervisor_token()
+    if not token:
+        return
+
+    def _post():
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                "http://supervisor/core/api/services/persistent_notification/create",
+                data=json.dumps({"title": title, "message": message,
+                                 "notification_id": notification_id}).encode(),
+                method="POST",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5).read()
+        except Exception as exc:  # noqa
+            log.warning("HA notification failed: %s", exc)
     threading.Thread(target=_post, daemon=True).start()
 
 
@@ -1108,12 +1185,17 @@ class XmppSession(threading.Thread):
     SASL is bypassed (we just answer <success/>) per the documented trick.
     """
 
-    def __init__(self, conn: socket.socket, addr):
+    def __init__(self, conn: socket.socket, addr, tls_mac: str | None = None,
+                 first: bytes = b""):
         super().__init__(daemon=True)
         self.conn = conn
         self.addr = addr
         self.buf = ""
-        self.mac = None
+        # The MAC a TLS handshake proved (port XMPP_TLS_PORT), or None on the
+        # plain port; and whatever the session read before it was handed here.
+        self.tls_mac = tls_mac
+        self._first = first
+        self._mac = tls_mac
         self.authed = False
         self.bound = False
         self.connected_at = None
@@ -1124,6 +1206,8 @@ class XmppSession(threading.Thread):
         self.sid = next(_SID)
         self.tcp_at = time.time()
         self.last_rx = self.tcp_at
+        self.last_tx = self.tcp_at
+        self._ka = itertools.count(1)
         self.resource_at = None
         # One writer at a time: the session thread, the control API threads
         # and the timers all push on this socket, and two sendall() calls on
@@ -1132,12 +1216,79 @@ class XmppSession(threading.Thread):
         # Set when a sound is pushed to an idle rabbit, cleared by the bind
         # that answers it (see _check_sound_ack).
         self._sound_at = None
+        # The microphone inside the session (MIC_HEAD): the raw bytes still
+        # owed, and an undecoded tail that may start an announce.
+        self._mic_left = 0
+        self._raw = b""
+        # Sounds inside the session, one at a time (RES_PACE_S).
+        self._res_played = threading.Event()
+        self._res_played.set()
+        self._res_queue = queue.Queue()
+        self._res_worker = None
+        self._pace_lock = threading.Lock()
+
+    # -- who is talking ---------------------------------------------------- #
+    @property
+    def mac(self):
+        return self._mac
+
+    @mac.setter
+    def mac(self, value):
+        value = (value or "").lower() or None
+        if self.tls_mac is not None:
+            # The PSK proved which rabbit this is; a stanza does not get to say
+            # otherwise.
+            if value is not None and value != self.tls_mac:
+                log.warning("rabbit %s: TLS session of %s names itself %s -- closing it",
+                            self.addr[0], self.tls_mac, value)
+                self._refuse()
+            return
+        if value is not None:
+            row = KEYS.get(value)
+            if row is not None and row["state"] == "confirmed":
+                # Its owner confirmed its key: that rabbit talks over TLS only,
+                # so whoever names it here, in the clear, is not it.
+                log.warning("rabbit %s: XMPP as %s on the plain port, but its key is "
+                            "confirmed -- TLS port only, closing", self.addr[0], value)
+                self._refuse()
+                return
+        self._mac = value
+
+    def rides(self, policy: str) -> bool:
+        """Whether this session may carry `policy` (adoption.SESSION_POLICIES):
+        it is the TLS session of the rabbit whose key opened it, and the
+        bytecode its last boot was served reads that policy there."""
+        if self.tls_mac is None or self.mac != self.tls_mac:
+            return False
+        row = KEYS.get(self.tls_mac)
+        return row is not None and policy in row["served"]
+
+    def _refuse(self):
+        try:
+            with self._send_lock:
+                self.conn.sendall(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>"
+                                  b"<not-authorized/></failure></stream:stream>")
+        except OSError:
+            pass
+        self.close()
 
     # -- low level --------------------------------------------------------- #
+    def _write(self, raw: bytes):
+        """Write under the send lock, which the caller holds. Over TLS one
+        record per sendall, never more than the rabbit's one-record buffer
+        (max_fragment_length 2^12): that is also how the rabbit tells an
+        announce from the bytes it announces."""
+        self.last_tx = time.time()
+        if self.tls_mac is not None:
+            for i in range(0, len(raw), adoption.RECORD_BYTES):
+                self.conn.sendall(raw[i:i + adoption.RECORD_BYTES])
+        else:
+            self.conn.sendall(raw)
+
     def send(self, data: str):
         try:
             with self._send_lock:
-                self.conn.sendall(data.encode("utf-8"))
+                self._write(data.encode("utf-8"))
             log.debug("-> rabbit %s: %s", self.addr[0], data[:300])
         except OSError:
             self._alive = False
@@ -1147,18 +1298,133 @@ class XmppSession(threading.Thread):
         return f"{self.mac or '0000'}@{self.domain}/{self.resource}"
 
     # -- command push ------------------------------------------------------ #
-    def send_violet_packet(self, raw: bytes):
+    def _packet_stanza(self, raw: bytes) -> str:
         with self._send_lock:
             self.msg_nb += 1
             nb = self.msg_nb
         b64 = base64.b64encode(raw).decode("ascii")
-        stanza = (
+        return (
             f"<message from='net.openjabnab.platform@{self.domain}/services' "
             f"to='{self.mac}@{self.domain}/{self.resource}' id='ojn-{nb}'>"
             f"<packet xmlns='violet:packet' format='1.0' ttl='604800'>{b64}</packet>"
             f"</message>"
         )
-        self.send(stanza)
+
+    def send_violet_packet(self, raw: bytes):
+        self.send(self._packet_stanza(raw))
+
+    def _resources_in_session(self, program: str):
+        """The program with each of this add-on's /res/ resources that the
+        rabbit will take from its session renamed res:N, and those
+        resources, [(N, bytes)], in order: ST when its runtime reads sounds
+        there (res), MU, MC and CH when it reads a program's resources there
+        too (rsc). Together they fit the rabbit's store, so none is evicted
+        by the next one before the program runs. Anything else -- another
+        host's URL, a resource over the budget -- stays a URL."""
+        keys = (({"ST"} if self.rides("res") else set())
+                | ({"MU", "MC", "CH"} if self.rides("res") and self.rides("rsc") else set()))
+        if not keys:
+            return program, []
+        prefix = resource_url("")
+        lines = program.split("\n")
+        sent, named, total = [], {}, 0
+        for i, line in enumerate(lines):
+            key, _, url = line.partition(" ")
+            url = url.strip()
+            if key not in keys or not url.startswith(prefix):
+                continue
+            if url in named:
+                lines[i] = f"{key} res:{named[url]}"
+                continue
+            with RES_LOCK:
+                entry = RESOURCES.get(url[len(prefix):])
+            if entry is None:
+                continue
+            data = entry[1]
+            if total + len(data) > adoption.RES_MAX_BYTES or len(sent) >= adoption.RES_KEEP:
+                log.info("rabbit %s: resource of %d bytes does not fit its store, sent by URL",
+                         self.mac, len(data))
+                continue
+            rid = next(_RES_IDS)
+            named[url] = rid
+            sent.append((rid, data))
+            total += len(data)
+            lines[i] = f"{key} res:{rid}"
+        return "\n".join(lines), sent
+
+    def _send_with_resources(self, program: str):
+        """The program, its resources first when they go down the session:
+        each announced in a record of its own, its bytes, then the program,
+        under one hold of the send lock so nothing comes between them."""
+        program, sent = self._resources_in_session(program)
+        if not sent:
+            self.send_violet_packet(message_packet(program))
+            return
+        # The rabbit sifts a resource's bytes out of the stream as they arrive
+        # but runs the program later; a second sound announced in between
+        # drops the first from its store before it plays (emulator: four
+        # 136 KB sentences three seconds apart, two heard). So a sound waits
+        # until the rabbit has started the one before it, RES_PACE_S at most.
+        plays = any(line.startswith("ST res:") for line in program.split("\n"))
+        with self._pace_lock:
+            idle = (self._res_played.is_set() and self._res_queue.empty()
+                    and (self._res_worker is None or not self._res_worker.is_alive()))
+            if idle:
+                if plays:
+                    self._res_played.clear()
+            else:
+                self._res_queue.put((program, sent, plays))
+                if self._res_worker is None or not self._res_worker.is_alive():
+                    self._res_worker = threading.Thread(target=self._send_paced, daemon=True)
+                    self._res_worker.start()
+                return
+        self._send_resources(program, sent)
+
+    def _send_paced(self):
+        while self._alive:
+            try:
+                program, sent, plays = self._res_queue.get(timeout=5)
+            except queue.Empty:
+                return
+            if not self._res_played.wait(RES_PACE_S):
+                log.info("rabbit %s: the previous sound never started; sending the next", self.mac)
+            with self._pace_lock:
+                if plays:
+                    self._res_played.clear()
+            self._send_resources(program, sent)
+
+    def _send_resources(self, program: str, sent):
+        stanza = self._packet_stanza(message_packet(program)).encode("utf-8")
+        try:
+            with self._send_lock:
+                for rid, data in sent:
+                    self._write(f"<res xmlns='{adoption.RES_NS}' id='{rid}' "
+                                f"len='{len(data)}'/>".encode("ascii"))
+                    self._write(data)
+                self._write(stanza)
+            log.info("rabbit %s: %s inside the session", self.mac,
+                     ", ".join(f"{len(d)} bytes as res:{r}" for r, d in sent))
+        except OSError:
+            self._alive = False
+
+    def send_firmware(self, image: bytes, sig: bytes):
+        """A firmware update inside the session (patch_ota_in_session.py):
+        the announce with fw='1', the plain image, then `FW res:N <signature
+        as 128 hex digits>`. The rabbit verifies the signature itself before
+        it flashes, exactly as for an image fetched by URL."""
+        rid = next(_RES_IDS)
+        head = (f"<res xmlns='{adoption.RES_NS}' id='{rid}' len='{len(image)}' "
+                f"fw='1'/>").encode("ascii")
+        stanza = self._packet_stanza(message_packet(f"FW res:{rid} {sig.hex()}")).encode("utf-8")
+        try:
+            with self._send_lock:
+                self._write(head)
+                self._write(image)
+                self._write(stanza)
+            log.info("rabbit %s: firmware image of %d bytes inside the session as res:%d",
+                     self.mac, len(image), rid)
+        except OSError:
+            self._alive = False
 
     def send_program(self, program: str):
         """Push a code-0x0A program (newline-separated 'KEY value' commands).
@@ -1176,7 +1442,7 @@ class XmppSession(threading.Thread):
             if self.resource == "idle" and self._sound_at is None:
                 at = self._sound_at = time.time()
                 threading.Timer(SOUND_ACK_S, self._check_sound_ack, args=(at,)).start()
-        self.send_violet_packet(message_packet(program))
+        self._send_with_resources(program)
 
     def _free_the_speaker(self):
         """Stop a capture of ours so a sound can be heard, and owe it back."""
@@ -1287,7 +1553,10 @@ class XmppSession(threading.Thread):
         WAKE["streaming"] = True
         WAKE["cooldown"] = 0.0
         log.info("auto-listen: starting mic stream on %s", self.mac)
-        self.send_program(f"RS {_server_ip()} {MIC_UDP_PORT}")
+        # Inside the TLS session when its runtime streams there, encrypted
+        # with everything else; over UDP on the LAN otherwise.
+        self.send_program("RS session" if self.rides("mic")
+                          else f"RS {_server_ip()} {MIC_UDP_PORT}")
         _save_state()
 
     def _should_clear_mic(self) -> bool:
@@ -1388,6 +1657,9 @@ class XmppSession(threading.Thread):
         f = frag.strip()
         if not f:
             return
+        if "id='ka-" in f or 'id="ka-' in f:
+            log.debug("<- rabbit %s: %s", self.addr[0], f[:400])
+            return
         log.info("<- rabbit %s: %s", self.addr[0], f[:400])
 
         if "violet:iq:register" in f and "<iq" in f:
@@ -1451,8 +1723,17 @@ class XmppSession(threading.Thread):
 
         if f.startswith("<response"):
             m = re.search(r'username="?([0-9a-fA-F]{8,})"?', f)
+            if not m:
+                # DIGEST-MD5 puts the username inside the base64 response.
+                b64 = re.search(r">\s*([A-Za-z0-9+/=]+)\s*</response>", f)
+                with contextlib.suppress(ValueError):
+                    if b64:
+                        m = re.search(r'username="?([0-9a-fA-F]{12})"?',
+                                      base64.b64decode(b64.group(1)).decode("latin-1"))
             if m:
                 self.mac = m.group(1).lower()
+            if not self._alive:
+                return
             # success-bypass: tell the rabbit it authenticated
             self.authed = True
             self.send("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
@@ -1466,6 +1747,8 @@ class XmppSession(threading.Thread):
             res = re.search(r"<resource>\s*([^<]*?)\s*</resource>", f)
             if res and res.group(1).strip():
                 self.resource = res.group(1).strip()
+            if self.resource == "streaming":
+                self._res_played.set()        # a sound has started: the next may come
             frm = re.search(r"from='([0-9a-fA-F]{8,})@", f) or re.search(r'from="([0-9a-fA-F]{8,})@', f)
             if frm:
                 self.mac = frm.group(1).lower()
@@ -1583,6 +1866,21 @@ class XmppSession(threading.Thread):
                           {"mac": self.mac, "type": "button", "clic": clic, "action": action})
             return
 
+        if "violet:nabaztag:rfid" in f:
+            # A tag on the reader, reported inside the session instead of by
+            # plain rfid.jsp (patch_rfid_xmpp.py; seal() tells a confirmed
+            # rabbit to). The rabbit is the one whose key opened this TLS
+            # session -- never a MAC read from the stanza. No runtime sends
+            # this on the plain port, so nothing is fired there.
+            mt = re.search(r"<tag>\s*([0-9A-Fa-f]{2,32})\s*</tag>", f)
+            if self.tls_mac is None or self.mac != self.tls_mac:
+                log.warning("rabbit %s: rfid stanza outside its TLS session, ignored", self.addr[0])
+            elif mt:
+                log.info("rabbit %s: RFID tag=%s inside the session", self.mac, mt.group(1))
+                fire_ha_event("nabaztag_event",
+                              {"mac": self.mac, "type": "rfid", "tag": mt.group(1)})
+            return
+
         if "violet:nabaztag:ears" in f:
             # The rabbit sends <ears><left>L</left><right>R</right></ears> when the
             # ears are turned by hand (positions ~0..16).
@@ -1654,25 +1952,48 @@ class XmppSession(threading.Thread):
             else:
                 log.info("registered bunny mac=%s from %s", self.mac, self.addr[0])
 
+    def keepalive(self):
+        """A whole stanza the rabbit answers, never whitespace: Violet's
+        parser drops every stanza that follows a blank left in its buffer."""
+        self.send(f"<iq type='set' from='net.openjabnab.platform@{self.domain}/services' "
+                  f"to='{self.mac}@{self.domain}/{self.resource}' id='ka-{next(self._ka)}'>"
+                  f"<command xmlns='http://jabber.org/protocol/commands' node='getrunningstate' "
+                  f"action='execute'/></iq>")
+
+    def _keepalive_due(self, now: float):
+        if KEEPALIVE_S and self.bound and self.mac and self._alive and now - self.last_tx >= KEEPALIVE_S:
+            self.keepalive()
+
     def run(self):
-        log.info("XMPP connection from %s", self.addr[0])
-        self.conn.settimeout(min(900, XMPP_IDLE_S / 3) if XMPP_IDLE_S else 900)
+        log.info("XMPP connection from %s%s", self.addr[0],
+                 f" over TLS ({self.tls_mac})" if self.tls_mac else "")
+        self.conn.settimeout(15)
         try:
+            if self._first:
+                self._take(self._first)
+                self._first = b""
             while self._alive:
                 try:
                     chunk = self.conn.recv(4096)
                 except socket.timeout:
-                    if XMPP_IDLE_S and self.bound and time.time() - self.last_rx > XMPP_IDLE_S:
+                    now = time.time()
+                    if XMPP_IDLE_S and self.bound and now - self.last_rx > XMPP_IDLE_S:
                         log.warning("rabbit %s (mac=%s): nothing received for %.0f s - session dropped",
-                                    self.addr[0], self.mac, time.time() - self.last_rx)
+                                    self.addr[0], self.mac, now - self.last_rx)
                         break
+                    self._keepalive_due(now)
                     continue
                 except OSError:
                     break
                 if not chunk:
                     break
                 self.last_rx = time.time()
-                self._feed(chunk.decode("utf-8", "replace"))
+                self._take(chunk)
+                # Here too, not only on a timeout: the rabbit writes a blank
+                # of its own every few seconds, so its socket is never quiet
+                # long enough for one, and the first keepalive went out after
+                # 159 s -- past the 150 s after which the runtime gives up.
+                self._keepalive_due(self.last_rx)
         finally:
             if self.mac:
                 with BUNNIES_LOCK:
@@ -1685,6 +2006,51 @@ class XmppSession(threading.Thread):
                 pass
             up = _ago(time.time() - self.connected_at) if self.connected_at else "?"
             log.info("XMPP disconnect %s (mac=%s) — was online %s", self.addr[0], self.mac, up)
+
+    def _take(self, chunk: bytes):
+        """What the socket gave: the microphone's raw bytes to mic_feed, the
+        rest to the XML parser. Only a session that streams its microphone
+        here (rides "mic") is searched; every other one is all XML."""
+        if not self._mic_left and not self._raw and not self.rides("mic"):
+            self._feed(chunk.decode("utf-8", "replace"))
+            return
+        head = adoption.MIC_HEAD
+        data, xml = self._raw + chunk, bytearray()
+        self._raw = b""
+        while data:
+            if self._mic_left:
+                part, data = data[:self._mic_left], data[self._mic_left:]
+                self._mic_left -= len(part)
+                got = mic_feed(part, self.addr[0])
+                if got and got[0] % 50 == 1:
+                    log.info("rabbit %s: mic inside the session, %d chunks, %d bytes",
+                             self.mac, *got)
+                continue
+            i = data.find(head)
+            if i == -1:
+                # Keep a tail that may be the beginning of an announce.
+                keep = next((k for k in range(min(len(head) - 1, len(data)), 0, -1)
+                             if head.startswith(data[-k:])), 0)
+                xml += data[:len(data) - keep]
+                self._raw = data[len(data) - keep:]
+                break
+            xml += data[:i]
+            end = data.find(b"'/>", i)
+            if end == -1:
+                if len(data) - i > len(head) + 16:
+                    xml += data[i:]            # not an announce after all
+                else:
+                    self._raw = data[i:]
+                break
+            n = data[i + len(head):end]
+            if not n.isdigit() or int(n) > adoption.MIC_MAX_CHUNK:
+                log.warning("rabbit %s: a malformed microphone announce, closing", self.mac)
+                self._alive = False
+                return
+            self._mic_left = int(n)
+            data = data[end + 3:]
+        if xml:
+            self._feed(xml.decode("utf-8", "replace"))
 
     def _feed(self, data: str):
         """Incremental XMPP parser: extracts complete top-level stanzas.
@@ -1753,11 +2119,167 @@ def xmpp_server():
             time.sleep(1)
 
 
+# TLS 1.3 with the adoption key (adoption.tls_context); None when this Python
+# cannot do an external PSK, and then no TLS port is offered to anybody.
+try:
+    TLS_CTX, _PSK_SEEN = adoption.tls_context(KEYS)
+except RuntimeError as _exc:
+    TLS_CTX, _PSK_SEEN = None, None
+    log.warning("no TLS for adopted rabbits: %s", _exc)
+
+
+class _Prefixed(io.RawIOBase):
+    """The bytes already read off the socket, then the socket."""
+
+    def __init__(self, first: bytes, conn):
+        self._first, self._conn = first, conn
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        if self._first:
+            n = min(len(b), len(self._first))
+            b[:n] = self._first[:n]
+            self._first = self._first[n:]
+            return n
+        return self._conn.recv_into(b)
+
+
+class _Records(io.RawIOBase):
+    """Writes in small slices, one TLS record each."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        mv = memoryview(b)
+        for i in range(0, len(mv), adoption.HTTP_RECORD_BYTES):
+            self._conn.sendall(mv[i:i + adoption.HTTP_RECORD_BYTES])
+        return len(mv)
+
+
+def _serve_http_over_tls(conn, first: bytes, addr, mac: str):
+    """One HTTP request inside a TLS session: Naboot's bootloader (1.0.0.2
+    and later) asks for bc.jsp in here once its key is confirmed, proved by
+    the same PSK. The handler trusts the PSK's MAC over the query's."""
+
+    class _OverTls(BootHandler):
+        tls_mac = mac
+
+        def setup(self):
+            self.connection = self.request
+            self.rfile = io.BufferedReader(_Prefixed(first, conn))
+            self.wfile = _Records(conn)
+
+        def address_string(self):
+            return f"tls:{addr[0]}"
+
+    _OverTls(conn, addr, None)
+
+
+def _tls_client(conn: socket.socket, addr):
+    conn.settimeout(10)
+    try:
+        conn = TLS_CTX.wrap_socket(conn, server_side=True)
+    except (ssl.SSLError, OSError) as exc:
+        log.warning("TLS handshake failed from %s: %s", addr[0], exc)
+        with contextlib.suppress(OSError):
+            conn.close()
+        return
+    mac = getattr(_PSK_SEEN, "mac", None)
+    log.info("TLS %s with %s, PSK identity %s", conn.version(), addr[0], mac)
+    # One listener, two protocols: the first bytes decide.
+    try:
+        first = conn.recv(4096)
+    except socket.timeout:
+        first = b""            # a slow XMPP client: the session waits for it
+    except OSError:
+        with contextlib.suppress(OSError):
+            conn.close()
+        return
+    if first[:4] in (b"GET ", b"HEAD"):
+        log.info("HTTP over TLS from %s, PSK identity %s", addr[0], mac)
+        try:
+            _serve_http_over_tls(conn, first, addr, mac or "")
+        except Exception as exc:  # noqa
+            log.warning("HTTP over TLS from %s failed: %s", addr[0], exc)
+        finally:
+            with contextlib.suppress(OSError):
+                conn.close()
+        return
+    XmppSession(conn, addr, tls_mac=mac, first=first).run()
+
+
+def xmpp_tls_server():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", XMPP_TLS_PORT))
+    srv.listen(8)
+    log.info("XMPP over TLS 1.3 PSK listening on 0.0.0.0:%d", XMPP_TLS_PORT)
+    while True:
+        try:
+            conn, addr = srv.accept()
+            threading.Thread(target=_tls_client, args=(conn, addr), daemon=True).start()
+        except Exception as exc:  # noqa
+            log.error("TLS accept failed: %s", exc)
+            time.sleep(1)
+
+
 # --------------------------------------------------------------------------- #
 # HTTP boot server (the rabbit) — /vl/bc.jsp, /vl/locate.jsp
 # --------------------------------------------------------------------------- #
 class BootHandler(BaseHTTPRequestHandler):
     server_version = "nabaztag-violet/0.1"
+    # The MAC a TLS session proved, for a request that came in over :5223;
+    # None for plain HTTP.
+    tls_mac = None
+
+    def _serve_kx(self, q: dict) -> None:
+        """The adoption exchange: the rabbit's X25519 public key in, ours out,
+        as 64 hex digits. Our private key lives for this request only."""
+        mac = mac_from_query(q)
+        pub = (q.get("p") or [""])[0].strip().lower()
+        if mac is None or not re.fullmatch(r"[0-9a-f]{64}", pub):
+            self.send_error(400, "kx.jsp wants m=<mac> and p=<64 hex digits>")
+            return
+        row = KEYS.get(mac)
+        if row is not None and row["state"] in ("pending", "confirmed"):
+            # A rabbit keeps its key from its first exchange on: a second
+            # offer is somebody else, or this rabbit after its configuration
+            # was wiped -- in which case the owner forgets the old key on the
+            # adoption page first, deliberately.
+            log.warning("kx: %s already has a %s key; a new exchange from %s was refused",
+                        mac, row["state"], self.address_string())
+            self.send_error(409, f"this rabbit already has a {row['state']} key")
+            return
+        rabbit_pub = bytes.fromhex(pub)
+        priv, ours = adoption.keypair()
+        try:
+            key, colors = adoption.derive(priv, rabbit_pub, rabbit_pub, ours)
+        except adoption.LowOrderPoint:
+            log.warning("kx: %s sent a low-order public key, refused", mac)
+            self.send_error(400, "unusable public key")
+            return
+        if not KEYS.offer(mac, key, colors):
+            self.send_error(409, "this rabbit already has a key")
+            return
+        log.info("kx: %s agreed a key; its belly shows %s -- confirm on the adoption page",
+                 mac, adoption.describe_colors(colors))
+        notify_ha("Nabaztag: confirm the adoption",
+                  f"The rabbit {mac} shows five colours on its belly: "
+                  f"{adoption.describe_colors(colors)}. If they match, confirm them on the "
+                  f"add-on's adoption page (http://{SERVER_ADDRESS}:8099/adoption, or the "
+                  f"port you mapped to 8080).", f"nabaztag_adoption_{mac}")
+        body = ours.hex().encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         log.info("HTTP %s - %s", self.address_string(), fmt % args)
@@ -1765,14 +2287,35 @@ class BootHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urlparse(self.path)
         path = p.path
+        if path.endswith("/kx.jsp"):
+            return self._serve_kx(parse_qs(p.query))
         if path.endswith("/bc.jsp"):
+            q = parse_qs(p.query)
+            mac = mac_from_query(q)
+            if self.tls_mac is not None and mac != self.tls_mac:
+                log.warning("bytecode over TLS: %s proved %s but asked for %s -- refused",
+                            self.address_string(), self.tls_mac, mac)
+                self.send_error(403, "not the rabbit this session proved")
+                return
+            row = KEYS.get(mac) if mac else None
+            # A rabbit with a key on record ran the exchange, so its bootloader
+            # is Naboot's and has the TLS opcodes: it gets the TLS runtime. Any
+            # other rabbit gets the hybrid, which a stock firmware can run.
+            path_bc = BOOTCODE_TLS_FILE if (row is not None and BOOTCODE_TLS_FILE) else BOOTCODE_FILE
             try:
-                with open(BOOTCODE_FILE, "rb") as fh:
+                with open(path_bc, "rb") as fh:
                     data = fh.read()
             except OSError:
                 self.send_error(500, "bootcode missing")
                 return
-            log.info("serving bootcode (%d bytes) to %s [%s]", len(data), self.address_string(), p.query)
+            if row is not None:
+                KEYS.note_served(mac, adoption.session_policies(data)
+                                 if row["state"] == "confirmed" else ())
+            data = adoption.seal(data, row)
+            log.info("serving bootcode %s (%d bytes%s) to %s [%s]",
+                     os.path.basename(path_bc), len(data),
+                     ", TLS required, signed" if row and row["state"] == "confirmed" else "",
+                     self.address_string(), p.query)
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(len(data)))
@@ -1819,7 +2362,15 @@ class BootHandler(BaseHTTPRequestHandler):
             # without ":<port>" the rabbit can't open the XMPP session.
             body = (f"ping {SERVER_ADDRESS}\n"
                     f"broad {SERVER_ADDRESS}\n"
-                    f"xmpp_domain {SERVER_ADDRESS}:{XMPP_PORT}\n").encode()
+                    f"xmpp_domain {SERVER_ADDRESS}:{XMPP_PORT}\n")
+            # The TLS port, to a rabbit whose owner confirmed its key. Its
+            # bytecode opens it only when the firmware also holds the key;
+            # stock bytecodes ignore the line.
+            mac = mac_from_query(parse_qs(p.query))
+            row = KEYS.get(mac) if mac else None
+            if TLS_CTX is not None and row is not None and row["state"] == "confirmed":
+                body += f"xmpp_tls {XMPP_TLS_PORT}\n"
+            body = body.encode()
             log.info("locate -> %s for %s [%s]", SERVER_ADDRESS, self.address_string(), p.query)
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -1893,6 +2444,58 @@ def http_boot_server():
 # --------------------------------------------------------------------------- #
 # Control API for Home Assistant
 # --------------------------------------------------------------------------- #
+# The owner's page for the adoption check: the five colours the add-on
+# computed, drawn as the belly shows them, and yes / no. Static; the data
+# comes from /api/adoption. With an api_token, open it as /adoption?token=...
+ADOPTION_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nabaztag adoption</title>
+<style>
+:root{color-scheme:light dark;--bg:#fafafa;--fg:#1c1c1c;--card:#fff;--mute:#666;--line:#ddd;--ok:#1e7d32;--no:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#eee;--card:#1f1f1f;--mute:#aaa;--line:#333}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+.mac{font-family:ui-monospace,monospace;font-size:15px}
+.state{font-size:13px;color:var(--mute)}
+.belly{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:8px;margin:16px 0}
+.led{border-radius:50%;border:2px solid var(--line)}
+.led span{display:block;text-align:center;font-size:11px;margin-top:60px;color:var(--mute)}
+button{font:inherit;padding:10px 16px;border-radius:8px;border:0;margin:4px 8px 4px 0;cursor:pointer;color:#fff}
+.yes{background:var(--ok)}.no{background:var(--no)}.forget{background:#555}
+p.mute{color:var(--mute);font-size:14px}
+</style></head><body><main>
+<h1 id=t></h1><p class=mute id=lead></p><div id=list></div><p class=mute id=err></p>
+</main><script>
+const fr=(navigator.language||'').startsWith('fr');
+const T=fr?{t:'Adoption des lapins',lead:"Un lapin sous Naboot affiche cinq couleurs sur son ventre après l'échange de clé. Compare-les avec celles-ci. Si elles sont identiques, confirme : le lapin passera en TLS à son prochain démarrage (débranche-le puis rebranche-le). Si elles diffèrent, refuse.",
+none:"Aucun lapin n'a fait d'échange de clé. Il faut un firmware Naboot 1.0.0.0 ou plus récent.",ask:'Le ventre montre-t-il ces couleurs ?',yes:'Oui, identiques',no:'Non, elles diffèrent',forget:'Oublier cette clé',
+forgetq:"Oublier la clé ? Si elle était confirmée, le lapin refusera tout bytecode jusqu'à la réinitialisation de sa configuration (bouton de la tête maintenu au branchement, puis /reset).",
+st:{pending:'en attente de ta réponse',confirmed:'confirmée : TLS',rejected:'refusée'},leds:['bas','gauche','milieu','droite','haut'],notls:"Cette version de Python ne sait pas faire de TLS à clé prépartagée : pas de TLS.",noruntime:"Aucun runtime TLS fourni : le lapin restera en clair."}
+:{t:'Rabbit adoption',lead:'A rabbit on Naboot shows five colours on its belly after the key exchange. Compare them with these. If they are the same, confirm: the rabbit moves to TLS at its next boot (unplug it and plug it back in). If they differ, reject.',
+none:'No rabbit has run the key exchange. It takes Naboot 1.0.0.0 or later.',ask:'Does the belly show these colours?',yes:'Yes, the same',no:'No, they differ',forget:'Forget this key',
+forgetq:'Forget the key? If it was confirmed, the rabbit refuses every bytecode until its configuration is reset (head button held while plugging it in, then /reset).',
+st:{pending:'waiting for your answer',confirmed:'confirmed: TLS',rejected:'rejected'},leds:['bottom','left','middle','right','top'],notls:'This Python cannot do pre-shared-key TLS: no TLS.',noruntime:'No TLS runtime bundled: the rabbit stays in the clear.'};
+document.getElementById('t').textContent=T.t;document.getElementById('lead').textContent=T.lead;document.title=T.t;
+const tok=new URLSearchParams(location.search).get('token')||'';
+const H=tok?{'X-API-Token':tok}:{};
+const POS={4:[1,2],1:[2,1],2:[2,2],3:[2,3],0:[3,2]};
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+async function act(a,k){if(a==='forget'&&!confirm(T.forgetq))return;
+ const r=await fetch('api/adoption/'+a,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H),body:JSON.stringify({mac:k.mac,fingerprint:k.fingerprint})});
+ if(!r.ok){document.getElementById('err').textContent=(await r.json()).error||r.status}load()}
+async function load(){const r=await fetch('api/adoption',{headers:H});const d=await r.json();const L=document.getElementById('list');L.replaceChildren();
+ const err=[];if(!d.tls)err.push(T.notls);if(!d.tls_runtime)err.push(T.noruntime);document.getElementById('err').textContent=err.join(' ');
+ if(!d.keys.length){L.append(el('p','mute',T.none));return}
+ for(const k of d.keys){const c=el('div','card');c.append(el('div','mac',k.mac.match(/../g).join(':')),el('div','state',T.st[k.state]||k.state));
+  const b=el('div','belly');k.rgb.forEach((rgb,i)=>{const l=el('div','led');l.style.background=rgb;l.style.gridRow=POS[i][0];l.style.gridColumn=POS[i][1];l.title=T.leds[i];b.append(l)});c.append(b);
+  if(k.state==='pending'){c.append(el('p',null,T.ask));const y=el('button','yes',T.yes);y.onclick=()=>act('confirm',k);const n=el('button','no',T.no);n.onclick=()=>act('reject',k);c.append(y,n)}
+  const f=el('button','forget',T.forget);f.onclick=()=>act('forget',k);c.append(f);L.append(c)}}
+load();
+</script></body></html>
+"""
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     server_version = "nabaztag-violet-api/0.1"
 
@@ -1954,6 +2557,59 @@ class ApiHandler(BaseHTTPRequestHandler):
                                     "online": bool(conn), "bunnies": conn,
                                     "last_seen": seen,
                                     "last_recording": rec, "mic_stream": mic})
+
+        if path == "/adoption":
+            body = ADOPTION_PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy",
+                             "default-src 'none'; script-src 'unsafe-inline'; "
+                             "style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/api/adoption":
+            return self._json(200, {"keys": KEYS.listing(), "tls": TLS_CTX is not None,
+                                    "tls_port": XMPP_TLS_PORT,
+                                    "tls_runtime": bool(BOOTCODE_TLS_FILE)})
+
+        if path in ("/api/adoption/confirm", "/api/adoption/reject", "/api/adoption/forget"):
+            # A decision that hands the rabbit to whoever holds the key: POST
+            # with a JSON body only, which a page on another site cannot send
+            # without the browser asking this server first (and it never says
+            # yes). The fingerprint ties the answer to the colours shown.
+            if self.command != "POST" or not (self.headers.get("Content-Type") or "").startswith(
+                    "application/json"):
+                return self._json(405, {"error": "POST a JSON body"})
+            try:
+                n = min(int(self.headers.get("Content-Length") or 0), 4096)
+                req = json.loads(self.rfile.read(n) or b"{}")
+                mac = str(req.get("mac") or "").replace(":", "").lower()
+                fp = str(req.get("fingerprint") or "")
+            except (ValueError, AttributeError):
+                return self._json(400, {"error": "bad JSON"})
+            if not _MAC_RE.fullmatch(mac):
+                return self._json(400, {"error": "mac: twelve hex digits"})
+            action = path.rsplit("/", 1)[1]
+            if action == "forget":
+                ok = KEYS.forget(mac)
+            else:
+                if not fp:
+                    return self._json(400, {"error": "fingerprint required"})
+                ok = KEYS.decide(mac, action == "confirm", fp)
+            if not ok:
+                return self._json(409, {"error": "no pending key with that fingerprint"
+                                        if action != "forget" else "no key for that rabbit"})
+            log.info("adoption: %s %s by the owner", mac,
+                     {"confirm": "confirmed", "reject": "rejected", "forget": "forgotten"}[action])
+            if action == "confirm":
+                log.info("adoption: %s gets the signed TLS runtime at its next boot; "
+                         "unplug it and plug it back in", mac)
+            return self._json(200, {"ok": True, "keys": KEYS.listing()})
 
         if path == "/api/micwav":
             # Debug: the live mic-stream buffer decoded to a PCM WAV.
@@ -2052,9 +2708,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if b is None:
                     warn = "trigger requested but no connected bunny — staged only"
                 else:
-                    b.send_program(f"FW {staged_url}")
+                    image = None
+                    if b.rides("res") and b.rides("ota"):
+                        # Down its TLS session, as the plain image and its
+                        # signature; nobody on the LAN sees or swaps it.
+                        try:
+                            image, sig = adoption.sim_image(blob)
+                        except ValueError as exc:
+                            log.warning("OTA: %s not sent inside the session: %s", name, exc)
+                    if image is not None:
+                        b.send_firmware(image, sig)
+                        log.info("OTA: pushed %s to %s inside its session", name, b.mac)
+                    else:
+                        b.send_program(f"FW {staged_url}")
+                        log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
                     triggered = True
-                    log.info("OTA: pushed FW %s to %s", staged_url, b.mac)
             return self._json(200, {
                 "ok": True,
                 "staged": target,
@@ -2292,23 +2960,29 @@ def udp_mic_server():
             continue
         if data[:3] != b"snd":
             continue
-        if not WAKE["on"]:
-            # Belt + suspenders: even if the rabbit didn't honor our RT for
-            # some reason, the server-side wake pipeline (STT, hallucination
-            # filter) stays idle when listening is off. Don't accumulate
-            # bytes we'd just throw away — and don't log them as ongoing
-            # mic activity either.
-            continue
-        with MIC_LOCK:
-            MIC_STREAM["adpcm"] += data[3:]
-            MIC_STREAM["packets"] += 1
-            MIC_STREAM["ts"] = time.time()
-            MIC_STREAM["src"] = addr[0]
-            n, total = MIC_STREAM["packets"], len(MIC_STREAM["adpcm"])
+        got = mic_feed(data[3:], addr[0])
         now = time.time()
-        if now - last_log > 2:
-            log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", n, total, addr[0])
+        if got and now - last_log > 2:
+            log.info("UDP mic: %d snd datagrams, %d bytes (from %s)", *got, addr[0])
             last_log = now
+
+
+def mic_feed(data: bytes, src: str):
+    """IMA-ADPCM from the rabbit's microphone, by UDP or inside its TLS
+    session: (packets, bytes) so far, or None when it was dropped."""
+    if not WAKE["on"]:
+        # Belt + suspenders: even if the rabbit didn't honor our RT for
+        # some reason, the server-side wake pipeline (STT, hallucination
+        # filter) stays idle when listening is off. Don't accumulate
+        # bytes we'd just throw away — and don't log them as ongoing
+        # mic activity either.
+        return None
+    with MIC_LOCK:
+        MIC_STREAM["adpcm"] += data
+        MIC_STREAM["packets"] += 1
+        MIC_STREAM["ts"] = time.time()
+        MIC_STREAM["src"] = src
+        return MIC_STREAM["packets"], len(MIC_STREAM["adpcm"])
 
 
 # --------------------------------------------------------------------------- #
@@ -2574,6 +3248,13 @@ def main():
                     "bytecode/bootcode_hybrid.bin from the repo (see DOCS.md, "
                     "'Bytecodes')", BOOTCODE_FILE)
     threading.Thread(target=xmpp_server, daemon=True).start()
+    if TLS_CTX is not None:
+        threading.Thread(target=xmpp_tls_server, daemon=True).start()
+    if BOOTCODE_TLS_FILE:
+        log.info("adopted rabbits get %s", BOOTCODE_TLS_FILE)
+    else:
+        log.warning("no TLS runtime bundled: adopted rabbits get the hybrid, "
+                    "which never opens the TLS port")
     threading.Thread(target=api_server, daemon=True).start()
     threading.Thread(target=udp_mic_server, daemon=True).start()
     threading.Thread(target=wake_loop, daemon=True).start()

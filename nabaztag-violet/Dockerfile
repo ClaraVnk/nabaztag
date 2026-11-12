@@ -1,4 +1,4 @@
-ARG BUILD_FROM=python:3.12-alpine
+ARG BUILD_FROM=python:3.13-alpine
 
 # --- Stage 1: build whisper.cpp (bundled, local STT) + fetch a model -------- #
 # Built on the SAME base as the runtime image so the musl ABI matches. OpenMP is
@@ -64,8 +64,17 @@ COPY bootcode.hybrid /app/bootcode.hybrid
 RUN echo "c0ac2ecfb9942fcb4d451f2019bb162dcde76870ad7eb64bf9e8a3ba9c501f80  /app/bootcode.hybrid" \
     | sha256sum -c -
 
+# The runtime for rabbits that ran the adoption exchange (Naboot 1.0.0.0 and
+# later): the hybrid plus the TLS client and the fixes since, built from
+# OpenJabNab 640257f by bytecode/build-bytecode.sh (see bytecode/README.md).
+# Never served to a stock rabbit, which lacks the opcodes it calls.
+COPY bootcode.tls /app/bootcode.tls
+RUN echo "2c561ba955746c001eb5a778d5dbe9635d19be52a57c533ed53fde6b78be4cee  /app/bootcode.tls" \
+    | sha256sum -c -
+
 # Dependency-free server (Python stdlib only); reads /data/options.json at runtime.
-COPY server.py /app/
+# adoption.py: the per-rabbit key and TLS 1.3 PSK for Naboot rabbits.
+COPY server.py adoption.py /app/
 # Original Nabaztag jingles (Standard MIDI, extracted from the firmware) — the
 # server renders them to audio on the fly via a tiny built-in synth.
 COPY sounds /app/sounds

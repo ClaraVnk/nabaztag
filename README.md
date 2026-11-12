@@ -486,7 +486,11 @@ at the root). Its add-on, **Nabaztag Violet Server** (`nabaztag-violet/`), is a
 small, **dependency-free server that speaks the original Violet protocol**
 directly: the rabbit phones home to it, and Home Assistant drives the rabbit —
 ears, belly weather icons, nose — through a simple control API. A **stock**
-rabbit needs nothing flashed for it.
+rabbit needs nothing flashed for it. A rabbit on **Naboot** gets the same
+adoption key as on Le Terrier (since 0.17.0): you confirm the five belly
+colours on the add-on's page, and from then on its bytecode is signed and its
+session runs inside TLS 1.3 on port 5223 (see the add-on's
+[`DOCS.md`](nabaztag-violet/DOCS.md), *Adoption key and TLS*).
 
 It still works and it is still here — but the server it embeds is the ancestor
 of Le Terrier, and new work goes to the

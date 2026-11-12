@@ -1,5 +1,5 @@
 name: "Nabaztag Violet Server"
-version: "0.16.4"
+version: "0.17.0"
 slug: "nabaztag_violet"
 description: "Our own clean server for the original Nabaztag/tag (Violet protocol): serves the bytecode, accepts the rabbit's XMPP, drives ears/LEDs/sound/TTS, and (Phase 2) does button push-to-talk → bundled STT → conversation agent → speech. For Home Assistant."
 url: "https://github.com/ClaraVnk/nabaztag/tree/main/nabaztag-violet"
@@ -21,11 +21,13 @@ homeassistant_api: true
 ports:
   "80/tcp": 80
   "5222/tcp": 5222
+  "5223/tcp": 5223
   "8080/tcp": 8099
   "4000/udp": 4000
 ports_description:
   "80/tcp": "Boot: /vl/bc.jsp serves the bytecode, /vl/locate.jsp points the rabbit at us."
   "5222/tcp": "XMPP: the rabbit connects here; the server pushes violet:packet commands."
+  "5223/tcp": "XMPP and boot over TLS 1.3, for Naboot rabbits whose adoption colours you confirmed."
   "8080/tcp": "Control API for Home Assistant — reached on host port 8099 (8080 is commonly taken on the host)."
   "4000/udp": "Microphone stream from the rabbit (hybrid bytecode only) — Phase-2/3 voice."
 options:
