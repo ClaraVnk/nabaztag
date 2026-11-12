@@ -47,12 +47,36 @@ struct tls {
   uint8_t ckey[16], civ[12], skey[16], siv[12];
   uint32_t cseq_hi, cseq_lo, sseq_hi, sseq_lo;   /* 5.3, 64-bit */
 
-  uint8_t hs[512];          /* handshake message reassembly */
   uint8_t pending[64];      /* client Finished record (58) or an alert (24) */
-  uint8_t rx[NAB_TLS_RX];
+  /* Where records and handshake messages are gathered: the session with
+     the warren keeps its 4 KB records and 512 bytes of handshake; a
+     session with a certificate needs 16 KB records and the whole chain. */
+  uint8_t *rx, *hs;
+  uint32_t rxcap, hscap;
+#ifdef NAB_TLS_CERTS
+  uint8_t certs;            /* 0: PSK with the warren; 1: a certificate is expected */
+  uint8_t proved;           /* 1 chain trusted, 2 CertificateVerify checked */
+  uint8_t eph[32];          /* our X25519 secret, until the ServerHello */
+  char host[64];
+  char now[14];
+  uint8_t key_alg[10], key_param[10];
+  uint8_t key[600];         /* the leaf's key, for CertificateVerify */
+  uint32_t alg_len, param_len, key_len;
+#endif
 };
 
-static struct tls T SECTION_EXTBSS;
+static uint8_t RX0[NAB_TLS_RX] SECTION_EXTBSS;
+static uint8_t HS0[512] SECTION_EXTBSS;
+static struct tls T0 SECTION_EXTBSS;
+#ifdef NAB_TLS_CERTS
+static uint8_t RX1[NAB_TLS_RX_CERT] SECTION_EXTBSS;
+static uint8_t HS1[NAB_TLS_HS_CERT] SECTION_EXTBSS;
+static struct tls T1 SECTION_EXTBSS;
+#endif
+/* The session the calls below act on: 0 with the warren, 1 with a host
+   that has a certificate (nab_tls_select). */
+static struct tls *S = &T0;
+#define T (*S)
 
 /* --- small helpers -------------------------------------------------------- */
 
@@ -267,7 +291,9 @@ int nab_tls_start(const uint8_t psk[NAB_TLS_PSK],
   uint8_t *m, *ext, *psk_ext, *binders;
   uint32_t n, body, trunc;
 
+  S = &T0;
   memset(&T, 0, sizeof T);            /* .extbss is NOLOAD: nothing else clears it */
+  T.rx = RX0; T.rxcap = sizeof RX0; T.hs = HS0; T.hscap = sizeof HS0;
   sha256_init(&T.th);
   if (idlen == 0 || idlen > 32) return 0;
   /* 4 header + 2 + 32 + 1 + 4 + 2 + extensions (7 + 6 + 5 + (4 + 2 + 2 + idlen + 4 + 2 + 1 + 32)) */
@@ -477,7 +503,7 @@ static int hs_feed(const uint8_t *p, uint32_t n)
     {
       uint32_t len = ((uint32_t)T.hs[1] << 16) | ((uint32_t)T.hs[2] << 8) | T.hs[3];
       uint32_t k;
-      if (4 + len > sizeof T.hs) return fail(A_DECODE_ERROR);
+      if (4 + len > T.hscap) return fail(A_DECODE_ERROR);
       k = 4 + len - T.hslen;
       if (k > n) k = n;
       memcpy(T.hs + T.hslen, p, k);
@@ -495,7 +521,7 @@ static int hs_feed(const uint8_t *p, uint32_t n)
 int nab_tls_in(const uint8_t *data, uint32_t len)
 {
   if (T.state != NAB_TLS_HANDSHAKE && T.state != NAB_TLS_READY) return -1;
-  if (len > sizeof T.rx - T.rxlen) len = sizeof T.rx - T.rxlen;
+  if (len > T.rxcap - T.rxlen) len = T.rxcap - T.rxlen;
   memcpy(T.rx + T.rxlen, data, len);
   T.rxlen += len;
   return (int)len;
@@ -517,7 +543,7 @@ int nab_tls_next(void)
     if (T.rxlen < 5) return -1;
     type = T.rx[0];
     len = get16(T.rx + 3);
-    if (T.rx[1] != 3 || len > sizeof T.rx - 5) return fail(A_RECORD_OVERFLOW);
+    if (T.rx[1] != 3 || len > T.rxcap - 5) return fail(A_RECORD_OVERFLOW);
     if (T.rxlen < 5 + len) return -1;
     body = T.rx + 5;
 
@@ -620,3 +646,12 @@ int nab_tls_close(uint8_t *out, uint32_t cap)
 }
 
 int nab_tls_state(void) { return T.state; }
+
+void nab_tls_select(int session)
+{
+#ifdef NAB_TLS_CERTS
+  S = session ? &T1 : &T0;
+#else
+  (void)session;
+#endif
+}

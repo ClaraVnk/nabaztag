@@ -17,12 +17,12 @@ INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
 # Defined before any rule that uses it: a prerequisite list is
 # expanded when the rule is read, not when it runs.
-CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h net/nab_tls.h net/nab_rng.h net/nab_pki.h
+CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx.h net/nab_tls.h net/nab_rng.h net/nab_pki.h net/chachapoly.h
 
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng pki
+.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng pki chachapoly
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -148,7 +148,12 @@ pki: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
 		../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c ../crypto/nab_sha384.c \
 		../crypto/sha256.c /tmp/tn_pki.o && /tmp/t_pki
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng pki
+# ChaCha20-Poly1305 (RFC 8439): its vectors, then OpenSSL's for every length.
+chachapoly: $(CRYPTO_H)
+	@echo "== ChaCha20-Poly1305, RFC 8439 and OpenSSL"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_chachapoly test_chachapoly.c ../crypto/chachapoly.c && /tmp/t_chachapoly
+
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng pki chachapoly
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo
@@ -183,6 +188,7 @@ vectors:
 	python3 vectors_p256.py > vectors_p256.h
 	python3 vectors_sha256.py > vectors_sha256.h
 	python3 vectors_pki.py > vectors_pki.h
+	python3 vectors_chachapoly.py > vectors_chachapoly.h
 	python3 vectors_cmac.py > vectors_cmac.h
 	python3 vectors_tls.py session_openssl.dump > vectors_tls.h
 	python3 vectors_h2e.py > vectors_h2e.h
