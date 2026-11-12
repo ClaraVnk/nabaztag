@@ -6,6 +6,6 @@
 #
 # Counts depend on the compiler: results-2026-11-08.txt came from gcc 12.2,
 # so compare runs made with the same image, never across images.
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache bash python3 gcc musl-dev \
         gcc-arm-none-eabi binutils-arm-none-eabi newlib-arm-none-eabi qemu-arm
