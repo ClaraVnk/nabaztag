@@ -16,7 +16,6 @@
 #include "net/chachapoly.h"
 #include "net/nab_pki.h"
 int crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned char *n, const unsigned char *p);
-int crypto_scalarmult_curve25519_tweet_base(unsigned char *q, const unsigned char *n);
 #endif
 
 /* The watchdog: CLR_WDT on the hardware, see patch_verify_wdt. A 4 KB
@@ -76,8 +75,15 @@ static uint8_t RX0[NAB_TLS_RX] SECTION_EXTBSS;
 static uint8_t HS0[512] SECTION_EXTBSS;
 static struct tls T0 SECTION_EXTBSS;
 #ifdef NAB_TLS_CERTS
-static uint8_t RX1[NAB_TLS_RX_CERT] SECTION_EXTBSS;
-static uint8_t HS1[NAB_TLS_HS_CERT] SECTION_EXTBSS;
+/* 26 KB: more than .extbss has left, so the firmware's tls_certs step gives
+   them a region of their own, taken from the bottom of the VM heap. */
+#if defined(__ELF__) && defined(NAB_TLS_EXTBSS2)
+#define SECTION_EXTBSS2 __attribute__((section(".extbss2")))
+#else
+#define SECTION_EXTBSS2 SECTION_EXTBSS
+#endif
+static uint8_t RX1[NAB_TLS_RX_CERT] SECTION_EXTBSS2;
+static uint8_t HS1[NAB_TLS_HS_CERT] SECTION_EXTBSS2;
 static struct tls T1 SECTION_EXTBSS;
 #endif
 /* The session the calls below act on: 0 with the warren, 1 with a host
@@ -638,7 +644,12 @@ int nab_tls_start_cert(const char *host, const char now[14], const uint8_t rando
   memcpy(e + 9, host, hl); e += 9 + hl;             /* server_name (RFC 6066 3) */
   memcpy(e, fixed, sizeof fixed); e += sizeof fixed;
   put16(e, 0x0033); put16(e + 2, 38); put16(e + 4, 36); put16(e + 6, 0x001d); put16(e + 8, 32);
-  crypto_scalarmult_curve25519_tweet_base(e + 10, T.eph);
+  {
+    /* The base point by hand: strip_tweetnacl keeps crypto_scalarmult (the
+       adoption key exchange uses it) and drops crypto_scalarmult_base. */
+    static const uint8_t nine[32] = {9};
+    crypto_scalarmult_curve25519_tweet(e + 10, T.eph, nine);
+  }
   e += 42;                                          /* key_share */
   put16(m + 47, (uint32_t)(e - (m + 49)));
   m[1] = 0; put16(m + 2, (uint32_t)(e - m) - 4);

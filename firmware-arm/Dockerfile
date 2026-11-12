@@ -53,6 +53,9 @@ COPY crypto/p256.c crypto/p256.h crypto/sha256.c crypto/sha256.h \
      crypto/nab_kx.c crypto/nab_kx.h crypto/nab_kx_vm.c \
      crypto/nab_tls.c crypto/nab_tls.h crypto/nab_tls_vm.c \
      crypto/nab_rng.c crypto/nab_rng.h \
+     crypto/nab_pki.h crypto/nab_bn.c crypto/nab_rsa.c crypto/nab_ecdsa.c \
+     crypto/nab_x509.c crypto/nab_sha384.c crypto/chachapoly.c crypto/chachapoly.h \
+     crypto/nab_https_vm.c \
      /build/sae-crypto/
 COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
 

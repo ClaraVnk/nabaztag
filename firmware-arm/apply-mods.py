@@ -772,6 +772,158 @@ def patch_tls_psk(root: Path) -> None:
     print("[ok]   tls_psk: tlsStart/tlsIn/tlsOut/tlsState/tlsClose on the adoption key")
 
 
+def patch_tls_certs(root: Path) -> None:
+    """TLS 1.3 with a server's certificate: the rabbit fetches HTTPS itself.
+
+    2026-11-12, for Naboot 1.2.0.0. Until now a podcast reached the rabbit
+    through the warren, which fetched it over HTTPS and relayed it in the
+    clear or inside the session: the warren's bandwidth and processor, for
+    every rabbit listening. The rabbit now opens the host itself. nab_tls.c
+    gets its second session (NAB_TLS_CERTS): X25519, ChaCha20-Poly1305 then
+    AES-128-GCM, the certificate chain checked up to the root the warren
+    sends with the order to play (nab_https_vm.c), the name, the dates,
+    CertificateVerify. Proven on a host against openssl s_server
+    (tests/tls_cert_interop.py), 16 KB records included.
+
+    Opcodes, all on session 1 and giving session 0 back:
+      httpsStart host now roots -> ClientHello, or nil
+      httpsIn segment           -> one decrypted record, or nil
+      httpsOut data|nil         -> records for data; with nil, what is pending
+      httpsState                -> nab_tls state
+      httpsClose                -> close_notify
+
+    Memory: the 16 KB-record receive buffer and the chain reassembly (26 KB)
+    do not fit beside .extbss, so they get .extbss2, 32 KB taken from the
+    BOTTOM of the VM heap: the heap starts at 0xD0018000 and is 32 KB
+    shorter (768 KB). Its top, where the VM stack lives, does not move, so
+    no RAM is used that the rabbit did not use before. Requires tls_psk.
+    """
+    if not (root / "src/net/nab_tls.c").exists():
+        sys.exit("FAIL tls_certs: tls_psk must run first")
+    here = _staged_crypto(root)
+    for f in ("nab_bn.c", "nab_rsa.c", "nab_ecdsa.c", "nab_x509.c", "nab_sha384.c",
+              "chachapoly.c", "nab_https_vm.c", "nab_tls.c"):
+        (root / "src/net" / f).write_text((here / f).read_text())
+    for f in ("nab_pki.h", "chachapoly.h"):
+        (root / "inc/net" / f).write_text((here / f).read_text())
+    h = (here / "nab_tls.h").read_text()
+    guard = "#ifndef NAB_TLS_H\n"
+    if h.count(guard) != 1:
+        sys.exit("FAIL tls_certs: nab_tls.h guard not found")
+    (root / "inc/net/nab_tls.h").write_text(h.replace(
+        guard, "/* tls_certs (apply-mods.py) */\n#define NAB_TLS_CERTS 1\n#define NAB_TLS_EXTBSS2 1\n" + guard, 1))
+
+    # The VM heap moves up by 32 KB; its end, and the stack there, stay.
+    q = root / "inc/vm/vmem.h"
+    t = q.read_text()
+    if "0xD0018000" not in t:
+        for old, new in (("#define VMEM_LENGTH\t            (1024*200)",
+                          "#define VMEM_LENGTH\t            (1024*192)   /* tls_certs: 32 KB to .extbss2 */"),
+                         ("#define _vmem_heap               ((int32_t*)(0xD0010000))",
+                          "#define _vmem_heap               ((int32_t*)(0xD0018000))   /* tls_certs */")):
+            if t.count(old) != 1:
+                sys.exit(f"FAIL {q}: {old!r} not found once")
+            t = t.replace(old, new, 1)
+        q.write_text(t)
+    q = root / "inc/utils/mem.h"
+    t = q.read_text()
+    old = "#define SRAM_BASE   (0xD0010000)"
+    if old in t:
+        q.write_text(t.replace(old, "#define SRAM_BASE   (0xD0018000)   /* tls_certs */", 1))
+
+    ld = root / "sys/ml67q4051.ld"
+    s = ld.read_text()
+    if ".extbss2" not in s:
+        a = "  ExtRAM  (rwx) : ORIGIN = 0xD0000000, LENGTH = 32k\n"
+        if s.count(a) != 1:
+            sys.exit(f"FAIL {ld}: extbss must run first")
+        s = s.replace(a, a + "  /* tls_certs: the bottom 32 KB of what was the VM heap */\n"
+                             "  ExtRAM2 (rwx) : ORIGIN = 0xD0010000, LENGTH = 32k\n", 1)
+        b = "SECTIONS\n{\n"
+        if s.count(b) != 1:
+            sys.exit(f"FAIL {ld}: no SECTIONS block")
+        s = s.replace(b, b + "  .extbss2 (NOLOAD) :\n  {\n    *(.extbss2)\n    *(.extbss2.*)\n"
+                             "  } >ExtRAM2\n  __vm_heap_origin__ = 0xD0018000;\n\n", 1)
+        ld.write_text(s)
+
+    decl = ("int nab_https_vm_start(const uint8_t *host, uint32_t hostlen, const uint8_t *now, uint32_t nowlen,\n"
+            "                       const uint8_t *der, uint32_t derlen, uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_in(const uint8_t *data, uint32_t len);\n"
+            "void nab_https_vm_take(uint8_t *dst);\n"
+            "int nab_https_vm_pending(uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_out(const uint8_t *in, uint32_t len, uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_state(void);\n"
+            "int nab_https_vm_close(uint8_t *out, uint32_t cap);\n")
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_https_vm_start" not in t:
+        t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
+        q.write_text(t)
+    add_core_opcode(root, "httpsStart", "fun[S S S]S", 3,
+        "      case OPhttpsStart:\n"
+        "        {\n"
+        "          /* host, \"YYYYMMDDHHMMSS\", the roots (DER, end to end) */\n"
+        "          int32_t r=VALTOPNT(VPULL());\n"
+        "          int32_t w=VALTOPNT(VPULL());\n"
+        "          int32_t h=VALTOPNT(VSTACKGET(0));\n"
+        "          uint8_t ch[192];\n"
+        "          int32_t n=0;\n"
+        "          if (h!=NIL && w!=NIL && r!=NIL)\n"
+        "            n=nab_https_vm_start((const uint8_t*)VSTARTBIN(h),VSIZEBIN(h),(const uint8_t*)VSTARTBIN(w),VSIZEBIN(w),\n"
+        "                                 (const uint8_t*)VSTARTBIN(r),VSIZEBIN(r),ch,sizeof ch);\n"
+        "          VSTACKSET(0,n>0?PNTTOVAL(VMALLOCSTR((char*)ch,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsIn", "fun[S]S", 1,
+        "      case OPhttpsIn:\n"
+        "        {\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r=nab_https_vm_in(d!=NIL?(const uint8_t*)VSTARTBIN(d):0,d!=NIL?VSIZEBIN(d):0);\n"
+        "          if (r>=0)\n"
+        "          {\n"
+        "            int32_t p=VMALLOCBIN(r);\n"
+        "            if (p!=NIL) nab_https_vm_take(VSTARTBIN(p));\n"
+        "            VSTACKSET(0,p!=NIL?PNTTOVAL(p):NIL);\n"
+        "          }\n"
+        "          else VSTACKSET(0,NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsOut", "fun[S]S", 1,
+        "      case OPhttpsOut:\n"
+        "        {\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r=NIL;\n"
+        "          if (d==NIL)\n"
+        "          {\n"
+        "            uint8_t pend[64];\n"
+        "            int32_t n=nab_https_vm_pending(pend,sizeof pend);\n"
+        "            if (n>0) r=PNTTOVAL(VMALLOCSTR((char*)pend,n));\n"
+        "          }\n"
+        "          else\n"
+        "          {\n"
+        "            uint32_t size=nab_tls_out_size(VSIZEBIN(d));\n"
+        "            int32_t p=VMALLOCBIN(size);   /* may move the heap: re-read d */\n"
+        "            d=VALTOPNT(VSTACKGET(0));\n"
+        "            if (p!=NIL && nab_https_vm_out((const uint8_t*)VSTARTBIN(d),VSIZEBIN(d),VSTARTBIN(p),size)>0) r=PNTTOVAL(p);\n"
+        "          }\n"
+        "          VSTACKSET(0,r);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsState", "fun[]I", 0,
+        "      case OPhttpsState:\n"
+        "        VPUSH(INTTOVAL(nab_https_vm_state()));\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsClose", "fun[]S", 0,
+        "      case OPhttpsClose:\n"
+        "        {\n"
+        "          uint8_t a[32];\n"
+        "          int32_t n=nab_https_vm_close(a,sizeof a);\n"
+        "          VPUSH(n>0?PNTTOVAL(VMALLOCSTR((char*)a,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    print("[ok]   tls_certs: httpsStart/In/Out/State/Close, .extbss2 at 0xD0010000, VM heap from 0xD0018000")
+
+
 def patch_adoption_boot(root: Path) -> None:
     """The adoption flow in the bootloader: boot-mods/adoption.mtl.
 
@@ -8890,7 +9042,7 @@ def main() -> int:
         # 1.1.0.0 without the DCC telemetry (Nabazprout's anti-replay day is
         # read: 37,573 frames, p0/0/41), refusing CCMP replays behind the
         # probation guard, and saying its RF chip (rfic_report).
-        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,tls_certs,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -9194,6 +9346,7 @@ def main() -> int:
         "ccmp_replay_count": patch_ccmp_replay_count,
         "ccmp_replay_enforce": patch_ccmp_replay_enforce,
         "rfic_report": patch_rfic_report,
+        "tls_certs": patch_tls_certs,
         "opt_size": patch_opt_size,
     }
     for step in steps:
