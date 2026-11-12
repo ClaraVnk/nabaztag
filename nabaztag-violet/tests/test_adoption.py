@@ -271,6 +271,19 @@ class EndToEnd(unittest.TestCase):
         self.assertIn(b"<success", b.recv(4096))
         self.assertEqual(sess.mac, "0019dbaabbcc")
 
+    def test_keepalive_goes_out_while_the_rabbit_chatters(self):
+        """The rabbit writes a blank every few seconds: the server's socket
+        never times out, and the keepalive must not wait for it to."""
+        a, b = socket.socketpair()
+        sess = server.XmppSession(a, ("127.0.0.1", 1))
+        sess._mac, sess.bound, sess.authed, sess.resource = MAC, True, True, "idle"
+        sess.last_tx -= server.KEEPALIVE_S + 1
+        threading.Thread(target=sess.run, daemon=True).start()
+        b.sendall(b" ")
+        b.settimeout(3)
+        self.assertIn(b"id='ka-", b.recv(4096))
+        sess.close()
+
     def test_keepalive_is_a_whole_stanza(self):
         a, b = socket.socketpair()
         sess = server.XmppSession(a, ("127.0.0.1", 1))

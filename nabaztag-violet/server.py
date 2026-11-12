@@ -1796,6 +1796,10 @@ class XmppSession(threading.Thread):
                   f"<command xmlns='http://jabber.org/protocol/commands' node='getrunningstate' "
                   f"action='execute'/></iq>")
 
+    def _keepalive_due(self, now: float):
+        if KEEPALIVE_S and self.bound and self.mac and self._alive and now - self.last_tx >= KEEPALIVE_S:
+            self.keepalive()
+
     def run(self):
         log.info("XMPP connection from %s%s", self.addr[0],
                  f" over TLS ({self.tls_mac})" if self.tls_mac else "")
@@ -1813,8 +1817,7 @@ class XmppSession(threading.Thread):
                         log.warning("rabbit %s (mac=%s): nothing received for %.0f s - session dropped",
                                     self.addr[0], self.mac, now - self.last_rx)
                         break
-                    if KEEPALIVE_S and self.bound and self.mac and now - self.last_tx >= KEEPALIVE_S:
-                        self.keepalive()
+                    self._keepalive_due(now)
                     continue
                 except OSError:
                     break
@@ -1822,6 +1825,11 @@ class XmppSession(threading.Thread):
                     break
                 self.last_rx = time.time()
                 self._feed(chunk.decode("utf-8", "replace"))
+                # Here too, not only on a timeout: the rabbit writes a blank
+                # of its own every few seconds, so its socket is never quiet
+                # long enough for one, and the first keepalive went out after
+                # 159 s -- past the 150 s after which the runtime gives up.
+                self._keepalive_due(self.last_rx)
         finally:
             if self.mac:
                 with BUNNIES_LOCK:
