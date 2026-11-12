@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.15"
       - name: Regenerate the vectors from the specifications
         run: |
           python -m pip install --quiet cryptography
@@ -41,7 +41,7 @@ jobs:
         run: make -C firmware-arm/tests
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       - name: TLS against OpenSSL and Python ssl, live
         # 3.13 is the first Python with SSLContext.set_psk_server_callback.
         run: |
