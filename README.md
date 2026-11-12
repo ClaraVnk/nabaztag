@@ -69,7 +69,9 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   a bad joke a day, a bedtime story, weather warnings and pollen on the
   belly, and the next departures from any French network or Swiss stop
   (open data, live where published). Answers from the owner's own AI, a
-  Home Assistant integration, and a token API for every setting.
+  Home Assistant integration, and a token API for every setting. And the
+  **Nabagram**: owners share photos of their rabbits, open to members whose
+  rabbit is adopted, each photo reviewed before it shows.
 - 🧩 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** — the
   rabbit as proper Home Assistant **devices and entities** (a light, a switch,
   selects, sensors, buttons) rather than REST calls. It works against Le
@@ -108,6 +110,20 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 > hands-free for "hey Nabi", asks **Claude** and answers. The
 > **[Roadmap](#roadmap)** below says what is done and what comes next; the
 > phase-by-phase story is in [`docs/HISTORY.md`](docs/HISTORY.md).
+
+### 🌍 Le Terrier, in pictures
+
+<p align="center">
+  <img src="images/terrier-home.webp" alt="Le Terrier's home page on a computer: the cards that present what the warren does" width="520">
+</p>
+<p align="center">
+  <img src="images/terrier-mobile-1.webp" alt="Le Terrier on a phone: the top of the home page" width="200">
+  &nbsp;
+  <img src="images/terrier-mobile-2.webp" alt="Le Terrier on a phone: the feature cards" width="200">
+  &nbsp;
+  <img src="images/terrier-mobile-4.webp" alt="Le Terrier on a phone: how it works" width="200">
+  <br><sub>Le Terrier on a computer and on a phone. Mobile first, light and dark themes.</sub>
+</p>
 
 ## Flash Naboot & adopt your rabbit on Le Terrier
 
@@ -165,7 +181,11 @@ Put your rabbit on the public warren —
    computed and asks whether the belly showed the same: **confirm**, and from
    then on the warren signs that rabbit's bytecode (the rabbit refuses
    unsigned bytecode), its XMPP moves onto TLS, and every update reaches it
-   over the air. Until you confirm, the colours come back for a minute at
+   over the air. On the LEDs **orange looks like yellow and white like
+   cyan**: the page names each colour, and those pairs count as the same.
+   Answer *No* only for a real difference — a refused key needs a reset of
+   the rabbit to get new colours; when unsure, choose *Not sure* and replug
+   it to see them again. Until you confirm, the colours come back for a minute at
    every boot — unplug and replug to see them again. *Missed the code? It is
    spoken again on the next connect, but at most once every ~10 minutes per
    rabbit — so wait that long before power-cycling, or you'll get a silent
