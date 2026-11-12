@@ -28,6 +28,7 @@ import threading
 from collections import OrderedDict
 import time
 import itertools
+import queue
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -269,6 +270,8 @@ _SID = itertools.count(1)
 # Resource ids for the TLS sessions, one counter for the whole add-on, so a
 # reconnect never meets an id it saw before.
 _RES_IDS = itertools.count(1)
+# How long a sound inside the session waits for the one before it to start.
+RES_PACE_S = 40
 
 
 def _ago(seconds: float) -> str:
@@ -1217,6 +1220,12 @@ class XmppSession(threading.Thread):
         # owed, and an undecoded tail that may start an announce.
         self._mic_left = 0
         self._raw = b""
+        # Sounds inside the session, one at a time (RES_PACE_S).
+        self._res_played = threading.Event()
+        self._res_played.set()
+        self._res_queue = queue.Queue()
+        self._res_worker = None
+        self._pace_lock = threading.Lock()
 
     # -- who is talking ---------------------------------------------------- #
     @property
@@ -1351,6 +1360,40 @@ class XmppSession(threading.Thread):
         if not sent:
             self.send_violet_packet(message_packet(program))
             return
+        # The rabbit sifts a resource's bytes out of the stream as they arrive
+        # but runs the program later; a second sound announced in between
+        # drops the first from its store before it plays (emulator: four
+        # 136 KB sentences three seconds apart, two heard). So a sound waits
+        # until the rabbit has started the one before it, RES_PACE_S at most.
+        plays = any(line.startswith("ST res:") for line in program.split("\n"))
+        with self._pace_lock:
+            idle = (self._res_played.is_set() and self._res_queue.empty()
+                    and (self._res_worker is None or not self._res_worker.is_alive()))
+            if idle:
+                if plays:
+                    self._res_played.clear()
+            else:
+                self._res_queue.put((program, sent, plays))
+                if self._res_worker is None or not self._res_worker.is_alive():
+                    self._res_worker = threading.Thread(target=self._send_paced, daemon=True)
+                    self._res_worker.start()
+                return
+        self._send_resources(program, sent)
+
+    def _send_paced(self):
+        while self._alive:
+            try:
+                program, sent, plays = self._res_queue.get(timeout=5)
+            except queue.Empty:
+                return
+            if not self._res_played.wait(RES_PACE_S):
+                log.info("rabbit %s: the previous sound never started; sending the next", self.mac)
+            with self._pace_lock:
+                if plays:
+                    self._res_played.clear()
+            self._send_resources(program, sent)
+
+    def _send_resources(self, program: str, sent):
         stanza = self._packet_stanza(message_packet(program)).encode("utf-8")
         try:
             with self._send_lock:
@@ -1704,6 +1747,8 @@ class XmppSession(threading.Thread):
             res = re.search(r"<resource>\s*([^<]*?)\s*</resource>", f)
             if res and res.group(1).strip():
                 self.resource = res.group(1).strip()
+            if self.resource == "streaming":
+                self._res_played.set()        # a sound has started: the next may come
             frm = re.search(r"from='([0-9a-fA-F]{8,})@", f) or re.search(r'from="([0-9a-fA-F]{8,})@', f)
             if frm:
                 self.mac = frm.group(1).lower()

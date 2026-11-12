@@ -401,6 +401,21 @@ class InSession(unittest.TestCase):
         self.assertTrue(wire.startswith(head + data))
         self.assertTrue(wire[len(head) + len(data):].startswith(b"<message"))
 
+    def test_a_second_sound_waits_until_the_first_has_started(self):
+        reader = _Reader(self.b)
+        first = server.resource_url(server.store_resource(b"a" * 3000))
+        second = server.resource_url(server.store_resource(b"b" * 3000))
+        self.sess.send_program(f"ST {first}")
+        self.sess.send_program(f"ST {second}")
+        time.sleep(0.3)
+        self.assertEqual(self.sess._res_queue.qsize() + (1 if self.sess._res_worker else 0) > 0, True)
+        self.sess._handle_stanza(f"<iq type='set' id='9' from='{MAC}@x/streaming'>"
+                                 "<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>"
+                                 "<resource>streaming</resource></bind></iq>")
+        wire = reader.result()
+        self.assertEqual(wire.count(b"<res "), 2)
+        self.assertLess(wire.index(b"a" * 100), wire.index(b"b" * 100))
+
     def test_choreography_and_jingle_too_but_not_another_hosts_url(self):
         ch = server.resource_url(server.store_resource(b"chor"))
         prog, wire = self._sent_program(f"MU http://example.org/a.mp3\nCH {ch}\nMU {ch}")
