@@ -1,0 +1,54 @@
+// Dependency updates, opened as pull requests by Renovate (it replaced
+// Dependabot on 2026-11-12, for the whole Nabaztag project at once).
+//
+// No Python manifest here (the add-ons use the standard library), so what
+// moves are the base images -- Dockerfiles, Containerfiles and the add-on's
+// build.yaml -- and the actions of the workflows. The nabgcc and MTL commits
+// pinned in the firmware's build files are not updated: a toolchain change is
+// a firmware change, done by hand and proven in the emulator.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
+  timezone: "Europe/Paris",
+  schedule: ["before 9am on monday"],
+  labels: ["dependencies"],
+  prConcurrentLimit: 5,
+  dependencyDashboard: true,
+  // Renovate merges by itself once every check is green, rather than through
+  // GitHub's auto-merge: that needs branch protection, which a private
+  // repository on a free plan does not have.
+  platformAutomerge: false,
+  ignorePaths: ["legacy/**"],
+  customManagers: [
+    {
+      // The add-on's base image, as Home Assistant's builder reads it.
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)build\\.yaml$/"],
+      matchStrings: ['"(?<depName>(?:[a-z0-9]+/)?python):(?<currentValue>[0-9.]+-alpine)"'],
+      datasourceTemplate: "docker",
+    },
+  ],
+  packageRules: [
+    {
+      // Minor and patch versions and new digests merge themselves once the
+      // checks are green; a major version waits for a human.
+      matchUpdateTypes: ["minor", "patch", "digest", "pinDigest"],
+      automerge: true,
+    },
+    {
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest", "pinDigest"],
+      groupName: "GitHub Actions",
+    },
+    {
+      // amd64 and arm64 of the add-on move together.
+      matchFileNames: ["nabaztag-violet/**"],
+      matchDatasources: ["docker"],
+      groupName: "add-on base image",
+    },
+  ],
+  vulnerabilityAlerts: {
+    labels: ["security"],
+    schedule: ["at any time"],
+  },
+}
