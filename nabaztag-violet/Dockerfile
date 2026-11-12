@@ -1,4 +1,4 @@
-ARG BUILD_FROM=python:3.13-alpine
+ARG BUILD_FROM=python:3.15-alpine
 
 # --- Stage 1: build whisper.cpp (bundled, local STT) + fetch a model -------- #
 # Built on the SAME base as the runtime image so the musl ABI matches. OpenMP is
