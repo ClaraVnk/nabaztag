@@ -98,8 +98,17 @@ uint32_t nab_bn_add(uint32_t *r, const uint32_t *a, const uint32_t *b, int n)
   return (uint32_t)carry;
 }
 
+/* ARM state for this one function on the rabbit (2026-11-13): Thumb has no
+   32x32->64 multiply, so every limb product was a call to __aeabi_lmul; in
+   ARM state it is one UMLAL. The rest of the arithmetic stays Thumb. */
+#if defined(__thumb__) && defined(__ARM_ARCH)
+#define BN_ARM __attribute__((target("arm")))
+#else
+#define BN_ARM
+#endif
+
 /* r = a * b / R mod m (CIOS). r may alias a or b. */
-void nab_bn_mul(const nab_bn_ctx *c, uint32_t *r, const uint32_t *a, const uint32_t *b)
+BN_ARM void nab_bn_mul(const nab_bn_ctx *c, uint32_t *r, const uint32_t *a, const uint32_t *b)
 {
   uint32_t t[NAB_BN_LIMBS + 2];
   int n = c->n;
