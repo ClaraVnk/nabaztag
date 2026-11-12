@@ -1,0 +1,34 @@
+name: Metal toolchain
+
+# The Python Metal compiler and its kin (firmware-arm/tools): every fixture
+# compiled byte-identically to the committed C++ references, typed like the
+# C++, the ill-typed ones refused with the same lines, the bytecode
+# round-tripped. No network, no container: 67 checks in a few seconds.
+on:
+  pull_request:
+    paths: ["firmware-arm/tools/**", "bytecode/**", "nabaztag-violet/bootcode.hybrid", ".github/workflows/toolchain.yml"]
+  push:
+    branches: [main]
+    paths: ["firmware-arm/tools/**", "bytecode/**", "nabaztag-violet/bootcode.hybrid", ".github/workflows/toolchain.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    name: mtl_comp, mtl_pyc, mtl_asm against the C++
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: bash firmware-arm/tools/run-tests.sh

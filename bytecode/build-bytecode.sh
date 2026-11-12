@@ -32,7 +32,10 @@ OUT="${3:-$BC/bootcode_hybrid.bin}"
 
 [ -d "$BC/sources" ]         || { echo "no $BC/sources — is this a bootcode tree?"; exit 1; }
 [ -f "$BC/sources/main.mtl" ] || { echo "no sources/main.mtl"; exit 1; }
-[ -x "$CC" ]                 || { echo "compiler not executable: $CC"; exit 1; }
+case "$CC" in
+  *.py) [ -f "$CC" ]          || { echo "no compiler at $CC"; exit 1; } ;;
+  *)    [ -x "$CC" ]          || { echo "compiler not executable: $CC"; exit 1; } ;;
+esac
 grep -q "fun dnsreq" "$BC/sources/dns.mtl" || { echo "sources/dns.mtl: no dnsreq — not stock Violet?"; exit 1; }
 
 echo "==> copying our modules into sources/"
@@ -108,7 +111,11 @@ python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
-"$CC" -s "$BC/bootcode.mtl" "$OUT"
+case "$CC" in
+  # firmware-arm/tools/mtl_comp.py: byte-identical to the C++, python3 only.
+  *.py) python3 "$CC" "$BC/bootcode.mtl" -o "$OUT" ;;
+  *)    "$CC" -s "$BC/bootcode.mtl" "$OUT" ;;
+esac
 
 # The literal the warren flips for a confirmed rabbit must be there exactly
 # once, or the Terrier leaves the policy alone and TLS stays optional; the

@@ -555,7 +555,6 @@ def render_text(bc: Bytecode, show_globals: bool = True) -> str:
     out.append(f"=== code ({bc.nbfun} functions) ===")
     for fn in bc.functions:
         header_pc = fn.pc_start
-        body_pc = fn.pc_start + 3
         size = fn.pc_end - fn.pc_start
         name_part = f" {fn.name}" if fn.name else ""
         out.append("")
@@ -625,7 +624,6 @@ def render_masm(bc: Bytecode) -> str:
                 if t not in targets:
                     targets[t] = f"L_0x{t:04X}"
 
-        body_start = fn.pc_start + 3
         label_part = fn.name or f"fn{fn.index}"
         out.append(f".fun {label_part} {fn.nargs} {fn.nlocals}")
         for pc, op, mnem, operand in fn.insns:

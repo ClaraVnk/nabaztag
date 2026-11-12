@@ -36,7 +36,6 @@ from typing import Any
 # Reuse the disassembler's parser + opcode tables.
 from mtl_dis import (
     parse as parse_bytecode,
-    OPCODES,
     BUILTIN_NAMES,
     Function,
     Bytecode,
@@ -142,7 +141,6 @@ class FunDecomp:
             return
         end_i = self.by_pc.get(end_pc, len(self.insns))
         while i < end_i:
-            ins = self.insns[i]
             handled, di = self._try_structural(i, end_i)
             if handled:
                 i += di

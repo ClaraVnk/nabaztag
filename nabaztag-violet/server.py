@@ -418,8 +418,8 @@ def build_choreography(tempo_ms: int, actions: list) -> bytes:
         t = tempo_ms // 10
     body = bytearray([0x00, 0x01, t & 0xFF])
     last = 0
-    for time, kind, params in sorted(actions, key=lambda a: a[0]):
-        delta = min(max(time - last, 0), 255)
+    for at, kind, params in sorted(actions, key=lambda a: a[0]):
+        delta = min(max(at - last, 0), 255)
         body.append(delta & 0xFF)
         if kind == "motor":
             ear, angle, d = params
@@ -427,7 +427,7 @@ def build_choreography(tempo_ms: int, actions: list) -> bytes:
         else:  # led
             led, r, g, b = params
             body += bytes([0x07, led & 0xFF, r & 0xFF, g & 0xFF, b & 0xFF, 0x00, 0x00])
-        last = time
+        last = at
     n = len(body)
     return bytes([(n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF]) + bytes(body) + bytes(4)
 
