@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.17.0
+
+- **The adoption key and TLS, as on Le Terrier.** A Naboot rabbit (1.0.0.0
+  or later) runs its key exchange with the add-on and lights five colours on
+  its belly; the add-on's new page, `http://<HAOS_IP>:8099/adoption`, shows
+  the same five and asks whether they match (a Home Assistant notification
+  points to it). Once you confirm, the rabbit's bytecode is signed with its
+  key and its session runs inside TLS 1.3 on port **5223**, the bytecode
+  download too from the next boot. See *Adoption key and TLS* in the
+  documentation. A stock rabbit is served exactly as before.
+- **A new runtime for Naboot rabbits** (`bootcode.tls`, 114 082 bytes, built
+  from OpenJabNab 640257f by `bytecode/build-bytecode.sh`): the TLS client,
+  plus everything since the hybrid -- a session that notices a dead server,
+  bounded HTTP answers, a rabbit that goes back to sleep after speaking at
+  night. Stock rabbits keep the hybrid, which they can run.
+- **Keepalive.** A bound rabbit the add-on has said nothing to for 45 s is
+  sent a state query: the new runtime closes a session it has read nothing
+  from for 150 s.
+- **Python 3.13** base image (TLS with a pre-shared key needs it).
+- Proven in the emulator against this add-on, Naboot 1.0.0.3's bootloader
+  and the new runtime (`firmware-arm/emulator/tools/addon-tls-proof.sh`):
+  exchange, confirmation, the signed runtime, `locate.jsp` and XMPP inside
+  TLS 1.3, a sentence spoken, then `bc.jsp` itself inside TLS on the next
+  boot; no processor reset. Left alone seven minutes, the rabbit keeps one
+  session (twice reconnected without the keepalive). Not yet on a real
+  rabbit.
+
 ## 0.16.4
 
 - **An OTA no longer resets the rabbit inside the signature check.** The

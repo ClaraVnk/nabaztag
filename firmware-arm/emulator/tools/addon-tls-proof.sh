@@ -94,7 +94,10 @@ T2=$(date +%s)
 boot 3-tls-boot ${IDLE:+scenarios/vm/addon-idle.txt}
 podman logs --since "@$T2" "$NAME" 2>&1 | grep -a "serving bootcode\|HTTP over TLS\|registered\|TLS\|refused" | sed 's/^/   /' | head -10
 if [ -n "$IDLE" ]; then
-  echo "   keepalive every ${KA}s: $(grep -ac "XMPP connection from .* over TLS" <(podman logs --since "@$T2" "$NAME" 2>&1)) XMPP connection(s) in boot 3"
+  # Boot 3 opens the TLS port three times in its first ten seconds (bc.jsp,
+  # locate.jsp, XMPP); every later open is a session the rabbit gave up on.
+  n=$(grep -a "gw: the rabbit opened .*:$XMPPS\$" "$OUT/vm-3-tls-boot.log" | awk -F'[][ ]+' '$2 > 20000' | wc -l)
+  echo "   keepalive every ${KA}s: $n XMPP reconnection(s) after the boot"
 fi
 podman logs "$NAME" > "$OUT/addon.log" 2>&1
 podman rm -f "$NAME" >/dev/null 2>&1
