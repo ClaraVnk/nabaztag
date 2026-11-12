@@ -61,15 +61,11 @@ required.
 > logged `bootcode file not found` and answered `/vl/bc.jsp` with a 500 — the
 > rabbit booted and sat there silently. If you see that, update the add-on.
 
-**The stock Violet / OpenJabNab bytecodes** are a different matter: they are
-Violet's proprietary firmware, so they are **not** committed here. The add-on
-image fetches them at build time, and you can fetch them the same way if you
-want the original behaviour instead of the hybrid:
-
-```sh
-curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet
-curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.ojn
-```
+**The stock Violet / OpenJabNab bytecodes** are in
+`nabaztag-violet/vendor/openjabnab/` (`bootcode.violet`, `bootcode.ojn`, from
+OpenJabNab's commit 640257f, with their SHA-256), copied into the image as
+`/app/bootcode.violet` and `/app/bootcode.ojn`. Use one of them if you want the
+original behaviour instead of the hybrid.
 
 Verify what you downloaded:
 

@@ -677,9 +677,10 @@ or `POST` the audio bytes directly and the add-on serves them.
   [part 2](https://nabaztag.ovh/doc/v2/InteractionServeurs2.pdf)). The old
   `nabaztag.com/doc` index is gone.
 - [OpenJabNab](https://github.com/OpenJabNab/OpenJabNab) — reference PHP/C++ Violet
-  reimplementation, and where the stock `bootcode.violet` / `bootcode.ojn` are
-  fetched from at add-on build time (they are Violet's proprietary firmware and
-  are not committed here — see `nabaztag-violet/DOCS.md`, *Bytecodes*).
+  reimplementation. Its Violet bootcode sources, from which every runtime here
+  is built, are vendored in `firmware-arm/vendor/openjabnab/`, and the stock
+  `bootcode.violet` / `bootcode.ojn` in `nabaztag-violet/vendor/openjabnab/`, so
+  nothing breaks if that repository disappears.
 - [RedoXyde](https://github.com/RedoXyde) (`mtl_linux`, `nabgcc`) and
   [Pixel166](https://github.com/Pixel166) (`nabAsm`/`nabDasm`) — the open Metal
   firmware toolchain that makes Phase 2 possible.

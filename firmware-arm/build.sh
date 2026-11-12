@@ -55,6 +55,11 @@ echo ">> shipping build context to $REMOTE_HOST:$REMOTE_DIR"
 "${SCP[@]}" "$HERE/Dockerfile" "$HERE/apply-mods.py" "$REMOTE_HOST:$REMOTE_DIR/"
 "${SCP[@]}" -r "$HERE/upstream" "$HERE/crypto" "$HERE/keys" "$HERE/patches" "$HERE/pages" "$HERE/boot-mods" \
   "$REMOTE_HOST:$REMOTE_DIR/"
+# vendor/ too: the Dockerfile builds nabgcc from the vendored copy since
+# 1.1.0.0, and a context without it fails at its COPY. Through tar, not scp:
+# nabgcc keeps symlinks to files its build generates (src/bc.c), which scp
+# refuses to copy while they dangle.
+COPYFILE_DISABLE=1 tar -C "$HERE" -cf - vendor | "${SSH[@]}" "$REMOTE_HOST" "tar -xf - -C $REMOTE_DIR"
 
 echo ">> building image on $REMOTE_HOST ($RUNTIME)"
 # Stream the build log + propagate the build exit code (so a build failure
