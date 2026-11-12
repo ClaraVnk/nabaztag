@@ -362,13 +362,14 @@ flash + recovery procedure and `../docs/BRICK_FORENSICS.md` if anything goes wro
 ## Reproducing it
 
 ```sh
-# on the dev VM (NEVER build on the HA host) — signing happens locally on the Mac
-./build.sh --mode lean --remote <user@dev-vm> --runtime podman
+# on the dev VM (NEVER build on the HA host) — signing happens locally on the
+# Mac, and only with --sign
+./build.sh --mode lean --remote <user@dev-vm> --runtime podman --sign
 ```
 
 ```sh
 # the minimal rescue build, same way
-./build.sh --mode minimal --remote <user@dev-vm> --runtime podman
+./build.sh --mode minimal --remote <user@dev-vm> --runtime podman --sign
 # → bin/minimal/firmware0.0.0.13.signed.sim, copied here as naboot-minimal.signed.sim
 ```
 

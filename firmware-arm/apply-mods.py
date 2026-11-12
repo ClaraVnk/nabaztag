@@ -872,6 +872,54 @@ def patch_crash_report(root: Path) -> None:
     print("[ok]   crash_report: &r=reason.resets.verify.ok.flash.errors in the boot URL")
 
 
+def patch_rfic_report(root: Path) -> None:
+    """Say which radio chip the rabbit has: `&f=<RfIcType>` in the boot URL.
+
+    rt2501usb.c carries register tables and channel code for four RF chips
+    (RF5225, RF5226, RF2528, RF2527), about 1.1 KB, and the Nabaztag:tag's
+    RT2571W module should only ever have the RF2528. Should: the value comes
+    from the dongle's own EEPROM, per rabbit, and a wrong guess is a rabbit
+    with no Wi-Fi. So the fleet says it first (2026-11-12), and the tables
+    go only once every rabbit has.
+
+    No new opcode: crash_report's resetInfo already builds a string for
+    boot_url, so it ends with `&f=<n>` too, and the warren reads it as one
+    more parameter (terrier: kept out of the boot marks, it is hardware,
+    not the image). Requires crash_report.
+    """
+    q = root / "src/usb/rt2501usb.c"
+    t, nl = read_flat(q)
+    if "rt2501_rfic(void)" not in t:
+        a = "static EEPROM_ANTENNA_STRUC rt2501_Antenna;\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: rt2501_Antenna is not declared where rfic_report expects")
+        t = t.replace(a, a + "/* rfic_report (apply-mods.py): the RF chip, for the boot URL. */\n"
+                         "uint8_t rt2501_rfic(void) { return rt2501_Antenna.field.RfIcType; }\n", 1)
+        write_flat(q, t, nl)
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "rt2501_rfic" in t:
+        print(f"[skip] {q}: the boot URL already says the RF chip")
+        return
+    a = "  return n;\n}\n"
+    i = t.find("static int nab_crash_report(char *out)")
+    j = t.find(a, i)
+    if i < 0 or j < 0:
+        sys.exit(f"FAIL {q}: rfic_report needs crash_report first")
+    t = t[:j] + ("  {\n    /* rfic_report: &f=<RfIcType>, decimal */\n"
+                 "    extern uint8_t rt2501_rfic(void);\n"
+                 "    uint32_t f = rt2501_rfic();\n"
+                 "    out[n++] = '&'; out[n++] = 'f'; out[n++] = '=';\n"
+                 "    if (f >= 100) out[n++] = (char)('0' + f / 100);\n"
+                 "    if (f >= 10) out[n++] = (char)('0' + f / 10 % 10);\n"
+                 "    out[n++] = (char)('0' + f % 10);\n  }\n") + t[j:]
+    if t.count("char out[6 * 11];") != 1:
+        sys.exit(f"FAIL {q}: resetInfo's buffer is not where rfic_report expects it")
+    t = t.replace("char out[6 * 11];", "char out[6 * 11 + 8];   /* + &f=255 */", 1)
+    q.write_text(t)
+    print("[ok]   rfic_report: &f=<RF chip> after the reset report in the boot URL")
+
+
 def strip_tweetnacl(root: Path) -> None:
     """Remove the TweetNaCl entry points we don't use (everything that isn't
     crypto_sign_open or its hash dependency). The orphaned static helpers
@@ -8472,11 +8520,11 @@ def patch_ccmp_replay_enforce(root: Path) -> None:
     in ieee80211_input_data, the AP's own retransmissions included (they
     are duplicates). The counters keep counting, and now count refusals.
 
-    To be added to a mode only after a rabbit's telemetry has shown, with
-    ccmp_replay_count alone, N rising, p0/0/0 and V rising: if the RXD
-    words are not the packet number this would drop every frame after the
-    first and the rabbit would be deaf. Proven in the emulator only
-    (scenarios/ccmp-replay-enforce.txt).
+    Shown on Nabazprout on 2026-11-12 with ccmp_replay_count alone: N rose
+    to 37,573, p0/0/41, V rising. Should a rabbit's words not be the packet
+    number after all, the probation below keeps it from going deaf: more
+    than half of its first 256 protected frames flagged and that boot only
+    counts. Proven in the emulator (scenarios/ccmp-replay-enforce.txt).
     """
     q = root / "src/net/ieee80211.c"
     t, nl = read_flat(q)
@@ -8488,8 +8536,36 @@ def patch_ccmp_replay_enforce(root: Path) -> None:
         sys.exit(f"FAIL {q}: ccmp_replay_enforce needs ccmp_replay_count first")
     t = t.replace(a, "/* ccmp_replay_enforce: refuse what ccmp_replay_count counts. */\n"
                      "#define IEEE80211_CCMP_REPLAY_ENFORCE 1\n\n" + a, 1)
+    # The guard (2026-11-12). Nabazprout's day of telemetry (37,573 frames,
+    # p0/0/41 on a UniFi AP) says the RXD words are the packet number; one
+    # rabbit and one AP is not every rabbit. So the verdict is the rabbit's
+    # own: over the first 256 protected frames after boot, a misread would
+    # flag nearly every frame, a real link nearly none. More than half
+    # flagged and this boot only counts, as 1.1.0.0 did, instead of going
+    # deaf; otherwise it refuses, and the verdict holds until the next boot
+    # -- a replay flood later cannot talk it back into counting.
+    s_at = "static int32_t ieee80211_ccmp_stale(const struct ieee80211_frame *h)\n"
+    if t.count(s_at) != 1:
+        sys.exit(f"FAIL {q}: ccmp_replay_enforce needs ieee80211_ccmp_stale")
+    t = t.replace(s_at, (
+        "/* ccmp_replay_enforce: 0 on probation (refusing), 1 refusing,\n"
+        "   -1 counting only for this boot (apply-mods.py). */\n"
+        "static int8_t ieee80211_ccmp_verdict;\n"
+        "static int32_t ieee80211_ccmp_enforcing(void)\n"
+        "{\n"
+        "\tif(!ieee80211_ccmp_verdict && ieee80211_ccmp_seen >= 256)\n"
+        "\t\tieee80211_ccmp_verdict = 2 * ((uint32_t)ieee80211_ccmp_replay_uc\n"
+        "\t\t\t+ ieee80211_ccmp_replay_gr) > ieee80211_ccmp_seen ? -1 : 1;\n"
+        "\treturn ieee80211_ccmp_verdict >= 0;\n"
+        "}\n\n") + s_at, 1)
+    r_at = "#ifdef IEEE80211_CCMP_REPLAY_ENFORCE\n\t\t\treturn;\n#endif\n"
+    if t.count(r_at) != 1:
+        sys.exit(f"FAIL {q}: the refusal is not where ccmp_replay_enforce expects it")
+    t = t.replace(r_at, "#ifdef IEEE80211_CCMP_REPLAY_ENFORCE\n"
+                        "\t\t\tif(ieee80211_ccmp_enforcing()) return;\n#endif\n", 1)
     write_flat(q, t, nl)
-    print(f"[ok]   {q}: CCMP frames with a stale packet number are refused")
+    print(f"[ok]   {q}: CCMP frames with a stale packet number are refused "
+          f"(after a 256-frame probation that can fall back to counting)")
 
 
 def patch_mixed_gtk(root: Path) -> None:
@@ -8680,7 +8756,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -8811,6 +8887,10 @@ def main() -> int:
         # counted (not yet refused). The same steps as lean-reclaim, under
         # the number the boot URL carries.
         "naboot-1.1.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,dcc_telemetry,ccmp_replay_count,linker_keep,gc_sections",
+        # 1.1.0.0 without the DCC telemetry (Nabazprout's anti-replay day is
+        # read: 37,573 frames, p0/0/41), refusing CCMP replays behind the
+        # probation guard, and saying its RF chip (rfic_report).
+        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -9113,6 +9193,7 @@ def main() -> int:
         "http_cap": patch_http_cap,
         "ccmp_replay_count": patch_ccmp_replay_count,
         "ccmp_replay_enforce": patch_ccmp_replay_enforce,
+        "rfic_report": patch_rfic_report,
         "opt_size": patch_opt_size,
     }
     for step in steps:

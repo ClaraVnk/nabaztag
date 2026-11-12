@@ -9,6 +9,7 @@
 #
 # Usage (--remote is REQUIRED — there is deliberately no default):
 #   ./build.sh --mode lean    --remote user@dev-vm --runtime podman   # the shipped stable
+#   add --sign to sign it with the local key (only for an image to ship)
 #   ./build.sh --mode minimal --remote user@dev-vm --runtime podman   # rescue / parachute
 #   ./build.sh --mode signed-stock … / --mode pages-only …           # bisection builds
 #
@@ -19,8 +20,10 @@ set -euo pipefail
 REMOTE=""
 MODE="full"
 RUNTIME="docker"
+SIGN=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --sign)    SIGN=1;       shift ;;
     --remote)  REMOTE="$2";  shift 2 ;;
     --mode)    MODE="$2";    shift 2 ;;
     --runtime) RUNTIME="$2"; shift 2 ;;
@@ -93,10 +96,14 @@ if ! "${SSH[@]}" "$REMOTE_HOST" "$RUNTIME run --rm $TAG" | tar -xv -C "$OUTDIR/"
 fi
 
 # Sign locally on the Mac (private key lives at ~/.nabaztag/signing_key.bin
-# and never leaves this machine). Skip silently if the key isn't present yet.
+# and never leaves this machine), and only when asked: --sign. A signed image
+# is one a rabbit will install; on 2026-11-12 a test build came out signed
+# because the key happened to be there. Without --sign, unsigned only.
 # We sign into both the mode-scoped path AND a top-level self-identifying
 # name (naboot-<mode>.signed.sim) so any file is recognizable out of context.
-if [ -f "$HOME/.nabaztag/signing_key.bin" ]; then
+if [ -z "$SIGN" ]; then
+  echo ">> not signed (no --sign): bin/$MODE/ holds the UNSIGNED .sim only"
+elif [ -f "$HOME/.nabaztag/signing_key.bin" ]; then
   echo ">> signing .sim with local Ed25519 key"
   python3 "$HERE/signing/sign_sim.py" "$OUTDIR/firmware0.0.0.13.sim" \
     -o "$OUTDIR/firmware0.0.0.13.signed.sim"
