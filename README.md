@@ -207,10 +207,9 @@ The plain port stays for every other rabbit.
 > on **WPA3**, that you run 1.0.0.2 if the access point is set to
 > H2E-only (hash-to-element; beta) — 1.0.0.0 only does SAE *hunting-and-pecking*;
 > WPA3-only and WPA2/WPA3 transition both work; and that the rabbit can resolve
-> `terrier.cyberloutre.fr` (it needs working DNS). Want
-> to go back to the stock bootloader meanwhile? Flash
-> **[`firmware-arm/releases/naboot-minimal.signed.sim`](firmware-arm/releases/)**
-> the same way — it is the rescue build (`RECOVERY.md`).
+> `terrier.cyberloutre.fr` (it needs working DNS). A rabbit that misbehaves
+> after a flash is flashed again from its own setup page, with the release
+> itself; [`RECOVERY.md`](firmware-arm/docs/RECOVERY.md) covers the rest.
 
 > The custom firmware is **optional**: a stock rabbit works fine on the
 > [Home Assistant add-on](#the-home-assistant-add-on-legacy) (nothing flashed).
