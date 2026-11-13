@@ -10,6 +10,7 @@ landed.
 """
 
 import argparse
+import datetime
 import os
 import re
 import sys
@@ -8466,6 +8467,206 @@ def patch_http_cap(root: Path) -> None:
     print(f"[ok]   {q}: HTTP_NORMAL answers counted, dropped past 160 KB")
 
 
+def _der(b: bytes, i: int) -> tuple[int, int, int]:
+    """Tag, start of the contents, end of the contents of the TLV at i."""
+    tag, n = b[i], b[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7F
+        n = int.from_bytes(b[i:i + k], "big")
+        i += k
+    return tag, i, i + n
+
+
+def boot_anchor(der: bytes) -> dict[str, bytes]:
+    """The spans nab_tls matches an anchor on, as nab_x509_parse cuts them:
+    the subject Name's contents, the SPKI algorithm OID, its curve OID (or
+    nothing) and the BIT STRING's contents past the unused-bits byte."""
+    _, a, _ = _der(der, 0)                       # Certificate
+    _, p, e = _der(der, a)                       # tbsCertificate
+    if der[p] == 0xA0:                           # version
+        p = _der(der, p)[2]
+    for _ in range(4):                           # serial, signature, issuer, validity
+        p = _der(der, p)[2]
+    t, sp, se = _der(der, p)                     # subject
+    assert t == 0x30
+    out = {"subject": der[sp:se]}
+    t, kp, _ = _der(der, se)                     # SubjectPublicKeyInfo
+    t, ap, ae = _der(der, kp)                    # AlgorithmIdentifier
+    t, op, oe = _der(der, ap)
+    out["alg"] = der[op:oe]
+    out["param"] = b""
+    if oe < ae and der[oe] == 0x06:
+        t, qp, qe = _der(der, oe)
+        out["param"] = der[qp:qe]
+    t, bp, be = _der(der, ae)
+    assert t == 0x03 and der[bp] == 0
+    out["key"] = der[bp + 1:be]
+    return out
+
+
+def patch_boot_https(root: Path) -> None:
+    """kx.jsp and bc.jsp over HTTPS for the pinned warren: boot-mods/boot_https.mtl.
+
+    The last thing a rabbit sent in the clear was its first boot: kx.jsp and,
+    until the owner confirms the colours, bc.jsp (2026-11-13). For one host,
+    NAB_BOOT_HTTPS_HOST (terrier.cyberloutre.fr), httprequest goes to port
+    443 through nab_tls's session 1, anchored on the root built in from
+    NAB_BOOT_ANCHOR (keys/boot_anchor.der, ISRG Root X2: name and key, about
+    180 bytes). No fallback for that host; every other host as before.
+
+    The certificates must not have expired before the build date
+    (NAB_BOOT_FLOOR, "YYYYMMDDHHMM", the build's UTC minute by default): the
+    bootloader has no clock. The emulator proof builds with its own test
+    root and host, since nobody but Let's Encrypt can sign under X2.
+
+    Requires tls_certs (the https* opcodes, nab_https_vm.c) and http_cap
+    (runs after it: the Httpreq type it rewrites).
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "bhttps_event" in t:
+        print(f"[skip] {q}: the pinned warren is already fetched over HTTPS")
+        return
+    if not (root / "src/net/nab_https_vm.c").exists():
+        sys.exit(f"FAIL {q}: tls_certs must run first")
+    host = os.environ.get("NAB_BOOT_HTTPS_HOST") or "terrier.cyberloutre.fr"
+    floor = os.environ.get("NAB_BOOT_FLOOR") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M")
+    if not re.fullmatch(r"[a-z0-9.-]{1,63}", host) or not re.fullmatch(r"20\d{10}", floor):
+        sys.exit(f"FAIL {q}: NAB_BOOT_HTTPS_HOST {host!r} or NAB_BOOT_FLOOR {floor!r} malformed")
+    here = Path(__file__).resolve().parent
+    der_path = Path(os.environ.get("NAB_BOOT_ANCHOR") or "")
+    for cand in ((der_path,) if der_path.name else ()) + (root.parent / "keys/boot_anchor.der", here / "keys/boot_anchor.der"):
+        if cand.is_file():
+            der_path = cand
+            break
+    else:
+        sys.exit(f"FAIL {q}: no boot anchor (NAB_BOOT_ANCHOR, keys/boot_anchor.der)")
+    a = boot_anchor(der_path.read_bytes())
+    lines = ["/* boot_https (apply-mods.py): from " + der_path.name + ". Generated. */"]
+    for k in ("subject", "alg", "param", "key"):
+        v = a[k] or b"\0"   # an empty curve OID: one byte nobody reads (param_len 0 below)
+        lines.append(f"static const uint8_t nab_boot_anchor_{k}[{len(v)}] = {{" + ",".join(f"0x{x:02x}" for x in v) + "};")
+    lines.append(f"#define NAB_BOOT_ANCHOR_PARAM_LEN {len(a['param'])}")
+    h = "\n".join(lines) + "\n"
+    (root / "inc/net/nab_boot_anchor.h").write_text(h)
+    vm = root / "src/net/nab_https_vm.c"
+    v = vm.read_text()
+    if "#define NAB_BOOT_ANCHOR 1" not in v:
+        vm.write_text("#define NAB_BOOT_ANCHOR 1\n" + v)
+
+    if "HTTP_MAX_NORMAL" not in t:
+        if os.environ.get("NAB_SIM"):
+            # The emulator's VM: only the C side (the anchor) is built here;
+            # its bootloader bytecode comes from the image under test.
+            print(f"[ok]   boot_https: anchor {der_path.name} built in (VM, no bootloader)")
+            return
+        sys.exit(f"FAIL {q}: http_cap must run first")
+    body = (here / "boot-mods" / "boot_https.mtl").read_text()
+    body = (f'const BOOT_HTTPS_HOST="{host}";;\n'
+            f'const BOOT_HTTPS_FLOOR=">{floor}.";;\n' + body)
+    for old, new, what in (
+        ("type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH];;\n",
+         "type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH tlsH];;\n",
+         "Httpreq type"),
+        ("fun httpsendreq ip x=\n", body + "\nfun httpsendreq ip x=\n", "httpsendreq"),
+        ("\t\tset httpreq.cnxH=opentcp netip nil useparamip ip port fixarg4 #tcpevent httpreq;\n",
+         "\t\tset httpreq.cnxH=if port==BOOT_HTTPS_PORT then opentcp netip nil useparamip ip port fixarg4 #bhttps_event httpreq\t// boot_https\n"
+         "\t\t\telse opentcp netip nil useparamip ip port fixarg4 #tcpevent httpreq;\n",
+         "the plain open"),
+        ("\tlet cuturl url ->[host port path] in",
+         "\tlet cuturl url ->[host port path] in\n"
+         "\tlet if port==80 && !strcmp host BOOT_HTTPS_HOST then BOOT_HTTPS_PORT else port -> port in\t// boot_https",
+         "httprequest's cuturl"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: {host} over HTTPS, anchor {der_path.name} ({sum(map(len, a.values()))} B), floor {floor}")
+
+
+def patch_owner_unlock(root: Path) -> None:
+    """The owner can always leave: an unsigned image, by physical presence.
+
+    Since flash_verify, OPflashFirmware writes only an image signed with our
+    key, and the config page refuses anything else: a rabbit on Naboot could
+    not go back to Violet's firmware, nor to anyone else's, nor survive the
+    day we stop signing -- short of JTAG (Clara, 2026-11-13). Locking an
+    owner in is not what the signature is for: it is there against a remote
+    takeover, through the network or a warren.
+
+    So the gate also opens, in C, for a rabbit that was started with its head
+    button held (config mode: only the signed bootloader runs, no runtime
+    bytecode) AND whose button is held again at the moment of the write. Both
+    are read on the pin (push_button_value); no bytecode and no server can
+    press it. The second press is the owner's "yes": a neighbour on the open
+    config network cannot slip an image in on their own. The image must
+    still look like a firmware (nab_fw_plausible). The config page hands any
+    image that fails the signature to the flash anyway, and shows the error
+    page when the gate says no, as before.
+    """
+    m = root / "src/main.c"
+    t, nl = read_flat(m)
+    if "nab_boot_button" not in t:
+        a = "  init_io();\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {m}: init_io() not found once")
+        t = t.replace(a, a + "  /* owner_unlock: the head button at power-on, read once (apply-mods.py) */\n"
+                             "  { extern uint8_t push_button_value(void); nab_boot_button = push_button_value(); }\n", 1)
+        a = "int main(void)\n{\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {m}: main() not found once")
+        t = t.replace(a, "uint8_t nab_boot_button;   /* owner_unlock */\n" + a, 1)
+        write_flat(m, t, nl)
+    q = root / "src/vm/vinterp.c"
+    t, nl = read_flat(q)
+    if "nab_boot_button" in t:
+        print(f"[skip] {q}: the owner can already flash an unsigned image")
+        return
+    a = "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: the signed-image guard is not there once")
+    t = t.replace(a, "              &&(nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+                     "                 ||(nab_boot_button&&push_button_value()))   /* owner_unlock */\n", 1)
+    t = t.replace("#include <string.h>\n", "#include <string.h>\nextern uint8_t nab_boot_button;\n"
+                  "extern uint8_t push_button_value(void);\n", 1)
+    write_flat(q, t, nl)
+
+    b = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(b)
+    old = ("\tif firm!=nil then\n"
+           "\tif sig!=nil then\n"
+           "\tif (verifySig firm sig)!=0 then\n"
+           "\t(\n"
+           "\t\tnil;\n"
+           "\t\tsetleds 0xffffff;\n")
+    new = ("\tif firm==nil then (setleds 0xff; page_error)\n"
+           "\telse\n"
+           "\t(\n"
+           "\t\t// owner_unlock: an image without a valid signature goes to the\n"
+           "\t\t// flash too; the C gate takes it only from the owner's hand.\n"
+           "\t\tif (if sig==nil then 0 else verifySig firm sig)!=0 then setleds 0xffffff else setleds 0xff8000;\n")
+    tail_old = ("\t\tpage_error\n"
+                "\t)\n"
+                "\telse\n"
+                "\t(\n"
+                "\t\tnil;\n"
+                "\t\tsetleds 0xff;\n"
+                "\t\tpage_error\n"
+                "\t);;\n")
+    if "verifySig firm sig" not in t:
+        # The emulator's VM is built without the bootloader step: its
+        # bootloader bytecode comes from the image under test (bootbc.py).
+        print(f"[ok]   {q}: the gate opens for the owner; {b.name} has no signed httpflash here")
+        return
+    if t.count(old) != 1 or t.count(tail_old) != 1:
+        sys.exit(f"FAIL {b}: httpflash is not the shape owner_unlock expects")
+    t = t.replace(old, new, 1).replace(tail_old, "\t\tpage_error\n\t);;\n", 1)
+    write_flat(b, t, nl)
+    print(f"[ok]   {q}: an unsigned image flashes with the head button held at power-on and now")
+
+
 def patch_ccmp_replay_count(root: Path) -> None:
     """Count the CCMP frames a replay check would refuse. Refuses nothing.
 
@@ -9042,10 +9243,10 @@ def main() -> int:
         # 1.1.0.0 without the DCC telemetry (Nabazprout's anti-replay day is
         # read: 37,573 frames, p0/0/41), refusing CCMP replays behind the
         # probation guard, and saying its RF chip (rfic_report).
-        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
                 # 1.2.0.0 with the live JTAG telemetry back (DCC, jtag/listen.sh): the
                 # diagnostic build to flash on a rabbit that misbehaves (Clara, 2026-11-13).
-                "naboot-1.2.0.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+                "naboot-1.2.0.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
@@ -9349,6 +9550,8 @@ def main() -> int:
         "prune_dead_funs": patch_prune_dead_funs,
         "small_strings": patch_small_strings,
         "http_cap": patch_http_cap,
+        "boot_https": patch_boot_https,
+        "owner_unlock": patch_owner_unlock,
         "ccmp_replay_count": patch_ccmp_replay_count,
         "ccmp_replay_enforce": patch_ccmp_replay_enforce,
         "rfic_report": patch_rfic_report,

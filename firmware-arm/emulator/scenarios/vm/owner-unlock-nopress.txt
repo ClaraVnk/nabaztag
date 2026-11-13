@@ -1,0 +1,22 @@
+# bytecode: bootloader
+#
+# owner_unlock (apply-mods.py): an image without our signature, uploaded
+# through the config page, is written only if the head button was held at
+# power-on (config mode) AND is held again when the write starts. Here the
+# second press never comes: the upload must end on the error page, with no
+# write (owner-unlock.txt is the same upload with the button held).
+#
+#   SCENARIO=scenarios/vm/owner-unlock.txt STEPS=<run.sh's>,owner_unlock \
+#     tools/config-upload.sh ../bin/naboot-1.2.0.0/Nab.elf ../bin/naboot-1.2.0.0/firmware0.0.0.13.sim
+#
+# Pass: "the rabbit asked to flash itself" once. The same .sim with
+# owner-unlock-nopress.txt: never, and the error page.
+
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 240000
+
+
+at 7000   upload
+

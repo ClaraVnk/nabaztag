@@ -66,6 +66,12 @@ void gw_set_xmpp_port(uint16_t port) { gw_xmpp_port = port; }
 static uint16_t gw_port80_to;
 void gw_set_port80(uint16_t port) { gw_port80_to = port; }
 
+/* Where a connection to port 443 goes instead, 0 for port 443: Naboot
+ * 1.2.0.0 fetches kx.jsp and bc.jsp from its pinned warren over HTTPS
+ * (boot_https), and an unprivileged proof cannot listen on 443. */
+static uint16_t gw_port443_to;
+void gw_set_port443(uint16_t port) { gw_port443_to = port; }
+
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
  * reach its warren", and exactly what you want when the answer is no. */
@@ -590,6 +596,7 @@ static int host_connect(uint16_t port)
 
   if(warren_host[0] == 0) return -1;
   if(port == 80 && gw_port80_to) port = gw_port80_to;
+  else if(port == 443 && gw_port443_to) port = gw_port443_to;
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_INET;

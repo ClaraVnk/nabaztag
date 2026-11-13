@@ -79,14 +79,17 @@ RUN cd /build/nabgcc \
 # rewrite vinterp.c with one line ending, and a diff taken against the
 # original no longer applies to the rewritten file.
 COPY firmware-arm/apply-mods.py /build/apply-mods.py
-RUN NAB_SIM=1 python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
+# boot_https builds its anchor from keys/ (the proof's own root, for
+# tools/boot-https-proof.sh: BOOT_ANCHOR_FILE=proof_boot_anchor.der).
+COPY firmware-arm/keys               /build/keys
+ARG BOOT_ANCHOR_FILE=boot_anchor.der
+RUN NAB_SIM=1 NAB_BOOT_ANCHOR=/build/keys/$BOOT_ANCHOR_FILE python3 /build/apply-mods.py --steps "$MOD_STEPS" /build/nabgcc
 
 COPY firmware-arm/crypto             /build/crypto
 # The VM target compiles crypto/nab_sig.c, which includes tweetnacl.h, and the
 # public key the verifier is built around. Neither was copied in, so the
 # documented `./run.sh --vm` could not build in a clean container.
 COPY firmware-arm/upstream           /build/upstream
-COPY firmware-arm/keys               /build/keys
 COPY firmware-arm/emulator           /build/emulator
 # The SAE known-answer vectors: the virtual AP checks its own H2E against
 # them before every run (src/vaph2e.c).

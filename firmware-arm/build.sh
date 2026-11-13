@@ -75,7 +75,13 @@ mkdir -p "$HERE/bin"
 # seen rather than assumed. Overridable, for a reproducible rebuild.
 BUILD_MARK="${BUILD_MARK:-$(date -u +%y%m%d%H%M)}"
 echo "   build mark: $BUILD_MARK (the boot URL will carry &z=$BUILD_MARK)"
-if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $RUNTIME build --build-arg MODE=$MODE --build-arg BUILD_MARK=$BUILD_MARK -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
+# boot_https: certificates must not have expired before this minute (the
+# bootloader has no clock). BOOT_ANCHOR / BOOT_HTTPS_HOST override the root
+# and the pinned warren, for the emulator proof only.
+BOOT_ARGS="--build-arg BOOT_FLOOR=${BOOT_FLOOR:-$(date -u +%Y%m%d%H%M)}"
+[ -n "${BOOT_ANCHOR:-}" ] && BOOT_ARGS="$BOOT_ARGS --build-arg BOOT_ANCHOR=$BOOT_ANCHOR"
+[ -n "${BOOT_HTTPS_HOST:-}" ] && BOOT_ARGS="$BOOT_ARGS --build-arg BOOT_HTTPS_HOST=$BOOT_HTTPS_HOST"
+if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $RUNTIME build --build-arg MODE=$MODE --build-arg BUILD_MARK=$BUILD_MARK $BOOT_ARGS -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
   echo "!! $RUNTIME build FAILED on $REMOTE_HOST — last 80 lines:" >&2
   tail -80 "$LOGFILE" >&2
   echo "(full log at $LOGFILE)" >&2

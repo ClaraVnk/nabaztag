@@ -227,6 +227,8 @@ void sim_run_events(void)
   }
 }
 
+uint8_t nab_boot_button;   /* owner_unlock: main.c's, on a rabbit */
+
 int main(int argc, char **argv)
 {
   const char *scenario = NULL;
@@ -250,6 +252,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
+    else if(!strcmp(argv[i], "--port443") && i + 1 < argc) gw_set_port443((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
     else if(!strcmp(argv[i], "--flash-out") && i + 1 < argc) hw_flash_out(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
@@ -267,6 +270,7 @@ int main(int argc, char **argv)
         "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
         "                bookkeeping and expect-xmpp-opens\n"
         "  --port80      the warren's port that connections to port 80 go to\n"
+        "  --port443     the host port that connections to port 443 go to\n"
         "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
         "                rabbit in config mode (scenario: config-mode, upload)\n"
         "  --flash-out   keep the image the rabbit hands to flashFirmware, as the\n"
@@ -298,6 +302,9 @@ int main(int argc, char **argv)
    * first thing it does, and that one read decides between a station and
    * an access point for the rest of the run. */
   if(sim.config_mode) hw_press(2, 1);
+  /* owner_unlock reads the button once at power-on, as main.c does on a
+   * rabbit: config mode is the first of its two presses. */
+  { extern uint8_t nab_boot_button; nab_boot_button = push_button_value(); }
 
   sim_log("scenario %s, tick %u ms, stop at %u ms",
           scenario ? scenario : "(default)", sim.tick_ms, sim.stop_ms);

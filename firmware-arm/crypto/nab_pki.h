@@ -86,6 +86,8 @@ typedef struct {
 int nab_x509_parse(nab_cert *c, const uint8_t *der, uint32_t len);
 /* now: "YYYYMMDDHHMMSS", UTC, from the warren's clock. */
 int nab_x509_valid_at(const nab_cert *c, const char now[14]);
+/* Not expired before floor ("YYYYMMDDHHMM"); notBefore unchecked. */
+int nab_x509_not_expired(const nab_cert *c, const char floor[12]);
 /* A subjectAltName dNSName equal to host, or "*.rest" covering one label. */
 int nab_x509_names_host(const nab_cert *c, const char *host);
 int nab_x509_issued_by(const nab_cert *child, const nab_cert *parent);

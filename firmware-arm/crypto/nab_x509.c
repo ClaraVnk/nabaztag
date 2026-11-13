@@ -130,6 +130,16 @@ int nab_x509_valid_at(const nab_cert *c, const char now[14])
   return memcmp(a, now, 14) <= 0 && memcmp(now, b, 14) <= 0;
 }
 
+/* Not expired before `floor` ("YYYYMMDDHHMM"); the start is not checked.
+   For the bootloader, which has no clock yet: the floor is the firmware's
+   build date, so a certificate issued after the build still passes. */
+int nab_x509_not_expired(const nab_cert *c, const char floor[12])
+{
+  char b[14];
+  if (when(&c->not_after, b)) return 0;
+  return memcmp(floor, b, 12) <= 0;
+}
+
 static int same_host(const uint8_t *a, uint32_t n, const char *b)
 {
   for (uint32_t i = 0; i < n; i++) {

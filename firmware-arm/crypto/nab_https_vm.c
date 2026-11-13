@@ -16,6 +16,11 @@
 
 #include "net/nab_tls.h"
 #include "net/nab_pki.h"
+#ifdef NAB_BOOT_ANCHOR
+/* boot_https (apply-mods.py): the one root the bootloader trusts for its
+   warren, built in -- ISRG Root X2 for Le Terrier. Name and key only. */
+#include "net/nab_boot_anchor.h"
+#endif
 
 extern void ieee80211_rng_bytes(uint8_t *out, uint32_t len);
 
@@ -39,10 +44,19 @@ int nab_https_vm_start(const uint8_t *host, uint32_t hostlen, const uint8_t *now
   uint8_t rnd[32], secret[32];
   uint32_t p = 0, n = 0;
   int r;
-  if (!hostlen || hostlen >= sizeof h || nowlen != 14 || !derlen || derlen > ROOTS_MAX) return 0;
+  if (!hostlen || hostlen >= sizeof h || nowlen != 14 || derlen > ROOTS_MAX) return 0;
   memcpy(h, host, hostlen); h[hostlen] = 0;
   memcpy(t, now, 14);
-  memcpy(roots, der, derlen);
+#ifdef NAB_BOOT_ANCHOR
+  if (derlen < 4) {                /* no root could be this short: the built-in one */
+    anchors[0].subject = nab_boot_anchor_subject; anchors[0].subject_len = sizeof nab_boot_anchor_subject;
+    anchors[0].alg = nab_boot_anchor_alg;         anchors[0].alg_len = sizeof nab_boot_anchor_alg;
+    anchors[0].param = nab_boot_anchor_param;     anchors[0].param_len = NAB_BOOT_ANCHOR_PARAM_LEN;
+    anchors[0].key = nab_boot_anchor_key;         anchors[0].key_len = sizeof nab_boot_anchor_key;
+    n = 1;
+  }
+#endif
+  if (derlen >= 4) memcpy(roots, der, derlen);
   while (p + 4 <= derlen && n < ANCHORS_MAX) {      /* SEQUENCE, 2-byte length */
     uint32_t len = roots[p + 1] == 0x82 ? 4u + (((uint32_t)roots[p + 2] << 8) | roots[p + 3])
                  : roots[p + 1] == 0x81 ? 3u + roots[p + 2] : 0;

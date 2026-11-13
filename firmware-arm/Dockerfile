@@ -58,6 +58,13 @@ COPY crypto/p256.c crypto/p256.h crypto/sha256.c crypto/sha256.h \
      crypto/nab_https_vm.c \
      /build/sae-crypto/
 COPY keys/signing_pubkey.h          /build/nabgcc/inc/signing_pubkey.h
+# boot_https: the root the bootloader trusts for its warren (ISRG Root X2),
+# and the warren. The emulator proof passes its own test root and host.
+ARG BOOT_ANCHOR=keys/boot_anchor.der
+COPY ${BOOT_ANCHOR}                 /build/keys/boot_anchor.der
+ARG BOOT_HTTPS_HOST=
+ARG BOOT_FLOOR=
+ENV NAB_BOOT_HTTPS_HOST=$BOOT_HTTPS_HOST NAB_BOOT_FLOOR=$BOOT_FLOOR
 
 # Apply our source modifications (idempotent, prints what landed).
 COPY apply-mods.py /build/apply-mods.py

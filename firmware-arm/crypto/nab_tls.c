@@ -577,7 +577,10 @@ static int on_certificate(const uint8_t *m, uint32_t n)
   if (!k) return fail(A_DECODE_ERROR);
   if (!nab_x509_names_host(&CHAIN[0], T.host)) return fail(42);
   for (uint32_t i = 0; i < k; i++) {
-    if (!nab_x509_valid_at(&CHAIN[i], T.now)) return fail(45);  /* certificate_expired */
+    /* now ">YYYYMMDDHHMM.": the bootloader, before any clock -- not expired
+       before the build date (boot-mods/boot_https.mtl). */
+    if (!(T.now[0] == '>' ? nab_x509_not_expired(&CHAIN[i], T.now + 1)
+                          : nab_x509_valid_at(&CHAIN[i], T.now))) return fail(45);  /* certificate_expired */
     if (anchored(&CHAIN[i])) break;
     if (i + 1 == k || !CHAIN[i + 1].ca || !nab_x509_issued_by(&CHAIN[i], &CHAIN[i + 1])
         || !signed_by(&CHAIN[i], &CHAIN[i + 1].key_alg, &CHAIN[i + 1].key_param,

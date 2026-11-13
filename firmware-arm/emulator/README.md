@@ -732,6 +732,32 @@ gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
 way, as the runtime OTA's hex path does for images of 117 KB and up. The
 config page does not: see the scenario's header for the figures.
 
+## Naboot 1.2.0.0's first boot over HTTPS
+
+`boot_https` sends kx.jsp and bc.jsp to the pinned warren on port 443, the
+chain anchored on the root built into the firmware, with no fallback to 80.
+`tools/boot-https-proof.sh` proves it against a real Terrier behind a real
+Caddy, with the proof's own root (nobody but Let's Encrypt signs under X2):
+`chain` makes the PKI and `keys/proof_boot_anchor.der`, the firmware and this
+emulator are built with that anchor (the script's header has the commands),
+`run` boots a new rabbit against the right chain and then a rogue one.
+`--port443` sends the rabbit's connections to port 443 to the proxy's port.
+
+Measured 2026-11-13: right chain, kx.jsp and bc.jsp (113,606 bytes) through
+Caddy over TLS, key agreed; rogue chain (same names, other keys), 13 tries on
+443, every one refused, 0 requests in the clear. The VM must compile the
+tree's `nab_https_vm.c` (the Makefile does): `../crypto`'s has no anchor,
+and the first three runs refused every boot for that reason alone.
+
+## The owner's way out
+
+`owner_unlock`: an image without our signature is written only if the head
+button was held at power-on (config mode) and is held again when the write
+starts. `scenarios/vm/owner-unlock.txt` and `owner-unlock-nopress.txt`, via
+`tools/config-upload.sh` with `STEPS=<run.sh's>,owner_unlock`. Measured
+2026-11-13 on naboot-1.2.0.0's bootloader: unsigned + button held, written;
+unsigned, no second press, refused; signed 1.0.0.3, no press, written.
+
 ## The flash itself, and a power cut in the middle of it
 
 `./rabbit-vm` stops where the image is handed to `flash_uc`: the writer is

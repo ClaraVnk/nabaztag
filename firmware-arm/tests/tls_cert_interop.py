@@ -95,6 +95,14 @@ def main():
         run(a.client, d, [lec, iec], le, CH, "evil.example.test", NOW, R, False, "another host name is refused"),
         run(a.client, d, [lec, iec], le, CH, "podcast.example.test", "20270301000000", R, False, "an expired certificate is refused"),
         run(a.client, d, [lec, iec], le, CH, "podcast.example.test", NOW, O, False, "a root it does not trust is refused"),
+        # The bootloader has no clock: ">" + the build minute + "." means "not
+        # expired before the build", the start unchecked (boot_https).
+        run(a.client, d, [lec, iec], le, CH, "podcast.example.test", ">202611131200.", R, True,
+            "boot: in date at the build"),
+        run(a.client, d, [lec, iec], le, CH, "podcast.example.test", ">202001010000.", R, True,
+            "boot: a certificate issued after the build passes"),
+        run(a.client, d, [lec, iec], le, CH, "podcast.example.test", ">202703010000.", R, False,
+            "boot: expired before the build is refused"),
         run(a.client, d, [lec], le, CH, "podcast.example.test", NOW, R, False, "a chain without its intermediate is refused"),
     ]
     sys.exit(0 if all(results) else 1)
