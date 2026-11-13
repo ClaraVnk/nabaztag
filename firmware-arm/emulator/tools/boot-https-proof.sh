@@ -17,7 +17,8 @@
 #   3. tools/boot-https-proof.sh run <dir> --terrier <image> --bytecode <runtime.hybrid> \
 #        --emulator <image> --elf ../bin/naboot-1.2.0.0/Nab.elf
 #
-# run boots a rabbit out of the box twice: against the right chain (the key
+# run boots a rabbit out of the box twice, then the first one again: against
+# the right chain (the key
 # exchange and the bytecode must come through Caddy over TLS), then against
 # the rogue chain (the rabbit must refuse it AND never ask the warren in the
 # clear: the Terrier must see no kx.jsp at all).
@@ -150,6 +151,21 @@ podman logs "$NAME-caddy" > "$OUT/caddy-rogue.log" 2>&1
 echo "   caddy (TLS) with the rogue chain: $(grep -aci 'handshake error\|alert' "$OUT/caddy-rogue.log") handshake failure(s), $(grep -ac 'kx.jsp' "$OUT/caddy-rogue.log") kx.jsp served"
 echo "   terrier: kx.jsp requests during the rogue boot: $(( $(kx) - BEFORE ))  (must be 0: no fallback to http)"
 echo "   rabbit opened: $(grep -ao 'gw: the rabbit opened [^ ]* -> [^ ]*' "$OUT/vm-2-rogue.log" | sed 's/.*-> //' | sort | uniq -c | tr '\n' ' ')"
+
+# Boot 3: the first rabbit again, now holding a pending key. A release skips
+# the exchange; a kx_probe test image runs it anyway, takes the warren's 409
+# and keeps its own key (2026-11-13, Bunny).
+caddy good
+boot 3-again fresh-good
+podman logs "$NAME-caddy" > "$OUT/caddy-again.log" 2>&1
+echo "   boot 3, the same rabbit with its key: $(grep -ac 'kx.jsp' "$OUT/caddy-again.log") kx.jsp, $(grep -ac 'bc.jsp' "$OUT/caddy-again.log") bc.jsp"
+# &k= in each boot's bc.jsp: how the exchange went (kx_probe images only;
+# 5 a key, 4 not a key (409), 3 connection/TLS failed, 2 no answer in time,
+# 1 no entropy, 0 never ran).
+for l in good rogue again; do
+  echo "   &k= in bc.jsp, $l: $(grep -ao 'bc.jsp?[^ "]*' "$OUT/caddy-$l.log" | grep -ao '&k=[0-9]*' | tr '\n' ' ')"
+done
+echo "   terrier: $(podman logs "$NAME" 2>&1 | grep -ac 'already has a') exchange(s) refused for a rabbit with a key"
 
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 podman rm -f "$NAME" "$NAME-caddy" >/dev/null 2>&1

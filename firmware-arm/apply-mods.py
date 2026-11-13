@@ -8586,6 +8586,78 @@ def patch_boot_https(root: Path) -> None:
     print(f"[ok]   {q}: {host} over HTTPS, anchor {der_path.name} ({sum(map(len, a.values()))} B), floor {floor}")
 
 
+def patch_kx_probe(root: Path) -> None:
+    """A test image only: run the key exchange at every boot, key or not, and
+    say how it went in the boot URL (`&k=<n>`). Never in a release.
+
+    2026-11-13, Bunny: a rabbit flashed straight to 1.2.0.0 never sent kx.jsp
+    over HTTPS on the real ARM7 and stayed without a key, while its bc.jsp
+    over the same TLS went through at every boot. The emulator cannot see why
+    (its clock does not charge the crypto), and the only rabbits on hand have
+    a confirmed key, so they skip the exchange. With this, one of them runs it
+    anyway -- the pool, the X25519, the heap, the first TLS of the boot --
+    and keeps its own key: the answer is never stored (the warren refuses a
+    second key for a confirmed rabbit, 409, and logs kx_contested).
+
+    k: 1 the entropy pool never came (KX_WAIT), 2 no answer in
+    BOOT_HTTPTIMEOUT, 3 the request failed (connection or TLS), 4 an answer
+    that is not a key (the warren's 409), 5 a key. 0: the exchange never ran.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "kxwhy" in t:
+        print(f"[skip] {q}: the key exchange is already probed")
+        return
+    def rep(old: str, new: str, what: str) -> None:
+        nonlocal t
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)} (adoption_boot and boot_marker first)")
+        t = t.replace(old, new, 1)
+    rep("var kxdone;;\n", "var kxdone;;\nvar kxwhy=0;;\n", "kxdone")
+    rep("fun _kxcbhttp httpreq res=\n",
+        "// kx_probe: the key this rabbit already has, used as if the exchange had\n"
+        "// been skipped.\n"
+        "fun kx_keep=\n"
+        "\tlet strget conf CONF_KXFLAG -> f in\n"
+        "\tif f==75 || f==67 then\n"
+        "\t(\n"
+        "\t\tkxUse strsub conf CONF_KXKEY 32;\n"
+        "\t\tif f==75 then set kxshow=time+KX_SHOW;\n"
+        "\t\t0\n"
+        "\t);\n"
+        "\t0;;\n"
+        "fun _kxcbhttp httpreq res=\n", "_kxcbhttp")
+    rep("\tlet kx_unhex httpgetcontent res -> w in\n"
+        "\tlet if w!=nil then kxFinish w -> r in\n"
+        "\tif r!=nil then\n",
+        "\tlet kx_unhex httpgetcontent res -> w in\n"
+        "\tlet strget conf CONF_KXFLAG -> f in\n"
+        "\tlet if w!=nil && f!=75 && f!=67 then kxFinish w -> r in\n"
+        "\t(\n"
+        "\tset kxwhy=if res==nil then 3 else if w==nil then 4 else 5;\n"
+        "\tif f==75 || f==67 then kx_keep;\n"
+        "\tif r!=nil then\n", "kx answer")
+    rep("\tset kxdone=1;\n\t0;;\n\nfun kx_url",
+        "\tset kxdone=1;\n\t0\n\t);;\n\nfun kx_url", "kx answer's end")
+    rep("\tif f==75 || f==67 then\n"
+        "\t(\n"
+        "\t\tkxUse strsub conf CONF_KXKEY 32;\n"
+        "\t\tif f==75 then set kxshow=time+KX_SHOW;\n"
+        "\t\tset kxdone=1;\n"
+        "\t\t0\n"
+        "\t)\n"
+        "\telse if kxhttp==nil then\n",
+        "\tif f==0 && 0 then 0\t// kx_probe: no skipping, even with a key\n"
+        "\telse if kxhttp==nil then\n", "skip on a stored key")
+    rep("\t\t\tif time-kxwait>KX_WAIT then set kxdone=1;\n",
+        "\t\t\tif time-kxwait>KX_WAIT then (set kxwhy=1; kx_keep; set kxdone=1);\n", "pool wait")
+    rep("\t\thttpabort kxhttp;\n\t\tset kxdone=1;\n",
+        "\t\thttpabort kxhttp;\n\t\tset kxwhy=2;\n\t\tkx_keep;\n\t\tset kxdone=1;\n", "kx timeout")
+    rep('::"&s=1"', '::"&s=1"::"&k="::(itoa kxwhy)', "boot_url's &s=1")
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: the key exchange runs at every boot, its outcome in &k= (TEST IMAGE)")
+
+
 def patch_owner_unlock(root: Path) -> None:
     """The owner can always leave: an unsigned image, by physical presence.
 
@@ -9109,7 +9181,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9244,6 +9316,8 @@ def main() -> int:
         # read: 37,573 frames, p0/0/41), refusing CCMP replays behind the
         # probation guard, and saying its RF chip (rfic_report).
         "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+        # A test image (kx_probe), never a release: the key exchange at every boot.
+        "naboot-1.2.0.0-kxprobe": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_probe,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
                 # 1.2.0.0 with the live JTAG telemetry back (DCC, jtag/listen.sh): the
                 # diagnostic build to flash on a rabbit that misbehaves (Clara, 2026-11-13).
                 # Without boot_https: with it the image is 732 bytes over the flash; a
@@ -9554,6 +9628,7 @@ def main() -> int:
         "http_cap": patch_http_cap,
         "boot_https": patch_boot_https,
         "owner_unlock": patch_owner_unlock,
+        "kx_probe": patch_kx_probe,
         "ccmp_replay_count": patch_ccmp_replay_count,
         "ccmp_replay_enforce": patch_ccmp_replay_enforce,
         "rfic_report": patch_rfic_report,
