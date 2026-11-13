@@ -65,29 +65,23 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   relayed), fetches its updates from this repository's releases, boots for
   the very first time over HTTPS (ISRG Root X2 built in), and its owner can
   always flash something else, unsigned, by holding its head down.
-- 🔧 **Custom firmware — Naboot 1.0.0.3** (2026-11-10, every item
-  proven on a real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
+- 🔧 **Under it, everything Naboot already did** (every item proven on a
+  real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
   **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed
   bytecode**, **TLS 1.3** for XMPP and for the boot itself, **binary OTA**
-  pushed from the warren's page with the rabbit restarting by itself, the
-  fixes of a security audit, a crash report in the boot URL, and a modern
-  config UI — in 123 420 of 126 976 bytes of flash.
-- 🧪 **Naboot 1.1.0.0 — beta, at your own risk** (2026-11; proven in the
-  emulator, **not yet on a real rabbit**). The outcome of a line-by-line
-  security review of Violet's 2006 code, RedoXyde's port and ours, each
-  finding reproduced before it was fixed
+  pushed from the warren's page with the rabbit restarting by itself, a crash
+  report in the boot URL, and a modern config UI.
+- 🛡️ **And the fixes of a line-by-line security review** of Violet's 2006
+  code, RedoXyde's port and ours, each finding reproduced before it was fixed
   ([`SECURITY-FINDINGS-2026-11.md`](firmware-arm/docs/SECURITY-FINDINGS-2026-11.md)):
   two out-of-bounds bugs twenty years old in the beacon parser and the USB
   descriptors, the adoption key no longer readable by a bytecode, an OTA that
   only flashes an image whose signature was checked, a flash writer that no
   longer returns into half-written code
-  ([`OTA-ANTIBRICK.md`](firmware-arm/docs/OTA-ANTIBRICK.md)). And 15 KB of
-  flash taken back from dead code: WEP, the factory test mode, the software
-  codecs, pairwise TKIP. The signed image is
-  [`naboot-1.1.0.0-beta.signed.sim`](firmware-arm/releases/naboot-1.1.0.0-beta.signed.sim)
-  (or build it with `--mode naboot-1.1.0.0`). Le Terrier does not offer it:
-  the stable release stays 1.0.0.3. **Ask Clara directly** if you want to try
-  it on a rabbit, with the runtime bytecode that goes with it.
+  ([`OTA-ANTIBRICK.md`](firmware-arm/docs/OTA-ANTIBRICK.md)). 15 KB of flash
+  were taken back from dead code (WEP, the factory test mode, the software
+  codecs, pairwise TKIP) to make room for HTTPS. First tried as the
+  1.1.0.0 beta, now in the release.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server. Violet's
   services with the 2006 voices (clock, weather, alarm, Ztamps, rabbits in
@@ -295,7 +289,7 @@ The long, dated story of every phase — what was tried, what broke, what was
 measured — lives in **[`docs/HISTORY.md`](docs/HISTORY.md)**, unabridged. This
 is the short version.
 
-**In beta — Naboot 1.1.0.0 (2026-11; emulator only, at your own risk)**
+**Done — Naboot 1.1.0.0 (2026-11; a beta, emulator only; all of it shipped in 1.2.0.0)**
 
 - **The 2026-11 security review** — fifteen entries fixed, each reproduced
   first; one measured before it is enforced (CCMP replays are counted and
