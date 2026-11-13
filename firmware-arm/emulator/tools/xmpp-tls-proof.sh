@@ -150,7 +150,10 @@ def cert(subject, key, issuer, ikey, h, ca, san=None):
     b = (x509.CertificateBuilder().subject_name(name(subject)).issuer_name(name(issuer))
          .public_key(key.public_key()).serial_number(x509.random_serial_number())
          .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=60))
-         .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+         .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
+         # Python 3.13 verifies strictly: no key identifiers, no chain.
+         .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ikey.public_key()), critical=False))
     if ca:
         b = b.add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), critical=True)
     if san:
@@ -166,7 +169,8 @@ inter = cert("Proof YR1", ik, "Proof Root X1", rk, hashes.SHA256(), True)
 leaf = cert("github.test", lk, "Proof YR1", ik, hashes.SHA256(), False, "github.test")
 pem = lambda c: c.public_bytes(serialization.Encoding.PEM)
 open(f"{out}/data/bundle.pem", "wb").write(pem(root))
-open(f"{out}/gh/chain.pem", "wb").write(pem(leaf) + pem(inter))
+open(f"{out}/gh/leaf.pem", "wb").write(pem(leaf))
+open(f"{out}/gh/inter.pem", "wb").write(pem(inter))
 open(f"{out}/gh/key.pem", "wb").write(lk.private_bytes(serialization.Encoding.PEM,
     serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 PY
@@ -238,7 +242,17 @@ if [ -n "$OTA" ]; then
     # binary form of the .sim it just staged.
     podman exec "$NAME" python3 -c "import urllib.request; open('/data/gh.bin','wb').write(urllib.request.urlopen('http://127.0.0.1:$HTTP/ota/naboot-latest.signed.bin').read())"
     mv "$OUT/data/gh.bin" "$OUT/gh/naboot.bin"
-    ( cd "$OUT/gh" && openssl s_server -accept $GH -tls1_3 -cert chain.pem -key key.pem -WWW -quiet > "$OUT/gh.log" 2>&1 ) &
+    # A server left behind by an earlier run would answer with its own chain.
+    for pid in $(ss -ltnpH "sport = :$GH" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2); do kill "$pid"; done
+    # Python's server, not openssl s_server -WWW: that one answers without a
+    # Content-Length, which the binary path rightly refuses; GitHub sends it.
+    ( cd "$OUT/gh" && cat leaf.pem inter.pem > chain.pem && python3 -c "
+import http.server, ssl, sys
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain('chain.pem', 'key.pem')
+srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), http.server.SimpleHTTPRequestHandler)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()" $GH > "$OUT/gh.log" 2>&1 ) &
     GH_PID=$!
     echo "https://github.test:$GH/naboot.bin" > "$OUT/data/ota/naboot-latest.signed.sim.url"
     echo "   fake GitHub on :$GH serves $(stat -c %s "$OUT/gh/naboot.bin") bytes"
