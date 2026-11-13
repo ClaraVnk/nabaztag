@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 from unicorn import (Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_BLOCK,
-                     UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE,
+                     UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE,
                      UC_HOOK_MEM_UNMAPPED, UC_PROT_ALL)
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
                                UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
