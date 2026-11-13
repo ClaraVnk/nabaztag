@@ -157,7 +157,7 @@ directly (bit-bang) with **F/F Dupont wires**.
    *modernized* setup page (`page_a`), unless this is the first flash — in
    which case you still see the 2006 UI.
 5. Click **firmware upgrade** → `page_u` → upload
-   `../releases/naboot-1.0.0.3.signed.sim`. (`full` is not shipped — see above.
+   `../releases/naboot-1.2.0.0.signed.sim`. (`full` is not shipped — see above.
    The old `naboot-stable` is archived in `../releases/archive/`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
    reboots on its own.
@@ -173,7 +173,7 @@ directly (bit-bang) with **F/F Dupont wires**.
 
 If the rabbit boots into `full` but the modernized config-mode UI misbehaves
 (broken form, can't re-upload), enter config mode again (head button + power)
-and upload the release (`../releases/naboot-1.0.0.3.signed.sim`) again. The
+and upload the release (`../releases/naboot-1.2.0.0.signed.sim`) again. The
 old `minimal` build, which put back the 2006 setup UI, is archived in
 `../releases/archive/`: it never ran on a rabbit and cannot take an update
 from the Terrier afterwards.

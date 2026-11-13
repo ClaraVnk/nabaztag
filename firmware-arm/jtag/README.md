@@ -15,7 +15,7 @@ sudo apt-get install -y git                    # Raspberry Pi OS Lite has none
 git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
 ./firmware-arm/jtag/station.sh setup          # once, then log out and back in
 ./firmware-arm/jtag/station.sh check          # JTAG answers and the flash reads back
-./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.3.signed.sim
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.0.0.signed.sim
                                               # verify, write, read back, compare
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
