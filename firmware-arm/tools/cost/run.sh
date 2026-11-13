@@ -29,7 +29,7 @@ TN=${TN:-tweetnacl}             # patched tweetnacl.c (sign_open_alias + verify_
 MC=${MC:-third/monocypher}      # monocypher.c/.h + monocypher-ed25519.c/.h (mc_* cases only)
 C25=${C25:-third/c25519}        # c25519 sources (c25519_* cases only)
 OUT=${OUT:-out}; mkdir -p $OUT inc/net keys
-F="-O1 -mthumb -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin \
+F="-O1 ${MODE:--mthumb} -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin \
    -ffunction-sections -fdata-sections -I. -Iinc -I$TN -Istub -Ikeys -I$FW -I$MC -I$C25 -I$TESTS"
 CC=arm-none-eabi-gcc
 
@@ -66,6 +66,9 @@ srcs() {
     sae_pt|sae_commit_h2e|sae_commit_hnp) echo "$FW/sae.c $FW/p256.c $FW/sha256.c" ;;
     gcm_kat|gcm_1k|ctr_1k|ghash_1k|aes_block) echo "aes128_enc.c gcm.c" ;;
     hkdf_kat|hkdf) echo "$FW/sha256.c hkdf.c" ;;
+    cp_1k|cp_16k) echo "$FW/chachapoly.c" ;;
+    ecdsa_p256|ecdsa_p384) echo "$FW/nab_ecdsa.c $FW/nab_bn.c" ;;
+    rsa2048_pss|rsa4096_pkcs1) echo "$FW/nab_rsa.c $FW/nab_bn.c $FW/sha256.c $FW/nab_sha384.c $TN/tweetnacl.c" ;;
     sha256_4k|sha256_1k) echo "$FW/sha256.c" ;;
     aes_block_cmac) echo "$FW/cmac.c" ;;
     mc_x25519) echo "$MC/monocypher.c" ;;

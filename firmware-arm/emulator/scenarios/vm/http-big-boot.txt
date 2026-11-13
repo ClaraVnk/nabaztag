@@ -1,0 +1,26 @@
+# bytecode: bootloader
+#
+# A server -- or any host on the path -- that answers the bootloader's HTTP
+# request with far more than a bytecode. `http-big` makes the gateway answer
+# every request itself: 200, then a megabyte.
+#
+# The bootloader's HTTP client kept every segment of an HTTP_NORMAL answer
+# until the connection closed, with no limit. A megabyte does not fit in the
+# VM's 800 KB heap: "the firmware asked for a processor reset (reason 1: the
+# VM ran out of memory)", and a Nabaztag comes back from a soft reset with
+# its radio asleep. With the http_cap step the request is dropped past
+# HTTP_MAX_NORMAL: the rabbit closes the connection ("the rabbit hung up on
+# the oversized answer"), the callback gets the nil it gets for any failed
+# request, and boot_loop asks again after BOOT_HTTPTIMEOUT. No reset.
+#
+# The bootloader comes out of a firmware image (tools/bootbc.py), so this
+# fails on any image built without http_cap -- that is the control.
+
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 120000
+
+at 0      http-big 1000000
+at 20000  expect RUN
+at 110000 expect RUN
+at 115000 expect-no-reset

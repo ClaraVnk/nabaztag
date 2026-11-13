@@ -18,6 +18,20 @@
 # free, so the rabbit never waits for this listener and runs the same with
 # or without it.
 #
+# A firmware with ccmp_replay_count (mode lean-reclaim, 1.1.0.0) adds three
+# fields at the end of the line, so everything before them reads as before
+# and the line is ~110 characters:
+#   ... F0/1c N1a2 p0/0/0 V0/2000012f
+# N protected CCMP data frames examined; p frames a replay check would have
+# refused, unicast / group / retransmitted (Retry bit); V the receive
+# descriptor's Eiv / Iv words for the last frame examined. If the radio
+# hands the CCMP header over in those words as Linux's rt73usb says, the
+# packet number is Eiv<<16 | Iv&0xffff and the top two bits of Iv are the
+# key id. Nothing is refused: this is the measurement that says whether
+# ccmp_replay_enforce may be turned on. `./listen.sh | ./ccmp-pn.py` reads
+# it: N rising, p staying 0/0/0 and the packet number rising = safe; p
+# rising as fast as N = the words are not a packet number, do not enforce.
+#
 # Reading a rabbit stuck in AUTH (W2) with it: a rising, r 0, h rising,
 # F failed rising with a = our frames leave and nobody acknowledges them
 # (wrong channel or rate, or an AP ignoring this MAC); a rising, r 0,

@@ -1,0 +1,19 @@
+# bytecode: bootloader
+#
+# The rabbit plays an https:// stream itself (Naboot 1.2.0.0: tls_certs and
+# bytecode/patch_https_play.py), with no relay on the warren.
+#
+# Run as boot 2 of tools/https-proof.sh, the owner having confirmed the key:
+# the session runs TLS 1.3 PSK, then the warren is asked to play a station
+# whose URL is https on a host it can verify. It pushes the root as res:N and
+# sends `ST https://host:port/path#r<N>@<time>`; the rabbit opens the host
+# itself, checks the chain against that root, and plays what comes.
+#
+# What to read in this log: `https: ST`, `https: hello to`, `https: ready,
+# request sent`, a port of the test host opened by the rabbit, then
+# `audio: the rabbit started playing`; after the stop, `live: cut`.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 230000
+at 20000 expect RUN
+at 225000 expect RUN

@@ -139,13 +139,40 @@ __attribute__((weak)) uint8_t buffer_temp[4096];
 /* rx_protected's counter, for a build without that step (the control). */
 __attribute__((weak)) uint8_t ieee80211_plain_dropped;
 
+static char flash_out_path[512];
+__attribute__((weak)) void sim_flash_done(void);
+
+/** @brief Keep the image the rabbit hands to flash_uc, for flashsim. */
+void hw_flash_out(const char *path)
+{
+  snprintf(flash_out_path, sizeof(flash_out_path), "%s", path);
+}
+
+/* There is no flash here to brick, so the write itself is not run: the real
+ * flash_uc is ARM code that runs from RAM against the Oki controller, and
+ * flashsim/ executes exactly that. What this side can vouch for is
+ * everything before it -- that the bytecode, verifySig and flashFirmware's
+ * own checks let this image through -- and, with --flash-out, the bytes that
+ * got through, so the two halves can be chained on the same image. */
 void flash_uc(uint8_t *data, int32_t nb_byte, uint8_t *temp)
 {
-  (void)data; (void)temp;
+  (void)temp;
   flash_writes++;
   flash_last_size = nb_byte;
   sim_log("the rabbit asked to flash itself with a %d-byte image — ignored, "
           "there is no flash here to brick", nb_byte);
+  if(flash_out_path[0] && nb_byte > 0) {
+    FILE *f = fopen(flash_out_path, "wb");
+    if(f == NULL) { sim_log("flash: cannot write %s", flash_out_path); return; }
+    fwrite(data, 1, (size_t)nb_byte, f);
+    fclose(f);
+    sim_log("flash: the image handed to flash_uc is in %s", flash_out_path);
+  }
+  /* On the rabbit this call does not come back: the writer ends in a reset.
+   * Returning to the bytecode here would run the branch that means "the
+   * flash was refused" -- red lights and the error page -- after a flash
+   * that went through. ./rabbit-vm takes the processor away instead. */
+  if(sim_flash_done) sim_flash_done();
 }
 
 uint32_t hw_flash_writes(void) { return flash_writes; }

@@ -14,7 +14,7 @@
 // user doesn't have to memorize the IP.
 //
 // Design choices match the runtime version:
-//   - 40-byte DNS message allocated *once* and reused; only the 4 IP
+//   - 40-byte DNS message held as one literal and reused; only the 4 IP
 //     bytes change per tick.
 //   - destination MAC is the canonical multicast MAC 01:00:5e:00:00:fb
 //     (RFC 1112 §6.4) so we bypass ARP for the class-D 224.0.0.251.
@@ -26,46 +26,16 @@ const MDNS_BOOT_PORT=5353;;
 // 01:00:5e:00:00:fb
 const MDNS_BOOT_MAC="\1\0\$5e\0\0\$fb";;
 
-var mdns_boot_pkt=nil;;
+// The whole message as one literal (a 40-byte string costs 40 bytes; forty
+// strset calls cost 337): header id=0 flags=0x8400 one answer, the name
+// 6"naboot" 5"local" 0, type A, class IN with cache-flush, TTL 120,
+// RDLENGTH 4, and four RDATA bytes filled at announce time.
+var mdns_boot_pkt="\0\0\$84\0\0\0\0\1\0\0\0\0\6naboot\5local\0\0\1\$80\1\0\0\0x\0\4\0\0\0\0";;
 var mdns_boot_last=0;;
-
-fun mdns_boot_build_pkt=
-	let strnew 40 -> b in
-	(
-		// DNS header: id=0, flags=0x8400 (response + authoritative),
-		// 1 answer, 0 queries/auth/extra.
-		strset b 0 0;  strset b 1 0;
-		strset b 2 0x84; strset b 3 0;
-		strset b 4 0;  strset b 5 0;
-		strset b 6 0;  strset b 7 1;
-		strset b 8 0;  strset b 9 0;
-		strset b 10 0; strset b 11 0;
-		// answer name: 6 "naboot" 5 "local" 0
-		strset b 12 6;
-		strset b 13 'n'; strset b 14 'a'; strset b 15 'b';
-		strset b 16 'o'; strset b 17 'o'; strset b 18 't';
-		strset b 19 5;
-		strset b 20 'l'; strset b 21 'o'; strset b 22 'c';
-		strset b 23 'a'; strset b 24 'l';
-		strset b 25 0;
-		// type A (0x0001)
-		strset b 26 0; strset b 27 1;
-		// class IN with cache-flush bit (0x8001)
-		strset b 28 0x80; strset b 29 1;
-		// TTL = 120 s
-		strset b 30 0; strset b 31 0; strset b 32 0; strset b 33 120;
-		// RDLENGTH = 4
-		strset b 34 0; strset b 35 4;
-		// RDATA — filled at announce time.
-		strset b 36 0; strset b 37 0; strset b 38 0; strset b 39 0;
-		set mdns_boot_pkt = b;
-		b
-	);;
 
 fun mdns_boot_announce=
 	if netip==nil then 0
 	else (
-		if mdns_boot_pkt==nil then mdns_boot_build_pkt;
 		strset mdns_boot_pkt 36 (strget netip 0);
 		strset mdns_boot_pkt 37 (strget netip 1);
 		strset mdns_boot_pkt 38 (strget netip 2);

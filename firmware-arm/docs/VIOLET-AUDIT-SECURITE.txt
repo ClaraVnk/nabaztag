@@ -1,0 +1,276 @@
+AUDIT DE SÉCURITÉ SYSTÉMATIQUE DU CODE D'ORIGINE VIOLET (firmware Nabaztag:tag)
+Phase 1 — traitement des entrées non fiables — 2026-11-11
+
+Périmètre : code Violet 2006-2007 (Sylvain Huet : VM/Metal ; Sébastien
+Bourdeauducq : radio rt2501/ieee80211/eapol ; Oki : pile USB hôte ; « Violet » :
+HAL ; Romain Cochet / « AS » : bibliothèques Metal) et portage GCC RedoXyde
+2015-2017. Nos ajouts (adoption_kx, wpa3/sae, nab_*, verifySig, liveness,
+xml-leading-blank, probe_ssid_bound, micstream, fwota, etc.) sont HORS périmètre.
+
+Méthode : balayage de tous les points où le lapin traite une entrée non fiable
+(réseau Metal, radio 802.11, descripteurs USB, tag RFID, trame/programme du
+serveur) à la recherche de : débordements (pile C et tas VM), lectures/écritures
+hors limites, longueurs issues de la trame non vérifiées, confusion de type,
+entiers signés, boucles/récursions non bornées, états non authentifiés.
+
+Convention : fichier:fonction:ligne. C = ~/review-1003/nabgcc/src ;
+Metal = ~/vanish/tree-ota/sources.
+
+Les points DÉJÀ connus et en cours de correction ne sont PAS re-signalés comme
+nouveaux (ParseXML blanc en tête ; débordement SSID du probe-request en maître ;
+DHCP sans vérif de transaction / port 68 ouvert ; page de config qui renvoie le
+mot de passe ; balises RSN à double avance l.1493/1576 ; clé de groupe TKIP en
+mode mixte ; pas d'anti-rejeu CCMP ; OTA sans borne de Content-Length ; sysCmp
+qui borne sur la plus longue chaîne ; sysI2cRead sur pointeur nul ; index ADPCM ;
+pile TCP/DNS/HTTP faible : ISN constant, pas de RST, sommes non vérifiées,
+réponses DNS non authentifiées, réponses bufferisées sans limite). Ce document
+cherche du NOUVEAU et, à la fin, liste ce qui a été contrôlé et jugé sain.
+
+
+=====================================================================
+OBSERVATION STRUCTURELLE (à lire d'abord, oriente la priorisation)
+=====================================================================
+
+La couche VM Metal est SÛRE EN MÉMOIRE par construction. Vérifié dans
+vinterp.c :
+  - OPstrget (635-641) : borne n ∈ [0, VSIZEBIN(p)[ sinon NIL.
+  - OPstrsub (643-664) : clampe « if (start+len>VSIZEBIN(q)) len=VSIZEBIN(q)-start »
+    puis exige start>=0 && len>=0, sinon NIL.
+  - OPstrgetword (1165) : passe la taille à sysStrgetword (borné) ; OPfetch
+    (312-325) borne i ∈ [0, VSIZE(p)[ ; OPstrset (555-562) borne n.
+  - OPstore / OPsetstruct / OPsetstructb (400/367/352) : le test de bornes
+    FAUX d'origine (« (i>=0)||(i<VSIZE) », toujours vrai → écriture dans
+    l'objet de tas suivant) A ÉTÉ CORRIGÉ en « && » (cf. #27 finding 6).
+
+Conséquence : les parseurs écrits en Metal (pingextract, extractdhcp, parseans,
+ParseXML, http, infoUpdate, runChorCmd) ne subissent PAS de débordement mémoire
+classique — un index issu de la trame qui dépasse rend NIL/0 ou est clampé, pas
+une lecture/écriture sauvage. Leurs faiblesses sont donc LOGIQUES : ressources
+non bornées (déni de service), données non authentifiées (empoisonnement),
+récursion pilotée par un compteur d'en-tête, identifiants prévisibles.
+
+Priorisation qui en découle : corriger côté Metal protège contre le DoS et
+l'empoisonnement ; seules les corrections côté C (ieee80211, usb, eapol)
+protègent contre de VRAIES corruptions mémoire. Les trouvailles critiques
+ci-dessous sont donc toutes en C.
+
+
+=====================================================================
+1. RADIO 802.11 — ieee80211.c (pré-association, le plus exposé)
+=====================================================================
+
+1.1  [ÉLEVÉE] Analyse des IE de balise / probe-response sans borne de longueur
+     d'élément contre frame_end
+     ieee80211.c:ieee80211_input_mgt, boucle 1378-1577 (état S_SCAN)
+
+(a) La boucle « while(frame_current < frame_end) » lit frame_current[0] (id) et
+    frame_current[1] (longueur annoncée), puis selon l'id copie/parcourt
+    frame_current[1] octets, puis avance « frame_current += frame_current[1]+2 ».
+    Aucun des cas ne vérifie que frame_current+2+frame_current[1] <= frame_end :
+      - SSID (1381-1385) : « if(frame_current[1] < sizeof(scan_result.ssid)) »
+        borne la destination mais pas la SOURCE : la boucle de copie lit
+        frame_current[i+2] pour i < frame_current[1], ce qui peut dépasser
+        frame_end (lecture hors limites de la trame reçue).
+      - RATES/XRATES (1392-1398) : « for(i=0;i<frame_current[1];i++) …
+        frame_current[i+2] » — jusqu'à 255 octets lus au-delà, sans borne.
+      - DSPARMS (1387-1389) : « scan_result.channel = frame_current[2] » sans
+        vérifier frame_current[1] >= 1 ni frame_current+2 < frame_end.
+(b) PIRE : les boucles pilotées par un compteur 16 bits de la trame
+    (RSN : 1418, 1444, 1470 ; WPA vendor : 1535, 1555) :
+      count = (current[0])|(current[1]<<8);  // jusqu'à 65535, non vérifié
+      for(i=0;i<count;i++){ memcmp(current, oui, 3); current += IEEE80211_OUI_LEN; }
+    « current » avance de 4 octets × count SANS AUCUNE BORNE contre frame_end :
+    une IE RSN forgée avec un grand count provoque une lecture hors limites
+    pouvant atteindre ~256 Ko au-delà de la trame, dans le pool USB/SRAM adjacent.
+(c) Déclencheur : un simple beacon ou probe-response, reçu en S_SCAN, AVANT toute
+    authentification/association (ieee80211_input n'exige que state != S_IDLE).
+    Un point d'accès pirate ou une injection 802.11 suffit, sans connaître la clé.
+    Conséquences : lecture hors limites (pas d'écriture → pas de RCE sur ce
+    chemin, mais plantage possible selon le mapping SRAM) ; classification
+    « scan_result.encryption » corrompue : un « found » sur de la mémoire
+    quelconque peut faire passer un réseau ouvert pour WPA2 (ou l'inverse),
+    fausser le choix de chiffrement remonté au Metal ; boucle longue (jusqu'à
+    65535 itérations) = gel temporaire de la réception. Sévérité ÉLEVÉE
+    (surface pré-auth, OOB read + DoS). Note : distinct du double-avance RSN
+    déjà connu (l.1493/1576) ; ici c'est l'absence de borne sur count et sur
+    frame_current[1].
+
+1.2  [MOYENNE] Lectures hors limites mineures faute de garde de longueur
+     ieee80211.c:ieee80211_input_mgt, cas ASSOC_RESP (1707-1746)
+
+(a) La seule garde générale (1299) assure length >= sizeof(ieee80211_frame)=24.
+    Le cas ASSOC_RESP lit « assoc_code = frame_current[2]|(frame_current[3]<<8) »
+    (1720) sans exiger length >= 28. Une assoc-response de 24 octets lit 2 à 4
+    octets au-delà de frame_end. Même classe pour les champs fixes lus après la
+    garde « +6 » du cas AUTH quand le corps est tronqué.
+(b) État restreint (S_ASSOC, MAC de l'AP attendu) donc faible atteignabilité.
+(c) Sévérité moyenne/faible (OOB read de quelques octets).
+
+1.3  [NOTE] Multicast comparé sur 3 octets seulement
+     ieee80211.c:ieee80211_input_data:1844, 1885
+
+(a) « memcmp(i_addr1, ieee80211_multicast_address, IEEE80211_ADDR_LEN/2) » ne
+    compare que 3 octets (préfixe OUI). Acceptation volontaire de tout multicast,
+    mais filtre d'adresse laxiste. Sans conséquence mémoire. Faible.
+
+
+=====================================================================
+2. USB HÔTE — descripteurs du périphérique (non fiables)
+=====================================================================
+
+2.1  [ÉLEVÉE] Débordement de tas piloté par bLength du périphérique
+     usbhcore.c:usbh_get_descriptor_all, memcpy 371, 389, 404, 417, 432
+
+(a) Pendant l'énumération, le code parcourt la configuration retournée par le
+    périphérique et, pour chaque descripteur, fait :
+      bLength = *ptr;                                   // octet du périphérique
+      *pconfiguration = hcd_malloc(sizeof(struct ...)); // taille FIXE
+      memcpy(*pconfiguration, ptr, bLength);            // copie bLength octets
+    pour CONFIGURATION (371), INTERFACE (389, « *ptr »), ENDPOINT (404),
+    OTG (417) et « expansion » (432). bLength est l'octet de longueur annoncé
+    par le périphérique (jusqu'à 255), la destination est une structure de taille
+    fixe (config/interface ~9 octets + champs de chaînage, endpoint ~7). Un
+    périphérique qui annonce bLength > sizeof(struct) fait DÉBORDER l'allocation
+    EXTRAM et écrase les pointeurs de chaînage (next/interface/otg) placés juste
+    avant le memcpy → corruption mémoire et déréférencement de pointeurs corrompus
+    à l'itération suivante et au usbh_release_descriptor_all.
+(b) wTotalLength (222, 16 bits) pilote hcd_malloc(size) ; une grande valeur fait
+    échouer l'alloc (géré), mais le memcpy par descripteur peut sur-lire buf+ret
+    quand bLength déborde en fin de tampon.
+(c) Déclencheur : un périphérique USB malveillant branché sur le port hôte. En
+    pratique ce port porte le dongle Ralink interne → nécessite un accès physique
+    (remplacement/émulation du dongle). Sévérité ÉLEVÉE (corruption mémoire
+    — seul vrai candidat à l'écriture hors limites de l'audit) sous réserve
+    d'accès physique. C'est du code d'exemple Oki repris par Violet ; le même
+    motif « confiance en bLength » existe dans tout le stack OHCI.
+
+
+=====================================================================
+3. EAPOL — post-authentification (surface réduite)
+=====================================================================
+
+3.1  [FAIBLE] Lecture fixe de 32 octets dans key_data sans vérifier key_data_length
+     eapol.c:eapol_input_group_msg1, rc4_cipher 1027
+
+(a) Pour TKIP, le GTK est déchiffré par :
+      rc4_cipher(&rc4, gtk.b, fr_in->key_frame.key_data,
+                 EAPOL_MICK_LENGTH+EAPOL_EK_LENGTH);   // 32 octets fixes
+    sans vérifier que key_data_length (champ de la trame) couvre bien 32 octets.
+    Un message de groupe plus court fait lire au-delà de la fin de trame
+    (OOB read) et installe un GTK partiellement issu de mémoire adjacente.
+(b) eapol_mic_span (notre ajout) borne la portée du MIC mais PAS cette lecture
+    fixe de 32 octets dans key_data.
+(c) Post-authentification : le message doit passer la vérification de MIC, qui
+    exige le KCK dérivé du PMK (4-way réussi). Seul un AP ayant terminé le
+    handshake (ou possédant le PMK) peut l'atteindre. Sévérité FAIBLE.
+
+3.2  [NOTE] Le même motif « longueur fixe de clé » se retrouve aux msg3/4 : les
+     champs key_length/key_data_length de la trame sont ignorés à la réception
+     (commentés « FIXME », eapol.c:824/974) — cohérent avec un handshake écrit
+     pour WPA-TKIP et étendu « au jugé » à WPA2 (déjà noté en zone d'ombre 8.1).
+
+
+=====================================================================
+4. PILE RÉSEAU METAL — faiblesses logiques (pas de corruption mémoire)
+=====================================================================
+
+4.1  [MOYENNE] Compteurs d'en-tête DNS non bornés → DoS et empoisonnement SRV
+     dns.mtl:parsemsg (121-129), parseans (65-119), parsequs (43)
+
+(a) parsemsg lit nbqu (offset 4) et nbans (offset 6), tous deux 16 bits
+    (jusqu'à 65535), SANS les borner contre la taille réelle du paquet.
+    parsequs récurse nbqu fois (saut de question), parseans récurse nbans fois.
+    Chaque réponse SRV (type 33) est PRÉFIXÉE à la variable globale SrvAnswerL
+    (112-113) ; chaque réponse A ajoute au cache ldns (cbnetdns, « ### attention
+    à la taille de la liste »).
+(b) cbnetdns (239-262) ne valide que l'id DNS (16 bits) contre la liste des
+    requêtes en cours ; or dnsid (var dnsid=0, incrémenté) est SÉQUENTIEL donc
+    prévisible, et la source (ipfrom/port) n'est pas vérifiée contre le serveur
+    interrogé. Un unique paquet UDP forgé, non authentifié, suffit à :
+      (i) faire croître SrvAnswerL/ldns sans borne → ?OM Error → reboot (DoS) ;
+      (ii) empoisonner le cache SRV qui désigne le serveur XMPP → détourner la
+      connexion XMPP du lapin vers un hôte choisi par l'attaquant.
+(c) La lecture mémoire reste sûre (strget/strgetword/strsub bornent) : c'est un
+    problème de RESSOURCE et d'AUTHENTICITÉ, pas de corruption. Le fait « DNS
+    non authentifié » est déjà connu ; l'amplification par nbans/nbqu et la
+    croissance de liste non bornée sont les éléments NOUVEAUX. Sévérité MOYENNE.
+
+4.2  [FAIBLE] Trame serveur 0x7f : len 24 bits non contrôlée mais clampée
+     main.mtl:pingextract_ (3680), bintoi3
+
+(a) pingextract_ lit un bloc [code 1][len 3 big-endian][données len]. len
+    (bintoi3, jusqu'à 0xFFFFFF) sert d'offset de récursion « i+4+len » et de
+    longueur « strsub s i+4 len ». strsub CLAMPE len à la fin de chaîne, donc pas
+    d'allocation géante ni d'OOB (contrairement à ce qu'on pourrait craindre) ;
+    si len mène au-delà de la fin, le bloc rendu est tronqué ou la récursion
+    s'arrête (len<0 via strget NIL). Pas de corruption.
+(b) Reste une faiblesse : la trame 0x7f elle-même n'est PAS authentifiée au
+    niveau applicatif (seul code 10 « programme » est désobfusqué par uncrypt
+    0x47/47, qui n'est pas une signature). Un pair XMPP malveillant, ou un MITM
+    sur la session en clair, peut injecter des blocs (reboot code 9, sommeil
+    code 11, infoUpdate code 4) sans contrainte mémoire mais avec effet sur
+    l'état du lapin. Sévérité faible (effet logique, pas de corruption) — à
+    rapprocher de la faiblesse XMPP-en-clair déjà connue.
+
+4.3  [NOTE] ParseXML / ParseXMLPacket (xmlparser.mtl) : découpeur de stanzas par
+     strfind « </Nom> », complexité quadratique (strsub/strcat à chaque niveau).
+     Mémoire sûre (clamps VM), mais une stanza de plusieurs Ko (ressource base64)
+     coûte cher en CPU et en allocations → pression GC. Pas de borne sur la
+     taille de pBuffer accumulé (XmppTcpReadPlain). DoS lent possible par un
+     pair qui envoie une stanza géante jamais fermée. Sévérité faible.
+
+
+=====================================================================
+5. VM — points latents (non atteignables par les trames actuelles)
+=====================================================================
+
+5.1  [FAIBLE/latent] Débordement entier dans OPstrsub
+     vinterp.c:OPstrsub:652
+
+(a) « if (start+len > VSIZEBIN(q)) len = VSIZEBIN(q)-start » : si start ≈ 2^30
+    et len explicite grand, start+len déborde int32 (devient négatif), le test
+    est faux, le clamp est contourné, puis VMALLOCBIN(len) alloue énorme et
+    mystrcpy sur-lit q.
+(b) Non atteignable aujourd'hui (il faudrait une chaîne VM > 1 Go pour produire
+    de tels indices). Latent : à surveiller si un futur appelant passe à strsub
+    des indices non bornés venus du réseau. Même remarque pour OPplayFeed (751)
+    et OPload/OPsave qui réutilisent le motif « start+len>VSIZE ».
+
+
+=====================================================================
+6. CONTRÔLÉ ET JUGÉ SAIN (pour éviter de futures fausses pistes)
+=====================================================================
+
+  - RFID (rfid.c:check_rfid_devices) : cmpt_tags borné à 16 par la boucle de bits
+    du masque 16 bits (233-241) ; tableau tag_rfid[16] (rfid.c:345) ; read_frame
+    lit des longueurs fixes (2/9/19) dans dummy_tab[20]. Pas de débordement.
+  - DHCP (dhcp.mtl:extractdhcp) : avance correcte de 2+len (« let i+2->i in …
+    extractdhcp src i+len »), pas de boucle infinie sur option de longueur 0.
+    Lectures bornées par strget/strsub. (Les défauts connus — pas de xid, mac
+    chaddr seule, cbnetdhcp67 qui répond à tout client en mode AP — restent.)
+  - send_challenge_reply (ieee80211.c:1044) : refuse si challenge_length !=
+    IEEE80211_CHALLENGE_LEN avant toute copie → pas de débordement du tampon TX.
+  - eapol msg3/msg4 : post-authentification (MIC requis), hors surface pré-auth.
+  - Opcodes VM de chaîne/tableau (strget, strsub, strgetword, fetch, strset) :
+    tous bornés ; store/setstruct/setstructb déjà corrigés.
+
+
+=====================================================================
+7. SYNTHÈSE ET PRIORITÉS
+=====================================================================
+
+Critiques réelles (corruption mémoire, à corriger côté C) :
+  1.1  ieee80211 : IE de balise sans borne (count RSN/WPA, frame_current[1]) —
+       OOB read pré-auth, le plus exposé.
+  2.1  usbhcore : memcpy piloté par bLength — seul candidat à l'écriture hors
+       limites (accès physique requis).
+
+Logiques (DoS / empoisonnement, corrigeables côté Metal) :
+  4.1  DNS nbans/nbqu non bornés + id prévisible → DoS + détournement XMPP.
+  4.2/4.3  Trames 0x7f et stanzas non authentifiées/non bornées en clair.
+
+Faibles / latentes :
+  1.2 ASSOC_RESP OOB mineur ; 3.1 EAPOL GTK lecture fixe (post-auth) ;
+  5.1 overflow entier OPstrsub (latent).
+
+Rappel du périmètre : aucune correction n'est faite ici (analyse seule).

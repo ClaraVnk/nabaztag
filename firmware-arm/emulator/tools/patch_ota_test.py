@@ -17,9 +17,18 @@ from pathlib import Path
 src = Path(sys.argv[1]) / "main.mtl"
 url = sys.argv[2]
 s = src.read_text(encoding="latin-1")
-old = ('set run=configwaitRun httprequest "GET" Secholn configurl nil '
-       '#_configcbhttp HTTP_NORMAL')
-if old not in s:
+# The request as stock Violet writes it, and as bytecode/patch_locate_tls.py
+# leaves it (a choice between the TLS port and plain HTTP).
+STOCK = ('set run=configwaitRun httprequest "GET" Secholn configurl nil '
+         '#_configcbhttp HTTP_NORMAL')
+TLS = ('set run=configwaitRun\n'
+       '\t\t\tif LocateTlsWanted then LocateTlsRequest configurl #_configcbhttp\n'
+       '\t\t\telse (set LocateTlsFailed=0; httprequest "GET" Secholn configurl nil '
+       '#_configcbhttp HTTP_NORMAL)')
+for old in (TLS, STOCK):
+    if s.count(old) == 1:
+        break
+else:
     sys.exit("runconfigstart's locate.jsp request is not where it was")
 s = s.replace(old, f'set run=configwaitRun flashFromUrl "{url}"', 1)
 src.write_text(s, encoding="latin-1")

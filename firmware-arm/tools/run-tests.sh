@@ -30,12 +30,12 @@
 # needs the real compiler, which lives in the firmware build image. The
 # `Compiler :` lines come out on stderr, the .bin is the output file:
 #
-#   scp ./fixtures/NAME.mtl dev-loutre:cxxw/
-#   ssh dev-loutre 'podman run --rm -v /home/loutre/cxxw:/w:z \
+#   scp ./fixtures/NAME.mtl BUILDHOST:cxxw/
+#   ssh BUILDHOST 'podman run --rm -v ~/cxxw:/w:z \
 #       localhost/nab-firmware-build:lean bash -lc \
 #       "/build/nabgcc/mtl/mtl_linux/mtl_compiler -s /w/NAME.mtl /w/NAME.bin" \
 #       2> cxxw/NAME.log'
-#   scp dev-loutre:cxxw/NAME.bin ./fixtures/
+#   scp BUILDHOST:cxxw/NAME.bin ./fixtures/
 #   grep '^Compiler :' cxxw/NAME.log | grep -v 'compiling file\|done !' > fixtures/NAME.types
 #
 # For an ill-typed fixture, NAME.err is that log minus the banner, the

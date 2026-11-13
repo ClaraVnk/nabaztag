@@ -1,0 +1,123 @@
+FUZZING DES ANALYSEURS DU FIRMWARE VIOLET
+Phase 4 — corpus malformé + sanitizers, confirmation des trouvailles Phase 1
+2026-11-11
+
+Objectif : soumettre des entrées malformées aux analyseurs identifiés en Phase 1
+et observer le comportement (crash, hors-limites, boucle). Méthode retenue :
+harnais C isolé compilé avec AddressSanitizer + UndefinedBehaviorSanitizer
+(plus simple et plus net que l'injection de trames dans l'émulateur). Le code
+des boucles vulnérables est RECOPIÉ TEL QUEL depuis le firmware d'origine
+(ieee80211.c:ieee80211_input_mgt lignes 1378-1495 ; usbhcore.c:
+usbh_get_descriptor_all ligne 371) ; seul l'environnement (tampons de taille
+EXACTE alloués sur le tas) est ajouté pour que les redzones d'ASan voient les
+débordements. Fichier : /tmp/harness.c.
+
+Toolchain : le runtime ASan n'est pas installé sur la machine de build, mais l'image
+podman de l'émulateur (localhost/nabaztag-emulator) l'a. Compilation et exécution
+dans cette image (réutilisée, non reconstruite) :
+  gcc -fsanitize=address,undefined -g -O0 harness.c -o h
+Rappel SELinux : bind-mount avec « ,Z » (chcon container_file_t) pour que le
+conteneur lise le fichier.
+
+CAVEAT de fidélité : le harnais reproduit les BOUCLES à l'octet près mais pas
+l'objet firmware compilé (types TXD/descripteurs réels, chaînage). Un débordement
+signalé ici l'est donc sur une réplique fidèle du chemin de code, pas sur le
+binaire ARM. Le verdict « le chemin déborde » est néanmoins solide.
+
+
+=====================================================================
+CORPUS ET RÉSULTATS
+=====================================================================
+
+A. Analyseur d'IE de balise/probe-response (ieee80211.c) — radio, PRÉ-AUTH
+-------------------------------------------------------------------------
+
+A1  SSID tronqué : IE {id=0, len=40, "ABCD"} dans une trame de 6 octets.
+    RÉSULTAT : PAS de débordement. La garde de destination
+    « if(frame_current[1] < sizeof(scan_result.ssid)=33) » filtre len=40 (>=33)
+    et la copie est sautée.
+    PRÉCISION IMPORTANTE (corrige l'intuition de Phase 1 §1.1 sur le SSID) : la
+    copie SSID n'est PAS la plus dangereuse — elle n'est atteinte que si la
+    longueur annoncée est < 33. Mais pour une longueur dans [1,32] SUPÉRIEURE au
+    nombre d'octets restants, la copie « scan_result.ssid[i]=frame_current[i+2] »
+    sur-lit bien la trame (non testé ici mais trivialement déductible : la garde
+    porte sur la destination, jamais sur frame_end).
+
+A2  RSN à compteur géant : IE {id=48, len=6, count=0x7fff} dans 10 octets.
+    RÉSULTAT : ASan CONFIRME.
+      ERROR: AddressSanitizer: heap-buffer-overflow
+      READ of size 3 ... in MemcmpInterceptorCommon  (la boucle de 0x7fff OUI)
+    La boucle « for(i=0;i<count;i++){ memcmp(current,oui,3); current+=4; } »
+    (ieee80211.c:1418) lit très au-delà de la trame : c'est la trouvaille
+    Phase 1 §1.1 (boucle pilotée par un compteur 16 bits non borné), la plus
+    sérieuse car pré-association et à grande amplitude.
+
+A3  RATES tronqué : IE {id=1, len=50, 2 octets} dans une trame de 4 octets.
+    RÉSULTAT : ASan CONFIRME.
+      ERROR: AddressSanitizer: heap-buffer-overflow
+      READ of size 1 at ... in ieee80211_ie_walk  (h.c:48)
+    La boucle « for(i=0;i<frame_current[1];i++) …frame_current[i+2] »
+    (ieee80211.c:1392) sur-lit la trame dès que la longueur annoncée dépasse
+    les octets disponibles. Trouvaille Phase 1 §1.1 (absence de borne contre
+    frame_end sur la longueur d'élément).
+
+B. Analyseur de descripteurs USB (usbhcore.c) — périphérique non fiable
+-----------------------------------------------------------------------
+
+B1  Descripteur de configuration avec bLength=255 copié dans une structure
+    de taille fixe.
+    RÉSULTAT : ASan CONFIRME — et c'est une ÉCRITURE (corruption réelle) :
+      ERROR: AddressSanitizer: heap-buffer-overflow
+      WRITE of size 255 at ... in __interceptor_memcpy
+    « memcpy(cfg, ptr, bLength) » où cfg=malloc(sizeof(struct)) déborde dès que
+    bLength > sizeof(struct). Trouvaille Phase 1 §2.1 : c'est le SEUL débordement
+    en ÉCRITURE de l'audit (corruption mémoire), piloté par l'octet de longueur
+    annoncé par le périphérique USB.
+
+
+=====================================================================
+PARSEURS METAL (ParseXML, DHCP, DNS, HTTP) — pourquoi pas de crash mémoire
+=====================================================================
+
+Les parseurs écrits en Metal ont été examinés en Phase 1 : ils ne produisent PAS
+de débordement mémoire, parce que toute lecture/écriture indexée passe par les
+opcodes VM qui bornent (OPstrget/OPstrsub/OPstrgetword/OPfetch) ou clampent. Un
+fuzzing au niveau octet de ces parseurs ne déclenche donc aucun ASan DANS la VM :
+l'index hors borne rend NIL/0 ou est ramené à la fin de chaîne. C'est pourquoi
+le harnais ASan ci-dessus ne les cible pas — il n'y a rien à y trouver au sens
+mémoire. Corroboration : l'émulateur se construit aussi sous ASan/UBSan
+(« make asan ») et passe les scénarios Wi-Fi et VM existants (trames bien
+formées) sans rapport ASan.
+
+Ce qu'un fuzzer DEVRAIT viser côté Metal est donc la RESSOURCE et la LOGIQUE,
+pas la mémoire :
+  - DNS : un paquet avec nbans/nbqu = 65535 (Phase 1 §4.1) → récursion et
+    croissance de liste (SrvAnswerL/ldns) → ?OM Error → reboot. Mesurable en
+    instrumentant le compteur d'allocations / la taille du tas de l'émulateur
+    sous un warren qui renvoie un tel paquet.
+  - ParseXML : une stanza géante jamais fermée → pBuffer non borné + coût
+    quadratique → pression GC (Phase 1 §4.3).
+  - Trame 0x7f : blocs répétés code 4/9/11 → effets d'état (reboot, sommeil)
+    sans authentification (Phase 1 §4.2).
+Ces cas relèvent d'un harnais « compteur de ressources » (tas, listes) plutôt
+que d'un sanitizer mémoire ; non exécutés ici faute de warren instrumenté, mais
+le mécanisme est établi par lecture de code et par l'observation structurelle de
+Phase 1 (la VM borne la mémoire, pas la ressource).
+
+
+=====================================================================
+SYNTHÈSE PHASE 4
+=====================================================================
+
+Confirmé empiriquement par ASan (répliques fidèles des boucles du firmware) :
+  - ieee80211.c : OOB read sur IE RATES à longueur excessive (A3) et sur la
+    boucle RSN à compteur non borné (A2) — pré-association.
+  - usbhcore.c : OOB WRITE (débordement de tas) sur memcpy piloté par bLength
+    (B1) — seul candidat à la corruption mémoire.
+Précisé : la copie SSID (A1) est filtrée pour len>=33 ; elle ne sur-lit que
+pour une longueur dans [1,32] supérieure au reste de trame.
+Négatif attendu et expliqué : les parseurs Metal ne crashent pas en mémoire (la
+VM borne) ; leur fuzzing doit cibler la ressource (DNS nbans, XML non borné).
+
+Reproduction : /tmp/harness.c ; gcc -fsanitize=address,undefined ; exécuté dans
+l'image localhost/nabaztag-emulator (ASan runtime présent).

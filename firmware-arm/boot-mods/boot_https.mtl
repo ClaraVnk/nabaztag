@@ -1,0 +1,78 @@
+// boot_https.mtl -- kx.jsp and bc.jsp over HTTPS for the pinned warren.
+//
+// Until 1.2.0.0 a rabbit nobody had adopted yet fetched its key exchange and
+// its bytecode in the clear: whoever sat on the network could answer kx.jsp
+// with their own key. For one host, set at build time (Le Terrier), every
+// request of this bootloader goes to port 443 through nab_tls's session 1,
+// and the chain must end on the one root built into the firmware (ISRG Root
+// X2, keys/boot_anchor.der). No fallback to port 80 for that host: a
+// fallback is what someone blocking 443 would ask for. Any other host (a
+// Home Assistant add-on on the LAN) is fetched in the clear, as before.
+//
+// No clock yet at boot: the certificates must not have expired before this
+// firmware was built ("now" = ">YYYYMMDDHHMM." -- nab_tls.c); their start is
+// not checked, so a certificate renewed after the build still passes.
+//
+// The decrypted bytes go to the stock tcpread, so http_cap's ceiling holds.
+// An answer counts only once the host's close_notify arrived: a TCP close
+// without it may be a cut answer, and is a failure.
+
+const BOOT_HTTPS_PORT=443;;
+
+fun bhttps_queue cnx httpreq s=
+	if s!=nil then
+	(
+		if httpreq.outputH==nil then set httpreq.outputH=s
+		else set httpreq.outputH=strcat (strsub httpreq.outputH httpreq.indexH nil) s;
+		set httpreq.indexH=0;
+		tcpwrite cnx httpreq;
+		0
+	);
+	0;;
+
+fun bhttps_drain cnx httpreq=
+	let httpsIn nil -> p in
+	if p==nil then 0
+	else (tcpread cnx p httpreq; bhttps_drain cnx httpreq);;
+
+fun bhttps_fail t httpreq=
+	set httpreq.inputH=nil;
+	closetcp t;
+	call httpreq.cbH [httpreq nil];
+	0;;
+
+fun bhttps_event t val msg httpreq=
+	if val==TCPWRITE then
+	(
+		if httpreq.tlsH==nil then	// connected: the request kept, the ClientHello first
+		(
+			set httpreq.tlsH=httpreq.outputH;
+			set httpreq.outputH=nil;
+			let httpsStart BOOT_HTTPS_HOST BOOT_HTTPS_FLOOR "-" -> ch in	// "-": no roots, the built-in one
+			if ch==nil then bhttps_fail t httpreq
+			else bhttps_queue t httpreq ch
+		)
+		else tcpwrite t httpreq;
+		0
+	)
+	else if val==TCPCLOSE then bhttps_fail t httpreq
+	else
+	(
+		let httpsIn msg -> p in
+		(
+			if p!=nil then tcpread t p httpreq;
+			bhttps_drain t httpreq;
+			bhttps_queue t httpreq httpsOut nil;
+			let httpsState -> s in
+			if s==3 then bhttps_fail t httpreq
+			else if s==4 then (closetcp t; tcpread t nil httpreq; 0)
+			else if s==2 && (strlen httpreq.tlsH)>0 then
+			(
+				bhttps_queue t httpreq httpsOut httpreq.tlsH;
+				set httpreq.tlsH="";
+				0
+			)
+			else 0
+		)
+	);
+	0;;

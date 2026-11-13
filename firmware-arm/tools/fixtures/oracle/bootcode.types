@@ -170,6 +170,7 @@ Compiler : AttributeResponse : struct (2)
 Compiler : BuildAttributes : fun [S] AttributeResponse
 Compiler : ReverseElements : fun [list u0] list u0
 Compiler : ParseXML : fun [S] XmlResponse
+Compiler : XmlBlankEnd : fun [S I I] I
 Compiler : ParseXMLPacket : fun [S] XmlResponse
 Compiler : Xml_FindFirstElementNamed : fun [Element S] Element
 Compiler : Xmp_GetTextContent : fun [Element] S
@@ -347,6 +348,10 @@ Compiler : var dhcp_infinite_lease : I
 Compiler : var dhcp_lease_t1 : I
 Compiler : Dhcpw : fun [S] S
 Compiler : updatedhcpleasetimes : fun [I] I
+Compiler : const DHCP_ACCEPT_WINDOW : I
+Compiler : var dhcp_xid : S
+Compiler : var dhcp_reqtime : I
+Compiler : dhcp_newreq : fun [] I
 Compiler : mkdhcp : fun [I S S S] S
 Compiler : mkdhcpans : fun [I S S S] S
 Compiler : extractdhcp_helper_dnslist : fun [S I I] list S
@@ -373,6 +378,7 @@ Compiler : parsequ : fun [S I] I
 Compiler : parsequs : fun [S I I] I
 Compiler : skipname : fun [S I] I
 Compiler : parseans : fun [S I I] [S I]
+Compiler : const DNS_MAX_RR : I
 Compiler : parsemsg : fun [S] [S I]
 Compiler : filterdns : fun [S] S
 Compiler : question : fun [I S] S
@@ -422,6 +428,8 @@ Compiler : const HTTP_SOLVE : I
 Compiler : const HTTP_REACH : I
 Compiler : const HTTP_CONNECTED : I
 Compiler : var lasthttpevent : w0
+Compiler : const HTTP_MAX_NORMAL : I
+Compiler : const HTTP_MAX_HEADERS : I
 Compiler : cnxH : fun [Httpreq] w0
 Compiler : inputH : fun [Httpreq] w0
 Compiler : outputH : fun [Httpreq] w0
@@ -432,7 +440,10 @@ Compiler : stateH : fun [Httpreq] w0
 Compiler : aliveH : fun [Httpreq] w0
 Compiler : sonH : fun [Httpreq] w0
 Compiler : redirLevelH : fun [Httpreq] w0
-Compiler : Httpreq : struct (10)
+Compiler : sizeH : fun [Httpreq] w0
+Compiler : maxH : fun [Httpreq] w0
+Compiler : Httpreq : struct (12)
+Compiler : httpover : fun [Httpreq] I
 Compiler : proto httprequest : fun [w0 w1 w2 w3 w4] w5
 Compiler : proto httpabort : fun [w0] w1
 Compiler : httpgetcode : fun [S] I
@@ -484,6 +495,13 @@ Compiler : proto sendmailxmppurl : fun [w0 w1] w2
 Compiler : const XmppTcpIdleTime : I
 Compiler : var XmppGlobalSession : w0
 Compiler : var XmppServerPort : I
+Compiler : var XmppTlsPort : I
+Compiler : const XMPP_TLS_DEFAULT_PORT : I
+Compiler : var XmppTlsPolicy : S
+Compiler : var XmppTlsOn : I
+Compiler : var XmppTlsSock : w0
+Compiler : var XmppTlsUp : I
+Compiler : proto XmppTlsSelect : fun [w0] w1
 Compiler : const XmppVioletPlatformComponent : S
 Compiler : const XmppVioletObjectsComponent : S
 Compiler : const XmppVioletAppletComponent : S
@@ -647,7 +665,46 @@ Compiler : proto xmpps_createStanza : fun [w0 w1 w2 w3 w4] w5
 Compiler : XmppTcpOpen : fun [S I tXmppSession] I
 Compiler : XmppTcpReOpen : fun [S I tXmppSession] I
 Compiler : XmppTcpActuallySendData : fun [tXmppSession] I
+Compiler : XmppTcpSendRaw : fun [tXmppSession S] I
+Compiler : XmppTcpReadPlain : fun [Tcp I S tXmppSession] I
+Compiler : XmppTlsRequired : fun [] I
+Compiler : XmppTlsSelect : fun [I] I
 Compiler : XmppTcpSend : fun [tXmppSession S] I
+Compiler : XmppTlsDrain : fun [S] list S
+Compiler : XmppTlsFlush : fun [tXmppSession] I
+Compiler : var XmppResPolicy : S
+Compiler : XmppResInSession : fun [] I
+Compiler : const XMPP_RES_BUDGET : I
+Compiler : const XMPP_RES_KEEP : I
+Compiler : var XmppResHead : S
+Compiler : var XmppResStore : w0
+Compiler : var XmppResLeft : I
+Compiler : var XmppResId : I
+Compiler : var XmppResLen : I
+Compiler : var XmppResKeep : I
+Compiler : var XmppResParts : w0
+Compiler : XmppResAttr : fun [S S] I
+Compiler : XmppResTrim : fun [list [u0 I u1] I I] list [u0 I u1]
+Compiler : XmppResFind : fun [list [u0 u1 u2] u0] u2
+Compiler : var XmppOtaPolicy : S
+Compiler : XmppOtaInSession : fun [] I
+Compiler : const XMPP_FW_MAX : I
+Compiler : var XmppFwOn : I
+Compiler : var XmppFwBuf : w0
+Compiler : var XmppFwOff : I
+Compiler : var XmppFwRid : w0
+Compiler : var XmppFwId : w0
+Compiler : XmppFwBegin : fun [w0 I] I
+Compiler : XmppFwChunk : fun [S] I
+Compiler : XmppFwDone : fun [] I
+Compiler : var XmppLivePolicy : S
+Compiler : XmppLiveInSession : fun [] I
+Compiler : var XmppLiveOn : I
+Compiler : proto XmppLiveChunk : fun [w0] w1
+Compiler : proto XmppLiveMark : fun [w0 w1] w2
+Compiler : XmppResBegin : fun [S] I
+Compiler : XmppResDone : fun [] I
+Compiler : XmppResSift : fun [list S] list S
 Compiler : XmppTcpRead : fun [Tcp I S tXmppSession] I
 Compiler : XmppTcpIdle : fun [tXmppSession] I
 Compiler : XmppTcpOpenStream : fun [tXmppSession] I
@@ -751,8 +808,31 @@ Compiler : hex8_fw : fun [I] S
 Compiler : var g_ota_url : w0
 Compiler : ota_quiet : fun [u0 u1] I
 Compiler : ota_fail_report : fun [I] Httpreq
+Compiler : const OTA_STEP_OK : I
+Compiler : const OTA_STEP_RUN : I
+Compiler : const OTA_STEP_SIG : I
+Compiler : const OTA_STEP_BAD : I
+Compiler : ota_flash : fun [S S] I
 Compiler : ota_cb : fun [u0 S] I
+Compiler : const OTA_BIN_IDLE : I
+Compiler : const OTA_BIN_HEAD : I
+Compiler : const OTA_BIN_BODY : I
+Compiler : const OTA_BIN_DONE : I
+Compiler : var g_ota_bstate : w0
+Compiler : var g_ota_bbuf : w0
+Compiler : var g_ota_bsig : w0
+Compiler : var g_ota_boff : w0
+Compiler : ota_hdr : fun [S S] S
+Compiler : ota_hdr_sig : fun [S] S
+Compiler : const FW_MAX_BYTES : I
+Compiler : const FW_SIM_MAX_BYTES : I
+Compiler : ota_bin_head : fun [S] I
+Compiler : ota_bin_chunk : fun [S] I
+Compiler : ota_bin_end : fun [] I
+Compiler : ota_bin_cb : fun [u0 S] I
+Compiler : ota_url_is_bin : fun [S] I
 Compiler : flashFromUrl : fun [S] Httpreq
+Compiler : XmppFwTake : fun [S] I
 Compiler : var g_stream_on : I
 Compiler : var g_stream_ip : w0
 Compiler : var g_stream_port : I
@@ -762,6 +842,12 @@ Compiler : cbrecstream : fun [S] I
 Compiler : _cbstreammac : fun [S] I
 Compiler : startmicstream : fun [S I] I
 Compiler : stopmicstream : fun [] I
+Compiler : var XmppMicPolicy : S
+Compiler : XmppMicInSession : fun [] I
+Compiler : const XMPP_MIC_MAX_SECONDS : I
+Compiler : var g_mic_start : I
+Compiler : XmppMicChunk : fun [S] I
+Compiler : XmppMicStart : fun [] I
 Compiler : const WAV_IDLE : I
 Compiler : const WAV_RUN : I
 Compiler : const WAV_EOF : I
@@ -781,6 +867,8 @@ Compiler : var wav_lasttime : w0
 Compiler : var wav_lastnet : w0
 Compiler : var wav_zeros : w0
 Compiler : var wav_curplayedbytes : I
+Compiler : var wav_live : w0
+Compiler : var wav_startsize : I
 Compiler : var lastvol : w0
 Compiler : var forcedvol : I
 Compiler : volfrombutton : fun [I] I
@@ -1053,6 +1141,17 @@ Compiler : filterconfig_line : fun [S I] list [S S]
 Compiler : filterconfig : fun [S I] list [S S]
 Compiler : dump_prgm : fun [list [S S]] list [S S]
 Compiler : _configcbhttp : fun [u0 S] I
+Compiler : const LOCATE_TLS_DONE : I
+Compiler : var LocateTlsReq : w0
+Compiler : var LocateTlsFailed : I
+Compiler : LocateTlsWanted : fun [] I
+Compiler : LocateTlsQueue : fun [Httpreq S] I
+Compiler : LocateTlsPush : fun [Tcp Httpreq] I
+Compiler : LocateTlsTake : fun [Httpreq S] I
+Compiler : LocateTlsEnd : fun [Tcp Httpreq] I
+Compiler : LocateTlsEvent : fun [Tcp I S Httpreq] I
+Compiler : LocateTlsOpen : fun [S Httpreq] I
+Compiler : LocateTlsRequest : fun [S fun [Httpreq S] I] Httpreq
 Compiler : var gConfigStart : I
 Compiler : runconfigstart : fun [] I
 Compiler : runconfigwait : fun [Httpreq] I
@@ -1064,9 +1163,13 @@ Compiler : rscFromProgram : fun [list [S u0]] list [u0 I]
 Compiler : var paletteselected : I
 Compiler : CheckForPaletteBefore : fun [list [S S]] I
 Compiler : prgmStart : fun [] I
+Compiler : var XmppRscPolicy : S
+Compiler : XmppRscTake : fun [S] I
 Compiler : _rscLoadCBhttp : fun [Httpreq S I] I
 Compiler : runRscLoadNext : fun [] I
 Compiler : runRscLoadWait : fun [Httpreq] I
+Compiler : var gWokeToPlay : I
+Compiler : proto startSleep : fun [] w0
 Compiler : endOfProgram : fun [I] I
 Compiler : var recordtimestart : w0
 Compiler : var recordmode : w0
@@ -1159,6 +1262,25 @@ Compiler : runStreamingCmd : fun [I] I
 Compiler : _cbGotoNextCmd : fun [I] I
 Compiler : _cbWavError : fun [] I
 Compiler : runWaitCmd : fun [I] Run
+Compiler : const XMPP_LIVE_WINDOW : I
+Compiler : const XMPP_LIVE_START : I
+Compiler : const XMPP_LIVE_GRANT : I
+Compiler : const XMPP_LIVE_TICK : I
+Compiler : const XMPP_LIVE_AGAIN : I
+Compiler : const XMPP_LIVE_SILENCE : I
+Compiler : var XmppLiveId : w0
+Compiler : var XmppLiveGot : I
+Compiler : var XmppLiveUpto : I
+Compiler : var XmppLiveTime : I
+Compiler : var XmppLiveHeard : I
+Compiler : var XmppLiveAsked : I
+Compiler : XmppLiveSay : fun [I S] I
+Compiler : XmppLiveAsk : fun [I] I
+Compiler : XmppLiveChunk : fun [S] I
+Compiler : XmppLiveMark : fun [S I] I
+Compiler : XmppLivePlay : fun [S] I
+Compiler : XmppLiveTick : fun [] I
+Compiler : XmppResPlay : fun [S] I
 Compiler : runEvalOneCommand : fun [I] I
 Compiler : var nexttaichi : w0
 Compiler : dotaichinow : fun [] I
@@ -1192,6 +1314,9 @@ Compiler : ParseRfid : fun [S] I
 Compiler : zeroRFIDchek : fun [] I
 Compiler : _cbrfidendchor : fun [u0] I
 Compiler : checkRfidPresence : fun [] S
+Compiler : var XmppRfidPolicy : S
+Compiler : XmppRfidInSession : fun [] I
+Compiler : XmppRfidReport : fun [S] I
 Compiler : controlrfid : fun [] I
 Compiler : controlplay : fun [] I
 Compiler : controlwait : fun [] I

@@ -1,0 +1,21 @@
+# A streamed answer whose headers never end.
+#
+# Run it as boot 1 of tools/xmpp-tls-proof.sh (a real Terrier, so that a
+# sound is fetched by URL: the adoption announcement of an orphan), with the
+# runtime under test:
+#
+#   sed 's|^boot 1-pending proof-a$|boot 1-pending proof-a scenarios/http/bighead-stream.txt|' \
+#       tools/xmpp-tls-proof.sh > /tmp/bighead.sh && bash /tmp/bighead.sh --terrier ... 
+#
+# The rabbit has its session by 81 s and fetches the announcement around 91 s.
+# From 86 s the gateway answers every new connection with a status line and
+# one header that never ends. Before patch_http_cap.py bounded the header
+# block the VM asked for a reset twelve seconds later; with it the rabbit
+# hangs up after 8 KB and goes on.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 160000
+at 20000  expect RUN
+at 86000  http-bighead 1000000
+at 150000 expect RUN
+at 155000 expect-no-reset

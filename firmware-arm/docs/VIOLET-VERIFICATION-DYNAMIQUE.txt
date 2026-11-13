@@ -1,0 +1,163 @@
+VÉRIFICATION DYNAMIQUE DU FIRMWARE VIOLET (émulateur whole-rabbit)
+Phase 3 — confirmer/corriger les hypothèses de la cartographie par la trace
+2026-11-11
+
+Outil : ~/res-work/nabaztag/firmware-arm/emulator, cible « rabbit-vm » (la VM
+Metal + une vraie image bytecode = bootcode.hybrid, pilotée par main()). Image
+podman RÉUTILISÉE sans reconstruction : localhost/nabaztag-emulator (27 h).
+Aucune image lourde reconstruite. Commande type :
+  python3 mkconf.py --ssid Terrier --security open --server warren.example:8080/vl \
+    --ip 10.0.0.42 --gateway 10.0.0.1 -o /tmp/o.eeprom
+  ./rabbit-vm scenarios/vm/boot-open.txt --eeprom /tmp/o.eeprom --warren <hôte>
+
+Architecture de l'émulateur (src/gw.c) : le C réel (vinterp, vmem, vloader,
+ieee80211, eapol) tourne ; le matériel (radio, LEDs, oreilles, VS1003, page de
+conf 4 Ko) est simulé ; le serveur « warren » est EXTERNE (toute connexion TCP
+du lapin est relayée vers --warren). Le lapin n'appelle PAS bc.jsp (son bytecode
+runtime est déjà chargé depuis bootcode.hybrid) : il démarre directement sur le
+runtime. Conséquence méthodologique importante (voir §4) : sans un vrai warren
+qui pousse des programmes et de l'audio, on ne peut pas exercer en vitro le GC
+sous pression, les rappels SYS_CBTCP/CBPLAY/CBREC en charge, ni OPbytecode.
+
+
+=====================================================================
+1. HYPOTHÈSES CONFIRMÉES (trace à l'appui)
+=====================================================================
+
+1.1  Flux de démarrage boot/main/loop (cartographie §5.1, §5.3)
+     CONFIRMÉ. Trace du démarrage (scenarios/vm/boot-open.txt) :
+       [0 ms] vmemInit
+       [0 ms] loaderInit
+       [0 ms] bytecode loaded: 472 functions
+       [0 ms] led bottom/left/middle/right/top = #ff00ff   (violet = non-master)
+       [0 ms] audio: volume 0x00 ; audio: amplifier on
+       [0 ms] the bytecode's main() returned
+       [0 ms] led * = #ff8000   (orange : attente réseau)
+     Points confirmés :
+       - L'ordre vmemInit -> loaderInit -> interpGo(main) est exactement celui de
+         main.c:main (cartographie §5.1).
+       - main() du bytecode S'EXÉCUTE UNE SEULE FOIS ET REND LA MAIN (« main()
+         returned ») : ce n'est pas une boucle infinie. Ensuite c'est la boucle C
+         (main.c) qui pilote en appelant SYS_CBLOOP (confirmé par l'animation LED
+         « led left = #0000ff / #000000 » répétée toutes les ~10 s ensuite :
+         c'est boot_leds/loop via loopcb). PRÉCISION par rapport à la carto : la
+         carto dit « main : … ; loopcb #loop » ; la trace montre que le passage
+         main->loop se fait bien par retour de main puis rappel loop, pas par un
+         appel direct.
+       - loaderInit lit la table des fonctions : « 472 functions » = le champ
+         nbfun de l'image (cartographie §4.1, uint16 nbfun). Le format vloader
+         est donc lu tel que décrit.
+
+1.2  Page de configuration conf.bin (cartographie §8.1)
+     CONFIRMÉ. L'émulateur relit la page de 4 Ko et son hexdump correspond aux
+     offsets documentés :
+       offset 0    « warren.example:8080/vl\0… »   = SERVERURL (41 o)
+       offset 42   0a 00 00 2a                      = NETIP 10.0.0.42
+       offset 46   ff ff ff 00                      = NETMASK 255.255.255.0
+       offset 50   0a 00 00 01                      = NETGATEWAY 10.0.0.1
+       offset 54   0a 00 00 01                      = NETDNS 10.0.0.1
+       offset 58   « Terrier\0 »                    = WIFISSID
+       offset 0xcf 0x47                             = MAGIC
+     « eeprom: … magic 0x47 (configured) ». Les offsets de config.mtl sont exacts.
+
+1.3  Le test OPnetAuth « FIXME 20170822 » (zones-ombre 3.2)
+     CONFIRMÉ. Sur un réseau ouvert, la trace (patch opnetauth-trace) donne :
+       OPnetAuth: mac=yes bssid=yes crypt=0x00 (&0xF0)=0x00 encrypt=0x00
+                  authmode=0 chn=6 rate=0x0fff key=NIL -> calling netAuth
+     Le test « (crypt&0xF0)==encrypt » est bien celui décrit : netAuth n'est
+     appelé que si le type de chiffrement du scan coïncide avec la config. Sur
+     open (0x00==0x00) il passe. L'hypothèse de la zone d'ombre 3.2 (le Metal
+     attend pour toujours si ça ne coïncide pas) est cohérente avec ce point de
+     contrôle unique.
+
+1.4  Automate 802.11 station (cartographie §7.3)
+     CONFIRMÉ. Séquence tracée : Scanning (canaux 1..14) -> Probe_Resp sur 6 ->
+     DUMPSCAN [ssid mac bssid rssi channel rateset encryption] -> Sending auth
+     request -> Auth -> Associating -> « ieee80211_assoc Unknown encryption: 0 »
+     (cas open, default du switch de ieee80211_associate) -> Assoc_Resp ->
+     « Association successful » -> wifi state=4 (CONNECTED) -> dhcp. Le tuple de
+     scan remonté au Metal a bien les 7 champs de la cartographie §2.6/§7.3.
+
+1.5  Format DNS et URL locate.jsp (protocole §1.2, §2.1)
+     CONFIRMÉ. Le lapin émet :
+       warren.example:8080/vl/locate.jsp?sn=0019db00beef&h=4&v=Git001
+     -> sn = MAC hexa minuscule (12 car.), h = HARDWARE = 4, v = révision.
+     Exactement le format reconstruit en Phase 2 §1.2. La requête DNS
+     correspond à dns.mtl:question (en-tête 00 01 01 00 00 01 …, QNAME
+     « 06 warren 07 example 00 », QTYPE 0001 QCLASS 0001).
+
+1.6  Modèle « pas d'interruption VM, tout est polled » (zones-ombre 5.1)
+     CONFIRMÉ indirectement : toutes les actions (scan, auth, dhcp, dns, LED,
+     oreilles) apparaissent cadencées par les ticks de 50 ms du scénario ; aucune
+     action hors tick. La boucle C est le seul ordonnanceur.
+
+
+=====================================================================
+2. HYPOTHÈSES PRÉCISÉES
+=====================================================================
+
+2.1  « bytecode en bas du tas, sous _vmem_start » (zones-ombre 1.1)
+     NON INFIRMÉ, mais NON OBSERVABLE directement par la trace (aucune adresse de
+     tas n'est imprimée au boot). Le comportement observé est cohérent : après
+     loaderInit, le code tourne et le GC (quand il tournera) ne doit pas le
+     déplacer. La confirmation reste par lecture de code (vloader.c:loaderInit +
+     vmemSetstart) ; l'émulateur ne l'expose pas sans instrumentation
+     supplémentaire. À faire si besoin : ajouter un print de _vmem_start après
+     loaderInit (le patch opnetauth-trace montre que ce genre d'ajout est trivial).
+
+2.2  Cases système SYS_* (cartographie §3.6)
+     PARTIELLEMENT confirmé : SYS_CBLOOP est exercé (animation LED en boucle).
+     SYS_CBTCP est exercé implicitement (les trames DNS/DHCP remontent au Metal
+     via net.mtl:net). SYS_CBPLAY / SYS_CBREC (audio) ne sont PAS exercés sans un
+     warren qui pousse un son. SYS_CBUDP reste non utilisé (conforme à l'hypothèse
+     « reliquat simulateur »). L'ordre et la sémantique des cases ne peuvent être
+     tracés qu'en instrumentant VCALLSTACKGET(_sys_start, i).
+
+
+=====================================================================
+3. HYPOTHÈSES NON EXERCÉES EN VITRO (restent confirmées par le code seul)
+=====================================================================
+
+3.1  GC mark-compact 4 passes (cartographie §3.5)
+     NON DÉCLENCHÉ. Sur 120 s de boot sans warren, aucune ligne « #GC : sp= hp=
+     used=% » ni « GC : BIG MOVE » : le tas ne se remplit pas (l'animation de
+     boot réutilise des constantes). Le GC n'est atteint qu'à ~800 Ko de
+     pression, c'est-à-dire sous un vrai flux de programmes/audio/ressources
+     base64. Le README de l'émulateur documente que le chemin OTA (getbinary_fw
+     laissant ~107 704 chaînes) produit « #GC : sp=1567 hp=151833 used=74% » —
+     ce qui confirme l'existence et le format du trace logGC, mais via un
+     scénario qui exige un warren servant une image. À reproduire avec un warren
+     réel (add-on HA ou Terrier) pointé par --warren.
+
+3.2  OPbytecode (remplacement à chaud du programme, zones-ombre 3.3)
+     NON EXERCÉ : le lapin démarre déjà sur le runtime (bootcode.hybrid), il n'y
+     a pas de transition boot->runtime via bc.jsp dans ce montage. Pour l'exercer
+     il faudrait servir un bc.jsp depuis le warren et un bootloader en bytecode
+     (le README décrit « bytecode: bootloader », make BYTECODE=obj/boot.bc).
+
+3.3  Rappels audio SYS_CBPLAY/CBREC et le FIFO 4 Ko (cartographie §2.5, §6.2)
+     NON EXERCÉS sans warren poussant un ST/MU. L'émulateur a un décodeur qui
+     « garde ce qu'on lui a donné » (--audio-dir) : une vérification complète de
+     la chaîne playFeed/play_check est possible avec un warren réel.
+
+
+=====================================================================
+4. LIMITE MÉTHODOLOGIQUE ET SUITE
+=====================================================================
+
+Le montage « rabbit-vm + warren externe » confirme tout le chemin de démarrage
+et d'association, le format de conf.bin, le point de contrôle OPnetAuth, et le
+format DNS/locate.jsp (ce qui recoupe et valide la Phase 2). En revanche, les
+mécanismes qui ne se déclenchent que sous charge applicative — GC 4 passes,
+rappels audio/TCP en volume, hot-swap OPbytecode — exigent un warren qui pousse
+réellement des <packet> et des ressources. Deux pistes pour les exercer sans
+reconstruire d'image :
+  (a) pointer --warren sur l'add-on HA ou un Terrier de test (le README le
+      prévoit explicitement : « Point --warren at a real add-on or a real
+      Terrier and the whole Violet protocol runs ») ;
+  (b) ajouter, à la manière du patch opnetauth-trace, un print de _vmem_start et
+      de vmemGC (passes) — instrumentation d'une ligne, compilée sous _NAB_SIM.
+
+Aucune hypothèse de la cartographie n'a été INFIRMÉE par la trace ; une a été
+précisée (main() rend la main avant la boucle, §1.1) et plusieurs restent à
+confirmer dynamiquement avec un warren vivant (§3).

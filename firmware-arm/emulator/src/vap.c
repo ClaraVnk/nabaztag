@@ -81,6 +81,12 @@ static uint8_t vap_filter_bssid[IEEE80211_ADDR_LEN];
 /* Counters the run summary prints. */
 struct vap_stats vap_stats;
 
+/* ccmp_replay_count's view of the receive descriptor (ieee80211.c). Weak:
+   a build without the step has none, and delivers frames as before. */
+extern uint32_t ieee80211_rxd_iv __attribute__((weak));
+extern uint32_t ieee80211_rxd_eiv __attribute__((weak));
+extern uint8_t ieee80211_rxd_alg __attribute__((weak));
+
 /* Frames queued from an AP towards the rabbit. Queued rather than delivered
  * inline: ieee80211_input() transmits as it processes, and handing it the
  * reply from inside rt2501_tx() would recurse through the whole handshake in
@@ -99,6 +105,17 @@ struct vap_queued {
   uint32_t length;
   int16_t  rssi;
   uint8_t  channel;
+  /* What the RT2573 says about the frame in its receive descriptor (RXD,
+   * rt2501usb_hw.h): the cipher it decrypted with, and words 2 and 3, "Iv"
+   * and "Eiv". For CCMP the chip strips the 8-byte CCMP header from the
+   * frame and hands it over in those two words, in the order it was on the
+   * air -- PN0 PN1 rsvd KeyID | PN2 PN3 PN4 PN5 -- which is how Linux's
+   * rt73usb reads the same chip (rt73usb_fill_rxdone: iv[0] = word 2,
+   * iv[1] = word 3, copied back in front of the payload as they are).
+   * Nobody has read those words on a rabbit yet: this is the driver's
+   * account of the hardware, and ccmp_replay_count exists to check it. */
+  uint32_t iv, eiv;
+  uint8_t  alg;
 };
 
 static struct vap_queued vap_queue[VAP_QUEUE_DEPTH];
@@ -137,8 +154,12 @@ static int ap_audible(const struct sim_ap *a)
   return a->up && (a->channel == vap_channel);
 }
 
-static void queue_frame(const uint8_t *frame, uint32_t length, int16_t rssi,
-                        uint8_t channel)
+static void vap_stamp_pn(struct vap_queued *q);
+
+/* `rxd` is the descriptor to deliver the frame with; NULL for a frame the
+ * AP sends now, which gets the next packet number of its key. */
+static void queue_frame_rxd(const uint8_t *frame, uint32_t length, int16_t rssi,
+                            uint8_t channel, const struct vap_queued *rxd)
 {
   struct vap_queued *q;
   if(length > VAP_FRAME_MAX) {
@@ -154,7 +175,22 @@ static void queue_frame(const uint8_t *frame, uint32_t length, int16_t rssi,
   q->length  = length;
   q->rssi    = rssi;
   q->channel = channel;
+  q->alg = 0;
+  q->iv = q->eiv = 0;
+  if(rxd != NULL) {
+    q->alg = rxd->alg; q->iv = rxd->iv; q->eiv = rxd->eiv;
+  } else if(length >= sizeof(struct ieee80211_frame)
+            && (frame[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA
+            && (frame[1] & IEEE80211_FC1_PROTECTED)) {
+    vap_stamp_pn(q);
+  }
   vap_queue_count++;
+}
+
+static void queue_frame(const uint8_t *frame, uint32_t length, int16_t rssi,
+                        uint8_t channel)
+{
+  queue_frame_rxd(frame, length, rssi, channel, NULL);
 }
 
 /* --- frame construction ----------------------------------------------- */
@@ -634,9 +670,60 @@ struct vap_handshake {
      on the wrong key. */
   uint8_t  tk_live[16];
   int      tk_live_set;
+  /* The packet numbers this AP transmits with: one counter per key, raised
+     before each protected frame, so the first frame under a key is PN 1.
+     The pairwise one restarts when a new temporal key is installed; the
+     group one belongs to the BSS and restarts only with a new group key. */
+  uint64_t pn_ptk;
+  uint64_t pn_gtk;
 };
 
 static struct vap_handshake vap_hs[SIM_MAX_APS];
+
+/* The last protected data frame sent to the station and the last sent to a
+   group address, as queued: what `replay` sends again. */
+static struct vap_queued vap_last_uc, vap_last_gr;
+static int vap_last_uc_set, vap_last_gr_set;
+
+static uint64_t vap_rxd_pn(const struct vap_queued *q)
+{
+  return ((uint64_t)q->eiv << 16) | (q->iv & 0xffff);
+}
+
+/* The receive descriptor of a protected data frame the AP sends now. */
+static void vap_stamp_pn(struct vap_queued *q)
+{
+  int ap = ap_index_for_bssid(q->data + 10);
+  int group = q->data[4] & 1;
+  struct vap_handshake *hs;
+  uint64_t pn;
+  uint8_t keyid;
+  int tkip;
+
+  if(ap < 0) return;
+  hs = &vap_hs[ap];
+  switch(sim.aps[ap].security) {
+    case SIM_SEC_WPA_TKIP:
+    case SIM_SEC_WPA2_TKIP:  tkip = 1; break;
+    case SIM_SEC_WPA2_MIXED: tkip = group; break;
+    default:                 tkip = 0; break;
+  }
+  pn = group ? ++hs->pn_gtk : ++hs->pn_ptk;
+  keyid = group ? (hs->gtk_index ? hs->gtk_index : 1) : 0;
+  if(tkip) {
+    /* TKIP's eight bytes are TSC1 WEPSeed TSC0 KeyID | TSC2..TSC5. */
+    uint8_t tsc0 = (uint8_t)pn, tsc1 = (uint8_t)(pn >> 8);
+    q->alg = RT2501_CIPHER_TKIP;
+    q->iv = (uint32_t)tsc1 | ((uint32_t)((tsc1 | 0x20) & 0x7f) << 8)
+          | ((uint32_t)tsc0 << 16) | ((uint32_t)(0x20 | (keyid << 6)) << 24);
+  } else {
+    q->alg = RT2501_CIPHER_AES;
+    q->iv = (uint32_t)(pn & 0xffff) | ((uint32_t)(0x20 | (keyid << 6)) << 24);
+  }
+  q->eiv = (uint32_t)(pn >> 16);
+  if(group) { vap_last_gr = *q; vap_last_gr_set = 1; }
+  else      { vap_last_uc = *q; vap_last_uc_set = 1; }
+}
 
 /* A group key the AP hands out. Fixed rather than random so a transcript can
  * be compared byte for byte between runs. */
@@ -1087,6 +1174,11 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
     hs->secure = 1;
     /* The AP installs the PTK on message 4, as hostapd does: from here
      * it transmits under this key, and the station had better hold it. */
+    /* ...and a new key starts its packet numbers over. Message 4 of a
+     * retransmitted message 3 confirms the key already in use: hostapd
+     * does not install it again, and the numbers go on. */
+    if(!hs->tk_live_set || memcmp(hs->tk_live, hs->ptk + 32, 16) != 0)
+      hs->pn_ptk = 0;
     memcpy(hs->tk_live, hs->ptk + 32, 16);
     hs->tk_live_set = 1;
     sim_log("AP %s: EAPOL 4/4 received, the handshake is complete",
@@ -1627,6 +1719,30 @@ void vap_inject(const uint8_t *frame, uint32_t length)
   queue_frame(frame, length, -40, vap_channel);
 }
 
+/* A probe request a station in radio range sends to a rabbit that is its own
+ * access point (config mode): an SSID information element of ssid_len bytes.
+ * ieee80211_input_mgt() copies it into a 33-byte stack buffer with the
+ * element's own length -- a length past 32 overruns it (finding #3). */
+void vap_inject_probe(uint32_t ssid_len)
+{
+  uint8_t out[VAP_FRAME_MAX], ssid[256];
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+  uint8_t *p = out + sizeof(*fr);
+  static const uint8_t attacker[6] = { 0x02, 0xde, 0xad, 0xbe, 0xef, 0x01 };
+
+  if(ssid_len > 255) ssid_len = 255;
+  memset(ssid, 'A', ssid_len);
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_REQ;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+  memcpy(fr->i_addr1, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, attacker, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  p = put_ie(p, IEEE80211_ELEMID_SSID, ssid, (uint8_t)ssid_len);
+  sim_log("attacker: probe request with a %u-byte SSID element", ssid_len);
+  vap_inject(out, (uint32_t)(p - out));
+}
+
 /* What the radio's own header calls these. Key slot 0 is the pairwise key;
  * anything else is a group key. */
 #define RT2501_CIPHER_NONE_ 0
@@ -1916,6 +2032,7 @@ void vap_rekey(int ap)
     key_data = (uint8_t *)&fr->key_frame + EAPOL_KEY_BODY_LENGTH;
     hs->replay++;
     hs->gtk_index = (uint8_t)(hs->gtk_index == 1 ? 2 : 1);
+    hs->pn_gtk = 0;                           /* a new key, its own numbers */
 
     if(vap_is_wpa2(a)) {
       uint8_t kde[24];
@@ -2105,6 +2222,82 @@ void vap_inject_plain(int ap, int eapol)
     return;
   }
   sim_log("vap: no associated AP to inject a plaintext frame from");
+}
+
+/**
+ * @brief One protected data frame from the AP, with the next packet number.
+ *
+ * An ARP request for the rabbit's address, to the rabbit or to everybody.
+ * ./rabbit has no gateway behind its AP, so this is the traffic the CCMP
+ * replay scenarios count.
+ */
+void vap_send_data(int ap, int group)
+{
+  static const uint8_t arp[] = {
+    0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06,
+    0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01 };
+  uint8_t body[sizeof arp + 20];
+  uint8_t out[VAP_FRAME_MAX];
+  uint32_t n;
+
+  for(int i = 0; i < sim.nb_aps; i++) {
+    struct sim_ap *a = &sim.aps[i];
+    const struct vap_queued *sent;
+    if(ap >= 0 && i != ap) continue;
+    if(!a->associated || !ap_audible(a)) continue;
+    if(!vap_hs[i].secure) {
+      sim_log("AP %s: no keys yet, no protected data frame", macstr(a->bssid));
+      return;
+    }
+    memset(body, 0, sizeof body);
+    memcpy(body, arp, sizeof arp);
+    n = vap_wrap_data(out, a, a->bssid, body, sizeof body);
+    if(group) memset(out + 4, 0xff, IEEE80211_ADDR_LEN);
+    queue_frame(out, n, a->rssi, a->channel);
+    sent = group ? &vap_last_gr : &vap_last_uc;
+    sim_log("AP %s: a data frame to %s, key id %u, PN %llu",
+            macstr(a->bssid), group ? "everybody" : "the station",
+            (unsigned)(sent->iv >> 30), (unsigned long long)vap_rxd_pn(sent));
+    vap_stats.data_sent++;
+    return;
+  }
+  sim_log("vap: no associated AP to send a data frame from");
+}
+
+/**
+ * @brief A protected data frame the station already received, again.
+ *
+ * Byte for byte, with the packet number it had, so the radio decrypts it
+ * exactly as it did the first time -- CCMP's integrity check has nothing to
+ * say about a frame that is genuine. Only the receiver's own record of the
+ * last number it took can tell, and the stock driver keeps none. With
+ * `retry` the Retry bit is set, which is not an attack: an AP that missed
+ * the acknowledgement sends the same frame, same number, once more.
+ */
+void vap_replay(int ap, int group, int retry)
+{
+  struct vap_queued *last = group ? &vap_last_gr : &vap_last_uc;
+  int from;
+
+  if(!(group ? vap_last_gr_set : vap_last_uc_set)) {
+    sim_log("vap: no protected %s frame has been sent yet, nothing to replay",
+            group ? "group" : "unicast");
+    return;
+  }
+  from = ap_index_for_bssid(last->data + 10);
+  if(from < 0 || (ap >= 0 && from != ap) || !ap_audible(&sim.aps[from])) {
+    sim_log("vap: the AP of the last protected frame is not on the air");
+    return;
+  }
+  if(retry) last->data[1] |= IEEE80211_FC1_RETRY;
+  else      last->data[1] &= (uint8_t)~IEEE80211_FC1_RETRY;
+  sim_log("%s %s: the last %s data frame again, key id %u, PN %llu%s",
+          retry ? "AP" : "attacker, as AP", macstr(last->data + 10),
+          group ? "group" : "unicast", (unsigned)(last->iv >> 30),
+          (unsigned long long)vap_rxd_pn(last),
+          retry ? " (Retry bit set: a retransmission)" : " (a replay)");
+  queue_frame_rxd(last->data, last->length, last->rssi, last->channel, last);
+  vap_stats.replays_sent++;
 }
 
 /**
@@ -2322,6 +2515,14 @@ void vap_poll(void)
       uint8_t *exact = malloc(q->length);
       if(exact == NULL) { sim_note_failure("out of memory"); return; }
       memcpy(exact, q->data, q->length);
+      /* What rt2501_rx_callback() copies out of the receive descriptor
+       * before it calls ieee80211_input(), in a build with
+       * ccmp_replay_count; a build without has no such variables. */
+      if(&ieee80211_rxd_iv != NULL) {
+        ieee80211_rxd_alg = q->alg;
+        ieee80211_rxd_iv  = q->iv;
+        ieee80211_rxd_eiv = q->eiv;
+      }
       ieee80211_input(exact, q->length, (int16_t)(q->rssi + vap_noise()));
       free(exact);
     }

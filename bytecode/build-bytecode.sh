@@ -16,10 +16,14 @@
 # Usage: build-bytecode.sh <bootcode-dir> [compiler] [out.bin]
 #   <bootcode-dir>  the stock Violet bootcode tree (has sources/, preproc.pl)
 #                   e.g. /root/violet-bootcode in the nabi-build container.
-#   [compiler]      Metal compiler. Default: RedoXyde mtl_linux's *patched* build,
-#                   which knows the custom verifySig opcode (152). The plain
-#                   mtl_compiler errors "unknown label 'verifySig'" on fwota, and
-#                   the bundled compiler/mtl_linux/mtl_comp is 64-bit and SEGFAULTS.
+#   [compiler]      Metal compiler. Default: this repo's
+#                   firmware-arm/tools/mtl_comp.py -- a Python compiler
+#                   byte-identical to RedoXyde's C++ mtl_compiler (gated by
+#                   tools/run-tests.sh) that already knows the verifySig opcode
+#                   (152) fwota needs, so the bytecode builds from the repo
+#                   alone, no external binary. Pass a path ending in .py to use
+#                   another Python compiler, or any other path for a native
+#                   mtl_compiler binary (invoked `CC -s IN OUT`).
 #   [out.bin]       output (default: <bootcode-dir>/bootcode_hybrid.bin)
 #
 # All patch scripts are idempotent; re-running on an already-patched tree is safe.
@@ -27,14 +31,14 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BC="${1:?give the Violet bootcode dir (the one with sources/ and preproc.pl)}"
-CC="${2:-/root/mtl_linux/mtl_compiler_patched}"
+CC="${2:-$HERE/../firmware-arm/tools/mtl_comp.py}"
 OUT="${3:-$BC/bootcode_hybrid.bin}"
 
 [ -d "$BC/sources" ]         || { echo "no $BC/sources — is this a bootcode tree?"; exit 1; }
 [ -f "$BC/sources/main.mtl" ] || { echo "no sources/main.mtl"; exit 1; }
 case "$CC" in
-  *.py) [ -f "$CC" ]          || { echo "no compiler at $CC"; exit 1; } ;;
-  *)    [ -x "$CC" ]          || { echo "compiler not executable: $CC"; exit 1; } ;;
+  *.py) [ -f "$CC" ] || { echo "compiler not found: $CC"; exit 1; } ;;
+  *)    [ -x "$CC" ] || { echo "compiler not executable: $CC"; exit 1; } ;;
 esac
 grep -q "fun dnsreq" "$BC/sources/dns.mtl" || { echo "sources/dns.mtl: no dnsreq — not stock Violet?"; exit 1; }
 
@@ -99,6 +103,37 @@ python3 "$HERE/patch_mic_in_session.py" "$BC/sources/main.mtl"
 # the image, then `FW res:N <sig>`, when the warren flipped "xmpp-ota:0".
 echo "==> patch_ota_in_session.py  (firmware updates inside the session)"
 python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
+# A radio or a podcast comes down the session as well, pulled by the rabbit
+# and played as it arrives: `ST live:N`, when the warren flipped "xmpp-live:0".
+echo "==> patch_live_in_session.py  (radio and podcasts inside the session)"
+python3 "$HERE/patch_live_in_session.py" "$BC/sources/main.mtl"
+# Blanks ahead of a stanza (a whitespace keepalive) no longer swallow it
+# and every stanza after it.
+echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
+python3 "$HERE/patch_xml_leading_blank.py" "$BC/sources/xmlparser.mtl"
+
+# A DHCP reply is trusted only in a window after we asked and with our id;
+# without it an unsolicited ACK could rewrite the rabbit's IP/gateway/DNS.
+echo "==> patch_dhcp_xid.py  (DHCP replies checked)"
+python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
+
+# DNS query ids are random (harder to forge a reply, which the SRV path turns
+# into the XMPP server) and reply record counts are bounded (no reboot).
+echo "==> patch_dns_antispoof.py  (random DNS ids, bounded counts)"
+python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
+
+# An HTTP_NORMAL answer is counted as it arrives and dropped past 16 KB (the
+# hex .sim OTA request carries its own, larger ceiling): a server or a host
+# on the path can no longer fill the heap, which was a reboot.
+echo "==> patch_http_cap.py  (HTTP_NORMAL answers bounded)"
+python3 "$HERE/patch_http_cap.py" "$BC/sources"
+
+echo "==> patch_https_play.py  (https:// streams played by the rabbit itself, Naboot 1.2.0.0)"
+python3 "$HERE/patch_https_play.py" "$BC/sources"
+
+echo "==> patch_ota_https.py  (an update fetched by the rabbit itself over HTTPS, Naboot 1.2.0.0)"
+python3 "$HERE/patch_ota_https.py" "$BC/sources"
+
 # A long press of the head goes to the warren as a long_click when the
 # warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
 echo "==> patch_btn_in_session.py  (a long press goes to the warren, not to record.jsp)"
@@ -112,7 +147,6 @@ python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )
 case "$CC" in
-  # firmware-arm/tools/mtl_comp.py: byte-identical to the C++, python3 only.
   *.py) python3 "$CC" "$BC/bootcode.mtl" -o "$OUT" ;;
   *)    "$CC" -s "$BC/bootcode.mtl" "$OUT" ;;
 esac
@@ -123,13 +157,14 @@ esac
 # or every sound is still fetched over plain HTTP; the program-resource one
 # once, or jingles and choreographies are; the microphone one once, or what
 # is said to the rabbit still crosses the internet in UDP; the update one
-# once, or every firmware image is still fetched over plain HTTP; the button
-# one once, or a long press still records the room to record.jsp.
+# once, or every firmware image is still fetched over plain HTTP; the stream
+# one once, or the radio and the podcasts are; the button one once, or a
+# long press still records the room to record.jsp.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
 for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
-            b"xmpp-btn:0"):
+            b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0", b"xmpp-btn:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")

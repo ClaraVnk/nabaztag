@@ -66,6 +66,12 @@ void gw_set_xmpp_port(uint16_t port) { gw_xmpp_port = port; }
 static uint16_t gw_port80_to;
 void gw_set_port80(uint16_t port) { gw_port80_to = port; }
 
+/* Where a connection to port 443 goes instead, 0 for port 443: Naboot
+ * 1.2.0.0 fetches kx.jsp and bc.jsp from its pinned warren over HTTPS
+ * (boot_https), and an unprivileged proof cannot listen on 443. */
+static uint16_t gw_port443_to;
+void gw_set_port443(uint16_t port) { gw_port443_to = port; }
+
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
  * reach its warren", and exactly what you want when the answer is no. */
@@ -316,6 +322,43 @@ static void handle_dhcp(const uint8_t *udp_payload, uint32_t length)
   }
 }
 
+/* An attacker's unsolicited DHCP ACK: it points the rabbit's gateway and DNS
+ * at `rogue`, with a transaction id of zero -- not one the rabbit sent, and
+ * sent at an arbitrary moment with no request in flight. Before the
+ * dhcp-antispoof bytecode, cbnetdhcp took any reply whose chaddr held the
+ * rabbit's MAC; after, this one is dropped (id mismatch, and out of window). */
+void gw_dhcp_rogue(uint32_t rogue)
+{
+  static const uint8_t rabbit_mac[6] = { 0x00, 0x19, 0xdb, 0x00, 0xbe, 0xef };
+  uint8_t out[300];
+  uint8_t udp[8 + sizeof(out)];
+  uint8_t *options = out + 240;
+  uint32_t n;
+
+  memset(out, 0, sizeof(out));
+  out[0] = 2; out[1] = 1; out[2] = 6;       /* reply, ethernet, 6-byte MAC */
+  /* out[4..7], the transaction id, stays 0: deliberately not the rabbit's. */
+  wr32(out + 16, rabbit_ip);                /* yiaddr */
+  wr32(out + 20, rogue);                    /* siaddr */
+  memcpy(out + 28, rabbit_mac, 6);          /* chaddr: the rabbit, so it looks for it */
+  out[236] = 0x63; out[237] = 0x82; out[238] = 0x53; out[239] = 0x63;
+  *options++ = 53; *options++ = 1; *options++ = 5;             /* ACK */
+  *options++ = 1;  *options++ = 4; wr32(options, gw_mask); options += 4;
+  *options++ = 3;  *options++ = 4; wr32(options, rogue);   options += 4;  /* router */
+  *options++ = 6;  *options++ = 4; wr32(options, rogue);   options += 4;  /* DNS */
+  *options++ = 51; *options++ = 4; wr32(options, 86400);  options += 4;
+  *options++ = 54; *options++ = 4; wr32(options, rogue);   options += 4;  /* server id */
+  *options++ = 0xff;
+  n = (uint32_t)(options - out);
+
+  wr16(udp, 67); wr16(udp + 2, 68);
+  wr16(udp + 4, (uint16_t)(8 + n)); wr16(udp + 6, 0);
+  memcpy(udp + 8, out, n);
+  sim_log("attacker: unsolicited DHCP ACK, gateway/DNS -> %s, transaction id 0",
+          ipstr(rogue));
+  send_ip(rogue, 0xffffffff, 17, udp, 8 + n, 1);
+}
+
 /* --- DNS -------------------------------------------------------------- */
 
 /**
@@ -430,9 +473,50 @@ struct gw_conn {
   uint32_t snd_nxt;   /* the next sequence number we will send */
   uint32_t rcv_nxt;   /* the next sequence number we expect */
   int      fin_sent;
+  uint32_t down;      /* bytes of TCP payload sent to the rabbit on it */
+  /* http-big: the gateway answers this connection itself. */
+  int      big;       /* 1 waiting for the request, 2 sending, 3 done */
+  uint32_t big_left;  /* bytes of the response still to send */
 };
 
 static struct gw_conn conns[GW_MAX_CONNECTIONS];
+
+/* http-big: from the moment a scenario says so, every connection the rabbit
+ * opens to anything but the XMPP port is answered here, with a 200 and a
+ * body of this many bytes -- a server, or a host on the path, that answers
+ * a request with far more than the rabbit can hold. 0 = off, proxy as usual.
+ * http.mtl's HTTP_NORMAL kept every segment until the connection closed;
+ * the heap is 204,800 words. */
+static uint32_t gw_http_big;
+/* http-bighead: the same, but the bytes are one header line that never ends,
+ * so the response's header block has no blank line: what http.mtl's
+ * HTTP_STREAM branch accumulates while it looks for one. */
+static int gw_http_big_head;
+
+void gw_http_big_head_set(uint32_t bytes)
+{
+  gw_http_big_head = bytes != 0;
+  gw_http_big_set(bytes);
+}
+
+void gw_http_big_set(uint32_t bytes)
+{
+  gw_http_big = bytes;
+  if(!bytes) gw_http_big_head = 0;
+  if(bytes)
+    sim_log("gw: from now on every HTTP request gets a %u-byte body, from "
+            "the gateway itself", bytes);
+  else
+    sim_log("gw: HTTP requests go to the warren again");
+}
+
+/* How much a connection carried down, said once when it ends: the size of
+ * the largest legitimate answer is read off these lines. */
+static void conn_report(const struct gw_conn *c, const char *how)
+{
+  sim_log("gw: port %u %s, %u bytes down%s", c->dest_port, how, c->down,
+          c->big == 2 ? " -- the rabbit hung up on the oversized answer" : "");
+}
 
 /**
  * @brief How many connections to the XMPP port are open.
@@ -498,6 +582,7 @@ static void tcp_send(struct gw_conn *c, uint8_t flags, const uint8_t *data,
   if(flags & 0x02) c->snd_nxt++;           /* a SYN takes a sequence number */
   c->snd_nxt += length;
   if(flags & 0x01) c->snd_nxt++;           /* and so does a FIN */
+  c->down += length;
 
   send_ip(c->dest_ip, c->rabbit_ip, 6, segment, 20 + length, 1);
 }
@@ -511,6 +596,7 @@ static int host_connect(uint16_t port)
 
   if(warren_host[0] == 0) return -1;
   if(port == 80 && gw_port80_to) port = gw_port80_to;
+  else if(port == 443 && gw_port443_to) port = gw_port443_to;
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_INET;
@@ -576,6 +662,16 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     c->dest_port = dport;
     c->rcv_nxt = seq + 1;
     c->snd_nxt = 0x1000;                   /* any starting point will do */
+    c->fd = -1;
+    if(gw_http_big && dport != gw_xmpp_port) {
+      c->big = 1;
+      c->state = TCP_OPEN;
+      gw_stats.tcp_opened++;
+      sim_log("gw: the rabbit opened %s:%u -> port %u, answered by the "
+              "gateway (http-big)", ipstr(src), sport, dport);
+      tcp_send(c, 0x02 | 0x10, NULL, 0);   /* SYN-ACK */
+      return;
+    }
     c->fd = host_connect(dport);
     if(c->fd < 0) {
       gw_stats.tcp_refused++;
@@ -648,11 +744,26 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
     }
     c->rcv_nxt += data_length;
     tcp_send(c, 0x10, NULL, 0);
+    if(c->big == 1) {
+      /* The request, whatever it asks for: the status line and headers
+       * now, the body from gw_poll, one segment per pass. */
+      static const char head[] = "HTTP/1.0 200 OK\r\nContent-Type: "
+                                 "application/octet-stream\r\n\r\n";
+      static const char endless[] = "HTTP/1.0 200 OK\r\nX-Pad: ";
+      c->big = 2;
+      c->big_left = gw_http_big;
+      if(gw_http_big_head)
+        tcp_send(c, 0x10 | 0x08, (const uint8_t *)endless, (uint32_t)(sizeof(endless) - 1));
+      else
+        tcp_send(c, 0x10 | 0x08, (const uint8_t *)head, (uint32_t)(sizeof(head) - 1));
+    }
   }
 
   if(flags & 0x01) {                       /* FIN */
     c->rcv_nxt++;
     sim_log("gw: the rabbit closed %s:%u", ipstr(src), sport);
+    conn_report(c, "closed by the rabbit");
+    if(c->big) c->big = 3;
     tcp_send(c, 0x10, NULL, 0);
     if(c->fd >= 0) shutdown(c->fd, SHUT_WR);
     if(!c->fin_sent) {
@@ -666,6 +777,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
 
   if(flags & 0x04) {                       /* RST */
     sim_log("gw: the rabbit reset %s:%u", ipstr(src), sport);
+    conn_report(c, "reset by the rabbit");
     conn_drop(c);
   }
 }
@@ -757,6 +869,23 @@ void gw_poll(void)
     ssize_t n;
 
     if(c->state != TCP_OPEN && c->state != TCP_CLOSING) continue;
+    if(c->big == 3 && c->state == TCP_CLOSING) { conn_drop(c); continue; }
+    if(c->big == 2) {
+      /* The oversized body: filler, a segment a pass, then a FIN. */
+      uint32_t chunk = c->big_left > GW_MSS ? GW_MSS : c->big_left;
+      if(chunk) {
+        memset(buffer, 'A', chunk);
+        tcp_send(c, 0x10 | 0x08, buffer, chunk);
+        c->big_left -= chunk;
+      } else {
+        c->big = 3;
+        c->fin_sent = 1;
+        conn_report(c, "served in full by the gateway");
+        tcp_send(c, 0x01 | 0x10, NULL, 0);
+        gw_stats.tcp_closed++;
+      }
+      continue;
+    }
     if(c->fd < 0) continue;
 
     n = read(c->fd, buffer, sizeof(buffer));
@@ -769,6 +898,7 @@ void gw_poll(void)
       if(!c->fin_sent) {
         c->fin_sent = 1;
         sim_log("gw: the warren closed %s:%u", ipstr(c->rabbit_ip), c->rabbit_port);
+        conn_report(c, "closed by the warren");
         tcp_send(c, 0x01 | 0x10, NULL, 0);
         gw_stats.tcp_closed++;
       }

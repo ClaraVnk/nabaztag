@@ -1,0 +1,14 @@
+# flashsim: the built firmware's flash writer and reset, on an ARM7 model.
+#
+#   podman build -t nabaztag-flashsim firmware-arm/emulator/flashsim
+#   podman run --rm -v <dir with the builds>:/img:z nabaztag-flashsim \
+#       sweep --resident /img/old/Nab.elf --image /img/new/Nab.elf
+#
+# Unicorn is the only dependency, pinned: a model that changes under a
+# measurement is not a measurement.
+FROM quay.io/rockylinux/rockylinux:10
+RUN dnf -y install --setopt=install_weak_deps=False python3 python3-pip \
+ && dnf clean all && rm -rf /var/cache/dnf \
+ && pip3 install --no-cache-dir unicorn==2.1.4
+COPY flashsim.py /flashsim/flashsim.py
+ENTRYPOINT ["python3", "/flashsim/flashsim.py"]

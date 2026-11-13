@@ -44,15 +44,26 @@ FUNS = '''/* mic-in-session */
 // before signing when it sends `RS session`.
 var XmppMicPolicy="xmpp-mic:0";;
 fun XmppMicInSession= (strget XmppMicPolicy 9)==49;;
+// The microphone never records for longer than this without a fresh RS, and
+// it stops the moment the session it was feeding is gone -- it must not keep
+// listening past a lost RT, or resume on its own when a dropped session
+// reconnects. A privacy rule, not a convenience: the owner presses "talk"
+// again if they meant to.
+const XMPP_MIC_MAX_SECONDS=60;;
+var g_mic_start=0;;
 fun XmppMicChunk s=
-	if g_stream_on && s!=nil && XmppGlobalSession!=nil && XmppTlsOn && (tlsState)==2 then
-		XmppTcpSend XmppGlobalSession strcatlist "<mic xmlns='violet:nabaztag:mic' len='"::(itoa strlen s)::"'/>"::s::nil;
-	0;;
+	if !g_stream_on then 0
+	else if (time - g_mic_start) > XMPP_MIC_MAX_SECONDS then (Secholn "mic: max duration reached, stopping"; stopmicstream; 0)
+	else if (XmppGlobalSession==nil) || (!XmppTlsOn) || ((tlsState)!=2) then (Secholn "mic: session gone, stopping"; stopmicstream; 0)
+	else if s!=nil then
+		(XmppTcpSend XmppGlobalSession strcatlist "<mic xmlns='violet:nabaztag:mic' len='"::(itoa strlen s)::"'/>"::s::nil; 0)
+	else 0;;
 fun XmppMicStart=
 	if XmppMicInSession then
 	(
 		Secholn "mic: streaming inside the session";
 		set g_stream_on=1;
+		set g_mic_start=time;
 		recStop;
 		recStart 8000 0 #XmppMicChunk;
 		0
