@@ -138,6 +138,10 @@ python3 "$HERE/patch_ota_https.py" "$BC/sources"
 # warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
 echo "==> patch_btn_in_session.py  (a long press goes to the warren, not to record.jsp)"
 python3 "$HERE/patch_btn_in_session.py" "$BC/sources/main.mtl"
+if [ "${OTA_REPORT:-}" = 1 ]; then
+  echo "==> patch_ota_report.py  (TEST RUNTIME: each step of an update goes to the warren)"
+  python3 "$HERE/patch_ota_report.py" "$BC/sources"
+fi
 
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
