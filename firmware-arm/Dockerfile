@@ -71,7 +71,9 @@ ARG BOOT_ANCHOR=keys/boot_anchor.der
 COPY ${BOOT_ANCHOR}                 /build/keys/boot_anchor.der
 ARG BOOT_HTTPS_HOST=
 ARG BOOT_FLOOR=
-ENV NAB_BOOT_HTTPS_HOST=$BOOT_HTTPS_HOST NAB_BOOT_FLOOR=$BOOT_FLOOR
+# kx_report's wait, in seconds (empty: its default)
+ARG KX_HTTPTIMEOUT=
+ENV NAB_BOOT_HTTPS_HOST=$BOOT_HTTPS_HOST NAB_BOOT_FLOOR=$BOOT_FLOOR NAB_KX_HTTPTIMEOUT=$KX_HTTPTIMEOUT
 
 # Apply our source modifications (idempotent, prints what landed).
 COPY apply-mods.py /build/apply-mods.py
