@@ -124,7 +124,7 @@ OUT="$(cd "$OUT" && pwd)"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log "$OUT"/mitm.log "$OUT"/audio-* "$OUT"/radio.log
 cp "$BYTECODE" "$OUT/data/baseline.hybrid"
 # A Terrier from 2026-11-13 on (terrier #164) reads the TLS runtime here.
-mkdir -p "$OUT/data/bytecode" && cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
+mkdir -p "$OUT/data/bytecode" && cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid" && cp "$BYTECODE" "$OUT/data/bytecode/baseline-https.hybrid"
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"   # bootbc.py reads both
 
