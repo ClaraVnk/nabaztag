@@ -231,6 +231,8 @@ void sim_run_events(void)
 
 uint8_t nab_boot_button;   /* owner_unlock: main.c's, on a rabbit */
 
+static int crypto_time;   /* --crypto-time, see crypto_charge */
+
 int main(int argc, char **argv)
 {
   const char *scenario = NULL;
@@ -259,6 +261,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--flash-out") && i + 1 < argc) hw_flash_out(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
+    else if(!strcmp(argv[i], "--crypto-time")) crypto_time = 1;
     else if(argv[i][0] == '-') {
       fprintf(stderr,
         "usage: %s [scenario] [--eeprom <file>] [--no-eeprom] [--audio-dir <dir>]\n"
@@ -278,6 +281,8 @@ int main(int argc, char **argv)
         "  --flash-out   keep the image the rabbit hands to flashFirmware, as the\n"
         "                bytes flash_uc would write (flashsim/ takes it from there)\n"
         "  --trace-net   log every packet, not just what happened to it\n"
+        "  --crypto-time charge each X25519, ECDSA and Ed25519 its time on the\n"
+        "                rabbit (seconds), so a timeout too short fails here\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
         argv[0]);
@@ -523,6 +528,16 @@ void reset_uc(void)
   if(_vmem_broken) sim.stop_ms = sim_now();
 }
 
+#define CRYPTO_MS_X25519   3000u
+#define CRYPTO_MS_ECDSA    3000u
+#define CRYPTO_MS_ED25519 12000u
+static void crypto_charge(uint32_t ms, const char *what)
+{
+  if(!crypto_time) return;
+  sim_advance(ms);
+  sim_log("crypto time: %s, +%u ms", what, ms);
+}
+
 /*
  * The signature gate, watched from outside. The Makefile links the VM with
  * -Wl,--wrap=nab_verify_sig (GNU ld only), so every call the OPverifySig
@@ -542,5 +557,48 @@ int __wrap_nab_verify_sig(const uint8_t *payload, size_t payload_len,
           VMEM_LENGTH + _vmem_stack - _vmem_heapindex, VMEM_LENGTH);
   ok = __real_nab_verify_sig(payload, payload_len, sig, scratch);
   sim_log("verifySig gate: %s", ok ? "signature OK" : "signature refused");
+  crypto_charge(CRYPTO_MS_ED25519, "Ed25519 verify");
   return ok;
+}
+
+/*
+ * --crypto-time: the crypto costs what it costs on the rabbit.
+ *
+ * The VM runs the firmware's crypto natively, and a loop pass is 50 ms of
+ * virtual time whatever it computed, so an X25519 or a certificate chain
+ * was free here and seconds on the ARM7. 2026-11-13: Naboot 1.2.0.0 gave
+ * its key exchange over HTTPS 10 s, which passed every proof here and never
+ * once on a rabbit -- measured there at 18 s (&kt=18, Nabazprout). With
+ * this, each call moves the clock by its cost on the rabbit, so a timeout
+ * too short for the real thing fails here first.
+ *
+ * The model: the 18 s of that exchange are two X25519 (the key share and
+ * the shared secret), three P-384 signatures (leaf, YE2, Root YE under X2)
+ * and one P-256 (CertificateVerify) -- six operations, 3 s each, which also
+ * matches the 2-8 s the X25519 ladder was estimated at from its instruction
+ * count (tools/cost). Ed25519 over a 127 KB image: four times an X25519's
+ * instructions (tools/cost: 248 M against 64 M), 12 s. A model, not a
+ * measurement of each: fix the numbers when one is measured.
+ */
+
+int __real_crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned char *n,
+                                              const unsigned char *p);
+int __wrap_crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned char *n,
+                                              const unsigned char *p)
+{
+  int r = __real_crypto_scalarmult_curve25519_tweet(q, n, p);
+  crypto_charge(CRYPTO_MS_X25519, "X25519");
+  return r;
+}
+
+int __real_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
+                            const uint8_t *sig, uint32_t siglen,
+                            const uint8_t *hash, uint32_t hlen, void *tick);
+int __wrap_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
+                            const uint8_t *sig, uint32_t siglen,
+                            const uint8_t *hash, uint32_t hlen, void *tick)
+{
+  int r = __real_nab_ecdsa_verify(curve, pub, publen, sig, siglen, hash, hlen, tick);
+  crypto_charge(CRYPTO_MS_ECDSA, curve ? "ECDSA P-384 verify" : "ECDSA P-256 verify");
+  return r;
 }

@@ -143,11 +143,12 @@ $(TARGET): $(WIFI_OBJ)
 	$(CC) $(SAN) -o $@ $(WIFI_OBJ) -lm
 
 # The signature gate is watched from vm_main.c through a linker wrap, so the
+# heap and (--crypto-time) the crypto's cost on the rabbit are in the transcript;
 # heap at the moment verifySig runs is in the transcript without touching
 # the firmware's own sources. GNU ld only; macOS's linker has no --wrap and
 # the wrapper then simply goes unused.
 ifeq ($(shell uname -s),Linux)
-VM_LDFLAGS = -Wl,--wrap=nab_verify_sig
+VM_LDFLAGS = -Wl,--wrap=nab_verify_sig -Wl,--wrap=crypto_scalarmult_curve25519_tweet -Wl,--wrap=nab_ecdsa_verify
 endif
 
 $(VM_TARGET): $(VM_OBJ)
