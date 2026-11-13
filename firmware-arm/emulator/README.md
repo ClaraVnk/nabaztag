@@ -923,3 +923,17 @@ written for are [RedoXyde's](https://github.com/RedoXyde/nabgcc) — his
 it rather than a rewrite. The AES implementation and the WPA2 group-key logic
 come from [uplg/nabgcc](https://github.com/uplg/nabgcc) (MIT; text in
 `../upstream/UPLG-LICENSE`). The original firmware is Violet's, 2006.
+
+### `--crypto-time`: the crypto at its cost on the rabbit
+
+The VM runs the firmware's crypto natively and a loop pass is 50 ms of
+virtual time whatever it computed, so an X25519 or a certificate chain was
+free here and seconds on the ARM7. `--crypto-time` (linker wraps in
+`src/vm_main.c`, GNU ld) moves the clock by each operation's cost on the
+rabbit: X25519 3 s, ECDSA verify 3 s, Ed25519 verify 12 s, calibrated on
+the key exchange measured on a real rabbit (2026-11-13: `&kt=18`).
+`tools/boot-https-proof.sh` runs with it (`CRYPTO_TIME=0` to turn it off).
+
+The check it was made for: Naboot 1.2.0.0's 10 s key exchange, which every
+untimed proof passed and no rabbit ever did. Timed, 1.2.0.0 sends no
+`kx.jsp` at all and 1.2.0.1 gets its key with `&k=5&kt=19`.

@@ -31,6 +31,10 @@ BASE=${BASE:-19800}
 PY=${PY:-python3}
 # The Caddy production runs (2.11.9, 2026-11-13): a proof on another one
 # passed while the rabbit hung on production's answer.
+# The crypto at its cost on the rabbit (vm_main.c --crypto-time), unless
+# CRYPTO_TIME=0: without it, 1.2.0.0's 10 s key exchange passed here and
+# never on a rabbit (2026-11-13).
+CRYPTO=--crypto-time; [ "${CRYPTO_TIME:-1}" = 0 ] && CRYPTO=
 CADDY=${CADDY:-docker.io/library/caddy@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -144,10 +148,10 @@ boot() {  # boot <label> <eeprom-name>
   podman run --rm --network host -v "$HERE:/r:z" -v "$OUT/host:/host:z" -v "$OUT:/out:z" --entrypoint sh "$EMU" -c "
     cd /build/emulator
     cp /r/scenarios/vm/*.txt scenarios/vm/
-    cp /r/src/gw.c /r/src/gw.h /r/src/vm_main.c src/
+    cp /r/src/gw.c /r/src/gw.h /r/src/vm_main.c src/ && cp /r/Makefile Makefile
     test -f /out/rabbit-vm.boot || { python3 tools/bootbc.py /host/Nab.elf -o obj/boot.bc > /out/bootbc.log 2>&1 && make -s NABGCC=/build/nabgcc BYTECODE=obj/boot.bc vm >/out/make-boot.log 2>&1 && cp rabbit-vm /out/rabbit-vm.boot; }
     test -f /host/$2.eeprom || python3 mkconf.py --ssid Terrier --security open --server $HOST/vl --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o /host/$2.eeprom >/dev/null
-    /out/rabbit-vm.boot scenarios/vm/xmpp-tls.txt --eeprom /host/$2.eeprom --warren 127.0.0.1 --port80 $HTTP --port443 $TLS --realtime" > "$OUT/vm-$1.log" 2>&1
+    /out/rabbit-vm.boot scenarios/vm/xmpp-tls.txt --eeprom /host/$2.eeprom --warren 127.0.0.1 --port80 $HTTP --port443 $TLS --realtime $CRYPTO" > "$OUT/vm-$1.log" 2>&1
   echo "== boot $1: vm exit $?  $(grep -a 'final state' "$OUT/vm-$1.log" | head -1)"
 }
 
