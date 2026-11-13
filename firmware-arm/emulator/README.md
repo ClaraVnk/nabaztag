@@ -739,7 +739,7 @@ config page does not: see the scenario's header for the figures.
 chain anchored on the root built into the firmware, with no fallback to 80.
 `tools/boot-https-proof.sh` proves it against a real Terrier behind a real
 Caddy, with the proof's own root (nobody but Let's Encrypt signs under X2):
-`chain` makes the PKI and `keys/proof_boot_anchor.der`, the firmware and this
+`chain` makes the PKI and the proof anchor (written under keys/, ignored by git), the firmware and this
 emulator are built with that anchor (the script's header has the commands),
 `run` boots a new rabbit against the right chain and then a rogue one.
 `--port443` sends the rabbit's connections to port 443 to the proxy's port.
