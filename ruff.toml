@@ -1,0 +1,17 @@
+# Lint for the Python of this repository: the add-on, the firmware tools, the
+# bytecode patches. Bugs, not style: pyflakes (undefined and unused names) and
+# syntax errors. Much of this code is dense on purpose (tables, byte layouts),
+# and a formatter's opinion about it would be noise.
+target-version = "py312"
+extend-exclude = [
+    "legacy",
+    # Metal written in Python for mtl_pyc.py: names it resolves are names
+    # pyflakes cannot see, by construction.
+    "firmware-arm/tools/fixtures",
+    "firmware-arm/vendor",
+]
+
+[lint]
+select = ["F", "E9"]
+# An f-string without a placeholder is harmless.
+ignore = ["F541"]

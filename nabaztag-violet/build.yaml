@@ -1,8 +1,9 @@
 build_from:
-  amd64: "python:3.12-alpine"
+  # 3.13 at least: TLS for adopted rabbits needs SSLContext.set_psk_server_callback.
+  amd64: "python:3.15-alpine"
   # Same base for arm64, so the musl ABI assumption in the whisper.cpp stage
   # holds. Listing it explicitly avoids falling back to a different HA base.
-  aarch64: "arm64v8/python:3.12-alpine"
+  aarch64: "arm64v8/python:3.15-alpine"
 labels:
   org.opencontainers.image.title: "Nabaztag Violet Server"
   org.opencontainers.image.source: "https://github.com/ClaraVnk/nabaztag"

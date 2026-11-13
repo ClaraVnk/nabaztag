@@ -182,6 +182,7 @@ void sim_run_events(void)
       case SIM_EV_EXPECT_XMPP:
       case SIM_EV_ARP:
       case SIM_EV_RFID:       break;   /* no network, no body, in this binary */
+      case SIM_EV_BUTTON:     break;
       case SIM_EV_EXPECT_REASSOC:
         if(sim.run_entries >= e->arg)
           sim_log("ok   reached RUN %d time%s, at least %d expected",

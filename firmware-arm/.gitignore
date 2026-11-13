@@ -10,6 +10,9 @@ __pycache__/
 # .sim the community downloads + our emergency backup. Test / dev / unstable
 # builds under bin/ stay ignored (that was always the rule). See releases/README.
 !releases/
+# ...and every signed image under it, archive/ included: a negated directory
+# does not un-ignore a new *.sim inside it (2026-11-13, the 1.1.0.0 beta).
+!releases/**/*.sim
 !releases/*.signed.sim
 !releases/*.md
 # Private signing key never leaves the dev machine. Only the public header

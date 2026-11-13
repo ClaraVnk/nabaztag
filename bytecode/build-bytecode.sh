@@ -134,6 +134,11 @@ python3 "$HERE/patch_https_play.py" "$BC/sources"
 echo "==> patch_ota_https.py  (an update fetched by the rabbit itself over HTTPS, Naboot 1.2.0.0)"
 python3 "$HERE/patch_ota_https.py" "$BC/sources"
 
+# A long press of the head goes to the warren as a long_click when the
+# warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
+echo "==> patch_btn_in_session.py  (a long press goes to the warren, not to record.jsp)"
+python3 "$HERE/patch_btn_in_session.py" "$BC/sources/main.mtl"
+
 # A rabbit that speaks in its sleep (a tag, a reminder during quiet hours)
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
@@ -153,12 +158,13 @@ esac
 # once, or jingles and choreographies are; the microphone one once, or what
 # is said to the rabbit still crosses the internet in UDP; the update one
 # once, or every firmware image is still fetched over plain HTTP; the stream
-# one once, or the radio and the podcasts are.
+# one once, or the radio and the podcasts are; the button one once, or a
+# long press still records the room to record.jsp.
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
 for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
-            b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0"):
+            b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0", b"xmpp-btn:0"):
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")

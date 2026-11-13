@@ -54,10 +54,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mtl_asm import Encoder, FunctionBody, Op, NIL  # noqa: E402
 from mtl_types import (  # noqa: E402
     MtlError, TNode, TypeDef, TYPENAME_UNDEF, TYPENAME_FUN, TYPENAME_LIST,
-    TYPENAME_TUPLE, TYPENAME_TAB, TYPENAME_WEAK, TYPENAME_CORE,
+    TYPENAME_TUPLE, TYPENAME_TAB, TYPENAME_WEAK,
     createnodetype, createnodetypecore, createnodetuple, createnodefun,
     actualtype, creategraph, creategraph_str, echograph, copytype, unif,
-    unif_argfun, unifbigger, argsfromfun, islabel, isdecimal,
+    unif_argfun, unifbigger, argsfromfun, isdecimal,
 )
 
 

@@ -14,9 +14,9 @@
 > over JTAG. See [`../docs/RECOVERY.md`](../docs/RECOVERY.md). Flashing is optional: a
 > stock rabbit works fine with the Home Assistant add-on.
 
-This folder holds the firmware builds we ship: the hardware-verified **stable**
-release the community downloads, plus the **minimal rescue** build to roll back to
-when a flash goes wrong. Both are reproducible and signed. Test / dev /
+This folder holds the firmware we ship: the hardware-verified release the
+community downloads (1.0.0.3). Every earlier release, and the old `minimal`
+rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
 ## `naboot-1.1.0.0-beta.signed.sim` — beta, at your own risk
@@ -69,7 +69,20 @@ WPA2 holds.
 `naboot-1.0.0.2` below stays as the previous release: flash it back if this
 one gives you trouble.
 
-## `naboot-1.0.0.2.signed.sim` — the previous release
+## `archive/naboot-1.1.0.0-beta.signed.sim` — archived (a beta, never the release)
+
+| | |
+|---|---|
+| **Status** | Archived 2026-11-13. A beta that only Nabazprout ran; never offered to everyone. Its fixes are all in 1.2.0.0. |
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.1.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3 with the fixes of the 2026-11 security review, the safer flash writer and 15 KB of dead code removed. **No WEP.** |
+| **Firmware version** | `1.1.0.0` |
+| **Build mark** | `z=2611121004` |
+| **Size** | 112 572 of 126 976 bytes (14 404 free) |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `1f1132a063abd87cb8daff25c99a20ba7cee25c4b295a5d3d684051152aafe5c` |
+
+## `archive/naboot-1.0.0.2.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|
@@ -104,7 +117,7 @@ bytecode.
 
 `naboot-1.0.0.0` below is the release before it.
 
-## `naboot-1.0.0.0.signed.sim` — an older release
+## `archive/naboot-1.0.0.0.signed.sim` — archived
 
 | | |
 |---|---|
@@ -135,9 +148,21 @@ held it six times and could not take an image this size.
   never passes, on the config page too. Unplug and replug it — the warren
   then serves it the recovery bytecode — and use the update button.
 
-`naboot-stable` (0.0.0.13) below stays as the previous release.
+1.1.0.0 (a beta), 1.0.0.2, 1.0.0.0, `naboot-stable` (0.0.0.13) and `naboot-lean-wpa2` (the same
+file as stable under another name) are **archived** (2026-11-13) in
+[`archive/`](archive/): no longer offered, kept so a rabbit can still be
+rolled back to them. Every new rabbit goes to 1.0.0.3.
 
-## `naboot-stable.signed.sim`
+**The rule:** this folder holds the release, nothing else. When a release
+ships, the one before it moves to `archive/` in the same change.
+
+`naboot-minimal` is archived too (2026-11-13): it never ran on a rabbit, it
+predates the fixes of 2026-11-08 (a rabbit on it cannot take an update from
+the Terrier), and since 1.0.0.0 the setup page takes any signed image, so a
+rabbit that misbehaves is flashed again with the release itself. A rabbit
+whose bootloader no longer answers is a JTAG case, minimal or not.
+
+## `archive/naboot-stable.signed.sim` — archived
 
 | | |
 |---|---|
@@ -178,7 +203,7 @@ over the air again. `minimal` is the parachute.
 
 If the first belly light is still orange a minute after it reboots, unplug it, wait ten seconds, plug it back in. Since the 2026-11-08 builds this is the exception: an over-the-air install was watched end to end that day and the rabbit came back on its own, 54 s after the download, with nobody at the plug. Earlier builds leave the 2006 radio asleep after the post-flash reset and need the mains every time.
 
-## `naboot-lean-wpa2.signed.sim` — lean + the WPA2 group-key fix
+## `archive/naboot-lean-wpa2.signed.sim` — archived (lean + the WPA2 group-key fix)
 
 > Byte-identical to `naboot-stable.signed.sim` as of 2026-11-08: the WPA2
 > group-key fix is in `lean`, so stable *is* this build. Two names, one
@@ -313,7 +338,7 @@ stub. Replace its `src/net/aes128.c` with uplg/nabgcc's (`wpa23-gtk-r2`) and
 wire `eapol_install_msg3_gtk` as `apply-mods.py` does here, rebuild, and keep
 your bytecode.
 
-## `naboot-minimal.signed.sim`
+## `archive/naboot-minimal.signed.sim` — archived
 
 | | |
 |---|---|

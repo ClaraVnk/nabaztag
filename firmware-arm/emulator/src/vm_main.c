@@ -128,7 +128,9 @@ void sim_run_events(void)
       case SIM_EV_UPLOAD:
         phone_start_upload();
         break;
-      case SIM_EV_BUTTON:      hw_press(2, e->arg); break;
+      case SIM_EV_BUTTON:
+        hw_press(2, e->arg);
+        break;
       case SIM_EV_RFID:
         hw_clear_tags();
         if(e->arg) hw_present_tag(e->tag);

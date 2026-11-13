@@ -24,7 +24,6 @@ Needs host networking (to be on the rabbit's L2 segment). No special caps.
 import os
 import socket
 import struct
-import sys
 
 NAME = os.environ.get("NABMDNS_NAME", "nabaztag.local").rstrip(".").lower().encode()
 ANSWER = os.environ["NABMDNS_ANSWER"]
