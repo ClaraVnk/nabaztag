@@ -41,6 +41,8 @@ struct vap_stats {
   uint32_t forged_msg1;        /* message 1 frames the AP never sent (forged-msg1) */
   uint32_t msg3_resent;        /* message 3 retransmissions (resend-msg3) */
   uint32_t eapol_oversized;    /* EAPOL frames with a body_length past the frame */
+  uint32_t data_sent;          /* protected data frames the `data` directive sent */
+  uint32_t replays_sent;       /* frames sent a second time with the PN they had */
 };
 
 extern struct vap_stats vap_stats;
@@ -69,6 +71,9 @@ void vap_set_up(int ap, int up);
 void vap_drop_eapol(int count);
 /* A frame from the phone that joined a rabbit in config mode: see phone.c. */
 void vap_inject(const uint8_t *frame, uint32_t length);
+/* A probe request from a station in radio range, with an SSID element of
+ * `ssid_len` bytes, to a rabbit that is its own AP (config mode). */
+void vap_inject_probe(uint32_t ssid_len);
 /* An attacker's plaintext data frame from the AP's address; `eapol` makes
  * it an EAPOL-Key message 1. */
 void vap_inject_plain(int ap, int eapol);
@@ -80,6 +85,14 @@ void vap_forged_msg1(int ap);
 void vap_resend_msg3(int ap);
 /* A group key message whose body_length says 65535 in a 150-byte frame. */
 void vap_eapol_oversized(int ap);
+/* One protected data frame from the AP, with the next packet number of the
+   key it travels under: to the station (pairwise key), or `group` to the
+   broadcast address (group key). */
+void vap_send_data(int ap, int group);
+/* The last such frame again, byte for byte and with the packet number it
+   had: an attacker's replay, or with `retry` the AP's own retransmission
+   (the Retry bit set), which is the one duplicate that is legitimate. */
+void vap_replay(int ap, int group, int retry);
 /* 1 when the pairwise key in the station's radio is the one the AP it is
    associated with transmits under; 0 otherwise, or with no association. */
 int vap_sta_ptk_synced(void);

@@ -317,11 +317,13 @@ Measured against the real `mtl_compiler` (RedoXyde/mtl_linux @ 7e557a1,
 the build image's copy), which prints the type of every declaration
 while it compiles:
 
-- the production `bootcode.mtl`: **1209 of 1209** `Compiler :` lines
-  identical, string for string, `u0`/`w0` numbering included
-  (`fixtures/oracle/bootcode.types`), and the bytes still `cmp` clean;
-- the bootloader `boot.0.0.0.13.mtl`: **427 of 427**
-  (`fixtures/oracle/boot.0.0.0.13.types`);
+- the production `bootcode.mtl` (the runtime of 1.1.0.0, built from
+  OpenJabNab 640257f by `bytecode/build-bytecode.sh`): **1334 of 1334**
+  `Compiler :` lines identical, string for string, `u0`/`w0` numbering
+  included (`fixtures/oracle/bootcode.types`), and the 114,082 bytes `cmp`
+  clean;
+- the bootloader `boot.0.0.0.13.mtl` of `naboot-1.1.0.0`: **420 of 420**
+  (`fixtures/oracle/boot.0.0.0.13.types`), 26,553 bytes `cmp` clean;
 - the 23 fixtures: **93 of 93** (one `.types` file per fixture, e.g. `fixtures/tiny.types`).
 
 The variable numbering needed no normalising: `recechograph` names a

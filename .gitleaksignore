@@ -6,3 +6,6 @@
 # The same two lines in main's squash merge of self-recovery (#92).
 f96f10338190f2fa7f9a6b568753f286b829584d:firmware-arm/apply-mods.py:generic-api-key:2876
 f96f10338190f2fa7f9a6b568753f286b829584d:firmware-arm/apply-mods.py:generic-api-key:3207
+# firmware-arm/tests/test_chachapoly.c: RFC 8439 section 2.5.2's Poly1305
+# test key, published in the RFC itself. No secret.
+f563d79fcc181dd67e69644a135a287f48f4df71:firmware-arm/tests/test_chachapoly.c:generic-api-key:28

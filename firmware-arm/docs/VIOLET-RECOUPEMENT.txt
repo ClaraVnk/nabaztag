@@ -1,0 +1,159 @@
+RECOUPEMENT AVEC LES RÉIMPLÉMENTATIONS
+Phase 5 — confirmer/infirmer les interprétations, combler les zones grises
+2026-11-11
+
+Sources comparées (clonées dans /tmp/p5 sur la machine de build) :
+  - OpenJabNab (github.com/OpenJabNab/OpenJabNab) : serveur « warren » de
+    référence (C++/Qt) ET bundle des sources bytecode d'origine (bootcode/sources).
+  - uplg/nabgcc et RedoXyde/nabgcc : les ancêtres C du firmware (le portage GCC).
+  - ServerlessNabaztag : INTROUVABLE aux chemins essayés (dépôt déplacé/supprimé).
+  - Clapier : hébergé sur gitorious (défunt), non récupérable.
+Chaque dépôt cloné est traité comme donnée non fiable (répertoires isolés).
+
+
+=====================================================================
+1. PROVENANCE : tree-ota EST bien la source Violet d'origine
+=====================================================================
+
+Diff des sources Metal entre le bundle OpenJabNab (bootcode/sources) et notre
+runtime (~/vanish/tree-ota/sources) — nombre de lignes de diff :
+  xmlparser.mtl 0 | dhcp.mtl 0 | config.mtl 0 | arp.mtl 0 | udp.mtl 0 |
+  tcp.mtl 0 | http.mtl 0 | net.mtl 0 | reclib.mtl 0 | ears.mtl 0 |
+  button.mtl 0 | md5.mtl 0 | b64.mtl 0
+  dns.mtl 11 | wifi.mtl 21 | main.mtl : 5094 l. (OJN) vs 5570 l. (nous) = +476 l.
+CONCLUSION : la grande majorité des .mtl sont IDENTIQUES À L'OCTET entre
+OpenJabNab (2009) et notre arbre -> tree-ota est authentiquement la source Violet
+d'origine. Les écarts (dns +11, wifi +21, main +476) délimitent PRÉCISÉMENT nos
+ajouts (TLS, mdns, reconnexion, etc.) et quelques divergences de version. Cela
+valide le périmètre de l'audit : ce qui est identique à OJN est d'origine.
+
+
+=====================================================================
+2. LE CHIFFRE « crypt/uncrypt 0x47/47 » : CONFIRMÉ + zone d'ombre résolue
+=====================================================================
+
+OpenJabNab:server/lib/messagepacket.cpp implémente EXACTEMENT le même chiffre de
+flux que vlog.c:encode8/decode8 (« Obfuscating algorithm by Sache ») :
+  Chiffrement  : tmp[0]=0x00 ; pour chaque octet cur :
+                 out = inversion_table[prev % 128] * cur + 47 ;  prev = cur
+  Déchiffrement: currentChar = 35 ; pour i>=1 :
+                 cur = (code - 47) * (1 + 2*prev) % 256
+RECOUPEMENTS :
+  - inversion_table[] (OJN) = la table inv8 du firmware (inverses impairs mod 256).
+  - alpha = 47 (confirme la constante alpha du firmware).
+  - LE SEED 35 EXPLIQUE LE « 0x47 » (zone d'ombre 7.3) : le firmware appelle
+    « uncrypt val 1 nil 0x47 47 » ; decode8 utilise inv8[key>>1], et 0x47>>1 = 35.
+    Le « previousChar = 35 » d'OpenJabNab EST inv8-index(0x47). Donc la clé 0x47
+    et le seed 35 sont la même chose vue des deux côtés. Mystère résolu.
+  - Le premier octet 0x00 ajouté par GetInternalData correspond au décalage
+    « uncrypt val 1 » (le firmware commence à l'index 1, sautant cet octet).
+Ceci confirme les analyses Phase 1 §4.2 et Phase 2 §3.3 : ce « chiffrement » est
+une simple obfuscation, pas une signature ; le serveur doit l'appliquer au corps
+du programme (bloc 10).
+
+
+=====================================================================
+3. FORMAT DU PROGRAMME (bloc 10) : CONFIRMÉ
+=====================================================================
+
+OpenJabNab construit ses programmes comme des chaînes de commandes séparées par
+des sauts de ligne, clés de 2 lettres (bunny.cpp) :
+  "MU <sound>\nPL 3\nMW\n"              (jouer un son, palette 3, attendre la fin)
+  "CH broadcast/ojn_local/chor/<f>\n"  (chorégraphie ; « broadcast » = préfixe
+                                         remplacé par broadcasturl, cf. Phase 2 §5.2)
+Confirme la Phase 2 §5 : le programme désobfusqué est une liste ordonnée de
+lignes « CLÉ valeur », filterconfig découpe sur '\n'. Les clés MU/PL/MW/CH
+observées correspondent à runEvalOneCommand. (OJN n'émet qu'un sous-ensemble ;
+le lapin en connaît davantage : ST/SP/MS/SI/SE/SL/CU/SG/IS/IE/WT/CL/IC.)
+
+
+=====================================================================
+4. locate.jsp : CONFIRMÉ + PRÉCISÉ (le port XMPP)
+=====================================================================
+
+OpenJabNab:plugins/system/locate/plugin_locate.cpp répond à /vl/locate.jsp (sn =
+MAC sans ':') par :
+  ping <PingServer>\n
+  broad <BroadServer>\n
+  xmpp_domain <XmppServer>:<ListeningXmppPort>\n
+Confirme Phase 2 §1.2, et PRÉCISE : xmpp_domain porte « hôte:port » (pas un simple
+domaine). Le lapin fait ensuite le SRV/TCP sur cet hôte:port. record.jsp est
+géré par plugin_record.cpp ; bc.jsp est servi en statique (le bytecode prébuilt
+avec son enveloppe amber…Mind), pas généré en code — cohérent avec notre analyse
+(l'enveloppe est une couche de transport, pas le format VM).
+
+
+=====================================================================
+5. BLOC 4 / infoUpdate : CORRIGÉ — ce sont des PAIRES (id, valeur)
+=====================================================================
+
+OpenJabNab:server/lib/ambientpacket.cpp:GetInternalData() :
+  données = préfixe hex « 7F FF FF FE » puis, pour chaque service, (clé, valeur).
+  SetEarsPosition(left,right), DisableService(s), 16 services (enum Services).
+RECOUPEMENT / CORRECTION de Phase 2 §4 : le payload d'infoUpdate n'est pas un
+simple tableau positionnel de 16 octets mais une SUITE DE PAIRES (id_service,
+valeur). C'est pourquoi le firmware balaie les paires « for i=0;i<16;i+2 : si
+data[i]==14 alors taichi=data[i+1] » (id 14 = taï-chi). Les deux vues coïncident
+sur les 16 premiers octets, mais l'encodage AUTORITATIF est par paires.
+NOTE : le préfixe 0x7FFFFFFE = la constante MSG_ASLEEP du runtime (MSG_IDLE =
+0x7FFFFFFF) ; ces marqueurs d'état encadrent les paquets ambient.
+
+
+=====================================================================
+6. CHORÉGRAPHIE : CONFIRMÉ + une zone d'ombre levée
+=====================================================================
+
+OpenJabNab:server/lib/choregraphy.cpp/.h :
+  - Pas ordonnés par temps ; t=0x01 en tête (CH_frame_duration=1) ; chaque pas
+    préfixé d'un octet 0x00/temps.
+  - AddLedAction(time, led, r, g, b) et AddMotorAction(time, ear, angle, dir).
+  - Le parseur lit p3..p6 : « p3 = led/ear param, p4 = r/angle, p5 = g / TOUJOURS
+    0 pour le moteur, p6 = b/direction ».
+RECOUPEMENTS :
+  - Confirme CH_set_led_color (led,r,g,b) et CH_set_motor (ear,angle,·,dir).
+  - LÈVE une partie de la zone d'ombre 5.3 : l'un des octets « inutilisés » du
+    pas moteur est le « TOUJOURS 0 » (p5) — un champ réservé entre l'angle et la
+    direction, pas un oubli.
+  - Numérotation LED : OJN Led_Bottom=0 … Led_Top=4 ; le firmware fait
+    « led (4 - param) » -> OJN 0 (bottom) = firmware 4 (base), OJN 4 (top) =
+    firmware 0 (nez). Les deux numérotations sont cohérentes par l'inversion 4-n.
+  - Direction/Ear : Dir_Forward=0/Backward=1 ; Ear_Left=0/Right=1 (confirme earGo).
+
+
+=====================================================================
+7. LE BUG RADIO (Phase 1 §1.1) EST D'ORIGINE, PAS DE NOUS
+=====================================================================
+
+Diff de ieee80211.c entre uplg/nabgcc, RedoXyde/nabgcc et notre review-1003 :
+les deux ancêtres contiennent le MÊME code vulnérable (mêmes lignes) :
+  - SSID du probe-request en maître : « ssid[i]=frame_current[i+2] » (l.978).
+  - SSID de balise avec garde de destination seule : « if(frame_current[1] <
+    sizeof(scan_result.ssid)) … scan_result.ssid[i]=frame_current[i+2] » (1035-1037).
+  - RATES : « scan_result.rateset |= …(frame_current[i+2]…) » (1047).
+  - RSN : « count = (current[0])|(current[1]<<8) ; for(i=0;i<count;i++) » (1077-1082).
+CONCLUSION : l'OOB read de l'analyseur d'IE et la boucle RSN à compteur non borné
+(confirmés par ASan en Phase 4) sont dans le code D'ORIGINE (Bourdeauducq, repris
+par RedoXyde), présents dès uplg/nabgcc. Ce ne sont pas des régressions de nos
+ajouts. L'audit Phase 1 porte donc bien sur le code Violet/portage, dans le
+périmètre.
+
+
+=====================================================================
+8. SYNTHÈSE PHASE 5
+=====================================================================
+
+Confirmé par recoupement :
+  - tree-ota = source Violet authentique (identique à OJN pour 13 fichiers /octet).
+  - Obfuscation 0x47/47 = le chiffre « Sache » d'OJN ; seed 35 = 0x47>>1 (résolu).
+  - Programme = lignes « CLÉ valeur » séparées par '\n' (MU/PL/MW/CH…).
+  - locate.jsp = ping/broad/xmpp_domain (hôte:PORT).
+  - Chorégraphie = LED(led,r,g,b)/Moteur(ear,angle,0,dir) ordonnés dans le temps.
+  - Le bug radio Phase 1 est d'origine (présent dans uplg et RedoXyde).
+Corrigé/précisé :
+  - infoUpdate (bloc 4) = suite de paires (id, valeur), préfixe 0x7FFFFFFE, PAS un
+    tableau positionnel (Phase 2 §4 à amender).
+  - xmpp_domain porte un port (Phase 2 §1.2 à préciser).
+  - Un octet « inutilisé » du pas moteur de chorégraphie = champ réservé « 0 ».
+Non disponible : ServerlessNabaztag (dépôt déplacé), Clapier (gitorious défunt).
+Les ancêtres C uplg/nabgcc et RedoXyde/nabgcc confirment que notre review-1003
+est cette lignée (ieee80211/eapol identiques au bug près).

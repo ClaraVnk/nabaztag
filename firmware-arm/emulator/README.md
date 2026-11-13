@@ -188,6 +188,13 @@ at 90000 expect RUN
 | `at <ms> expect-eapol-badlen <n>` / `expect-tkip-refused <n>` / `expect-sae-refused <n>` | assert the firmware's own counters (`eapol_bad_length`, `ieee80211_tkip_refused`, `ieee80211_sae_refused`): at least `n`, and fail when the build has no such step |
 | `at <ms> expect-reassoc <n>` | assert RUN has been reached at least `n` times |
 | `at <ms> expect-xmpp-opens <n>` | assert at least `n` connections were opened to port 5222 (`./rabbit-vm`) |
+| `at <ms> http-big <bytes>` | from now on the gateway answers every HTTP request itself: 200, then a body of that many bytes (`0` hands requests back to the warren) (`./rabbit-vm`) |
+| `at <ms> http-bighead <bytes>` | the same, but as one header line that never ends: the response has no blank line, which is what a streamed request (`ST <url>`, the `.bin` OTA) accumulates while it looks for one |
+| `at <ms> expect-no-reset` | assert the firmware never asked for a processor reset (a VM out of memory does) (`./rabbit-vm`) |
+| `at <ms> data [group]` | the AP sends one protected data frame with the next packet number of the pairwise key, or of the group key to the broadcast address |
+| `at <ms> replay [group] [retry]` | the last such frame again, with the packet number it had: an attacker's replay, or with `retry` (the Retry bit) the AP's own retransmission |
+| `at <ms> expect-replay <u> <g> <r>` | assert `ccmp_replay_count`'s counters exactly: unicast and group frames whose packet number did not increase, and retransmissions; fails when the build has no such step |
+| `at <ms> expect-data-up <n>` | assert exactly `n` data frames were handed up by the driver (`./rabbit`: EAPOL is consumed below, nothing else sends data) |
 | `realtime` | pace the loop to the wall clock |
 | `fetch <ms> <event>` | any of the above, `<ms>` after the rabbit starts downloading a sound |
 
@@ -248,6 +255,57 @@ is an open one. The check carries its author's own doubt —
 it has to agree with.
 
 ## What it already answers
+
+**How much an HTTP answer may weigh, 2026-11-11.** Both HTTP clients -- the
+bootloader's and the runtime's -- kept an HTTP_NORMAL answer whole until the
+connection closed. `at <ms> http-big <bytes>` makes the gateway answer every
+request itself with a body of that size, and the transcript says how much
+went down each connection (`gw: port 8080 closed by the rabbit, 165259 bytes
+down`), which is also how the largest legitimate answers were read off a
+normal boot (`tools/plain_warren.py`: kx.jsp 119 bytes, bc.jsp 112,349,
+locate.jsp 178).
+
+```
+                        bootloader (lean-reclaim)         runtime (112 KB hybrid)
+1,000,000 bytes         reset at 768 KB received          reset at 666 KB received
+complete answer         220,000 resets, 180,000 does not  200,000 resets, 100,000 does not
+with the ceiling        hangs up at 165,259, asks again   hangs up at 18,259, asks again
+                        (6 times in 2 min, no reset)      (38 times in 2 min, no reset)
+```
+
+`scenarios/vm/http-big-boot.txt` runs under the bootloader of the image
+under test (so it fails on an image without `http_cap`), and
+`scenarios/http/big-runtime.txt` under a runtime built with
+`bytecode/patch_http_cap.py`. The hex `.sim` OTA is the one large
+HTTP_NORMAL download left and has its own ceiling; `scenarios/ota/
+self-start.txt` still reaches the signature gate with it (216,175 bytes
+down, `naboot-stable`).
+
+**A CCMP frame played twice, 2026-11-11.** The virtual AP now gives every
+protected data frame a packet number, per key, and delivers it the way the
+radio would: in the receive descriptor's Iv and Eiv words, the CCMP header
+the RT2573 strips from the frame (PN0 PN1 rsvd KeyID | PN2..PN5), which is
+how Linux's rt73usb reads the same chip. **That layout is the driver's
+account, not a measurement of this board.** `data` sends a frame, `replay`
+sends the last one again with the number it had, `replay retry` does the
+same with the Retry bit, as an AP that missed the acknowledgement does.
+
+```
+without ccmp_replay_count   [20000] the last unicast data frame again, PN 3 (a replay)
+                            [20050] data: 36 bytes            <- handed up a second time
+with it                     [21000] ok   replays counted: 1 unicast, 0 group, 0 retransmitted
+                            [25000] ok   replays counted: 1 unicast, 1 group, 1 retransmitted
+                            [25000] ok   9 data frame(s) handed up    <- counted, not refused
+with ccmp_replay_enforce    [25000] ok   6 data frame(s) handed up    <- the three copies dropped
+```
+
+`scenarios/ccmp-replay.txt` goes on through two group rekeys, a pairwise
+rekey and a retransmitted message 3 without one false count; with the reset
+on key install taken out, the same scenario counts 3 group and 6 unicast
+frames that were never replayed. `scenarios/enforce/ccmp-replay.txt` is the
+refusal, in no default step list: what the emulator cannot say is whether
+those two words hold a packet number on a real rabbit, and the count mode
+exists to find out (`../jtag/ccmp-pn.py`).
 
 **Why a rabbit stays "connected" to an access point that has forgotten it,
 2026-11-08.** Two of the four needs-the-mains failures measured over JTAG
@@ -407,6 +465,22 @@ Terrier's `/speak` API make the rabbit talk 110 s into boot 2: with
 `bytecode/patch_res_in_session.py` and a Terrier that flips `xmpp-res:0`, the
 sound comes down the TLS session (`res:` lines, no port 80 open); with a
 Terrier that does not, it is fetched from `/res/` over plain HTTP as before.
+`--scenario scenarios/vm/xmpp-live.txt --fake-radio 128 --at 100 podcast
+'{"feed":"http://127.0.0.1:<BASE+81>/feed.xml","episode":1}'` plays a
+station: `tools/fake_radio.py` is the upstream (an endless stream at that
+bit rate, and a file), the Terrier relays it, and `--at <s> <api> <json>`
+puts the owner's calls on a clock. With `bytecode/patch_live_in_session.py`
+and a Terrier that flips `xmpp-live:0` the rabbit pulls the stream through
+its TLS session (`live:` lines, no port 80 open); otherwise it fetches
+`/pod/<token>` over HTTP as before. The scenario's `decoder 128` makes the
+emulated VS1003 take its sound at the bit rate, as the real one's DREQ
+does -- the stub used to swallow everything at once, so a stream never
+filled anything and its buffering could not be seen -- and the verdict
+counts the times the decoder ran dry, gives the heap after each collection,
+and checks every byte the decoder was fed against what the upstream served
+(each four bytes of the fake stream are their own position).
+`scenarios/vm/xmpp-live-stops.txt` adds the head button (`at <ms> button
+down|up`), a dropped session and a sleep.
 
 On the same day,
 with the committed `bootcode.hybrid`, `boot-wpa2` and `wpa2-deauth` failed
@@ -659,6 +733,73 @@ gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
 way, as the runtime OTA's hex path does for images of 117 KB and up. The
 config page does not: see the scenario's header for the figures.
 
+## Naboot 1.2.0.0's first boot over HTTPS
+
+`boot_https` sends kx.jsp and bc.jsp to the pinned warren on port 443, the
+chain anchored on the root built into the firmware, with no fallback to 80.
+`tools/boot-https-proof.sh` proves it against a real Terrier behind a real
+Caddy, with the proof's own root (nobody but Let's Encrypt signs under X2):
+`chain` makes the PKI and the proof anchor (written under keys/, ignored by git), the firmware and this
+emulator are built with that anchor (the script's header has the commands),
+`run` boots a new rabbit against the right chain and then a rogue one.
+`--port443` sends the rabbit's connections to port 443 to the proxy's port.
+
+Measured 2026-11-13: right chain, kx.jsp and bc.jsp (113,606 bytes) through
+Caddy over TLS, key agreed; rogue chain (same names, other keys), 13 tries on
+443, every one refused, 0 requests in the clear. The VM must compile the
+tree's `nab_https_vm.c` (the Makefile does): `../crypto`'s has no anchor,
+and the first three runs refused every boot for that reason alone.
+
+## The owner's way out
+
+`owner_unlock`: an image without our signature is written only if the head
+button was held at power-on (config mode) and is held again when the write
+starts. `scenarios/vm/owner-unlock.txt` and `owner-unlock-nopress.txt`, via
+`tools/config-upload.sh` with `STEPS=<run.sh's>,owner_unlock`. Measured
+2026-11-13 on naboot-1.2.0.0's bootloader: unsigned + button held, written;
+unsigned, no second press, refused; signed 1.0.0.3, no press, written.
+
+## The flash itself, and a power cut in the middle of it
+
+`./rabbit-vm` stops where the image is handed to `flash_uc`: the writer is
+ARM code that runs from RAM against the Oki flash controller, and a host
+build has neither. `flashsim/` is that other half. It takes the *built*
+image -- `Nab.elf`, the bytes a rabbit runs -- and executes it on an ARM7
+model (Unicorn, pinned in `flashsim/Containerfile`): the reset vector and
+cstartup up to `main()`, then the resident image's own `flash_uc` writing
+another image through a model of the controller, with the watchdog counted
+beside it, and a reset on whatever the flash holds afterwards.
+
+```sh
+podman build -t nabaztag-flashsim flashsim
+fs() { podman run --rm -v "$PWD/../bin:/img:z" nabaztag-flashsim "$@"; }
+
+fs boot  /img/lean-reclaim/Nab.elf                 # does this image reach main()?
+fs flash --resident /img/old/Nab.elf --image /img/new/Nab.elf
+fs flash --resident /img/old/Nab.elf --image /img/new/Nab.elf \
+         --fault prog-weak:0x1f8:1 --fault erase-weak:0x5000:1
+fs sweep --resident /img/old/Nab.elf --image /img/new/Nab.elf --mid
+```
+
+`flash` says how the writer ended (a reset, or a return to a caller that is
+no longer there), what the flash holds, and whether a reset on it reaches
+`main()` with `.data` in place. `--fault` makes a word or a sector fail a
+given number of times, or for good (`stuck:`). `sweep` cuts the power after
+every operation -- an erase, or a four-byte word -- counts the instants that
+leave a flash that is neither image, and emulates the reset on a sample of
+them. `--image` also takes a plain `Nab.bin` (a release lifted out of its
+`.sim`), for which `main()` is taken to be the first Thumb code reached.
+
+The two halves chain: `./rabbit-vm ... --upload x.sim --flash-out out.bin`
+keeps the image that got through the bootloader, `verifySig` and
+`flashFirmware`'s own checks, and `flashsim flash --image out.bin` writes
+exactly those bytes. In `rabbit-vm` the processor is taken away at that
+point, as on a rabbit, where `flash_uc` ends in a reset and never returns.
+
+What the model is and is not -- the two operation times are parameters, a
+half-finished erase is a guess -- is in `../docs/OTA-ANTIBRICK.md`, with
+the measurements it was written for.
+
 ## What it does not do yet
 
 **DHCP under `./rabbit-vm`.** The rabbit ARPs for `0.0.0.0` for ever and never
@@ -756,9 +897,12 @@ src/sim.c         the virtual clock and the scenario parser
 stubs/hw.c        the EEPROM, the LEDs, the ears, the buttons, the tags
 stubs/audio.c     the VLSI decoder, as a file you can listen to
 patches/          the simulated register window and one interpreter trace
+flashsim/         the built image's flash writer and reset, on an ARM7 model
 mkconf.py         writes the configuration page
 mkbc.py           turns a bytecode image into the array the VM links
-scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones
+scenarios/        the Wi-Fi questions; scenarios/vm/ the whole-rabbit ones;
+                  http/, ota/ and enforce/ need a bytecode or a step list of
+                  their own, which their headers name
 ```
 
 The seam is `rt2501_tx()` and `ieee80211_input()`. Above it, everything is the

@@ -1,0 +1,58 @@
+# scenarios/ccmp-replay.txt with the refusal on: ccmp_replay_enforce.
+#
+# Not under scenarios/ itself, which `make check` runs against the default
+# step list: ccmp_replay_enforce is in no default list until a rabbit's
+# telemetry has shown that the RXD words are the packet number.
+#
+#   ./run.sh --steps <the default list>,ccmp_replay_enforce scenarios/enforce/ccmp-replay.txt
+#
+# Same traffic, same counters -- they count refusals now -- and
+# expect-data-up says what came through: the replayed frames and the
+# retransmitted duplicate do not, everything else does, across both group
+# rekeys, the pairwise rekey and the retransmitted message 3.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 100000
+
+at 10000 expect RUN
+at 12000 data
+at 12500 data
+at 13000 data group
+at 13500 data
+at 14000 data group
+at 15000 expect-replay 0 0 0
+at 15000 expect-data-up 5
+
+at 20000 replay
+at 21000 expect-replay 1 0 0
+at 22000 replay group
+at 23000 expect-replay 1 1 0
+
+at 24000 data
+at 24200 replay retry
+at 25000 expect-replay 1 1 1
+at 25000 expect-data-up 6
+
+at 30000 rekey
+at 32000 data group
+at 32500 data group
+at 33000 expect-replay 1 1 1
+at 40000 rekey
+at 42000 data group
+at 43000 expect-replay 1 1 1
+
+at 50000 ptk-rekey
+at 55000 data
+at 55500 data
+at 56000 expect-replay 1 1 1
+at 56000 expect-ptk-synced
+
+at 60000 resend-msg3
+at 62000 data
+at 63000 expect-replay 1 1 1
+at 64000 replay
+at 65000 expect-replay 2 1 1
+at 65000 expect-data-up 12
+at 90000 expect RUN

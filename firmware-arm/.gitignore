@@ -19,3 +19,4 @@ __pycache__/
 # (keys/signing_pubkey.h) is committed.
 signing/*.key
 signing/*_priv*
+keys/proof_boot_anchor.der

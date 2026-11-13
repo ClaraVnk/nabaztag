@@ -50,6 +50,11 @@
 #define NAB_TLS_FRAG     4096
 #define NAB_TLS_MSS      1460
 #define NAB_TLS_RX       (NAB_TLS_FRAG + 1 + 16 + 5 + 256 + NAB_TLS_MSS)
+/* A session with a host that has a certificate (NAB_TLS_CERTS): records
+   of 2^14, which is what the web sends whatever it is asked, and room for
+   a whole certificate chain in one handshake message. */
+#define NAB_TLS_RX_CERT  (16384 + 1 + 16 + 5 + 256 + NAB_TLS_MSS)
+#define NAB_TLS_HS_CERT  8192
 /* Overhead of one outgoing record: header, content type, tag. */
 #define NAB_TLS_OVERHEAD (5 + 1 + 16)
 
@@ -117,5 +122,25 @@ int nab_tls_out(const uint8_t *in, uint32_t len, uint8_t *out, uint32_t cap);
 int nab_tls_close(uint8_t *out, uint32_t cap);
 
 int nab_tls_state(void);
+
+/* Which session the other calls act on: 0, the warren (PSK, the default
+   and the only one without NAB_TLS_CERTS); 1, a host with a certificate. */
+void nab_tls_select(int session);
+
+#ifdef NAB_TLS_CERTS
+/* An anchor: a root built into the image, by its subject and its key. */
+struct nab_tls_anchor {
+  const uint8_t *subject; uint32_t subject_len;   /* the Name's contents */
+  const uint8_t *alg; uint32_t alg_len;           /* SPKI algorithm OID */
+  const uint8_t *param; uint32_t param_len;       /* curve OID, or empty */
+  const uint8_t *key; uint32_t key_len;           /* SPKI BIT STRING contents */
+};
+void nab_tls_anchors(const struct nab_tls_anchor *a, uint32_t n);
+/* Session 1: ClientHello for `host` (SNI, checked against the certificate),
+   X25519 with `secret` as our share, ChaCha20-Poly1305 then AES-128-GCM.
+   now: "YYYYMMDDHHMMSS" UTC, for the certificates' validity. */
+int nab_tls_start_cert(const char *host, const char now[14], const uint8_t random[32],
+                       const uint8_t secret[32], uint8_t *out, uint32_t cap);
+#endif
 
 #endif /* NAB_TLS_H */

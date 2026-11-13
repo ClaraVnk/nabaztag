@@ -1,0 +1,316 @@
+RECONSTRUCTION DU PROTOCOLE FIL VIOLET (serveur « warren » -> lapin)
+Phase 2 — tout ce qu'un serveur doit émettre pour piloter un Nabaztag:tag
+2026-11-11
+
+But : le serveur Violet d'origine a disparu ; ce document reconstruit, à partir
+des SEULS analyseurs du lapin (firmware d'origine), le format exact que doit
+produire un warren pour commander le lapin. Les champs sont donnés tels que le
+lapin les LIT (fichier:fonction). Périmètre : code Violet/RedoXyde ; les ajouts
+hors périmètre sont signalés « [HORS PÉRIMÈTRE] ».
+
+Chemins : Metal = ~/vanish/tree-ota/sources ; bootloader =
+~/review-1003/nabgcc/mtl/boot. Complète la cartographie §4-6 (ne la répète pas :
+transport TCP/BOSH, SASL, pile IP) avec le détail des champs.
+
+
+=====================================================================
+0. VUE D'ENSEMBLE DU DIALOGUE
+=====================================================================
+
+Démarrage à froid (bootloader, bc.c = boot.0.0.0.13) :
+  1. GET <SERVERURL>/bc.jsp?v=<FW>&m=<mac>&l=<login>&p=<pwd>&h=<HW>
+     -> corps « amber » + 8 hexa (longueur) + image bytecode + « Mind ».
+  2. Le lapin charge ce bytecode (opcode bytecode) : il devient le runtime.
+
+Runtime (main.mtl) :
+  3. GET <SERVERURL>/locate.jsp?sn=<mac>&h=<HW>&v=<rev>
+     -> lignes « clé valeur » : ping, broad, xmpp_domain (+ xmpp_tls [HP]).
+  4. Résolution SRV _xmpp-client._tcp.<xmpp_domain>, TCP 5222 (ou BOSH
+     /http-bind), <stream:stream>, SASL DIGEST-MD5, bind (ressource = état),
+     session, presence.
+  5. Le serveur pousse des <message> contenant <packet xmlns="violet:packet"
+     format="1.0" [ttl="…"]>BASE64</packet>. La base64 décodée est une TRAME
+     0x7f…0xff. Le lapin la passe à evalTrame.
+  6. Une trame contient des blocs typés : délai de ping (3), infos/services (4),
+     reboot (9), PROGRAMME (10), mode veille (11).
+  7. Un programme est une liste de commandes [CLÉ valeur] (MU, ST, CH, …) ;
+     ses ressources (sons, chorégraphies) sont d'abord téléchargées en HTTP,
+     puis les commandes sont exécutées séquentiellement.
+
+Le lapin remonte vers le serveur : enregistrements (record.jsp), événements
+interactifs (itmode.jsp), RFID (rfid.jsp), et des <message> « packet » encodant
+des événements (bouton, oreilles) dans l'autre sens.
+
+
+=====================================================================
+1. COUCHE HTTP : LES .jsp (main.mtl:3442-3170, bootloader)
+=====================================================================
+
+Toutes les URL de service sont construites avec les mêmes paramètres communs :
+  sn = <mac>   webmac netMac : MAC en hexa minuscule sans séparateur (12 car.)
+  v  = <rev>   getBytecodeRevision : révision du bytecode (« $Rev: N $ » -> N)
+  h  = <HW>    HARDWARE = 4 (5 en simulateur) ; itoa
+Le serveur de base vient de conf.bin (SERVERURL, défaut « r.nabaztag.com/vl »).
+
+1.1  bc.jsp (BOOTLOADER, boot:boot_url/getbytecode)
+     GET <SERVERURL>/bc.jsp?v=<FW a.b.c.d>&m=<mac>&l=<login hexa>&p=<pwd hexa>&h=<HW>
+       v : FIRMWARE sous forme d'IP (Violet = « 0.0.0.2 »).
+       l, p : LOGIN/PWD de conf.bin (offset 163/169), en hexa.
+     Réponse (corps HTTP) attendue par getbytecode :
+       "amber" <8 chiffres hexa = longueur de l'image> <image bytecode> "Mind"
+     L'image est au format vloader (cartographie §4). AUCUNE signature ni
+     chiffrement d'origine : la seule « protection » est l'URL (login/pwd).
+
+1.2  locate.jsp (RUNTIME, main.mtl:configurl / _configcbhttp:3486)
+     GET <SERVERURL>/locate.jsp?sn=<mac>&h=<HW>&v=<rev>
+     Réponse (corps HTTP) : passée à filterconfig -> liste de couples
+     [CLÉ valeur] (une par ligne, séparateur = filterconfig_line/word). Clés lues
+     (listswitchstr) :
+       ping         <base-url>   pingsrv : préfixe de record.jsp/itmode.jsp/rfid.jsp
+       broad        <base-url>   broadcasturl : remplace le préfixe « broadcast »
+                                 des URL de ressources (rscfilterurl)
+       xmpp_domain  <domaine>    déclenche XmppSessionStart (obligatoire)
+       xmpp_tls     <port>       [HORS PÉRIMÈTRE] port TLS XMPP
+     Sans xmpp_domain : le lapin boucle sur configstartRun (réessaie locate.jsp).
+
+1.3  record.jsp (POST d'un enregistrement audio ADPCM)
+     <pingsrv>/vl/record.jsp?sn=<mac>&v=<rev>&h=<HW>&m=<mode>
+       m : mode d'enregistrement (entier). Corps POST = WAV ADPCM 8 kHz
+       (reclib.mtl:mkriff ; format 0x11, 4055 o/s, blocs de 256 o / 505 éch.).
+
+1.4  itmode.jsp (mode interactif — événements temps réel)
+     <pingsrv>/vl/itmode.jsp?sn=<mac>&v=<rev>&h=<HW>&a=<application>&st=<type>…
+       st=start                                   début
+       st=btn&pos=<P>&idx=<I>&btn=<B>             appui bouton
+       st=ear&pos=<P>&idx=<I>&el=<G>&er=<D>       oreilles (gauche/droite)
+       st=reco&pos=<P>&idx=<I>                    enregistrement effectué
+       st=rfid&t=<tag>                            tag RFID (webmac)
+       st=done                                    fin
+     &c=<cookie> (g_cookie) ajouté partout si défini via IC.
+     La réponse itmode.jsp est elle-même une trame base64 (comme le ping).
+
+1.5  rfid.jsp     <pingsrv>/vl/rfid.jsp?sn=<mac>&v=<rev>&h=<HW>&t=<tag hexa>
+1.6  sendMailXMPP.jsp [partiellement HP] m=<mac>&d=<domaine>&r=<data>&v=<rev>
+1.7  BOSH : <ip>/http-bind (POST, body <body rid sid …> XMPP, hold 15 wait 7).
+
+
+=====================================================================
+2. COUCHE XMPP (main.mtl:1300-3100)
+=====================================================================
+
+2.1  Ouverture
+     Résolution DNS SRV « _xmpp-client._tcp.<xmpp_domain> » -> hôte:port, sinon
+     TCP 5222 direct, sinon BOSH. Puis (XmppTcpOpenStream1) :
+       <?xml version='1.0' encoding='UTF-8'?>
+       <stream:stream to='<domaine>' xmlns='jabber:client'
+         xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>
+     L'ouverture de flux entrante est reconnue par strstr « id=' » (jamais par
+     le parseur XML : la balise <stream> ne se ferme qu'en fin de session).
+
+2.2  Authentification SASL DIGEST-MD5 (main.mtl:1584-1669, md5.mtl, b64.mtl)
+       -> <auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='DIGEST-MD5'/>
+       <- <challenge> (nonce, realm) base64
+       -> <response xmlns='…xmpp-sasl'>BASE64(response RFC 2831)</response>
+          username = <mac> ; password = GetXmppPassword (conf.bin offset 208 :
+          'd' + 12 car.) ou enregistrement in-band (« register »).
+       <- succès -> re-open stream.
+     Le serveur doit donc connaître le mot de passe XMPP du lapin (indexé par
+     la MAC). Realm/nonce classiques ejabberd.
+
+2.3  Bind et session (main.mtl:1808-1837)
+       -> <iq type='set' id='…'><bind xmlns='…xmpp-bind'>
+            <resource>RESSOURCE</resource></bind></iq>
+     LA RESSOURCE EST L'ÉTAT DU LAPIN vu du serveur (XmppSessionRequestResource) :
+       idle | asleep | streaming | itmode   (et busy quand la file est pleine)
+     Le serveur peut donc router selon l'état en lisant la ressource du JID.
+     Puis session, puis <presence/>.
+
+2.4  Canal de commande : <message> avec <packet> (main.mtl:2855, 3072)
+     Le serveur pousse :
+       <message from='…' to='<mac>@<domaine>/<res>' …>
+         <packet xmlns="violet:packet" format="1.0" [ttl="<sec>"]>
+           BASE64( trame 0x7f … 0xff )
+         </packet>
+       </message>
+     Le lapin : Xml_FindFirstElementNamed "packet" ; vérifie xmlns=="violet:packet"
+     et format=="1.0" ; décode le texte base64 (b64.mtl) ; -> evalTrame.
+     Requête de sources à l'ouverture (main.mtl:2604) :
+       <iq type='get'><query xmlns="violet:iq:sources">
+         <packet xmlns="violet:packet" format="1.0"/></query></iq>
+     JIDs : <mac>@<domaine>/<ressource>. Composants historiques :
+     xmpp.platform.violet.net / xmpp.objects.violet.net / xmpp.applet.violet.net.
+     Keepalive : le lapin envoie un espace « " " » toutes les 8 s ; ping XEP-0199
+     toutes les 60 s (délai de réponse 5 s). (ATTENTION connu : un blanc du
+     serveur entre deux stanzas bloquait ParseXMLPacket — keepalive.)
+
+
+=====================================================================
+3. LA TRAME 0x7f (main.mtl:pingextract 3689, evalTrame 4990)
+=====================================================================
+
+3.1  Format d'enveloppe
+       octet 0        = 0x7f  (sinon pingextract rend nil -> « bad trame »)
+       puis des BLOCS : [code : 1 octet][len : 3 octets big-endian][données : len]
+       fin            = 0xff  (code 255 -> fin, renvoie la liste des blocs)
+     Un code hors 0..11 (et != 255) arrête l'analyse -> trame rejetée.
+     bintoi3 (main.mtl) : len = (s[i+1]<<16)|(s[i+2]<<8)|s[i+3].
+     Chaque bloc devient [code, strsub(données)].
+
+3.2  Codes de bloc (evalTrame)
+       3   délai de ping                données ignorées (le délai est appliqué
+                                        ailleurs) ; sert à cadencer le ping.
+       4   infos / services / oreilles  données = payload infoUpdate (voir §4).
+                                        Sous-format : si (données[3]==0xFF) ->
+                                        ancien format infoUpdate(données[4:]) ;
+                                        sinon newInfoUpdate(données[4:]).
+       9   reboot                       -> stopEverythingAndResetToIdle (à
+                                        l'origine un vrai reboot ; adouci depuis).
+       10  PROGRAMME                    uncrypt(données,1,nil,0x47,47) puis
+                                        filterconfig -> liste de [CLÉ val] (§5).
+       11  mode                         données[0] : 0 = réveil (endSleep),
+                                        1 = sommeil (startSleep).
+     Plusieurs blocs peuvent coexister ; un seul bloc 10 (programme) par trame
+     est traité (le dernier gagne, cf. set program=…).
+
+3.3  Désobfuscation du programme (code 10)
+     uncrypt val 1 nil 0x47 47 : chiffre de flux maison (vlog.c:decode8),
+     clé 0x47, alpha 47. CE N'EST PAS une signature : juste une obfuscation
+     anti-sniffing. Le serveur doit donc chiffrer le corps du programme avec
+     encode8(0x47,47) avant de le mettre dans le bloc 10.
+
+
+=====================================================================
+4. BLOC 4 : infoUpdate (main.mtl:infoUpdate 3287 ; newInfoUpdate)
+=====================================================================
+
+Ancien format (infoUpdate, payload = données[4:], exemple en commentaire
+« /14/80/0/0/…/14/13/0/ ») — octets lus par index :
+  [0..15]  infosrc.0 .. infosrc.15   : 16 valeurs de « sources » (services :
+           météo, bourse, trafic, mails… -> animations LEDs du ventre).
+  messages : si len>19 et données[19] != 0 -> infomessages = 2
+             sinon si len>18 et données[18] != 0 -> infomessages = 1.
+  taichi   : balaye les paires (i, i+1) de [0..15] ; si données[i]==14 alors
+             infotaichi = données[i+1] (fréquence du taï-chi).
+  oreilles : [16] = position gauche, [17] = position droite ; si elles changent
+             -> son midi_communion + earsGoToRefPos.
+Le serveur encode donc l'état « ambiant » du lapin dans ces ~18 octets.
+(newInfoUpdate : variante plus récente, même rôle, sous-format par champs ;
+appelée quand données[3] != 0xFF.)
+
+
+=====================================================================
+5. BLOC 10 : LE « PROGRAMME » (main.mtl:runEvalOneCommand 4709)
+=====================================================================
+
+Après uncrypt + filterconfig, le programme est une LISTE ORDONNÉE de couples
+[CLÉ valeur] (clé = 2 lettres). Les commandes sont exécutées dans l'ordre
+(cmdEvalOne i -> i+1). « valeur » est une chaîne.
+
+Commandes d'ORIGINE (valeur = telle que lue) :
+  MU  val   jouer une ressource son LOCALE nommée val (déjà téléchargée).
+  MC  val   idem MU, mais ressource « signature » (budget SIGNCUTSIZE 40 000 o).
+  ST  val   démarrer un STREAMING HTTP de val (ressource audio en flux) ;
+            passe en ressource « streaming ».
+  SP  val   streaming « protégé » : URL + &sn=<mac> + &cs=<md5(URL+"teloiv")>.
+  MS  val   music stream non bloquant (comme ST, sans chorégraphie, comme MU).
+  SI  val   nomme le flux courant (gCurStreamName = val).
+  SE  val   stoppe le flux courant s'il porte le nom val.
+  MW        attendre la fin du son en cours avant la commande suivante.
+  CH  val   jouer la CHORÉGRAPHIE (ressource locale val) — voir §6.
+  SL  val   langue pour Google TTS (language = val).
+  CU  val   GET val (appel d'URL, « callURL », réponse ignorée).
+  SG  val   « Google say » : GET http://translate.google.com/translate_tts
+            ?ie=UTF-8&tl=<language>&q=<val> en streaming.
+  IS  val   début du mode interactif pour l'application val.
+  IE        fin du mode interactif.
+  WT  val   attendre atoi(val) millisecondes (reste interactif ; bouton = stop).
+  PL  val   sélection de palette LED : set_current_palette_mode(atoi val).
+  CL  val   couleur : x=atoi val ; palette_color(x>>24, x&0xffffff).
+  IC  val   réglages interactifs « ickey=icval » (voir §5.1).
+
+Commandes AJOUTÉES PAR NOUS [HORS PÉRIMÈTRE] : RS (mic stream), RT (stop mic),
+  SV (volume), FW (flash firmware). À ignorer pour le protocole d'origine.
+
+5.1  IC — réglages interactifs (eval_IC_msg 4420), format « ickey=icval »
+  snd.btn.1 = <res>            son du clic court du bouton (défaut « clonk »).
+  snd.btn.2 = <res>            son du double-clic (défaut « chord »).
+  snd.itmode = default|none    sons début/fin du mode interactif.
+  chor.itmode = default|none   chorégraphies début/fin du mode interactif.
+  record.enabled = true|false  autorise l'enregistrement (clic long).
+  streaming.chor.enabled = true|false   danse des oreilles pendant le streaming.
+  int.mask = <entier>          masque d'interruptions interactives, bits :
+                               1 BOUTON, 2 OREILLE_GAUCHE, 4 OREILLE_DROITE, 8 RFID.
+  cookie = <valeur>            g_cookie = « &c=<valeur> » ajouté aux URL itmode.
+
+5.2  Ressources d'un programme (rscFromProgram 3697)
+  Les commandes MU, CH -> ressource à télécharger avec un budget de 300 000 o ;
+  MC -> budget SIGNCUTSIZE (40 000 o). Chaque ressource est référencée par une
+  URL (= la « valeur » de la commande). rscfilterurl : si l'URL commence par
+  « broadcast », ce préfixe est remplacé par broadcasturl (de locate.jsp).
+  Les ressources sont téléchargées AVANT l'exécution (run = rscLoadNextRun), puis
+  stockées (rscloaded) et retrouvées par nom (listswitchstr) au moment du MU/CH.
+  Un son local est un flux que le VS1003 décode (MP3, WAV PCM, WAV ADPCM, MIDI).
+
+
+=====================================================================
+6. CHORÉGRAPHIE (main.mtl:runChorCmd 3985)
+=====================================================================
+
+Une chorégraphie (ressource jouée par CH) est une chaîne d'octets découpée en
+PAS. Chaque pas avance chorindex de 2 + (nombre de paramètres) octets ; le tempo
+est donné par chortimescale (× 10 ms) fixé par le premier pas CH_frame_duration ;
+le temps relatif d'un pas est lu à (chorindex-1) après avancement (octet de
+durée). Codes (const …) et paramètres lus (strget chordata chorindex+k) :
+  1   CH_frame_duration   p+1 : tempo (chortimescale = 10 × p) ; 1 param.
+  7   CH_set_led_color    p+1 led (4 - n : 0 nez…4 base), p+2 R, p+3 V, p+4 B ;
+                          consomme 6 octets (2 inutilisés — cf. zone d'ombre 5.3).
+  8   CH_set_motor        p+1 oreille, p+2 position, p+3 sens ; 3 param.
+  9   CH_set_leds_color   p+1 R, p+2 V, p+3 B (toutes les LEDs) ; 3 param.
+  10  CH_set_led_off      p+1 led ; 1 param.
+  14  CH_set_led_palette  p+1 led, p+2 index (7 & p+2) dans current_palette ; 2.
+  16  CH_randmidi         joue un MIDI aléatoire de getmidilist ; 0 param.
+  17  CH_avance           p+1 moteur, p+2 delta (avance l'oreille) ; 2 param.
+  18  CH_ifne             p+1 valeur comparée à chorrandom ; saut conditionnel
+                          (p+2,p+3 = offset) — tirage aléatoire de branche.
+  19  CH_attend           attend la fin du mouvement d'oreille et du son ; 0.
+  20  CH_setmotordir      p+1 moteur, p+2 sens (chortaichimotordir) ; 2 param.
+Fin : chorindex >= strlen chordata -> msgendchor.
+NB : ifne/attend servent surtout aux chorégraphies embarquées (taï-chi, RFID) ;
+le format exact des 2 octets inutilisés de set_led_color reste une zone d'ombre.
+
+
+=====================================================================
+7. ÉVÉNEMENTS LAPIN -> SERVEUR (sens inverse)
+=====================================================================
+
+  - Pendant un programme (controlplay) : clic bouton -> pause + <message>
+    « button » ; double-clic -> acquitter.
+  - Au repos (controlwait) : clic long -> enregistrement puis POST record.jsp ;
+    oreilles bougées -> <message> « ears » codant l'événement
+    0x8000 | (gauche<<8) | droite.
+  - Mode interactif : chaque événement (bouton/oreille/reco/rfid) -> GET
+    itmode.jsp avec st=… (§1.4), filtré par int.mask.
+  - RFID au repos (runIdle) -> GET rfid.jsp?t=<tag>.
+  - États : le lapin publie son état via la RESSOURCE XMPP (idle/asleep/
+    streaming/itmode/busy) à chaque transition (XmppSessionRequestResource).
+
+
+=====================================================================
+8. CE QU'UN WARREN MINIMAL DOIT IMPLÉMENTER
+=====================================================================
+
+  1. HTTP : servir bc.jsp (bytecode enveloppé amber…Mind) et locate.jsp (ping,
+     broad, xmpp_domain). Accepter record.jsp / itmode.jsp / rfid.jsp.
+  2. Base de mots de passe XMPP indexés par MAC (SASL DIGEST-MD5).
+  3. Serveur XMPP (ejabberd-like) acceptant <mac>@<domaine>, le bind de
+     ressource, et le routage par ressource = état.
+  4. Pousser des <message><packet xmlns="violet:packet" format="1.0">BASE64</packet>
+     où BASE64 = trame 0x7f + blocs + 0xff.
+  5. Pour jouer un son : bloc 10 (programme obfusqué 0x47/47) avec une commande
+     MU/ST/CH et héberger la ressource en HTTP ; ou SG pour du TTS.
+  6. NE PAS envoyer de blanc entre deux stanzas (ParseXMLPacket) ; répondre aux
+     pings XEP-0199 ; tolérer le keepalive espace du lapin.
+
+Zones d'ombre héritées (voir violet-zones-ombre.txt §4,5,7) : séparateurs exacts
+de filterconfig ; sous-format complet de newInfoUpdate ; 2 octets inutilisés de
+CH_set_led_color ; signification exacte de h=4 et de la forme « version en IP ».

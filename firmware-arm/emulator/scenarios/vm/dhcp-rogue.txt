@@ -1,0 +1,8 @@
+# DHCP hijack: an unsolicited ACK (wrong transaction id) points the rabbit's
+# gateway/DNS at 10.9.9.9. Before patch_dhcp_xid cbnetdhcp takes it; after, the
+# id does not match and the window is closed, so it is dropped.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 45000
+at 20000 expect RUN
+at 30000 dhcp-rogue

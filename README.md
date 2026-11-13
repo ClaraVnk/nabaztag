@@ -60,6 +60,22 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   pushed from the warren's page with the rabbit restarting by itself, the
   fixes of a security audit, a crash report in the boot URL, and a modern
   config UI — in 123 420 of 126 976 bytes of flash.
+- 🧪 **Naboot 1.1.0.0 — beta, at your own risk** (2026-11; proven in the
+  emulator, **not yet on a real rabbit**). The outcome of a line-by-line
+  security review of Violet's 2006 code, RedoXyde's port and ours, each
+  finding reproduced before it was fixed
+  ([`SECURITY-FINDINGS-2026-11.md`](firmware-arm/docs/SECURITY-FINDINGS-2026-11.md)):
+  two out-of-bounds bugs twenty years old in the beacon parser and the USB
+  descriptors, the adoption key no longer readable by a bytecode, an OTA that
+  only flashes an image whose signature was checked, a flash writer that no
+  longer returns into half-written code
+  ([`OTA-ANTIBRICK.md`](firmware-arm/docs/OTA-ANTIBRICK.md)). And 15 KB of
+  flash taken back from dead code: WEP, the factory test mode, the software
+  codecs, pairwise TKIP. The signed image is
+  [`naboot-1.1.0.0-beta.signed.sim`](firmware-arm/releases/naboot-1.1.0.0-beta.signed.sim)
+  (or build it with `--mode naboot-1.1.0.0`). Le Terrier does not offer it:
+  the stable release stays 1.0.0.3. **Ask Clara directly** if you want to try
+  it on a rabbit, with the runtime bytecode that goes with it.
 - 🌍 **[Le Terrier](https://terrier.cyberloutre.fr/)** — a public "warren" so
   anyone can adopt a rabbit without running their own server. Violet's
   services with the 2006 voices (clock, weather, alarm, Ztamps, rabbits in
@@ -235,11 +251,37 @@ The other way — [this repository's add-on](#the-home-assistant-add-on-legacy),
 a warren inside Home Assistant itself with a REST control API — still works,
 but new work goes to the integration and to the warren rather than there.
 
+## Building, testing, releasing
+
+Every tool here from a shell — building and signing a firmware, the host
+tests, the emulator and its proofs against a Terrier, the runtime bytecode, the
+JTAG station, a release: **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)**.
+
 ## Roadmap
 
 The long, dated story of every phase — what was tried, what broke, what was
 measured — lives in **[`docs/HISTORY.md`](docs/HISTORY.md)**, unabridged. This
 is the short version.
+
+**In beta — Naboot 1.1.0.0 (2026-11; emulator only, at your own risk)**
+
+- **The 2026-11 security review** — fifteen entries fixed, each reproduced
+  first; one measured before it is enforced (CCMP replays are counted and
+  reported over the JTAG telemetry, refused once a rabbit has shown the
+  counter stays at zero). The list, with what is left open and why, is in
+  `firmware-arm/docs/SECURITY-FINDINGS-2026-11.md`.
+- **Flash reclaimed** — 112 556 of 126 976 bytes, 14 420 free (1.0.0.3 left
+  3 556): `firmware-arm/docs/VIOLET-CODEMORT.txt` is the study, measured
+  symbol by symbol. **WEP is gone**: a rabbit on a WEP network will not join
+  it with this image.
+- **A safer flash** — the image is checked before anything is erased, a
+  sector that does not take is retried from RAM, and the writer never returns
+  to code it has just overwritten. A power cut during the two seconds of the
+  write is still a brick; nothing else is.
+- **Nothing lost if upstream disappears** — RedoXyde's `nabgcc` and
+  `mtl_linux` are vendored in `firmware-arm/vendor/`, the image builds
+  offline, and the Python Metal compiler builds this bootloader byte for byte
+  like the C++ one.
 
 **Done — Naboot 1.0.0.0 (2026-11-08; every item proven on a real rabbit)**
 
@@ -306,6 +348,10 @@ is the short version.
   or wake command until unplugged (Violet never spoke to a sleeping
   rabbit). `bytecode/patch_sleep_after_program.py` puts it back to sleep;
   the bug and the fix are both reproduced in the emulator.
+- **Blanks no longer deafen a rabbit.** Violet's XML parser kept a blank
+  ahead of a stanza as the rest of its buffer and dropped the stanza, then
+  every one after it: one whitespace keepalive and the rabbit acted on
+  nothing until unplugged. `bytecode/patch_xml_leading_blank.py` skips them.
 - **A rabbit that comes back on its own.** No more BOSH fallback after three
   failed connections, and a write no longer counts as hearing from the
   server (`bytecode/patch_liveness.py`): with the warren stopped for four
@@ -457,8 +503,13 @@ configuration flash sector, next to the Wi-Fi password.
 │   │                        #    run on a build machine against a virtual AP,
 │   │                        #    so a fix costs a second instead of unplugging
 │   │                        #    the rabbit. `cd firmware-arm/emulator && ./run.sh`
+│   ├── vendor/              #    RedoXyde's nabgcc + mtl_linux at the pinned
+│   │                        #    commits: the build reads this, not GitHub.
 │   └── docs/
 │       ├── ADOPTION-KEY.md  #    The per-rabbit key: exchange, colours, HMAC, TLS.
+│       ├── SECURITY-FINDINGS-2026-11.md # The review: fixed, measured, left open.
+│       ├── OTA-ANTIBRICK.md #    What a flash can and cannot survive, measured.
+│       ├── VIOLET-*.txt     #    Violet's original code, mapped and audited (FR).
 │       ├── BRICK_FORENSICS.md #  Recovery plan + bisection ladder.
 │       └── RECOVERY.md
 ├── bytecode/                # Runtime-side bytecode add-ons (mic stream, mDNS,

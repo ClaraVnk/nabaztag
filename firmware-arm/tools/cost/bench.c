@@ -49,6 +49,12 @@ static void hexout(const uint8_t *p, unsigned n)
 #define BENCH_sae_pt 28
 #define BENCH_sae_commit_h2e 29
 #define BENCH_sae_commit_hnp 30
+#define BENCH_cp_1k 31
+#define BENCH_cp_16k 32
+#define BENCH_ecdsa_p256 33
+#define BENCH_ecdsa_p384 34
+#define BENCH_rsa2048_pss 35
+#define BENCH_rsa4096_pkcs1 36
 #define SEL CAT(BENCH_, BENCH)
 
 #if SEL == BENCH_nop
@@ -244,6 +250,47 @@ int bench(void)
   hexout(tag, 16);
 #endif
   return 1;
+}
+
+#elif SEL == BENCH_cp_1k || SEL == BENCH_cp_16k
+/* ChaCha20-Poly1305 (TLS_CHACHA20_POLY1305_SHA256), a record of 1 KB or
+ * 16 KB with its 5-byte header as AAD, against gcm_1k above. */
+#include "net/chachapoly.h"
+#if SEL == BENCH_cp_1k
+static uint8_t rec[1024];
+#else
+static uint8_t rec[16384];
+#endif
+static const uint8_t K[32] = {1, 2, 3};
+static const uint8_t IV[12] = {4, 5, 6};
+static const uint8_t hdr[5] = {0x17, 0x03, 0x03, 0x04, 0x10};
+int bench(void)
+{
+  uint8_t tag[16]; unsigned i;
+  for (i = 0; i < sizeof rec; i++) rec[i] = (uint8_t)i;
+  chachapoly(K, IV, hdr, 5, rec, sizeof rec, tag, 1);
+  hexout(tag, 16);
+  return chachapoly(K, IV, hdr, 5, rec, sizeof rec, tag, 0) && rec[100] == 100;
+}
+
+#elif SEL == BENCH_ecdsa_p256 || SEL == BENCH_ecdsa_p384 || SEL == BENCH_rsa2048_pss || SEL == BENCH_rsa4096_pkcs1
+/* One signature check each, from tests/vectors_pki.h: what a TLS handshake
+ * with a certificate costs (a Let's Encrypt ECDSA chain: one P-384 check
+ * for the leaf, one P-256 for CertificateVerify; an RSA chain: RSA-2048s). */
+#include "net/nab_pki.h"
+#include "vectors_pki.h"
+extern void nab_verify_tick(void);   /* rt.c: counted as the watchdog */
+int bench(void)
+{
+#if SEL == BENCH_ecdsa_p256
+  return nab_ecdsa_verify(NAB_P256, EC_CASES[0].q, EC_CASES[0].ql, EC_CASES[0].s, EC_CASES[0].sl, EC_CASES[0].h, EC_CASES[0].hl, nab_verify_tick);
+#elif SEL == BENCH_ecdsa_p384
+  return nab_ecdsa_verify(NAB_P384, EC_CASES[9].q, EC_CASES[9].ql, EC_CASES[9].s, EC_CASES[9].sl, EC_CASES[9].h, EC_CASES[9].hl, nab_verify_tick);
+#elif SEL == BENCH_rsa2048_pss
+  return nab_rsa_verify_pss(RSA_CASES[1].n, RSA_CASES[1].nl, RSA_CASES[1].s, RSA_CASES[1].sl, RSA_CASES[1].h, RSA_CASES[1].hl, nab_verify_tick);
+#else
+  return nab_rsa_verify_pkcs1(RSA_CASES[8].n, RSA_CASES[8].nl, RSA_CASES[8].s, RSA_CASES[8].sl, RSA_CASES[8].h, RSA_CASES[8].hl, nab_verify_tick);
+#endif
 }
 
 #elif SEL == BENCH_hkdf_kat
