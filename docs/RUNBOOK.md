@@ -172,6 +172,21 @@ Terrier flips them per rabbit. Prove it in the emulator (section 4,
 `--bytecode`). Then serve it to one rabbit first: the Terrier's
 RUNBOOK, "The runtime bytecode".
 
+When an update does not install on a real rabbit and the emulator says it
+should (2026-11-13: Naboot 1.2.0.0 on the HTTPS runtime), build a test
+runtime that reports each step of the update to the warren, serve it to that
+rabbit alone (`bytecode: <name>` in its settings, admins only), and read the
+Terrier's log for `<ota>` while the owner clicks "Update this rabbit":
+
+```sh
+OTA_REPORT=1 bash bytecode/build-bytecode.sh /tmp/tree firmware-arm/tools/mtl_comp.py /tmp/otareport.hybrid
+# announced N buffer-ok | received N | installing N | collected, verifying | signature ok, flashing
+```
+
+The last step logged is where it stopped; the next boot's reset report
+(`verify`, `verify_ok`, `flash` in rabbit_events) says what happened after.
+Never in a release: `bytecode/patch_ota_report.py`.
+
 ## 6. The JTAG station
 
 Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
