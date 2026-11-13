@@ -22,40 +22,29 @@ resolve it once at start and reuse it for every datagram.
 
 ## How it's built
 
-The Metal toolchain only builds on Linux x86 (`-m32`), so it's done in a Docker
-container (here, `nabi-build` on the HAOS host):
+Two things are needed, and nothing else: this repository and OpenJabNab's copy
+of Violet's runtime sources (GPL, not vendored here).
 
 ```sh
-# deps
-apt-get install -y git build-essential gcc-multilib g++-multilib flex bison perl python3
-
-# 1) the Metal compiler (RedoXyde/mtl_linux) — note: OpenJabNab's bundled mtl_comp
-#    segfaults because its Makefile builds 64-bit; this one is -m32.
-git clone https://github.com/RedoXyde/mtl_linux && (cd mtl_linux && make)
-
-# 2) the stock Violet bytecode sources come from the OpenJabNab image
-#    (/var/www/OpenJabNab/bootcode). Drop micstream.mtl + mdnsresolve.mtl into
-#    its sources/, then patch main.mtl (#include + RS/RT/SV/FW + mdns announcer)
-#    and dns.mtl (route ".local" names over multicast mDNS):
-cp micstream.mtl mdnsresolve.mtl <bootcode>/sources/
-python3 patch_main.py <bootcode>/sources/main.mtl
-python3 patch_dns.py  <bootcode>/sources/dns.mtl
-
-# 3) preprocess + compile
-cd <bootcode>/sources && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl
-# NB: use RedoXyde/mtl_linux's compiler (-m32). The bundled <bootcode>/compiler/
-# mtl_comp is the 64-bit build and SEGFAULTS. The full hybrid pulls in fwota.mtl,
-# which uses the custom `verifySig` opcode (152) — so use the *patched* compiler
-# (mtl_compiler_patched); the plain mtl_compiler errors "unknown label verifySig".
-mtl_linux/mtl_compiler_patched -s <bootcode>/bootcode.mtl bootcode_hybrid.bin
+git clone https://github.com/OpenJabNab/OpenJabNab
+git -C OpenJabNab checkout 640257f3cef63fb428d80b8c171f3b15d17ab0ed
+./bytecode/build-bytecode.sh OpenJabNab/bootcode
 ```
 
-**One command for steps 2–3:** `./build-bytecode.sh <bootcode-dir>` copies all
-our modules, applies `patch_main.py` + `patch_dns.py`, and compiles with the
-patched compiler — so a rebuild can never silently drop a module (the mDNS
-resolver in particular). Hardware-verified: the full hybrid (104 827 B — resolver
-+ announcer + RS/RT/SV + OTA) boots, resolves over mDNS, binds XMPP, broadcasts
-`naboot.local`, and speaks. The FW/OTA path only *runs* on Naboot firmware.
+`build-bytecode.sh` copies our modules into `sources/`, applies every
+`patch_*.py` in order (each one idempotent, each one failing loudly if its
+anchor moved), preprocesses with OpenJabNab's `preproc.pl` and compiles with
+this repository's Python Metal compiler, `firmware-arm/tools/mtl_comp.py` --
+byte-identical to RedoXyde's C++ `mtl_compiler` and aware of the opcodes
+Naboot adds, so no 32-bit toolchain and no container are needed: perl and
+python3. From that commit the result is reproducible: 114 082 bytes for the
+tree of 2026-11-11.
+
+What comes out expects a Naboot firmware (the TLS, OTA and adoption-key paths
+call opcodes a stock rabbit does not have; they stay dormant there) and a
+warren that speaks the in-session records. `nabaztag-violet/bootcode.hybrid`
+in this repository is an older build, without TLS, kept for the Home
+Assistant add-on and the emulator's default run.
 
 ## Why the rabbit no longer reboots when the server restarts
 
@@ -105,6 +94,13 @@ stay out of the repo; see `nabaztag-violet/DOCS.md`, *Bytecodes*.)
   an announce record, the raw bytes, then `ST res:N`, instead of an
   `ST http://…/res/<token>` anyone on the path can fetch, when the warren flips
   `xmpp-res:0` under the HMAC.
+- ✅ A radio or a podcast comes down that session as well, and plays as it
+  arrives (`patch_live_in_session.py`): `ST live:N`, then the rabbit asks the
+  warren for the bytes its player has room for, 49 152 at most in hand, and
+  the sound starts after 16 384. Instead of `ST http://…/pod/<token>` over
+  plain HTTP, when the warren flips `xmpp-live:0` under the HMAC. Proven in
+  the emulator (`../firmware-arm/emulator/scenarios/vm/xmpp-live.txt`), not
+  yet on a rabbit.
 - ⏳ Serve the hybrid from the add-on, add a **UDP/4000 receiver** + an on-server
   wake-word engine (openWakeWord, "hey Nabi") that hands the utterance to the
   existing STT → conversation-agent → TTS loop. Live-test on the device (a bad

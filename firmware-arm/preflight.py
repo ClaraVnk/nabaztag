@@ -60,6 +60,13 @@ EXTRAM_ORIGIN, EXTRAM_LENGTH = 0xD0000000, 32 * 1024
 # What the linker cannot see, and so what a region check cannot cover.
 USB_POOL_ORIGIN = 0xD0008000   # EXTRAM_ADDR, inc/utils/mem.h
 VM_HEAP_ORIGIN = 0xD0010000    # SRAM_BASE / _vmem_heap, inc/vm/vmem.h
+# tls_certs (Naboot 1.2.0.0) moves the heap up 32 KB and gives the bottom
+# to .extbss2; its linker script says so in __vm_heap_origin__.
+EXTRAM2_ORIGIN = 0xD0010000
+
+
+def heap_origin(elf) -> int:
+    return elf.symbols.get("__vm_heap_origin__", VM_HEAP_ORIGIN)
 
 # sys/asm/init.s carves 0x1680 bytes off the top of IntRAM for the six mode
 # stacks, in this order downwards: UND 0x80, SVC 0x80, ABT 0x80, FIQ 0x100,
@@ -242,6 +249,8 @@ def check_regions(elf: Elf, r: Report) -> None:
     regions = (("IntROM", INTROM_ORIGIN, INTROM_LENGTH),
                ("IntRAM", INTRAM_ORIGIN, INTRAM_LENGTH),
                ("ExtRAM", EXTRAM_ORIGIN, EXTRAM_LENGTH))
+    if heap_origin(elf) > EXTRAM2_ORIGIN:
+        regions += (("ExtRAM2", EXTRAM2_ORIGIN, heap_origin(elf) - EXTRAM2_ORIGIN),)
     stray = []
     for s in elf.allocated():
         lo, hi = s["addr"], s["addr"] + s["size"]
@@ -358,9 +367,14 @@ def check_memory_landmarks(elf: Elf, r: Report) -> None:
     ext = [t for t in elf.allocated() if t["addr"] >= EXTRAM_ORIGIN]
     clashes = []
     for t in ext:
-        end = t["addr"] + t["size"]
+        start, end = t["addr"], t["addr"] + t["size"]
+        if heap_origin(elf) > EXTRAM2_ORIGIN and start >= EXTRAM2_ORIGIN:
+            # .extbss2: between the USB pool's end and the moved heap.
+            if end > heap_origin(elf):
+                clashes.append((t, "the VM heap", heap_origin(elf)))
+            continue
         for name, base in (("the USB/hcd pool", USB_POOL_ORIGIN),
-                           ("the VM heap", VM_HEAP_ORIGIN)):
+                           ("the VM heap", heap_origin(elf))):
             if end > base:
                 clashes.append((t, name, base))
     if clashes:

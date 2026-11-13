@@ -1,0 +1,645 @@
+CARTOGRAPHIE DU CODE D'ORIGINE VIOLET (Nabaztag:tag, firmware ARM7 + Metal)
+Document de référence — 2026-11-11
+
+Périmètre : firmware Violet 2006-2007 (Sylvain Huet : VM et langage Metal ;
+Sébastien Bourdeauducq : radio rt2501/802.11/EAPOL ; Oki : exemple USB hôte ;
+« Violet » : HAL ; Romain Cochet, « AS » : bibliothèques Metal 2007) et portage
+GCC RedoXyde 2015-2017. Nos ajouts sont exclus (ils sont marqués dans les
+sources par adoption_kx, xmpp-over-tls, res/rsc/mic/ota-in-session, liveness,
+sleep-after-program, xml-leading-blank, wpa3/sae, nab_kx, nab_tls, verifySig,
+entropy_pool, crash_report, link_liveness, probe_ssid_bound, mdns*, fwota,
+micstream) ; les tailles ci-dessous sont celles des fichiers actuels, nos
+ajouts compris, à titre d'ordre de grandeur.
+
+Chemins : C = ~/review-1003/nabgcc/{src,inc} ; Metal runtime =
+~/vanish/tree-ota/sources/*.mtl (assemblés par make_source.sh en bootcode.mtl) ;
+Metal bootloader = ~/review-1003/nabgcc/mtl/boot/boot.0.0.0.N.mtl ; compilateur
+et simulateur PC = ~/review-1003/nabgcc/mtl/mtl_linux.
+
+Matériel visé : Oki ML67Q4051 (ARM7TDMI, 32 MHz, 128 Ko flash interne dont le
+dernier secteur de 4 Ko = conf.bin, 16 Ko SRAM interne), SRAM externe à
+0xD0000000 (dont 32 Ko de pool USB à 0xD0008000 et le tas VM à 0xD0010000),
+contrôleur USB hôte ML60842 (OHCI), dongle Wi-Fi Ralink RT2501/RT73 sur USB,
+codec audio VLSI VS1003 sur SPI0, pilote LED TLC sur SPI1, lecteur RFID
+ST CRX14 sur I2C, 2 moteurs à encodeur (timers FTM), bouton, potentiomètre
+(ADC).
+
+
+=====================================================================
+1. CARTE DES MODULES
+=====================================================================
+
+1.1  C — machine virtuelle (src/vm, inc/vm) — Sylvain Huet 2006
+
+  vloader.c   161 l.  Chargement d'une image bytecode dans le tas : décodage
+                      des globales, copie du code, table des fonctions, cases
+                      système SYS_*. Dépend de vmem.
+  vmem.c      402 l.  Tas + pile de la VM, allocation (bin/tab/string),
+                      ramasse-miettes mark-compact 4 passes. Appelle
+                      play_check (hal/audio) entre les passes.
+  vinterp.c  1508 l.  Boucle d'interprétation (switch sur ~150 opcodes),
+                      cadres d'appel, appels terminaux, et la frontière vers le
+                      C (sys*, audio*, net*). Dépend de vmem, vloader, vlog,
+                      vaudio, vnet.
+  vlog.c      610 l.  Primitives « système » : écho UART, horloges, rand,
+                      copies/comparaisons/recherche de chaînes, conversions
+                      itoa/htoi…, listswitch, LED/moteur/bouton/RFID (vers
+                      hal/*), load/save (secteur conf), flash, reboot,
+                      crypt/uncrypt (encode8/decode8), I2C.
+  vaudio.c    598 l.  FIFO de lecture 4 Ko (audioFifoPlay), rappel Metal
+                      SYS_CBPLAY, enregistrement → SYS_CBREC, codecs IMA ADPCM,
+                      a-law/mu-law, accès registres VS1003.
+  vnet.c      158 l.  Pont vers le pilote radio : netSend/netCb (trames
+                      Ethernet brutes), scan, auth, checksum IP (netChk),
+                      PMK (netPmk), RSSI.
+  vbc.h               Numéros d'opcodes (0..151 d'origine ; 152+ sont à nous).
+  vbc_str.h           Noms des opcodes pour le debug.
+  vmem.h              Macros de la VM (VPUSH/VPULL, PNTTOVAL, HEADER_*...).
+
+1.2  C — radio et sécurité (src/net) — Bourdeauducq 2006, RedoXyde 2017
+
+  ieee80211.c 3200 l. Couche 802.11 station (et point d'accès pour la config) :
+                      scan, auth, assoc, réception/émission de trames,
+                      beacons en mode master, timers. Appelle rt2501usb (TX,
+                      clés, canal), eapol (WPA), remonte les données à
+                      rt2501usb_buffer (file de réception).
+  eapol.c    1204 l.  Handshake WPA/WPA2 (4-way + group key), PTK/GTK,
+                      installation des clés dans le RT2501 (rt2501_set_key).
+                      Dépend de hash (HMAC-MD5/SHA1, PBKDF2), rc4, aes128/cmac.
+  hash.c      455 l.  MD5, SHA-1, HMAC, PRF, PBKDF2 (password → PMK).
+  rc4.c        63 l.  RC4 (déchiffrement du GTK en TKIP).
+  aes128.c, cmac.c   AES-128 et AES-CMAC (key wrap / MIC pour CCMP).
+  (nab_*.c, sae.c, p256.c, sha256.c : ajouts, hors périmètre.)
+
+1.3  C — USB hôte et dongle (src/usb) — Oki 2003-2005, Violet, Bourdeauducq
+
+  usbctrl.c   261 l.  Contrôleur ML60842 : mode hôte, VBUS, interruption.
+  hcd.c      1114 l.  Pilote OHCI : ED/TD, transferts contrôle et bulk,
+                      interruption usbhost_interrupt, root hub.
+  hcdmem.c    306 l.  Allocateur du pool USB (COMRAM 4 Ko dans le ML60842 +
+                      EXTRAM 32 Ko) : hcd_malloc/hcd_free, utilisé aussi pour
+                      les trames radio.
+  usbhcore.c  645 l.  Énumération USB, descripteurs, pipes, attache des
+                      pilotes (usbh_driver_install).
+  list.c       46 l.  Listes doublement chaînées (style Linux).
+  rt2501usb.c 1433 l. Pilote du dongle Ralink : chargement du firmware
+                      (rt2501usb_firmware.h), EEPROM, RF/BBP, calibration,
+                      canal, BSSID, clés matérielles, TX (rt2501_tx), beacon,
+                      RX en bulk (rt2501_rx_callback → ieee80211_input),
+                      rt2501_state, rt2501_timer.
+  rt2501usb_io.c 177  Lecture/écriture registres MAC, BBP, RF via requêtes de
+                      contrôle USB.
+  rt2501usb_buffer.c  File des trames reçues (rt2501buffer_new/rt2501_receive)
+                      consommée par la boucle principale.
+
+1.4  C — HAL et divers (src/hal, src/utils, src/main.c) — Violet
+
+  main.c      604 l.  init matériel, boucle principale (voir §5).
+  audio.c     477 l.  VS1003 : init, volume, mode ADPCM, play_start/
+                      play_check/play_stop/play_eof, rec_start/rec_check/
+                      rec_stop, patch WMA, ADC du potentiomètre.
+  led.c       210 l.  Pilote LED RGB sur SPI1 (5 LEDs : nez, ventre G/M/D,
+                      base), correction d'intensité, set_led(led, 0xRRGGBB).
+  motor.c     264 l.  PWM moteurs d'oreilles et compteurs d'impulsions
+                      (FTM0/1 capture, FTM2-5 PWM), run_motor/stop_motor/
+                      get_motor_position.
+  rfid.c      446 l.  CRX14 par I2C : champ RF, inventaire ISO14443B,
+                      lecture/écriture de blocs.
+  i2c.c, spi.c, uart.c  Bus et console (dump hexa, xmodem).
+  utils/mem.c 257 l.  Flash interne : write_uc_flash (secteur conf 0x1F000),
+                      flash_uc (réécriture complète du firmware depuis la RAM,
+                      en .ramfunc, puis reset par chien de garde), SRAM externe.
+  utils/delay.c, sys.c, debug.c   DelayMs, _sbrk, IRQ on/off, rand.
+  bc.c       1977 l.  dumpbc[31588] : le bytecode du BOOTLOADER compilé
+                      (boot.0.0.0.13), lié dans le firmware.
+
+1.5  Metal — runtime (tree-ota/sources/*.mtl, 11 372 lignes assemblées)
+
+  main.mtl     5570 l. Tout l'applicatif : états généraux, mot de passe XMPP,
+                       transport XMPP (TCP et BOSH), gate, SASL DIGEST-MD5,
+                       session, stanzas IQ/message, locate.jsp, trames 0x7f et
+                       programmes, ressources, chorégraphies, taï-chi, mode
+                       interactif, streaming, enregistrement, RFID, sommeil,
+                       boucle loop et main.
+  xmlparser.mtl 256 l. Découpeur XML maison (ParseXML, ParseXMLPacket, accès
+                       attributs/éléments, impression de debug).
+  config.mtl    96 l.  Offsets de conf.bin, confInit/confSave/confGet*.
+  wifi.mtl     277 l.  Machine à états Wi-Fi (initW→gostationW→dhcpW→stationW,
+                       mode master), scan sérialisé pour env, wifiAuth.
+  net.mtl       45 l.  Démultiplexage des trames reçues (ARP / IP TCP / IP
+                       UDP), nettime.
+  arp.mtl       96 l.  ARP requête/réponse, cache, test de sous-réseau.
+  udp.mtl       51 l.  Construction UDP/IP, envoi, ports enregistrés.
+  tcp.mtl      290 l.  Pile TCP minimale (client et écoute), retransmission.
+  dhcp.mtl     223 l.  Client DHCP (et serveur DHCP pour le mode config).
+  dns.mtl      445 l.  Client DNS A et SRV, cache, bascule de serveur.
+  http.mtl     238 l.  Client HTTP/1.0 (normal, stream, direct), 302, proxy.
+  audiolib.mtl 233 l.  Lecture : FIFO de chaînes, pré-tampon, playStart
+                       callback, lecture locale et HTTP, volume.
+  reclib.mtl    67 l.  Enregistrement : recStart 8000 Hz, blocs ADPCM, en-tête
+                       RIFF.
+  ears.mtl     363 l.  Oreilles : calibration, cible, détection de
+                       manipulation.
+  button.mtl    59 l.  Clic / double / long / double-long.
+  leds.mtl, leds_protos.mtl, colors.mtl, palette.mtl  LEDs, états, palettes.
+  info.mtl     297 l.  Animations des « services » (météo, bourse, trafic,
+                       mails…) sur les LEDs du ventre, taï-chi.
+  env.mtl       18 l.  envrestore (désérialisation de l'env du boot).
+  utils.mtl    218 l.  Listes, chaînes, IP/MAC, tri, dump.
+  md5.mtl, b64.mtl     MD5 et Base64 en Metal (Romain Cochet 2007) pour SASL.
+  const_data.mtl 1472 l. Sons MIDI embarqués (midi_acquired, midi_endrecord…).
+  net_vars.mtl, *_protos.mtl   Variables réseau, prototypes croisés.
+  tcpudp_emu.mtl       Variante simulateur (sockets de l'hôte).
+  (mdns.mtl, mdnsresolve.mtl, micstream.mtl, fwota.mtl : à nous.)
+
+1.6  Metal — bootloader (nabgcc/mtl/boot/boot.0.0.0.N.mtl, ~2900 l.)
+
+  Monolithique : utilitaires, conf, ARP/UDP/TCP/DHCP/DNS/HTTP (client ET
+  serveur HTTP de configuration avec pages HTML intégrées), Wi-Fi, audio
+  (lecture d'un MIDI de démarrage), enregistrement de test, tests usine,
+  boot_loop (téléchargement du bytecode) et main. Versions 0.0.0.2/3/5 sans
+  déchiffrement du firmware ; 0.0.0.6+ avec uncrypt ; 0.0.0.13 = base de
+  Naboot.
+
+1.7  Outils PC (mtl_linux)
+
+  src/vcomp/*.cpp  Compilateur Metal (lexer/parser/typage/génération),
+                   bootstrap.cpp, stdlib_core.cpp (table des 131 primitives :
+                   nom, opcode, nombre d'arguments).
+  src/vm/*.c       La même VM que le firmware, compilée en natif.
+  src/simu/        Simulateur de lapin (fenêtre, sockets hôte, dumpbc.c).
+  config.txt       SOURCE nominal.mtl / boot.mtl, MAC simulée.
+
+
+=====================================================================
+2. FRONTIÈRE C ↔ METAL : LES PRIMITIVES
+=====================================================================
+
+Principe : toute primitive est un opcode (vbc.h). Le compilateur
+(stdlib_core.cpp) connaît pour chacune son nom, son opcode et son nombre
+d'arguments ; un appel direct devient l'opcode, une primitive passée en
+valeur (« #playFeed ») devient l'entier négatif -opcode qu'OPexec reconnaît.
+Les arguments sont sur la pile (le premier en profondeur), le résultat
+remplace le sommet. Convention des tampons : (chaîne, index, [source, index
+source,] longueur) avec nil = « jusqu'à la fin », et bornes vérifiées par
+sysCpy/sysCmp/sysFind.
+
+2.1  Opcodes de la machine (pas de C au-delà de la VM)
+
+  0-1   exec, ret                    appel/retour (voir §3.4)
+  2-6   intb, int, nil, drop, dup    constantes et pile
+  7-8   getlocalb/getlocal, 40-41 setlocalb/setlocal, 47 setlocal2
+  36-37 getglobalb/getglobal, 42 setglobal
+  9-27  add sub mul div mod and or eor shl shr neg not non eq ne lt gt le ge
+  28-29 goto, else (saut si 0)
+  30-33 mktabb/mktab (table de n nil), deftabb/deftab (table depuis la pile)
+  34-35 fetchb/fetch (lecture champ/tableau, nil si hors bornes)
+  43-44 setstructb/setstruct, 48 store (écriture champ ; le test de bornes
+        d'origine était faux, voir nos commentaires), 45-46 hd/tl, 52 first
+  49-51 call (appel d'une valeur fonction avec liste d'arguments), callrb/callr
+  55    fixarg (fermeture partielle : [fun args])
+  87    gc, 131-134 corePP/corePush/corePull/coreBit0 (introspection pile)
+  124-125 listswitch/listswitchstr (vlog.c:sysListswitch* : recherche dans
+        une liste de couples [clé valeur])
+
+2.2  Chaînes, nombres, listes (vinterp.c → vlog.c)
+
+  38-39, 95-96 Secho/Iecho/Secholn/Iecholn → logSecho/logIecho (UART)
+  53 time_ms → counter_timer ; 61 time → counter_timer_s ; 59-60 rand/srand
+  → sysRand (LCG 16 bits) / sysSrand
+  54 tabnew, 56-58 abs/max/min, 72 tablen
+  62 strnew, 63 strset, 69 strget, 68 strlen, 70 strsub, 71 strcat,
+  73 strcatlist, 137 strcmp (memcmp)
+  64 strcpy → sysCpy ; 65 vstrcmp → sysCmp ; 66-67 strfind/strfindrev →
+  sysFind/sysFindrev ; 115-116 strgetword/strputword (16 bits big-endian)
+  117-123 atoi htoi itoa ctoa itoh ctoh itobin2 → sysAtoi… (les « itoa »
+  allouent et empilent eux-mêmes la chaîne résultat)
+
+2.3  Périphériques (vinterp.c → vlog.c → hal)
+
+  74  led led couleur        → sysLed → led.c:set_led (0=nez, 1-3 ventre, 4 base)
+  75  motorset n dir         → sysMotorset → motor.c:run_motor/stop_motor
+                               (dir>0 REVERSE, <0 FORWARD, 0 stop, vitesse 255)
+  76  motorget n             → motor.c:get_motor_position (compteur FTM 16 bits)
+  77  button2                → main.c:push_button_value (bouton de tête)
+  78  button3                → audio.c:get_adc_value (255 - potentiomètre)
+  100 sndVol v               → vaudio.c:audioVol → set_vlsi_volume(v/2)
+  126-130 sndRefresh/sndWrite/sndRead/sndFeed/sndAmpli → accès direct VS1003
+                               (play_check+rec_check, SCI write/read, SDI feed,
+                               ampli) — utilisés par les tests usine du boot
+  101 rfidGet                → sysRfidget → rfid.c (premier tag, 8 octets)
+  147-149 rfidGetList/rfidRead/rfidWrite → rfid.c
+  150-151 i2cRead/i2cWrite   → sysI2cRead/Write (inachevé)
+  136 reboot v w             → sysReboot → reset_uc, si cookies corrects
+  143 flashFirmware s v w    → sysFlash → mem.c:flash_uc (ne revient pas)
+
+2.4  Stockage et chiffrement
+
+  82  load dst i "fichier" j len  → sysLoad → read_uc_flash (secteur conf,
+                                    nom ignoré, j < 4096)
+  92  save src i "fichier" j len  → sysSave → write_uc_flash (IRQ coupées)
+  144-145 crypt/uncrypt s i len key alpha → encode8/decode8 (flux maison)
+  142 netPmk ssid pass       → mypassword_to_pmk (PBKDF2-SHA1, hash.c)
+
+2.5  Audio (vinterp.c → vaudio.c → audio.c)
+
+  79  playStart trytofeed cb → SYS_CBPLAY := cb ; audioPlayStart → play_start
+  80  playFeed s i len       → audioPlayFeed (copie dans le FIFO 4 Ko, rend le
+                               nombre accepté ; playFeed nil = fin → play_eof)
+  81  playStop               → play_stop
+  102 playTime               → check_decode_time (secondes décodées, VS1003)
+  111 recStart freq gain cb  → SYS_CBREC := cb ; rec_start (ADPCM VS1003)
+  112 recStop                → rec_stop
+  113 recVol s i             → audioRecVol (énergie d'un bloc ADPCM)
+  138-141 adp2wav wav2adp alaw2wav wav2alaw → codecs C (non utilisés par le
+                               Metal d'origine hors recVol)
+
+2.6  Réseau (vinterp.c → vnet.c → rt2501/ieee80211)
+
+  103 netCb f                → SYS_CBTCP := f (rappel pour CHAQUE trame reçue)
+  104 netSend s i len mac j speed → rt2501_send (trame LLC/SNAP brute ; le Metal
+                               construit lui-même ARP, IP, UDP, TCP)
+  105 netState               → rt2501_state (BROKEN/IDLE/SCAN/CONNECTING/
+                               CONNECTED/MASTER)
+  106 netMac                 → rt2501_mac
+  107 netChk s i len acc     → somme de contrôle Internet (IP/TCP/UDP)
+  108 netSetmode mode ssid chan → rt2501_setmode (MANAGED / MASTER + beacons)
+  109 netScan ssid           → rt2501_scan ; rend une liste de tuples
+                               [ssid mac bssid rssi channel rateset encryption]
+  110 netAuth scan auth encrypt key → rt2501_auth (voir zone d'ombre 3.2)
+  114 netSeqAdd seq n        → addition 32 bits big-endian (numéros TCP)
+  146 netRssi                → rt2501_rssi_average
+  83-86, 88-91, 97, 135 udp*/tcp* : NON implémentés dans le firmware
+  (simulateur seulement)
+
+2.7  Système
+
+  93  bytecode s             → OPbytecode : remplace le programme (§4.3)
+  94  loopcb f               → SYS_CBLOOP := f
+  98-99 envget/envset        → SYS_ENV (chaîne qui survit à bytecode)
+
+2.8  Rappels C → Metal (le sens inverse)
+
+  main.c boucle              → SYS_CBLOOP ()                 (~20 Hz)
+  vnet.c:netCb               → SYS_CBTCP (trame, mac_source) par trame reçue
+  vaudio.c:audioPlayTryFeed  → SYS_CBPLAY (octets_libres) quand le FIFO baisse
+  vaudio.c:audioRecFeed_end  → SYS_CBREC (bloc_adpcm) par lot du VS1003
+  Chaque rappel : VPUSH des arguments, VPUSH de la case SYS, interpGo(),
+  VPULL du résultat. Il n'y a pas de rappel en interruption : tout est appelé
+  depuis la boucle principale (ou depuis play_check, lui-même appelé par la
+  boucle et par le GC).
+
+
+=====================================================================
+3. MODÈLE MÉMOIRE DE LA VM (vmem.h, vmem.c)
+=====================================================================
+
+3.1  Espace : un seul tableau _vmem_heap de VMEM_LENGTH = 204 800 mots de 32
+     bits (800 Ko) à 0xD0010000 (SRAM externe ; en simulateur un tableau C).
+       [0, _vmem_start[            code + table des fonctions (octets)
+       [_vmem_start, _vmem_heapindex[   objets du tas, croissant
+       ]_vmem_top+_vmem_stack, _vmem_top[  pile, _vmem_stack ≤ 0 décroissant
+     _vmem_top = &_vmem_heap[VMEM_LENGTH] ; VPUSH : _vmem_top[--_vmem_stack]=v.
+     Libre = VMEM_LENGTH + _vmem_stack - _vmem_heapindex (mots).
+
+3.2  Valeurs (un mot) :
+       bit0 = 0  entier signé 31 bits : INTTOVAL(i) = i<<1, VALTOINT(v) = v>>1
+       bit0 = 1  pointeur : PNTTOVAL(p) = (p<<1)|1, p = index de mot de l'en-tête
+       NIL = -1  (ISVALPNT(NIL) est vrai : tout code teste k != NIL)
+     Pas de flottants, pas de caractères (strget rend un entier), pas de
+     booléens (0 = faux, tout le reste dont nil = vrai).
+
+3.3  Objets : en-tête de HEADER_LENGTH = 3 mots puis données.
+       mot 0  HEADER_SIZETYPE : size<<8 | ext<<1 | type
+              type 0 = TYPE_BINARY (chaîne/octets), 1 = TYPE_TAB (mots VM)
+              ext 7 bits : jamais utilisé (« types externes »)
+              binaire : size = octets ; alloué ((size+4)>>2) mots, dernier mot
+                        mis à 0 → au moins un octet nul derrière la chaîne
+              table   : size = (n<<2)-1 ; VSIZE(p) = n mots
+       mot 1  HEADER_GC   : bit0 marque ; pendant le GC, adresse future <<1
+       mot 2  HEADER_LIST : chaînage de la liste de marquage
+     Accès : VSTART/VSTARTBIN (pointeur C sur les données), VFETCH/VSTORE
+     (élément de table), VSIZEBIN (longueur en octets).
+     Tout en Metal est l'un des deux : chaîne (S) = binaire ; tuple [a b],
+     structure [x:… y:…], tableau {…}, cellule de liste a::b (table de 2),
+     fermeture fixarg = tables. Les entiers ne sont jamais alloués.
+
+3.4  Allocation : vmemAllocBin/Tab/TabClear/String, vmemStacktotab (VMKTAB :
+     dépile n valeurs dans une table neuve). Toutes passent par vmem_check :
+     si libre - taille < VMEM_GCTHRESHOLD (16 mots) → vmemGC ; si toujours
+     insuffisant → « ?OM Error », _vmem_broken=1, interpGo refuse d'exécuter,
+     reboot. vmemPush appelle aussi vmem_check(0) : un simple empilement peut
+     provoquer un GC.
+
+3.5  GC (vmemGC) : mark-compact par glissement, racines = toute la pile.
+       vmemGCfirst  marquage itératif via HEADER_LIST
+       vmemGCsecond calcul des adresses de destination dans HEADER_GC
+       vmemGCthird  réécriture de tous les pointeurs (pile + champs) par
+                    HEADER_GC|1, re-marquage
+       vmemGCfourth déplacement (memcpy ou mot à mot) et remise à 0 de HEADER_GC
+     play_check(1) entre les passes (audio), logGC à la fin (ligne « #GC : sp=
+     hp= used=% » sur l'UART). Les objets sous _vmem_start (le code) ne bougent
+     jamais. Conséquence C : tout index d'objet pris avant une allocation est
+     invalide après.
+
+3.6  Cases système : les SYS_NB=6 premiers mots empilés (SYS_CBPLAY 0,
+     SYS_CBUDP 1, SYS_CBTCP 2, SYS_CBLOOP 3, SYS_ENV 4, SYS_CBREC 5), adressées
+     par VCALLSTACKGET(_sys_start, i) = _vmem_top[_sys_start - i]. Les globales
+     du programme suivent, adressées par VCALLSTACKGET(_global_start, i).
+
+
+=====================================================================
+4. FORMAT DU BYTECODE (vloader.c) ET SON TRANSPORT
+=====================================================================
+
+4.1  Image binaire (little-endian) :
+       int32 n        taille de la zone des globales, 4 octets d'en-tête compris
+       globales       suite de valeurs encodées (4.2) jusqu'à l'offset n
+       int32 b        taille du code
+       code[b]        opcodes (vbc.h), offsets de saut relatifs au début de
+                      chaque fonction
+       uint16 nbfun   nombre de fonctions
+       int32[nbfun]   offset de début de chaque fonction dans code
+     Prologue de fonction : uint8 narg, uint16 nloc, puis le corps. La fonction
+     0 est main (« proto main 0 »). loaderSizeBC calcule la taille totale ;
+     loaderFunstart(k) lit la table.
+
+4.2  Encodage d'une globale (loaderInitRec), int32 l :
+       -1              nil
+       bit0=0          entier (déjà au format VM, poussé tel quel)
+       bit0=1, bit1=0  chaîne de l>>2 octets qui suivent (pas d'alignement)
+       bit0=1, bit1=1  tuple de l>>2 éléments récursifs, ramassés par VMKTAB
+     Exemple (bc.c) : 0x000030a8 = 12 456 octets de globales ; 0x00000011 =
+     chaîne de 4 octets ; 0xffffffff = nil.
+
+4.3  Chargement (loaderInit) : copie de l'image au bas du tas → vmemInit →
+     6 NIL système → décodage des globales sur la pile → recopie du code +
+     table à l'offset 0 → vmemSetstart (le reliquat devient un bloc mort).
+     Au démarrage : loaderInit(dumpbc) depuis la flash. À chaud : OPbytecode
+     (chaîne du tas → même procédure, env préservé via audioFifoPlay, ≤ 4 Ko).
+
+4.4  Transport serveur → lapin (boot:boot_url, getbytecode) :
+     GET <CONF_SERVERURL>/bc.jsp?v=<FIRMWARE en forme a.b.c.d>&m=<mac hexa>
+     &l=<login hexa>&p=<pwd hexa>&h=<HARDWARE>, réponse HTTP dont le corps est
+     « amber » + 8 chiffres hexa (longueur) + image + « Mind ». Le runtime
+     redemande ensuite <CONF_SERVERURL>/locate.jsp?sn=<mac>&h=4&v=<rev> qui
+     rend des lignes « clé valeur » : ping <url>, broad <url>, xmpp_domain
+     <domaine> (main.mtl:_configcbhttp). FIRMWARE Violet = 0.0.0.2 ;
+     BYTECODE_REVISION_STR « $Rev: … $ » (Subversion) côté runtime.
+
+
+=====================================================================
+5. FLUX D'EXÉCUTION
+=====================================================================
+
+5.1  Firmware C (main.c:main)
+     init_pll → init_io → init_irq → init_uc_flash → init_spi →
+     init_led_rgb_driver → init_i2c → init_vlsi → init_pwm → init_uart →
+     usbctrl_init(HOST) → reg_irq_handler (USB EXINT2, UART0, timer 1 ms) →
+     usbhost_init → rt2501_driver_install → vmemInit(0) → loaderInit(dumpbc)
+     → VPUSH 0, interpGo (main du bootloader) → boucle :
+       CLR_WDT ; appel SYS_CBLOOP ;
+       pendant 50 ms : play_check(0) ; rec_check() ; usbhost_events() ;
+         tant que (< 1 s et trame reçue) : netCb(trame) ; hcd_free ;
+         play_check ; rec_check
+       toutes les 4 boucles : rt2501_timer (→ calibration RF périodique,
+         ieee80211_timer : décrément des timeouts d'état, expiration des
+         stations en mode master).
+     Le chien de garde est nourri dans la boucle, dans l'interpréteur (chaque
+     opcode : CLR_WDT) et dans play_check.
+
+5.2  Bootloader Metal (boot.0.0.0.13.mtl)
+     main : MACecho ; master=button2 ; confInit (lit conf.bin, réécrit conf0
+     si magic ≠ 0x47) ; wifiInit 1 ; loopcb #loop ; netstart ; sndVol ;
+     start=time_ms ; LEDs (bleu si master, violet sinon).
+     loop, cas normal (!master) : si pas de son en cours : wifiRun ; boot_leds
+     (animation 4 étapes : résolution, connexion, HTTP, bytecode) ; boot_loop.
+       wifiRun : initW (scan du SSID configuré, tri, wifiAuth → netAuth)
+                 → gostationW (attend RT2501_S_CONNECTED) → dhcpW (startdhcp,
+                 retente toutes les 3 s) → stationW.
+       boot_loop : si wifitry > 20 s sans succès : réseau suivant ; sinon
+                 httprequest GET bc.jsp ; timeout 10 s ; à la réponse :
+                 getbytecode → envset envmake → bytecode bc.
+     loop, cas master (bouton au démarrage) : 7 s appuyés = tests usine
+     (LEDs, moteurs, RFID, son, enregistrement) ; sinon netSetmode MASTER
+     « NabaztagXX » canal 1, startdhcpserver, startconfigserver 80 : pages
+     index (formulaire : serveur a, proxy c/d/e, dhcp f, ip g/h/i/j, ssid
+     k/w, auth l, crypt m, clé n, login o, pwd p), 1 = sauver (+ calcul du
+     PMK si WPA), 2 = flasher un firmware envoyé en hexa entre « -violet- »,
+     3 = reboot, 4 = upgrade, 5 = reset de la conf.
+
+5.3  Runtime Metal (main.mtl)
+     main : leds_set_state START ; confInit ; wifiInit 0 (env ≠ nil → stationW
+     immédiat avec envrestore) ; loopcb #loop ; infoInit ; netstart ;
+     startdnsclient ; startdhcp ; srand ; updatevol ; runinit (run =
+     configstartRun) ; sons interactifs par défaut.
+     loop (~20 Hz) : wifiRun ; si netState==IDLE → « wifi lost » : réinit ;
+     buttonloop ; match run with … (voir 5.4) → keymanager (CONTROL_WAIT /
+     PLAY / PROGRAMWAIT / INTERACTIF → controlwait/controlplay/…) ;
+     XmppSessionRun (envoi des stanzas en attente) ; XmppSessionIdle
+     (keepalive, ping, timeouts) ; uploadtimeout ; checkdhcp ;
+     interactiveEarProcessTouched ; wavtime ; updatevol.
+
+5.4  Automate principal (type Run, main.mtl)
+       configstartRun     GET locate.jsp (runconfigstart), LED ventre gauche bleu
+       configwaitRun      attente, timeout 10 s
+       xmppLoginRun       runLogin : XmppSessionStart → DNS SRV _xmpp-client,
+                          TCP 5222 (ou BOSH /http-bind en repli), stream,
+                          SASL DIGEST-MD5 (md5.mtl, b64.mtl), bind, session,
+                          presence ; LED ventre milieu bleu/orange/vert
+       idleRun            earRun ; infoRun (animations services) ; bottomled ;
+                          noseled ; runIdle (RFID, taï-chi aléatoire)
+       sleepRun           oreilles basses, LEDs éteintes, réponse aux stanzas
+       rscLoadNextRun / rscLoadWaitRun   téléchargement des ressources d'un
+                          programme (MU/CH/MC), 300 Ko max, SIGNCUTSIZE 40 Ko
+       cmdEvalOne i       runEvalOneCommand : commande i du programme
+       chorCmdRun i       runChorCmd : lecture de la chorégraphie
+       streamCmdRun i     runStreamingCmd : flux HTTP (podcast, radio)
+       waitCmdRun i       WT
+       earResetWaitRun cb attendre la remise à zéro des oreilles puis cb
+       recordRun / recordStartRun  enregistrement (clic long) puis POST
+                          record.jsp
+       interactiveReqWaitRun  mode interactif (itmode.jsp)
+       xmppReconnectRun   (ajout, hors périmètre)
+
+5.5  D'une stanza XMPP à un programme
+     TCP (tcp.mtl:cbnettcp) → XmppTcpRead → XmppTcpReadPlain : accumulation
+     dans pBuffer, ParseXMLPacket en boucle → XmppGateRead →
+     XmppGateHandlePingPackets (réponses au ping) ou XmppSessionRead (file
+     sInQueue) → XmppSessionProcess → XmppSessionProcessHandleStanzaIq /
+     message. Un <message> « packet » contient en base64 une trame binaire :
+     evalTrame → pingextract (0x7f, blocs [code][len 3 octets][données], fin
+     0xff) → codes 3 (délai ping), 4 (infoUpdate : services, nombre de
+     messages, taï-chi, positions d'oreilles), 9 (reboot), 10 (programme,
+     déchiffré par uncrypt 0x47 47 puis filterconfig en couples [CLÉ val]),
+     11 (0 réveil / 1 sommeil). Un programme déclenche rscFromProgram puis
+     prgmStart → cmdEvalOne 0.
+     Commandes (runEvalOneCommand) : MU/MC jouer une ressource locale ; ST/SP/
+     MS flux HTTP (SP avec cookie g_cookie) ; SI/SE identifiant de flux ; MW
+     attendre la fin du son ; CH chorégraphie (ressource) ; SL langue ; CU
+     appel d'URL ; SG « Google say » ; IS/IE début/fin interactif ; WT
+     attente ; PL palette ; CL couleur ; IC réglages interactifs (masques
+     bouton/oreilles/RFID) ; RS/RT/SV/FW ajoutés par nous.
+     Chorégraphie (runChorCmd) : octets [délai][code][params] : 1 tempo,
+     7 led r g b, 8 oreille pos dir, 9 toutes LEDs, 10 LED éteinte, 14 LED
+     palette, 16 MIDI aléatoire, 17 avance oreille, 18/19/20 (ifne, attend,
+     setmotordir).
+     Bouton pendant un programme (controlplay) : clic = pause + message
+     « button » au serveur ; double = acquitter tout ; au repos (controlwait)
+     clic long = enregistrer, oreilles bougées = message « ears » (event
+     0x8000 | gauche<<8 | droite).
+
+
+=====================================================================
+6. PILE RÉSEAU METAL
+=====================================================================
+
+6.1  Couches : le C livre et accepte des trames LLC/SNAP (8 octets « aa aa 03
+     00 00 00 08 00 » puis IP) sans en-tête 802.11/Ethernet : rt2501_send
+     fabrique l'en-tête 802.11 et le chiffrement, ieee80211_input_data le
+     retire. Le Metal construit donc à la main :
+       arp.mtl   mkarp/sendarp/cbnetarp ; cache larp ; arpreq ip cb (passe
+                 par la passerelle si hors sous-réseau) ; retransmission 10 s
+       udp.mtl   mkudp (en-têtes IP+UDP, sommes de contrôle par netChk) ;
+                 regudp port cb ; cbnetudp → cb [données mac ip_source]
+       tcp.mtl   mktcp ; opentcp ip port cb (SYN, port local 1024 + compteur) ;
+                 listentcp ; cbnettcp : automate STSYN/STEST/STFIN/STLISTEN ;
+                 un segment en vol (lastsentT), ACK immédiat, writetcp par
+                 tranches de 1024, retransmission chaque seconde ×10 ;
+                 enabletcp 0 = ignorer les segments (contrôle de flux du
+                 streaming audio)
+       dhcp.mtl  client (discover/offer/request/ack, bail, DNS reçus →
+                 dnslistfromdhcp) et serveur (mode config)
+       dns.mtl   question/parsemsg (A, et SRV pour XMPP), cache ldns avec TTL,
+                 bascule sur le DNS suivant au timeout
+       http.mtl  httprequest verbe url post cb type : type NORMAL (tout en
+                 mémoire, cb une fois), STREAM (en-tête puis cb par morceau),
+                 DIRECT ; 302 suivi 3 fois ; proxy via conf ; httpabort ;
+                 httpenable (flux)
+     net.mtl:net démultiplexe par type (ARP 0x0806 / IP) et protocole (6 TCP,
+     17 UDP) ; nettime appelle arptime/tcptime chaque seconde (wifi.mtl).
+
+6.2  Modèle de rappel TCP : cb [t événement données] avec TCPWRITE 0 (prêt à
+     émettre : connexion établie ou dernier segment acquitté), TCPREAD 1
+     (données), TCPCLOSE -1 (FIN reçu ou abandon), TCPSTART 2 (connexion
+     entrante). http.mtl:_httptcpevent et main.mtl:XmppTcpRead implémentent
+     cette interface ; fixargN sert à capturer le contexte (requête, session).
+
+6.3  XMPP : XmppSessionStart domaine → DnsSrv « _xmpp-client._tcp.<domaine> »
+     → XmppGateConnect : TCP 5222 (pTcp) ou BOSH (pBosh, requêtes HTTP POST
+     /http-bind avec rid/sid, hold 15, wait 7) ; XmppGateOpenStream ;
+     features → SASL DIGEST-MD5 (Sasl_processChallenge : nonce, realm,
+     response = MD5 selon RFC 2831, nom = MAC, mot de passe = GetXmppPassword
+     en conf.bin+208 ou enregistrement in-band « register ») ; bind avec
+     ressource « idle » / « asleep » / « streaming » / « itmode » (la
+     ressource EST l'état du lapin vu du serveur : XmppSessionRequestResource) ;
+     session ; presence. Idle : espace « " " » toutes les 8 s, ping toutes les
+     60 s avec 5 s de délai de réponse, arrêt si silence > XmppSessionReadTimeout.
+     JIDs : <mac>@<domaine>/<ressource> ; composants
+     xmpp.platform.violet.net / xmpp.objects.violet.net / xmpp.applet.violet.net.
+
+
+=====================================================================
+7. CHEMIN RADIO / USB CÔTÉ C
+=====================================================================
+
+7.1  Montée : usbctrl_init (ML60842 en hôte) → hcd_init (OHCI) → usbhost_init
+     → rt2501_driver_install (enregistre connect/disconnect) ; à l'énumération
+     du dongle : rt2501_connect → rt2501_setup (chargement du microcode Ralink
+     par requêtes de contrôle, EEPROM : MAC, calibration RF, antennes) →
+     rt2501_connected=1, ieee80211_init, eapol_init, rt2501_submit_rx (premier
+     transfert bulk-in), rt2501_setmode(MANAGED).
+
+7.2  Réception : hcd (interruption usbhost_interrupt → hcd_writeback_done) →
+     rt2501_rx_callback (reconstitution de la trame par paquets de 64 octets ;
+     descripteur RXD : CRC, erreur de chiffrement, RSSI) → ieee80211_input
+     (ignore si S_IDLE) → par type :
+       ieee80211_input_mgt : beacons/probe responses (remplissage de la liste
+         de scan en S_SCAN), auth response (open ou shared avec
+         ieee80211_send_challenge_reply) → S_ASSOC + ieee80211_associate
+         (émet l'assoc request avec IE WPA/RSN), assoc response → S_EAPOL si
+         WPA/WPA2 sinon S_RUN ; deauth/disassoc → S_IDLE ; en master :
+         probe/auth/assoc des stations (table ieee80211_associated_sta).
+       ieee80211_input_ctl : rien.
+       ieee80211_input_data : contrôle des adresses (BSSID), retrait de
+         l'en-tête 802.11 (+IV si chiffré, déchiffrement par le matériel),
+         LLC/SNAP : type EAPOL 0x888e → eapol_input ; sinon
+         rt2501buffer_new (file) → consommé par la boucle principale
+         (rt2501_receive → netCb → Metal).
+     Le dongle déchiffre TKIP/CCMP avec les clés posées par rt2501_set_key.
+
+7.3  Association (depuis le Metal) : netScan → rt2501_scan (S_SCAN, parcours
+     des canaux, rappel par réseau) ; netAuth → rt2501_auth : mémorise ssid/
+     bssid/canal/rateset/chiffrement, change de canal, émet l'auth request →
+     S_AUTH avec timeout. EAPOL : eapol_input_msg1 (ANonce → SNonce, PTK par
+     PRF, msg2 avec MIC), eapol_input_msg3 (vérifie MIC, installe PTK
+     rt2501_set_key(0,…) TKIP ou AES, msg4) → S_RUN ; eapol_input_group_msg1
+     (GTK RC4/TKIP ou AES-unwrap, installe la clé de groupe). Timeouts en
+     ticks de 200 ms : AUTH/ASSOC 10, EAPOL/RUN 600 (le RUN est réarmé par le
+     trafic).
+
+7.4  Émission : rt2501_send(trame, len, mac_dest, lowrate, mayblock) :
+     allocation dans COMRAM (hcd_malloc), en-tête TXD + 802.11 (ToDS, BSSID,
+     adresse destination fournie par le Metal après résolution ARP), overhead
+     de chiffrement, rt2501_tx (bulk-out). Les beacons du mode master passent
+     par rt2501_beacon.
+
+7.5  États exposés au Metal (rt2501_state) : BROKEN si rt2501_connected=0
+     (dongle perdu ou, à l'origine, toute erreur bulk-in), MASTER, puis
+     IDLE / SCAN / CONNECTING (AUTH, ASSOC, EAPOL) / CONNECTED (RUN).
+     wifi.mtl ne regarde que IDLE (perte → rescan), CONNECTED, MASTER.
+
+
+=====================================================================
+8. conf.bin, COOKIES ET CONSTANTES
+=====================================================================
+
+8.1  conf.bin (secteur 0x1F000 de la flash interne, 4 Ko ; config.mtl)
+       offset  taille  champ
+       0       41      SERVERURL (chaîne, défaut « r.nabaztag.com/vl »)
+       41      1       NETDHCP (1 = DHCP)
+       42      4       NETIP      46  4  NETMASK   50  4  NETGATEWAY
+       54      4       NETDNS
+       58      32      WIFISSID (chaîne)
+       90      1       WIFIAUTH (0 open, 1 shared)
+       91      1       WIFICRYPT (Violet : 0 none, 1 WEP, 2 WPA ; Naboot :
+                       0x10 WEP, 0x20 WPA, 0x40 WPA2)
+       92      64      WIFIKEY0 (clé WEP hexa/ASCII ou passphrase)
+       156     1       PROXYENABLE   157  4  PROXYIP   161  2  PROXYPORT
+       163     6       LOGIN         169  6  PWD (4 octets écrits)
+       175     32      WIFIPMK (PBKDF2, calculé à la configuration)
+       207     1       MAGIC = 0x47
+       208     1+12    'd' + mot de passe XMPP (runtime 2007)
+     Accès : load/save (sysLoad/sysSave), confInit/confSave, les confGet*.
+     Le bootloader régénère conf0 si MAGIC ≠ 0x47 ; le runtime ne vérifie
+     plus (code commenté, avec 0x48).
+
+8.2  Cookies et clés
+       flashFirmware firm 0x13fb6754 0x0407FE58   (boot:httpflash)
+       reboot 0x0407FE58 0x13fb6754               (boot:cbhttp page 3)
+       crypt/uncrypt key=0x47 alpha=47            (programmes code 10,
+                                                   firmware hexa ≥ boot 0.0.0.6)
+       délimiteur firmware « *violet* » (boot) / « -violet- » (mkfirmware.php)
+       enveloppe bytecode « amber » … « Mind »
+       0x7f / 0xff début et fin de trame serveur
+       0x8000 | gauche<<8 | droite : événement oreilles
+
+8.3  Constantes de temps et de taille
+       main.c         boucle 50 ms, quantum réception 1 s, rt2501_timer 200 ms
+       vmem.h         VMEM_LENGTH 204 800 mots, VMEM_GCTHRESHOLD 16
+       vaudio.h       AUDIO_FIFOPLAY 4096 ; trytofeed 1024 (2048 par défaut C)
+       audiolib.mtl   pré-tampon 80 000, max 400 000, fin 500 ms, réseau 15 s
+       reclib.mtl     8000 Hz, blocs 256 octets / 505 échantillons
+       ears.mtl       17 trous, offset 2, détection 2 s, cassée 5 s,
+                      trou double 600 ms-10 s
+       button.mtl     double-clic 500 ms, long 1500 ms
+       tcp.mtl        MSS 1460, fenêtre 5840, segment 1024, 10 retransmissions
+       dns.mtl        port 1597, timeout 5 s (SRV 7 s)
+       http.mtl       3 redirections, HTTP/1.0, User-Agent MTL
+       main.mtl       ping XMPP 60 s, idle 8 s, BOSH hold 15 wait 7,
+                      STD_NET_TIMEOUT 10 s, LED_TIMEOUT 600, SIGNCUTSIZE 40 000,
+                      ressources 300 000, TRAME_QUEUE_MAXLEN 10,
+                      RecordingTime 8000 ms, EAR_TOUCH_TIMEOUT 1000
+       ieee80211.h    AUTH/ASSOC 10 ticks, EAPOL/RUN 600 ticks
+       boot           HTTP 10 s, Wi-Fi 20 s, TESTDELAY 7 s, AP 192.168.0.1
+       runtime        AP 192.168.2.1 (net_vars.mtl), HARDWARE 4

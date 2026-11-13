@@ -76,6 +76,15 @@ VM += stubs/counters.c
 # runtime bytecode built with bytecode/patch_tls.py against a step list
 # with tls_psk; the opcodes are numbered after adoption_kx's.
 VM += ../crypto/nab_tls.c ../crypto/nab_tls_vm.c
+# The certificate session and the https opcodes (tls_certs, Naboot 1.2.0.0),
+# when the step list has it: the step leaves nab_https_vm.c in the tree.
+ifneq ($(wildcard $(NABGCC)/src/net/nab_https_vm.c),)
+VM += ../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c
+# The tree's copy of nab_https_vm.c, not ../crypto's: boot_https puts its
+# NAB_BOOT_ANCHOR there, as the firmware build compiles it. With ../crypto's
+# the VM had no built-in root and refused every first boot (2026-11-13).
+VM += ../crypto/nab_sha384.c ../crypto/chachapoly.c $(NABGCC)/src/net/nab_https_vm.c
+endif
 # The tree's own copy when the container staged one (and sign_open_alias
 # patched it), the vendored one otherwise.
 TWEETNACL ?= $(firstword $(wildcard $(NABGCC)/src/crypto/tweetnacl.c) ../upstream/tweetnacl/tweetnacl.c)

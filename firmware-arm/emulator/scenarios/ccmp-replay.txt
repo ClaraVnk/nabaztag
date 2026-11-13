@@ -1,0 +1,73 @@
+# A captured CCMP frame, sent again -- counted, not refused.
+#
+# CCMP's integrity check says a frame is genuine; only the receiver's record
+# of the last packet number (PN) it took says a genuine frame is not being
+# played a second time. The stock driver kept none: the radio decrypts the
+# copy as it did the original and ieee80211_input_data hands it up again.
+# Without ccmp_replay_count the first `expect-replay` fails ("this build has
+# no ccmp_replay_count step") and the transcript shows the replayed frame
+# delivered: that is the control.
+#
+# The step counts what a replay check would refuse and refuses nothing,
+# because what the RT2571W writes in the RXD's Iv and Eiv words has never
+# been read on a rabbit (the virtual AP fills them as Linux's rt73usb says
+# the chip does: the stripped CCMP header). This scenario is the check's
+# logic, on that assumption:
+#
+#   ordinary traffic, unicast and group interleaved        0 counted
+#   the last unicast frame again                           1 unicast
+#   the last group frame again                             1 group
+#   a retransmission (same PN, Retry bit)                  counted apart
+#   a group rekey, twice (the key id alternates)           no false positive
+#   a pairwise rekey: the new key's PN starts at 1         no false positive
+#   message 3 retransmitted: no key installed, the PN
+#   goes on, and a replay after it is still seen           1 more unicast
+#
+# and every frame is still handed up (expect-data-up counts the copies too).
+# scenarios/enforce/ccmp-replay.txt is the same traffic with the refusal on.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 100000
+
+at 10000 expect RUN
+at 12000 data
+at 12500 data
+at 13000 data group
+at 13500 data
+at 14000 data group
+at 15000 expect-replay 0 0 0
+at 15000 expect-data-up 5
+
+at 20000 replay
+at 21000 expect-replay 1 0 0
+at 22000 replay group
+at 23000 expect-replay 1 1 0
+
+at 24000 data
+at 24200 replay retry
+at 25000 expect-replay 1 1 1
+at 25000 expect-data-up 9
+
+at 30000 rekey
+at 32000 data group
+at 32500 data group
+at 33000 expect-replay 1 1 1
+at 40000 rekey
+at 42000 data group
+at 43000 expect-replay 1 1 1
+
+at 50000 ptk-rekey
+at 55000 data
+at 55500 data
+at 56000 expect-replay 1 1 1
+at 56000 expect-ptk-synced
+
+at 60000 resend-msg3
+at 62000 data
+at 63000 expect-replay 1 1 1
+at 64000 replay
+at 65000 expect-replay 2 1 1
+at 65000 expect-data-up 16
+at 90000 expect RUN

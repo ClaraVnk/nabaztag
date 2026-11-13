@@ -275,6 +275,12 @@ fun ota_hdr_sig hdr=
 	);;
 
 
+// The largest image we will even allocate a buffer for: the flash the
+// firmware may take. A Content-Length past this is refused before strnew,
+// so a server (or anyone on the path) cannot name a huge size and run the
+// VM out of memory, which is a reboot.
+const FW_MAX_BYTES=126976;;
+
 // The header block arrived. Everything the whole download needs is
 // decided here: the status, the size, the signature. The belly's first
 // light is this step.
@@ -286,7 +292,7 @@ fun ota_bin_head hdr=
 	let ota_hdr hdr "Content-Length: " -> cl in
 	let if cl==nil then nil else atoi cl -> len in
 	let ota_hdr_sig hdr -> sig in
-	if len==nil || len<=0 || sig==nil then
+	if len==nil || len<=0 || len>FW_MAX_BYTES || sig==nil then
 		(set g_ota_bstate=OTA_BIN_DONE; led 0 OTA_STEP_BAD; ota_fail_report 0xF2; 0)
 	else
 	(

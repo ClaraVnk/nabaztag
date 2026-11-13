@@ -66,6 +66,29 @@ static int32_t rec_state;
 /* Set by the harness from --audio-dir; one file per clip the rabbit plays. */
 static char audio_dir[384];
 
+/* The decoder's appetite. A VS1003 takes a sound at the rate it plays it:
+ * DREQ drops when its 2 KB input buffer is full and comes back as the music
+ * goes out. Without that a stub swallows whatever it is offered, a radio
+ * "plays" as fast as the network delivers it, and nothing upstream is ever
+ * asked to wait -- so nothing about buffering, back-pressure or the heap
+ * during a long stream can be measured. `decoder <kbit/s>` in a scenario
+ * (hw_audio_rate) gives it the bit rate of what it is being fed; 0, the
+ * default, is the old bottomless one. */
+#define DECODER_BUFFER 2048
+static uint32_t decoder_rate;     /* bytes per second, 0 = takes everything */
+static uint32_t clip_at;          /* when the allowance was last counted, sim ms */
+static uint64_t clip_allowed;     /* bytes the decoder may have taken by then */
+static uint32_t clip_bytes;       /* what the decoder took of it */
+static uint32_t clip_dry;         /* how often it ran out with more to come */
+static uint32_t clip_report;      /* next progress line, sim ms */
+static uint8_t  clip_was_dry;
+
+void hw_audio_rate(uint32_t kbps)
+{
+  decoder_rate = kbps * 125;
+  if(kbps) sim_log("audio: the decoder plays at %u kbit/s", kbps);
+}
+
 void hw_audio_dir(const char *dir)
 {
   snprintf(audio_dir, sizeof(audio_dir), "%s", dir ? dir : "");
@@ -123,12 +146,24 @@ uint32_t vlsi_feed_sdi(uint8_t *data, uint32_t len)
   if(len == 0) return 0;
   if(capture != NULL) fwrite(data, 1, len, capture);
   captured_bytes += len;
+  clip_bytes += len;
   return len;
 }
 
 uint8_t vlsi_fifo_ready(void)
 {
-  return 1;
+  uint32_t now = sim_now();
+
+  if(decoder_rate == 0 || !play_state) return 1;
+  /* It plays in real time and no faster: time spent with nothing to play
+   * is silence, not an appetite saved up for later. So the allowance grows
+   * with the clock and never gets more than its own buffer ahead of what
+   * was fed. */
+  clip_allowed += (uint64_t)(now - clip_at) * decoder_rate / 1000;
+  clip_at = now;
+  if(clip_allowed > (uint64_t)clip_bytes + DECODER_BUFFER)
+    clip_allowed = (uint64_t)clip_bytes + DECODER_BUFFER;
+  return clip_bytes < clip_allowed;
 }
 
 void vlsi_ampli(uint8_t on)
@@ -176,6 +211,12 @@ AUDIO_STATUS play_start(int32_t trytofeed)
   valtrytofeed = trytofeed;
   vlsi_ampli(1);
   play_state = 1;
+  clip_at = sim_now();
+  clip_allowed = DECODER_BUFFER;
+  clip_bytes = 0;
+  clip_dry = 0;
+  clip_was_dry = 0;
+  clip_report = clip_at + 10000;
   capture_open();
   sim_log("audio: the rabbit started playing something");
   AUDIO_OK;
@@ -207,6 +248,11 @@ void play_check(int32_t nocb)
   int32_t empty = 0;
   int32_t nb = 0;
 
+  if(play_state && decoder_rate && (int32_t)(sim_now() - clip_report) >= 0) {
+    clip_report += 10000;
+    sim_log("audio: %u bytes into clip %u, ran dry %u time%s", clip_bytes,
+            clips + 1, clip_dry, clip_dry == 1 ? "" : "s");
+  }
   if(!play_state || !vlsi_fifo_ready()) return;
 
   if(!nocb) nocb = 1 - audioPlayTryFeed(valtrytofeed);
@@ -222,8 +268,17 @@ void play_check(int32_t nocb)
       uint8_t b = (uint8_t)val;
       nb++;
       vlsi_feed_sdi(&b, 1);
+      clip_was_dry = 0;
     } else {
       empty = 1;
+      /* A paced decoder that wants more and finds none: silence in the
+       * room. Once per gap, and not at the end of the sound. */
+      if(decoder_rate && play_state == 1 && clip_bytes && !clip_was_dry) {
+        clip_was_dry = 1;
+        clip_dry++;
+        sim_log("audio: the decoder ran dry %u bytes into clip %u",
+                clip_bytes, clips + 1);
+      }
       if(play_state == 2) {
         play_state = 0;
         vlsi_ampli(0);

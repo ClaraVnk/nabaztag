@@ -129,12 +129,20 @@ class Op:
     OPrfidRead = 148; OPrfidWrite = 149;  OPi2cRead = 150;   OPi2cWrite = 151
     OPverifySig = 152
     OPpageRender = 153  # Phase 8: render a ROM HTML page with marker substitution
+    # The wpa3 steps give 153 to netSaePw instead (phase8-rom, the only mode
+    # with pageRender, has no WPA3): one number, two names, never both in
+    # one bootloader. Without this name the compiler refused wifiAuth.
+    OPnetSaePw = 153
     # apply-mods.py numbers these after what is there (add_core_opcode);
     # in lean-wpa3-kx/-tls and the emulator's default step list netSaePw is
     # 153, so the adoption and TLS opcodes land here.
     OPkxBegin = 154;  OPkxFinish = 155;   OPkxUse = 156;     OPkxCheck = 157
     OPtlsStart = 158; OPtlsIn = 159;      OPtlsOut = 160;    OPtlsState = 161
     OPtlsClose = 162
+    OPresetInfo = 163  # crash_report: the reset report the boot URL carries
+    # tls_certs (Naboot 1.2.0.0): the rabbit's own HTTPS, after crash_report
+    OPhttpsStart = 164; OPhttpsIn = 165;  OPhttpsOut = 166;  OPhttpsState = 167
+    OPhttpsClose = 168
 
 
 # Opcodes that take a 1-byte unsigned operand.
@@ -472,6 +480,9 @@ _MNEM_TO_OP = {name: code for code, name in
                    154: "OPkxBegin", 155: "OPkxFinish", 156: "OPkxUse",
                    157: "OPkxCheck", 158: "OPtlsStart", 159: "OPtlsIn",
                    160: "OPtlsOut", 161: "OPtlsState", 162: "OPtlsClose",
+                   163: "OPresetInfo",
+                   164: "OPhttpsStart", 165: "OPhttpsIn", 166: "OPhttpsOut",
+                   167: "OPhttpsState", 168: "OPhttpsClose",
                }.items()}
 
 

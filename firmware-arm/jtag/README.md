@@ -15,7 +15,7 @@ sudo apt-get install -y git                    # Raspberry Pi OS Lite has none
 git clone https://github.com/ClaraVnk/nabaztag && cd nabaztag
 ./firmware-arm/jtag/station.sh setup          # once, then log out and back in
 ./firmware-arm/jtag/station.sh check          # JTAG answers and the flash reads back
-./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.2.signed.sim
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.3.signed.sim
                                               # verify, write, read back, compare
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
@@ -33,6 +33,11 @@ where it stopped. Unplug and replug the rabbit afterwards.
 `listen` needs a firmware built with the `dcc_telemetry` step (mode
 `lean-wpa3-tel`); the fields are explained in `listen.sh`. Everything else
 works on any rabbit, bricked or not.
+
+A firmware with `ccmp_replay_count` ends the line with `N… p…/…/… V…/…`:
+CCMP frames examined, frames a replay check would have refused, and the
+radio's two IV words for the last one. `./listen.sh | ./ccmp-pn.py` decodes
+them and says whether the refusal (`ccmp_replay_enforce`) is safe to turn on.
 
 ![wiring](wiring.svg)
 

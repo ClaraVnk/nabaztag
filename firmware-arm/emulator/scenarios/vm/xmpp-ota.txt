@@ -1,0 +1,9 @@
+# An update inside the TLS session: tools/xmpp-tls-proof.sh --ota <signed .sim>
+# --speak-at 40 --scenario scenarios/vm/xmpp-ota.txt. Long enough for the
+# image to come down as res:N, the verifySig gate and flashFirmware (a stub
+# here, which says so). 2026-11-13: 1.0.0.3's runtime taking 1.2.0.0.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 300000
+
+at 20000  expect RUN

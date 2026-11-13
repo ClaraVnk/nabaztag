@@ -10,6 +10,7 @@ landed.
 """
 
 import argparse
+import datetime
 import os
 import re
 import sys
@@ -135,7 +136,16 @@ def patch_vinterp_c(root: Path) -> None:
         '              nab_verify_nomem++;\n'
         '          }\n'
         '          else nab_verify_badargs++;\n'
-        '          if (ok) nab_verify_ok++;\n'
+        '          if (ok)\n'
+        '          {\n'
+        '            nab_verify_ok++;\n'
+        '            /* adoption/flash: remember the image this signature covers,\n'
+        '               so that OPflashFirmware will flash only it and nothing\n'
+        '               else. SHA-512 via crypto_hash, whose block loop already\n'
+        '               feeds the watchdog (patch_verify_wdt). */\n'
+        '            crypto_hash_sha512_tweet(nab_flash_fp,(const uint8_t*)VSTARTBIN(payload),VSIZEBIN(payload));\n'
+        '            nab_flash_armed=1;\n'
+        '          }\n'
         '          (void)VPULL();\n'
         '          VSTACKSET(0, INTTOVAL(ok));\n'
         '        }\n'
@@ -159,7 +169,25 @@ def patch_vinterp_c(root: Path) -> None:
     counters = ('int32_t nab_verify_calls;\n'
                 'int32_t nab_verify_ok;\n'
                 'int32_t nab_verify_nomem;\n'
-                'int32_t nab_verify_badargs;\n')
+                'int32_t nab_verify_badargs;\n'
+                '/* adoption/flash: the image a verifySig accepted (SHA-512), and\n'
+                '   whether one has been. OPflashFirmware flashes only a match, so a\n'
+                '   runtime bytecode cannot hand junk or an unsigned image to the\n'
+                '   flash -- the signature gate (fwota.mtl) is no longer the only one. */\n'
+                'int32_t nab_flash_armed;\n'
+                'uint8_t nab_flash_fp[64];\n'
+                'extern int crypto_hash_sha512_tweet(unsigned char *,const unsigned char *,unsigned long long);\n'
+                '/* 1 iff `img` is byte-for-byte the image the last verifySig accepted.\n'
+                '   crypto_hash (SHA-512) feeds the watchdog as verifySig does; the\n'
+                '   compare is constant time. OPflashFirmware gates on this. */\n'
+                'static int nab_fw_verified(const unsigned char *img, int len)\n'
+                '{\n'
+                '  unsigned char fp[64]; int i, d = 0;\n'
+                '  if (!nab_flash_armed) return 0;\n'
+                '  crypto_hash_sha512_tweet(fp, img, (unsigned long long)len);\n'
+                '  for (i = 0; i < 64; i++) d |= fp[i] ^ nab_flash_fp[i];\n'
+                '  return d == 0;\n'
+                '}\n')
     if '#include "nab_sig.h"' not in s:
         if inc_anchor in s:
             s = s.replace(inc_anchor, inc_anchor + '\n#include "nab_sig.h"', 1)
@@ -172,8 +200,22 @@ def patch_vinterp_c(root: Path) -> None:
     if 'nab_verify_calls' in s and 'int32_t nab_verify_calls;' not in s:
         s = s.replace('#include "nab_sig.h"\n',
                       '#include "nab_sig.h"\n\n' + counters, 1)
+
+    # OPflashFirmware: flash only the image the last verifySig accepted, byte
+    # for byte. The two magic words stay the "are you sure" they always were;
+    # the signature binding is added to the same guard, in C, so a runtime
+    # bytecode that skips fwota.mtl cannot reach the flash with junk. The guard
+    # line is stock (patch_flash_verify rewrites the body below it, not this
+    # line), so this composes whether or not flash_verify runs.
+    guard_old = ("          if ((firmware!=NIL)&&(v==0x13fb6754)&&(w==0x0407FE58))\n")
+    guard_new = ("          if ((firmware!=NIL)&&(v==0x13fb6754)&&(w==0x0407FE58)\n"
+                 "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware)))\n")
+    if s.count(guard_old) != 1:
+        sys.exit(f"FAIL {p}: OPflashFirmware's guard is not the shape this patch expects ({s.count(guard_old)})")
+    s = s.replace(guard_old, guard_new, 1)
+
     p.write_text(s)
-    print(f"[ok]   {p}: added OPverifySig case + nab_sig.h include")
+    print(f"[ok]   {p}: OPverifySig + nab_sig.h; flashFirmware bound to a verified image")
 
 
 def patch_stdlib_core(root: Path) -> None:
@@ -247,7 +289,7 @@ def patch_sign_open_aliasing(root: Path) -> None:
 
         FOR(i,n) m[i] = sm[i];
         FOR(i,32) m[i+32] = pk[i];     <-- the public key lands on sm[32..63]
-        crypto_hash(h,m,n);
+        crypto_hash_sha512_tweet(h,m,n);
         reduce(h);
         scalarmult(p,q,h);
         scalarbase(q,sm + 32);         <-- and this needs sm[32..63]
@@ -486,10 +528,15 @@ def patch_adoption_kx(root: Path) -> None:
       kxCheck data mac   -> 1 if mac is HMAC-SHA-256(key, data)
 
     All three refuse once OPbytecode has run -- the bootloader has handed
-    over to the warren's runtime -- and from then on `load` of conf.bin
-    returns zeros where the key is stored (bytes 224 to 256). Not 208: the
-    runtime keeps its XMPP password there (main.mtl, 208-220), and hiding
-    or overwriting it made a rabbit re-register on hardware, 2026-11-08.
+    over to the warren's runtime -- and from then on `load` returns zeros
+    where the key is stored (bytes 224 to 256) and `save` refuses to write
+    there, whatever filename the opcode names: there is one flash page, and
+    sysLoad/sysSave ignore the name, so keying the guard on "conf.bin" (as
+    the first version did) let a runtime bytecode read the key back under
+    any other name, and write it under any name at all -- the runtime that
+    runs these opcodes is the warren's, not ours. Not 208: the runtime
+    keeps its XMPP password there (main.mtl, 208-220), and hiding or
+    overwriting it made a rabbit re-register on hardware, 2026-11-08.
     """
     if not (root / "src/net/nab_kx.c").exists():
         sys.exit("FAIL adoption_kx: nab_kx.c missing -- x25519_wdt must run first")
@@ -576,19 +623,34 @@ def patch_adoption_kx(root: Path) -> None:
             sys.exit(f"FAIL {q}: OPbytecode is not the shape adoption_kx expects")
         t = t.replace(a, a + "        nab_kx_latched=1;   /* adoption_kx: the runtime is the warren's */\n", 1)
     b = ("            len=sysLoad(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n")
-    if "conf.bin" not in t:
+    if "whatever filename the load names" not in t:
         if t.count(b) != 1:
             sys.exit(f"FAIL {q}: OPload is not the shape adoption_kx expects")
         t = t.replace(b, b + (
-            "            /* adoption_kx: after the hand-over the key is not readable. */\n"
-            "            if (nab_kx_latched && len>0 && !strcmp((char*)VSTARTBIN(q),\"conf.bin\"))\n"
+            "            /* adoption_kx: after the hand-over the key is not readable,\n"
+            "               whatever filename the load names -- one flash page, and no\n"
+            "               runtime load has reason to read bytes 224..256. */\n"
+            "            if (nab_kx_latched && len>0)\n"
             "            {\n"
             "              int32_t i;\n"
             "              for (i=0;i<len;i++)\n"
             "                if (start+i>=224 && start+i<257) VSTARTBIN(p)[index+i]=0;\n"
             "            }\n"), 1)
+    sv = ("            len=sysSave(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n")
+    if "the key region is not writable" not in t:
+        if t.count(sv) != 1:
+            sys.exit(f"FAIL {q}: OPsave is not the shape adoption_kx expects")
+        t = t.replace(sv, (
+            "            /* adoption_kx: after the hand-over the key region is not\n"
+            "               writable, whatever filename -- no runtime save touches\n"
+            "               224..256, so a bytecode cannot overwrite the key or forge\n"
+            "               the confirmed flag. */\n"
+            "            if (nab_kx_latched && len>0 && start<257 && start+len>224)\n"
+            "              len=0;\n"
+            "            else\n"
+            "              len=sysSave(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n"), 1)
     q.write_text(t)
-    print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load")
+    print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load and save")
 
 
 def patch_tls_psk(root: Path) -> None:
@@ -711,6 +773,158 @@ def patch_tls_psk(root: Path) -> None:
     print("[ok]   tls_psk: tlsStart/tlsIn/tlsOut/tlsState/tlsClose on the adoption key")
 
 
+def patch_tls_certs(root: Path) -> None:
+    """TLS 1.3 with a server's certificate: the rabbit fetches HTTPS itself.
+
+    2026-11-12, for Naboot 1.2.0.0. Until now a podcast reached the rabbit
+    through the warren, which fetched it over HTTPS and relayed it in the
+    clear or inside the session: the warren's bandwidth and processor, for
+    every rabbit listening. The rabbit now opens the host itself. nab_tls.c
+    gets its second session (NAB_TLS_CERTS): X25519, ChaCha20-Poly1305 then
+    AES-128-GCM, the certificate chain checked up to the root the warren
+    sends with the order to play (nab_https_vm.c), the name, the dates,
+    CertificateVerify. Proven on a host against openssl s_server
+    (tests/tls_cert_interop.py), 16 KB records included.
+
+    Opcodes, all on session 1 and giving session 0 back:
+      httpsStart host now roots -> ClientHello, or nil
+      httpsIn segment           -> one decrypted record, or nil
+      httpsOut data|nil         -> records for data; with nil, what is pending
+      httpsState                -> nab_tls state
+      httpsClose                -> close_notify
+
+    Memory: the 16 KB-record receive buffer and the chain reassembly (26 KB)
+    do not fit beside .extbss, so they get .extbss2, 32 KB taken from the
+    BOTTOM of the VM heap: the heap starts at 0xD0018000 and is 32 KB
+    shorter (768 KB). Its top, where the VM stack lives, does not move, so
+    no RAM is used that the rabbit did not use before. Requires tls_psk.
+    """
+    if not (root / "src/net/nab_tls.c").exists():
+        sys.exit("FAIL tls_certs: tls_psk must run first")
+    here = _staged_crypto(root)
+    for f in ("nab_bn.c", "nab_rsa.c", "nab_ecdsa.c", "nab_x509.c", "nab_sha384.c",
+              "chachapoly.c", "nab_https_vm.c", "nab_tls.c"):
+        (root / "src/net" / f).write_text((here / f).read_text())
+    for f in ("nab_pki.h", "chachapoly.h"):
+        (root / "inc/net" / f).write_text((here / f).read_text())
+    h = (here / "nab_tls.h").read_text()
+    guard = "#ifndef NAB_TLS_H\n"
+    if h.count(guard) != 1:
+        sys.exit("FAIL tls_certs: nab_tls.h guard not found")
+    (root / "inc/net/nab_tls.h").write_text(h.replace(
+        guard, "/* tls_certs (apply-mods.py) */\n#define NAB_TLS_CERTS 1\n#define NAB_TLS_EXTBSS2 1\n" + guard, 1))
+
+    # The VM heap moves up by 32 KB; its end, and the stack there, stay.
+    q = root / "inc/vm/vmem.h"
+    t = q.read_text()
+    if "0xD0018000" not in t:
+        for old, new in (("#define VMEM_LENGTH\t            (1024*200)",
+                          "#define VMEM_LENGTH\t            (1024*192)   /* tls_certs: 32 KB to .extbss2 */"),
+                         ("#define _vmem_heap               ((int32_t*)(0xD0010000))",
+                          "#define _vmem_heap               ((int32_t*)(0xD0018000))   /* tls_certs */")):
+            if t.count(old) != 1:
+                sys.exit(f"FAIL {q}: {old!r} not found once")
+            t = t.replace(old, new, 1)
+        q.write_text(t)
+    q = root / "inc/utils/mem.h"
+    t = q.read_text()
+    old = "#define SRAM_BASE   (0xD0010000)"
+    if old in t:
+        q.write_text(t.replace(old, "#define SRAM_BASE   (0xD0018000)   /* tls_certs */", 1))
+
+    ld = root / "sys/ml67q4051.ld"
+    s = ld.read_text()
+    if ".extbss2" not in s:
+        a = "  ExtRAM  (rwx) : ORIGIN = 0xD0000000, LENGTH = 32k\n"
+        if s.count(a) != 1:
+            sys.exit(f"FAIL {ld}: extbss must run first")
+        s = s.replace(a, a + "  /* tls_certs: the bottom 32 KB of what was the VM heap */\n"
+                             "  ExtRAM2 (rwx) : ORIGIN = 0xD0010000, LENGTH = 32k\n", 1)
+        b = "SECTIONS\n{\n"
+        if s.count(b) != 1:
+            sys.exit(f"FAIL {ld}: no SECTIONS block")
+        s = s.replace(b, b + "  .extbss2 (NOLOAD) :\n  {\n    *(.extbss2)\n    *(.extbss2.*)\n"
+                             "  } >ExtRAM2\n  __vm_heap_origin__ = 0xD0018000;\n\n", 1)
+        ld.write_text(s)
+
+    decl = ("int nab_https_vm_start(const uint8_t *host, uint32_t hostlen, const uint8_t *now, uint32_t nowlen,\n"
+            "                       const uint8_t *der, uint32_t derlen, uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_in(const uint8_t *data, uint32_t len);\n"
+            "void nab_https_vm_take(uint8_t *dst);\n"
+            "int nab_https_vm_pending(uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_out(const uint8_t *in, uint32_t len, uint8_t *out, uint32_t cap);\n"
+            "int nab_https_vm_state(void);\n"
+            "int nab_https_vm_close(uint8_t *out, uint32_t cap);\n")
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_https_vm_start" not in t:
+        t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
+        q.write_text(t)
+    add_core_opcode(root, "httpsStart", "fun[S S S]S", 3,
+        "      case OPhttpsStart:\n"
+        "        {\n"
+        "          /* host, \"YYYYMMDDHHMMSS\", the roots (DER, end to end) */\n"
+        "          int32_t r=VALTOPNT(VPULL());\n"
+        "          int32_t w=VALTOPNT(VPULL());\n"
+        "          int32_t h=VALTOPNT(VSTACKGET(0));\n"
+        "          uint8_t ch[192];\n"
+        "          int32_t n=0;\n"
+        "          if (h!=NIL && w!=NIL && r!=NIL)\n"
+        "            n=nab_https_vm_start((const uint8_t*)VSTARTBIN(h),VSIZEBIN(h),(const uint8_t*)VSTARTBIN(w),VSIZEBIN(w),\n"
+        "                                 (const uint8_t*)VSTARTBIN(r),VSIZEBIN(r),ch,sizeof ch);\n"
+        "          VSTACKSET(0,n>0?PNTTOVAL(VMALLOCSTR((char*)ch,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsIn", "fun[S]S", 1,
+        "      case OPhttpsIn:\n"
+        "        {\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r=nab_https_vm_in(d!=NIL?(const uint8_t*)VSTARTBIN(d):0,d!=NIL?VSIZEBIN(d):0);\n"
+        "          if (r>=0)\n"
+        "          {\n"
+        "            int32_t p=VMALLOCBIN(r);\n"
+        "            if (p!=NIL) nab_https_vm_take(VSTARTBIN(p));\n"
+        "            VSTACKSET(0,p!=NIL?PNTTOVAL(p):NIL);\n"
+        "          }\n"
+        "          else VSTACKSET(0,NIL);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsOut", "fun[S]S", 1,
+        "      case OPhttpsOut:\n"
+        "        {\n"
+        "          int32_t d=VALTOPNT(VSTACKGET(0));\n"
+        "          int32_t r=NIL;\n"
+        "          if (d==NIL)\n"
+        "          {\n"
+        "            uint8_t pend[64];\n"
+        "            int32_t n=nab_https_vm_pending(pend,sizeof pend);\n"
+        "            if (n>0) r=PNTTOVAL(VMALLOCSTR((char*)pend,n));\n"
+        "          }\n"
+        "          else\n"
+        "          {\n"
+        "            uint32_t size=nab_tls_out_size(VSIZEBIN(d));\n"
+        "            int32_t p=VMALLOCBIN(size);   /* may move the heap: re-read d */\n"
+        "            d=VALTOPNT(VSTACKGET(0));\n"
+        "            if (p!=NIL && nab_https_vm_out((const uint8_t*)VSTARTBIN(d),VSIZEBIN(d),VSTARTBIN(p),size)>0) r=PNTTOVAL(p);\n"
+        "          }\n"
+        "          VSTACKSET(0,r);\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsState", "fun[]I", 0,
+        "      case OPhttpsState:\n"
+        "        VPUSH(INTTOVAL(nab_https_vm_state()));\n"
+        "        break;\n")
+    add_core_opcode(root, "httpsClose", "fun[]S", 0,
+        "      case OPhttpsClose:\n"
+        "        {\n"
+        "          uint8_t a[32];\n"
+        "          int32_t n=nab_https_vm_close(a,sizeof a);\n"
+        "          VPUSH(n>0?PNTTOVAL(VMALLOCSTR((char*)a,n)):NIL);\n"
+        "        }\n"
+        "        break;\n")
+    print("[ok]   tls_certs: httpsStart/In/Out/State/Close, .extbss2 at 0xD0010000, VM heap from 0xD0018000")
+
+
 def patch_adoption_boot(root: Path) -> None:
     """The adoption flow in the bootloader: boot-mods/adoption.mtl.
 
@@ -809,6 +1023,54 @@ def patch_crash_report(root: Path) -> None:
         u = u[:m.end(1)] + '::"&r="::resetInfo' + u[m.end(1):]
         write_src(b, u)
     print("[ok]   crash_report: &r=reason.resets.verify.ok.flash.errors in the boot URL")
+
+
+def patch_rfic_report(root: Path) -> None:
+    """Say which radio chip the rabbit has: `&f=<RfIcType>` in the boot URL.
+
+    rt2501usb.c carries register tables and channel code for four RF chips
+    (RF5225, RF5226, RF2528, RF2527), about 1.1 KB, and the Nabaztag:tag's
+    RT2571W module should only ever have the RF2528. Should: the value comes
+    from the dongle's own EEPROM, per rabbit, and a wrong guess is a rabbit
+    with no Wi-Fi. So the fleet says it first (2026-11-12), and the tables
+    go only once every rabbit has.
+
+    No new opcode: crash_report's resetInfo already builds a string for
+    boot_url, so it ends with `&f=<n>` too, and the warren reads it as one
+    more parameter (terrier: kept out of the boot marks, it is hardware,
+    not the image). Requires crash_report.
+    """
+    q = root / "src/usb/rt2501usb.c"
+    t, nl = read_flat(q)
+    if "rt2501_rfic(void)" not in t:
+        a = "static EEPROM_ANTENNA_STRUC rt2501_Antenna;\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: rt2501_Antenna is not declared where rfic_report expects")
+        t = t.replace(a, a + "/* rfic_report (apply-mods.py): the RF chip, for the boot URL. */\n"
+                         "uint8_t rt2501_rfic(void) { return rt2501_Antenna.field.RfIcType; }\n", 1)
+        write_flat(q, t, nl)
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "rt2501_rfic" in t:
+        print(f"[skip] {q}: the boot URL already says the RF chip")
+        return
+    a = "  return n;\n}\n"
+    i = t.find("static int nab_crash_report(char *out)")
+    j = t.find(a, i)
+    if i < 0 or j < 0:
+        sys.exit(f"FAIL {q}: rfic_report needs crash_report first")
+    t = t[:j] + ("  {\n    /* rfic_report: &f=<RfIcType>, decimal */\n"
+                 "    extern uint8_t rt2501_rfic(void);\n"
+                 "    uint32_t f = rt2501_rfic();\n"
+                 "    out[n++] = '&'; out[n++] = 'f'; out[n++] = '=';\n"
+                 "    if (f >= 100) out[n++] = (char)('0' + f / 100);\n"
+                 "    if (f >= 10) out[n++] = (char)('0' + f / 10 % 10);\n"
+                 "    out[n++] = (char)('0' + f % 10);\n  }\n") + t[j:]
+    if t.count("char out[6 * 11];") != 1:
+        sys.exit(f"FAIL {q}: resetInfo's buffer is not where rfic_report expects it")
+    t = t.replace("char out[6 * 11];", "char out[6 * 11 + 8];   /* + &f=255 */", 1)
+    q.write_text(t)
+    print("[ok]   rfic_report: &f=<RF chip> after the reset report in the boot URL")
 
 
 def strip_tweetnacl(root: Path) -> None:
@@ -3809,6 +4071,194 @@ int32_t sysFlash(uint8_t* firmware,int32_t len)
 		else nil
 	)""", 1), nl)
     print(f"[ok]   {q}: a flash that wrote nothing serves the error page")
+
+
+def patch_flash_precheck(root: Path) -> None:
+    """Refuse, before anything is erased, an image that cannot be a firmware.
+
+    docs/OTA-ANTIBRICK.md, section 3. The signature says who built the image
+    and that it arrived whole; it does not say the file is a Nab.bin. Nothing
+    between verifySig and the first erase looks at the image at all, and the
+    writer takes any length: 126,977 bytes and it erases the configuration
+    sector, 200,000 and it issues erase commands past the end of the flash.
+    The first erase is where a refusal stops being free, so everything that
+    can be decided from the bytes is decided here:
+
+    - the length: at least four sectors, at most the 31 the linker script
+      gives the image (0x1F000, sector 31 is the configuration);
+    - the reset vector: `ldr pc,[pc,#n]`, which is what every image this
+      toolchain has produced starts with, loading an ARM address that lies
+      inside the image itself.
+
+    A refusal answers 0xE1 to the bytecode (the OTA path reports it as
+    /vl/otafail?e=000000E1) and leaves the flash untouched.
+
+    Deliberately NOT here: any comparison with the version in place. A
+    tester has to be able to flash an older signed image back; the six
+    images in releases/ start the same way and pass (two of them uploaded
+    through scenarios/vm/config-upload.txt, the oldest and the newest).
+
+    The bootloader's upload page is fixed in the same step, because its
+    failure branch could not be reached: it showed the error page when
+    flashFirmware answered nil, and the opcode never answers nil -- on a
+    refusal the image is still on the stack, on a failure the address is.
+    A successful flash does not return at all, so whatever comes back is a
+    failure, and the page now says so.
+    """
+    q = root / "src/vm/vinterp.c"
+    t = q.read_text()
+    if "nab_fw_plausible" in t:
+        print(f"[skip] {q}: flashFirmware already looks at the image first")
+    else:
+        a = "  return d == 0;\n}\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: no nab_fw_verified to put the precheck after "
+                     "(run the vinterp step first)")
+        t = t.replace(a, a + (
+            "/* flash_precheck: 1 iff `img` can be this board's firmware. Runs before\n"
+            "   the first erase, which is the last moment a refusal costs nothing.\n"
+            "   No version check: an older signed image must stay flashable. */\n"
+            "static int nab_fw_plausible(const unsigned char *img, int len)\n"
+            "{\n"
+            "  uint32_t v, t;\n"
+            "  if (len < 0x4000 || len > 0x1F000) return 0;\n"
+            "  v = img[0] | (img[1] << 8) | (img[2] << 16) | ((uint32_t)img[3] << 24);\n"
+            "  if ((v & 0xFFFFF000) != 0xE59FF000) return 0;  /* ldr pc,[pc,#n] */\n"
+            "  v = 8 + (v & 0xFFF);\n"
+            "  if (v > 0x100) return 0;\n"
+            "  t = img[v] | (img[v+1] << 8) | (img[v+2] << 16) | ((uint32_t)img[v+3] << 24);\n"
+            "  return t >= 0x08000020 && t < 0x08000000 + (uint32_t)len && !(t & 3);\n"
+            "}\n"), 1)
+        a = ("              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware)))\n")
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: OPflashFirmware's guard is not the shape this patch expects")
+        t = t.replace(a, (
+            "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+            "              &&(nab_fw_plausible((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+            "                 ||((VSTACKSET(0,INTTOVAL(0xE1))),0)))\n"), 1)
+        q.write_text(t)
+        print(f"[ok]   {q}: flashFirmware checks length and reset vector before the first erase")
+
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "######### flash REFUSED" in t:
+        print(f"[skip] {q}: httpflash already treats any return as a failure")
+        return
+    a = """		if (flashFirmware firm 0x13fb6754 0x0407FE58)==nil then
+		(
+			// A successful flash never gets here: the chip resets itself
+			// from inside the opcode. Getting here means the erase or a
+			// word did not take and the old firmware is still in place.
+			Secholn "######### flash FAILED, firmware unchanged";
+			setleds 0xff0000;
+			page_error
+		)
+		else nil
+	)"""
+    if a not in t:
+        # An image without flash_verify has no failure branch to repair, and
+        # the emulator's tree has no bootloader step at all.
+        print(f"[skip] {q}: no flash_verify failure branch in httpflash to repair")
+        return
+    write_flat(q, t.replace(a, """		flashFirmware firm 0x13fb6754 0x0407FE58;
+		// A successful flash never gets here: the chip resets itself from
+		// inside the opcode. Whatever it answered, getting here means the
+		// image was refused before the first erase.
+		Secholn "######### flash REFUSED, firmware unchanged";
+		setleds 0xff0000;
+		page_error
+	)""", 1), nl)
+    print(f"[ok]   {q}: httpflash shows the error page whenever flashFirmware returns")
+
+
+def patch_flash_no_return(root: Path) -> None:
+    """Once the first sector is erased, finish the flash or die trying.
+
+    docs/OTA-ANTIBRICK.md, section 3. flash_verify made the writer notice a
+    sector that did not erase or a word that did not take -- and then return
+    the address to its caller. The caller is sysFlash, in the flash, and by
+    then the flash is sectors 0..k-1 of the new image followed by the rest of
+    the old one: the return lands in code that is no longer there, the image
+    that would have fixed it is in a heap nobody will read again, and the
+    next power-up finds half a firmware. A write error that was survivable
+    is turned into a brick by reporting it.
+
+    The image is in RAM, the writer is in RAM, and the power is on. So:
+
+    - a sector that fails is erased and written again, four times, with the
+      watchdog fed before each attempt;
+    - if a sector still will not take, the rest are written anyway, and the
+      whole image is gone over again, three passes -- a pass costs nothing
+      for the sectors that took, because:
+    - a sector that already holds the bytes it is asked to hold is skipped,
+      before any erase. Writing the image that is already there erases
+      nothing at all, and a pass after a failure only touches what failed;
+    - flash_uc does not return. When it has done what it can it resets, with
+      the address of the last sector that refused in nab_flash_error, which
+      crash_report puts in the next boot URL if there is a next boot.
+
+    The watchdog: write_uc_flash_sec "stops" it with set_bit(TBGCON,0x80),
+    but TBGCON takes a write only after 0x5A has been written to it (see
+    wdt_start and reset_uc, which both do), so that halt is probably ignored
+    and the 2.09 s window probably keeps running across all thirty-odd
+    sectors with interrupts off. Nobody has measured which. Feeding it
+    between sectors is right under both readings: it is the same two writes
+    to WDTCON the interpreter makes before every opcode, done at the point
+    where the sector writer has put TBGCON back as it found it.
+
+    What this does not change is a power cut: the image in RAM goes with the
+    power. emulator/flashsim measures both, before and after.
+    """
+    q = root / "src/utils/mem.c"
+    t, nl = read_flat(q)
+    if "flash_no_return" in t:
+        print(f"[skip] {q}: flash_uc already finishes what it starts")
+        return
+    a = """  int32_t address=0;
+  while(nb_byte>0)
+  {
+    if(write_uc_flash_sec(address,data,(nb_byte<4096)?nb_byte:4096,temp))
+      return address ? address : -1;  /* the address that failed; 0 means 0 */
+    nb_byte-=4096;
+    data+=4096;
+    address+=4096;
+  }
+"""
+    if a not in t:
+        sys.exit(f"FAIL {q}: flash_uc is not the shape flash_verify leaves "
+                 "(run flash_verify first)")
+    t = t.replace(a, """  /* flash_no_return: see apply-mods.py. Nothing below returns to the
+   * caller, because after the first erase the caller is not there. */
+  int32_t address, left, bad=0;
+  uint32_t n, i;
+  uint8_t *src, pass, tries;
+  for(pass=0; pass<3; pass++)
+  {
+    bad=0;
+    for(address=0, src=data, left=nb_byte; left>0;
+        address+=4096, src+=4096, left-=4096)
+    {
+      n=(left<4096)?(uint32_t)left:4096;
+      /* A sector that already holds these bytes is left alone. */
+      for(i=0; i<n && ((uint8_t*)address)[i]==src[i]; i++);
+      if(i==n) continue;
+      for(tries=0; tries<4; tries++)
+      {
+        /* TBGCON as the sector writer leaves it on success, then the
+         * interpreter's own CLR_WDT. */
+        clr_bit(TBGCON,0x80);
+        put_value(WDTCON,0xC3);
+        put_value(WDTCON,0x3C);
+        if(!write_uc_flash_sec(address,src,n,temp)) break;
+      }
+      if(tries==4) bad=address ? address : -1;
+    }
+    if(!bad) break;
+  }
+  { extern int32_t nab_flash_error; nab_flash_error=bad; }
+""", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: flash_uc retries, skips what is already written, and never returns")
 
 
 def patch_rx_recovery(root: Path) -> None:
@@ -7491,12 +7941,1175 @@ def patch_opt_size(root: Path) -> None:
     print(f"[ok]   {p}: -O1 -> -Os (measurement build only)")
 
 
+def patch_violet_hardening(root: Path) -> None:
+    """Small robustness fixes in Violet-original C, from the audit.
+
+    - ieee80211.c: the RSN case of the beacon scan advanced frame_current by
+      the element length and the loop advanced it again, so every element
+      after an RSN one was misparsed. The extra advance is dropped.
+    - vlog.c sysCmp: when both ends run short it compared the LONGER of the two
+      remainders, reading past the shorter. It compares the shorter now.
+    - vaudio.c mydecodeinit: the ADPCM step index came from the data unclamped,
+      so a crafted resource over-read the 89-entry step table. Clamped to 0..88.
+    - vinterp.c OPstrsub/OPstrcpy/OPload: `start+len>size` overflows for large
+      signed values and lets a huge length through; rephrased as
+      `len>size-start`, which cannot overflow.
+
+    All Violet-original. Idempotent.
+    """
+    # 1. The beacon RSN double-advance.
+    p = root / "src/net/ieee80211.c"
+    s = read_src(p)
+    if "/* violet-hardening */" not in s:
+        nl = "\r\n" if "\r\n" in s else "\n"
+        old = ("                DBG_WIFI(\"WPA2 supported\"EOL);" + nl +
+               "                frame_current += frame_current[1];" + nl)
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: the RSN double-advance is not where this patch expects it")
+        s = s.replace(old, "                DBG_WIFI(\"WPA2 supported\"EOL);  /* violet-hardening: the loop advances, do not advance twice */" + nl, 1)
+        write_src(p, s)
+        print(f"[ok]   {p}: the beacon RSN case no longer double-advances")
+
+    # 2. sysCmp compares the shorter remainder.
+    p = root / "src/vm/vlog.c"
+    s = read_src(p)
+    if "/* violet-hardening */" not in s:
+        nl = "\r\n" if "\r\n" in s else "\n"
+        old = "    if (ldst-i>lsrc-j)" + nl + "      len=ldst-i;"
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: sysCmp is not the shape this patch expects")
+        s = s.replace(old, "    if (ldst-i<lsrc-j)  /* violet-hardening: the shorter, not the longer */" + nl + "      len=ldst-i;", 1)
+        write_src(p, s)
+        print(f"[ok]   {p}: sysCmp no longer reads past the shorter string")
+
+    # 3. ADPCM step index clamped.
+    p = root / "src/vm/vaudio.c"
+    s = read_src(p)
+    if "/* violet-hardening */" not in s:
+        nl = "\r\n" if "\r\n" in s else "\n"
+        old = "  PredictedValue=s0;" + nl + "  StepIndex=st;"
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: mydecodeinit is not the shape this patch expects")
+        s = s.replace(old, "  PredictedValue=s0;" + nl + "  if(st<0)st=0;else if(st>88)st=88;  /* violet-hardening */" + nl + "  StepIndex=st;", 1)
+        write_src(p, s)
+        print(f"[ok]   {p}: the ADPCM step index is clamped to the table")
+
+    # 4. The string-op length overflow (OPstrsub/OPstrcpy/OPload).
+    p = root / "src/vm/vinterp.c"
+    s = read_src(p)
+    if "/* violet-hardening */" not in s:
+        old = "if (start+len>VSIZEBIN(q)) len=VSIZEBIN(q)-start;"
+        n = s.count(old)
+        if n < 1:
+            sys.exit(f"FAIL {p}: the string-length clamp is not where this patch expects it")
+        s = s.replace(old, "if (len>VSIZEBIN(q)-start) len=VSIZEBIN(q)-start;  /* violet-hardening: no start+len overflow */")
+        write_src(p, s)
+        print(f"[ok]   {p}: {n} string-length clamps cannot overflow")
+
+
+def patch_strip_factory_test(root: Path) -> None:
+    """Remove Violet's factory test mode from the bootloader (2.8 KB of flash).
+
+    Holding the head button for more than seven seconds at power-on in config
+    mode turned the rabbit white and mute, then each click ran a production
+    test (LEDs, ears, RFID, a tone, the microphone). Nobody uses it and it is
+    a trap for whoever holds the button too long. With it go the RECLIB block
+    (record to a RIFF, only the microphone test called it), the tone
+    generator and the `midi_start` blob whose one use is commented out.
+
+    What config mode did besides is kept exactly: `loop` still waits for the
+    button to be released, turns the LEDs blue and only then runs the Wi-Fi.
+
+    Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    p = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s, nl = read_flat(p)
+    if "const TESTDELAY=7000;;" not in s:
+        print(f"[skip] {p}: the factory test mode is already gone")
+        return
+
+    def cut(text: str, start: str, end: str, what: str, keep_start: bool = False) -> str:
+        if text.count(start) != 1:
+            sys.exit(f"FAIL {p}: expected one {what}, found {text.count(start)}")
+        i = text.index(start)
+        j = text.index(end, i) + len(end)
+        return text[:i + (len(start) if keep_start else 0)] + text[j:]
+
+    # The record library: its last function is recriff, closed by the ifdef's brace.
+    i = s.index("ifdef RECLIB {") if s.count("ifdef RECLIB {") == 1 else sys.exit(
+        f"FAIL {p}: the RECLIB block is not where this patch expects it")
+    j = s.index("}\n", s.index("fun recriff", i)) + 2
+    s = s[:i] + s[j:]
+    # The MIDI blob.
+    s = cut(s, "var midi_start=", ";;\n", "midi_start")
+    # The test variables, the tone generator and its callback; `start` stays.
+    s = cut(s, "var start;;\n", "const TESTDELAY=7000;;\n", "test variable block", keep_start=True)
+    # The test branches of loop.
+    head = "\telse if start!=nil then\n"
+    if s.count(head) != 1 or "fun main=" not in s:
+        sys.exit(f"FAIL {p}: loop is not the shape this patch expects")
+    i = s.index(head)
+    j = s.index("fun main=", i)
+    s = s[:i] + (
+        "\telse if start!=nil then\n"
+        "\t(\n"
+        "\t\tif !button2 then\n"
+        "\t\t(\n"
+        "\t\t\tsetleds 0xff;\n"
+        "\t\t\tset start=nil\n"
+        "\t\t)\n"
+        "\t)\n"
+        "\telse wifiRun;\n"
+        "\t0;;\n\n\n") + s[j:]
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: factory test mode, record library and MIDI blob removed")
+
+
+def patch_strip_eapol_dump(root: Path) -> None:
+    """Drop the hex dumps eapol.c sends to the serial port during the handshake.
+
+    Every message 1/4 was dumped whole to a UART no production rabbit has a pad
+    for, and so were both MICs on a mismatch, the group key and the key data
+    (key material on a serial line, were one wired). The calls go; `dump` and
+    its hex printer then fall to --gc-sections, and the handshake no longer
+    waits on the UART.
+
+    Patches eapol.c. Idempotent.
+    """
+    p = root / "src/net/eapol.c"
+    s, nl = read_flat(p)
+    lines = s.split("\n")
+    kept = [ln for ln in lines if not re.fullmatch(r"\s*dump\([^;]*\);\s*", ln)]
+    n = len(lines) - len(kept)
+    if n == 0:
+        print(f"[skip] {p}: no dump() call left")
+        return
+    write_flat(p, "\n".join(kept), nl)
+    print(f"[ok]   {p}: {n} dump() calls to the UART removed")
+
+
+def patch_uart_silent(root: Path) -> None:
+    """Build the VM with HIDE_VM_OUTPUT: nothing is written to the serial port.
+
+    vlog.c already has the switch -- consolestr/consoleint/... become no-ops --
+    upstream just leaves it commented out in the Makefile. With it, logGC (three
+    lines of text at EVERY garbage collection), Secho and Iecho stop formatting
+    for a port nobody reads on a production rabbit, and the UART print helpers
+    fall to --gc-sections. The DCC telemetry is a different channel and stays.
+    Only the ARM Makefile changes; the emulator has its own and keeps its console.
+
+    Idempotent.
+    """
+    p = root / "Makefile"
+    s = p.read_text()
+    live = "OPTIONS += -DHIDE_VM_OUTPUT\n"
+    if "#" + live not in s:
+        if live in s:
+            print(f"[skip] {p}: HIDE_VM_OUTPUT already defined")
+            return
+        sys.exit(f"FAIL {p}: the HIDE_VM_OUTPUT line is not where this patch expects it")
+    p.write_text(s.replace("#" + live, live, 1))
+    print(f"[ok]   {p}: HIDE_VM_OUTPUT defined, the VM writes nothing to the UART")
+
+
+def patch_no_tkip_code(root: Path) -> None:
+    """Remove the pairwise-TKIP code no_tkip_pairwise made unreachable (~1.6 KB).
+
+    Since no_tkip_pairwise the rabbit refuses a network whose only pairwise
+    cipher is TKIP, and message 1/4 is refused before any computation. What
+    served that cipher stayed linked: the HMAC-MD5 MIC (five `else hmac_md5`
+    branches, the only callers of MD5 in C), the RC4 unwrap of the group key
+    in the group handshake, the pairwise TKIP key install, and the TKIP IV on
+    transmit. They go, and MD5 and rc4.o fall to --gc-sections.
+
+    The five MIC branches become `return`, not nothing: on the receive side an
+    empty branch would leave the zeroed MIC field to be compared with the
+    frame's own, and a frame carrying a zero MIC would pass. Unreachable, but
+    it fails closed this way.
+
+    Kept: the TKIP *group* key of a mixed WPA/WPA2 AP, which arrives AES-wrapped
+    in a KDE and is installed by eapol_install_msg3_gtk.
+
+    Requires no_tkip_pairwise. Patches eapol.c and ieee80211.c. Idempotent.
+    """
+    p = root / "src/net/eapol.c"
+    s, nl = read_flat(p)
+    if "/* no_tkip_code */" in s:
+        print(f"[skip] {p}: the pairwise-TKIP code is already gone")
+    else:
+        s, n = re.subn(r"\n  else\n    hmac_md5\([^;]*\);\n",
+                       "\n  else\n    return;  /* no_tkip_code */\n", s)
+        if n != 5:
+            sys.exit(f"FAIL {p}: expected 5 HMAC-MD5 MIC branches, found {n}")
+        old = ("    else\n"
+               "      rt2501_set_key(0, ptk.s.tk, ptk.s.mick.tx, ptk.s.mick.rx, RT2501_CIPHER_TKIP);\n")
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: the pairwise TKIP key install is not where this patch expects it")
+        s = s.replace(old, "", 1)
+        a = "    case IEEE80211_CIPHER_TKIP: // Decrypt RC4\n"
+        b = "    case IEEE80211_CIPHER_CCMP:\n"
+        if s.count(a) != 1 or b not in s[s.index(a):]:
+            sys.exit(f"FAIL {p}: the RC4 group-key case is not where this patch expects it")
+        i = s.index(a)
+        s = s[:i] + s[s.index(b, i):]
+        for decl in ("  uint8_t key[32];\n  struct rc4_context rc4;\n", '#include "net/rc4.h"\n'):
+            if s.count(decl) != 1:
+                sys.exit(f"FAIL {p}: expected one {decl.strip()!r}")
+            s = s.replace(decl, "", 1)
+        write_flat(p, s, nl)
+        print(f"[ok]   {p}: HMAC-MD5 MIC, RC4 unwrap and pairwise TKIP install removed")
+
+    p = root / "src/net/ieee80211.c"
+    s, nl = read_flat(p)
+    a = ("          case IEEE80211_CIPHER_TKIP:\n"
+         "            {\n"
+         "              struct ieee80211_tkip_iv iv;\n")
+    b = ("          case IEEE80211_CIPHER_CCMP:\n"
+         "            {\n"
+         "              struct ieee80211_ccmp_iv iv;\n")
+    if a not in s:
+        print(f"[skip] {p}: no TKIP IV on transmit")
+        return
+    if s.count(a) != 1 or s.count(b) != 1 or s.index(b) < s.index(a):
+        sys.exit(f"FAIL {p}: the transmit IV switch is not the shape this patch expects")
+    s = s[:s.index(a)] + s[s.index(b):]
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: TKIP IV on transmit removed")
+
+
+def patch_stub_soft_codecs(root: Path) -> None:
+    """Stub the four software audio codec opcodes nothing calls (~3 KB).
+
+    adp2wav, wav2adp, alaw2wav and wav2alaw convert between PCM, IMA ADPCM and
+    A-law/mu-law on the ARM7. The microphone is encoded by the VS1003 in
+    hardware, and neither the bootloader nor the runtime bytecode names them
+    (reclib.mtl's only calls sit in a block comment). The opcodes stay -- a
+    bytecode that used one must not run into a missing case -- but each now
+    drops its arguments and answers nil; the codecs and their three tables
+    (alaw, mulaw, exposant) fall to --gc-sections. The ADPCM decoder recVol
+    uses is not touched.
+
+    Patches vinterp.c. Idempotent.
+    """
+    p = root / "src/vm/vinterp.c"
+    s, nl = read_flat(p)
+    if "/* stub_soft_codecs */" in s:
+        print(f"[skip] {p}: the software codec opcodes are already stubs")
+        return
+    for op, nargs in (("OPadp2wav", 5), ("OPwav2adp", 5), ("OPalaw2wav", 6), ("OPwav2alaw", 6)):
+        head = f"      case {op}:\n"
+        if s.count(head) != 1:
+            sys.exit(f"FAIL {p}: expected one case {op}, found {s.count(head)}")
+        i = s.index(head)
+        end = "        break;\n"
+        j = s.index(end, i) + len(end)
+        if f"Audio{op[2].upper()}{op[3:]}(" not in s[i:j]:
+            sys.exit(f"FAIL {p}: case {op} is not the shape this patch expects")
+        s = (s[:i] + head +
+             f"        VDROPN({nargs - 1}); VSTACKSET(0,NIL);  /* stub_soft_codecs */\n" +
+             end + s[j:])
+    write_flat(p, s, nl)
+    print(f"[ok]   {p}: adp2wav/wav2adp/alaw2wav/wav2alaw answer nil; the codecs are unlinked")
+
+
+def patch_no_wep(root: Path) -> None:
+    """Remove WEP: the rabbit no longer joins a WEP network (~750 B).
+
+    WEP has been broken since 2001 and a key falls in minutes. A network
+    configured as WEP is now refused where a TKIP-only one already is (IDLE,
+    the bootloader retries; never a fall-back to an open association), and
+    what served it goes: shared-key authentication (the challenge reply), the
+    WEP key install, the WEP IV on transmit, the cipher mapping, and in the
+    bootloader the hex key parser, the WEP radio button and the "WEP auth"
+    select of the config page. A scan still labels such a network "WEP".
+
+    The bootloader half is no_wep_boot. Requires no_tkip_pairwise (it extends
+    that refusal). Patches ieee80211.c. Idempotent.
+    """
+    p = root / "src/net/ieee80211.c"
+    s, nl = read_flat(p)
+    if "/* no_wep */" in s:
+        print(f"[skip] {p}: WEP is already gone")
+    else:
+        def sub1(pattern: str, repl: str, text: str, what: str) -> str:
+            out, n = re.subn(pattern, lambda m: repl, text, flags=re.S)
+            if n != 1:
+                sys.exit(f"FAIL {p}: expected one {what}, found {n}")
+            return out
+
+        # 1. Refuse the network, beside the TKIP refusal.
+        s = sub1(r"\tif\(\(ieee80211_encryption&0xF0\) == IEEE80211_CRYPT_WPA\n",
+                 "\tif((ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WEP  /* no_wep */\n"
+                 "\t   || (ieee80211_encryption&0xF0) == IEEE80211_CRYPT_WPA\n",
+                 s, "TKIP refusal (no_tkip_pairwise)")
+        # 2. The key install in the association switch.
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*ieee80211_authmode = authmode;\n.*?"
+                 r"RT2501_CIPHER_WEP64\);\n[ \t]*\}\n[ \t]*break;\n",
+                 "", s, "WEP key install")
+        # 3. Shared-key authentication: the two functions, their call, the request.
+        a = "static void ieee80211_send_challenge_reply("
+        b = "static void ieee80211_send_probe_response("
+        if s.count(a) != 1 or s.count(b) != 1 or s.index(b) < s.index(a):
+            sys.exit(f"FAIL {p}: the shared-key functions are not where this patch expects them")
+        s = s[:s.index(a)] + s[s.index(b):]
+        s = sub1(r"[ \t]*/\* Shared key authentication \*/\n.*?ieee80211_input_shared_auth\(.*?\);\n",
+                 "\t\t\t\t\t\tieee80211_state = IEEE80211_S_IDLE;  /* no shared-key auth */\n",
+                 s, "shared-key auth call")
+        s = sub1(r"\t\} else \{\n[ \t]*/\* Shared key authentication: algo\[2\], seq\[2\], status\[2\] \*/\n"
+                 r"(?:[ \t]*auth->auth\[\d\] = [^\n]*SHARED[^\n]*\n){4}\t\}\n",
+                 "\t}\n", s, "shared-key auth request")
+        # 4. Transmit: the IV and the overhead.
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*fr->txd\.Iv = nab_rand\(\) & 0x00ffffff;\n"
+                 r"[ \t]*fr->txd\.IvOffset = sizeof\(struct ieee80211_frame\);\n[ \t]*break;\n",
+                 "", s, "WEP IV on transmit")
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*encryption_overhead = 8;[^\n]*\n[ \t]*break;\n",
+                 "", s, "WEP overhead")
+        # 5. The cipher mapping (its default fell through into WPA).
+        s = sub1(r"[ \t]*case IEEE80211_CRYPT_WEP:\n[ \t]*switch\(crypt\)\n.*?Unknown WEP Crypt\"\);\n"
+                 r"[ \t]*break;\n[ \t]*\};\n",
+                 "", s, "WEP cipher mapping")
+        if "IEEE80211_CRYPT_WEP64" in s or "CIPHER_WEP" in s:
+            sys.exit(f"FAIL {p}: a WEP use is left behind")
+        write_flat(p, s, nl)
+        print(f"[ok]   {p}: WEP refused; shared-key auth, key install and IV removed")
+
+
+def patch_no_wep_boot(root: Path) -> None:
+    """The bootloader half of no_wep: no WEP key parser, no WEP in the config page.
+
+    Separate because the emulator builds the C with a bootloader lifted from a
+    firmware image, and its own tree keeps the stock pages. Requires
+    modernize_pages (it edits that page). Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "fun wifiwepkey val=" not in t:
+        print(f"[skip] {q}: no WEP left in the bootloader")
+        return
+    i = t.index("fun _wifiwepkey val i len=")
+    j = t.index("fun wifiAuth=", i)
+    t = t[:i] + t[j:]
+    for old, new, what in (
+        ("\t\tlet if crypt==IEEE80211_CRYPT_WEP then confGetWifiauth else 0-> auth in\n"
+         "\t\tlet if crypt==IEEE80211_CRYPT_WEP then wifiwepkey confGetWifikey0\n"
+         "\t\t\telse if crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2 then confGetWifipmk -> key in\n",
+         "\t\tlet 0-> auth in\n"
+         "\t\tlet if crypt==IEEE80211_CRYPT_WPA || crypt==IEEE80211_CRYPT_WPA2 then confGetWifipmk -> key in\n",
+         "wifiAuth key choice"),
+        ('<label><input type=radio name=m "::"<ENC-WEP>"::" value=\\""::"<ENC-VWEP>"::"\\">WEP</label>\n', "",
+         "WEP radio button"),
+        ('<label><small>WEP auth</small><select name=l>"::"<AUTH>"::"</select></label>\n', "",
+         "WEP auth select"),
+        ("static IP, WEP auth</summary>", "static IP</summary>", "Advanced summary"),
+        ('\t\t\t["<ENC-WEP>" if crypt==IEEE80211_CRYPT_WEP then "checked"]::\n', "", "ENC-WEP marker"),
+        ('\t\t\t["<ENC-VWEP>" itoa IEEE80211_CRYPT_WEP]::\n', "", "ENC-VWEP marker"),
+        ('\t\t\t["<AUTH>" webSelectList auth [IEEE80211_AUTH_OPEN "OpenSystem"]::[IEEE80211_AUTH_SHARED "SharedKey"]::nil]::\n',
+         "", "AUTH marker"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: WEP key parser, radio button and auth select removed")
+
+
+def patch_share_page_css(root: Path) -> None:
+    """One stylesheet for the four config pages instead of four (~1.9 KB).
+
+    modernize_pages gives each page its own <style>, 4.5 KB in all, most of it
+    the same charter written four times. pages/shared.css is their union
+    (2.9 KB); it is stored once as `page_css` and spliced into each page when
+    it is served. page_a is already a list of fragments filled by pagefill, so
+    the stylesheet is one more marker; the three plain pages become functions that strcatlist their two
+    halves around it, built per request like page_a and collected after.
+
+    What differed between the pages is carried by three hooks: `class=c` on
+    the body of the two centred pages (done, error), `class=e` on the error
+    title, and a padding on the upgrade page's fieldset.
+
+    Requires modernize_pages; run it after every step that edits the pages.
+    Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "var page_css=" in t:
+        print(f"[skip] {q}: the pages already share one stylesheet")
+        return
+    css = (Path(__file__).resolve().parent / "pages" / "shared.css").read_text().strip()
+    if '"' in css or "\\" in css:
+        sys.exit("FAIL pages/shared.css: a quote or a backslash would need escaping in the Metal literal")
+    block = re.compile(r"<style>\n.*?\n</style>", re.S)
+    before = len(t)
+
+    # page_a: a list; the stylesheet becomes one of its fragments.
+    m = re.search(r'^var page_a="(.*?)::nil;;[ \t]*\n', t, re.M | re.S)
+    if m is None or len(block.findall(m.group(0))) != 1:
+        sys.exit(f"FAIL {q}: page_a is not the modernised page this patch expects")
+    # (A global's initialiser cannot name another global, so the fragment is a
+    # <STYLE> marker and pagefill, which already walks page_a, fills it in.)
+    t = t[:m.start()] + block.sub(lambda _: '"::"<STYLE>"::"', m.group(0), count=1) + t[m.end():]
+    fill = '["<FIRMWARE>" webip FIRMWARE]::\n'
+    if t.count(fill) != 1:
+        sys.exit(f"FAIL {q}: the pagefill marker list is not where this patch expects it")
+    t = t.replace(fill, fill + '\t\t\t["<STYLE>" page_css]::\n', 1)
+
+    # The three plain pages: string -> function around the stylesheet.
+    hooks = {
+        "page_done": (("<body>", "<body class=c>"),),
+        "page_u": (("<fieldset>", "<fieldset style=padding:16px>"),),
+        "page_error": (("<body>", "<body class=c>"), ("<h1>", "<h1 class=e>")),
+    }
+    for name, subs in hooks.items():
+        m = re.search(rf'^var {name}="(.*?)";;[ \t]*\n', t, re.M | re.S)
+        if m is None or len(block.findall(m.group(1))) != 1:
+            sys.exit(f"FAIL {q}: {name} is not the modernised page this patch expects")
+        head, tail = block.split(m.group(1), maxsplit=1)
+        for old, new in subs:
+            if tail.count(old) != 1:
+                sys.exit(f"FAIL {q}: expected one {old} in {name}, found {tail.count(old)}")
+            tail = tail.replace(old, new, 1)
+        t = (t[:m.start()] + f'fun {name}=strcatlist "{head}"::page_css::"{tail}"::nil;;\n'
+             + t[m.end():])
+
+    i = t.index("var page_a=")
+    t = t[:i] + f'var page_css="<style>\n{css}\n</style>";;\n\n' + t[i:]
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: four stylesheets -> one ({before} -> {len(t)} source bytes)")
+
+
+def patch_http_cap(root: Path) -> None:
+    """The bootloader drops an HTTP_NORMAL answer past HTTP_MAX_NORMAL bytes.
+
+    The bootloader's HTTP client (boot.0.0.0.13.mtl, `tcpread`) kept every
+    segment of an HTTP_NORMAL answer in `httpreq.inputH` until the
+    connection closed, with no limit; bc.jsp and kx.jsp are fetched that
+    way, in plain HTTP unless the owner confirmed a key. A server, or any
+    host on the path, that answers with more than the VM's 204,800-word
+    heap holds runs it out of memory: a reset, and a Nabaztag comes back
+    from a soft reset with its radio asleep. Measured in the emulator
+    (scenarios/vm/http-big-boot.txt, the gateway's `http-big`), on the
+    lean-reclaim bootloader of 2026-11-11: a megabyte resets the rabbit at
+    768 KB received; so does a complete answer of 220,000 bytes (the
+    segments, then two copies of the body, with the previous attempt's
+    still live); 180,000 bytes do not.
+
+    Now `Httpreq` carries `sizeH`, the bytes received so far. Past
+    HTTP_MAX_NORMAL the segments are let go, the connection is closed and
+    the callback gets nil -- what it gets when the name does not resolve or
+    the write fails, and `getbytecode nil` is nil -- so boot_loop asks again
+    after BOOT_HTTPTIMEOUT as it does for any answer that is not a
+    bytecode. Segments still in flight on the closed socket and its close
+    event are ignored, so the callback runs once.
+
+    HTTP_MAX_NORMAL is 163840 (160 KB). The largest legitimate answer is
+    bc.jsp: 112,349 bytes on 2026-11-11 for a 112,232-byte runtime
+    (tools/plain_warren.py; an HMAC trailer adds 68), against 119 for
+    kx.jsp. The ceiling leaves the bytecode 46% to grow and stays under
+    the 180,000 bytes this heap was measured to hold -- six answers of
+    163,059 bytes in two minutes, no reset. A bytecode past that could not
+    be fetched by this bootloader with or without a ceiling.
+
+    Not touched: bc.jsp over TLS (boot_tls's boottls_take keeps its own
+    list -- the peer there holds the adoption key and serves the bytecode
+    anyway), the HTTP_STREAM header block, and the config-mode server's
+    upload buffer, which has to take a 250 KB .sim.
+
+    The runtime bytecode has its own copy of this client and its own fix:
+    bytecode/patch_http_cap.py. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "HTTP_MAX_NORMAL" in t:
+        print(f"[skip] {q}: HTTP_NORMAL answers are already capped")
+        return
+    for old, new, what in (
+        ("type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH];;\n",
+         "// http_cap: an HTTP_NORMAL answer is kept whole until the connection\n"
+         "// closes; past this many bytes the request is dropped (apply-mods.py).\n"
+         "const HTTP_MAX_NORMAL=163840;;\n"
+         "type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH];;\n"
+         "fun httpover httpreq= httpreq.sizeH!=nil && httpreq.sizeH>HTTP_MAX_NORMAL;;\n",
+         "Httpreq type"),
+        ("\t\tif httpreq.typeH==HTTP_NORMAL then call httpreq.cbH [httpreq strcatlist rev httpreq.inputH nil]"
+         "\t// on retourne ce qui a \u00e9t\u00e9 re\u00e7u\n",
+         "\t\tif httpreq.typeH==HTTP_NORMAL then\n"
+         "\t\t(\n"
+         "\t\t\tif httpover httpreq then nil\t// http_cap: already answered with nil\n"
+         "\t\t\telse call httpreq.cbH [httpreq strcatlist rev httpreq.inputH nil]\n"
+         "\t\t)\n",
+         "HTTP_NORMAL end of answer"),
+        ("\t\tif httpreq.typeH==HTTP_NORMAL then set httpreq.inputH=input::httpreq.inputH"
+         "\t// on bufferise ce qui a \u00e9t\u00e9 re\u00e7u\n",
+         "\t\tif httpreq.typeH==HTTP_NORMAL then\n"
+         "\t\t(\n"
+         "\t\t\t// http_cap: count before keeping; past the ceiling the request\n"
+         "\t\t\t// is closed and answered once, late segments are dropped.\n"
+         "\t\t\tif httpover httpreq then nil\n"
+         "\t\t\telse\n"
+         "\t\t\t(\n"
+         "\t\t\t\tset httpreq.sizeH=(if httpreq.sizeH==nil then 0 else httpreq.sizeH)+strlen input;\n"
+         "\t\t\t\tif httpover httpreq then\n"
+         "\t\t\t\t(\n"
+         "\t\t\t\t\tset httpreq.inputH=nil;\n"
+         "\t\t\t\t\tclosetcp cnx;\n"
+         "\t\t\t\t\tcall httpreq.cbH [httpreq nil];\n"
+         "\t\t\t\t\tnil\n"
+         "\t\t\t\t)\n"
+         "\t\t\t\telse (set httpreq.inputH=input::httpreq.inputH; nil)\n"
+         "\t\t\t)\n"
+         "\t\t)\n",
+         "HTTP_NORMAL buffering"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: HTTP_NORMAL answers counted, dropped past 160 KB")
+
+
+def _der(b: bytes, i: int) -> tuple[int, int, int]:
+    """Tag, start of the contents, end of the contents of the TLV at i."""
+    tag, n = b[i], b[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7F
+        n = int.from_bytes(b[i:i + k], "big")
+        i += k
+    return tag, i, i + n
+
+
+def boot_anchor(der: bytes) -> dict[str, bytes]:
+    """The spans nab_tls matches an anchor on, as nab_x509_parse cuts them:
+    the subject Name's contents, the SPKI algorithm OID, its curve OID (or
+    nothing) and the BIT STRING's contents past the unused-bits byte."""
+    _, a, _ = _der(der, 0)                       # Certificate
+    _, p, e = _der(der, a)                       # tbsCertificate
+    if der[p] == 0xA0:                           # version
+        p = _der(der, p)[2]
+    for _ in range(4):                           # serial, signature, issuer, validity
+        p = _der(der, p)[2]
+    t, sp, se = _der(der, p)                     # subject
+    assert t == 0x30
+    out = {"subject": der[sp:se]}
+    t, kp, _ = _der(der, se)                     # SubjectPublicKeyInfo
+    t, ap, ae = _der(der, kp)                    # AlgorithmIdentifier
+    t, op, oe = _der(der, ap)
+    out["alg"] = der[op:oe]
+    out["param"] = b""
+    if oe < ae and der[oe] == 0x06:
+        t, qp, qe = _der(der, oe)
+        out["param"] = der[qp:qe]
+    t, bp, be = _der(der, ae)
+    assert t == 0x03 and der[bp] == 0
+    out["key"] = der[bp + 1:be]
+    return out
+
+
+def patch_boot_https(root: Path) -> None:
+    """kx.jsp and bc.jsp over HTTPS for the pinned warren: boot-mods/boot_https.mtl.
+
+    The last thing a rabbit sent in the clear was its first boot: kx.jsp and,
+    until the owner confirms the colours, bc.jsp (2026-11-13). For one host,
+    NAB_BOOT_HTTPS_HOST (terrier.cyberloutre.fr), httprequest goes to port
+    443 through nab_tls's session 1, anchored on the root built in from
+    NAB_BOOT_ANCHOR (keys/boot_anchor.der, ISRG Root X2: name and key, about
+    180 bytes). No fallback for that host; every other host as before.
+
+    The certificates must not have expired before the build date
+    (NAB_BOOT_FLOOR, "YYYYMMDDHHMM", the build's UTC minute by default): the
+    bootloader has no clock. The emulator proof builds with its own test
+    root and host, since nobody but Let's Encrypt can sign under X2.
+
+    Requires tls_certs (the https* opcodes, nab_https_vm.c) and http_cap
+    (runs after it: the Httpreq type it rewrites).
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    if "bhttps_event" in t:
+        print(f"[skip] {q}: the pinned warren is already fetched over HTTPS")
+        return
+    if not (root / "src/net/nab_https_vm.c").exists():
+        sys.exit(f"FAIL {q}: tls_certs must run first")
+    host = os.environ.get("NAB_BOOT_HTTPS_HOST") or "terrier.cyberloutre.fr"
+    floor = os.environ.get("NAB_BOOT_FLOOR") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M")
+    if not re.fullmatch(r"[a-z0-9.-]{1,63}", host) or not re.fullmatch(r"20\d{10}", floor):
+        sys.exit(f"FAIL {q}: NAB_BOOT_HTTPS_HOST {host!r} or NAB_BOOT_FLOOR {floor!r} malformed")
+    here = Path(__file__).resolve().parent
+    der_path = Path(os.environ.get("NAB_BOOT_ANCHOR") or "")
+    for cand in ((der_path,) if der_path.name else ()) + (root.parent / "keys/boot_anchor.der", here / "keys/boot_anchor.der"):
+        if cand.is_file():
+            der_path = cand
+            break
+    else:
+        sys.exit(f"FAIL {q}: no boot anchor (NAB_BOOT_ANCHOR, keys/boot_anchor.der)")
+    a = boot_anchor(der_path.read_bytes())
+    lines = ["/* boot_https (apply-mods.py): from " + der_path.name + ". Generated. */"]
+    for k in ("subject", "alg", "param", "key"):
+        v = a[k] or b"\0"   # an empty curve OID: one byte nobody reads (param_len 0 below)
+        lines.append(f"static const uint8_t nab_boot_anchor_{k}[{len(v)}] = {{" + ",".join(f"0x{x:02x}" for x in v) + "};")
+    lines.append(f"#define NAB_BOOT_ANCHOR_PARAM_LEN {len(a['param'])}")
+    h = "\n".join(lines) + "\n"
+    (root / "inc/net/nab_boot_anchor.h").write_text(h)
+    vm = root / "src/net/nab_https_vm.c"
+    v = vm.read_text()
+    if "#define NAB_BOOT_ANCHOR 1" not in v:
+        vm.write_text("#define NAB_BOOT_ANCHOR 1\n" + v)
+
+    if "HTTP_MAX_NORMAL" not in t:
+        if os.environ.get("NAB_SIM"):
+            # The emulator's VM: only the C side (the anchor) is built here;
+            # its bootloader bytecode comes from the image under test.
+            print(f"[ok]   boot_https: anchor {der_path.name} built in (VM, no bootloader)")
+            return
+        sys.exit(f"FAIL {q}: http_cap must run first")
+    body = (here / "boot-mods" / "boot_https.mtl").read_text()
+    body = (f'const BOOT_HTTPS_HOST="{host}";;\n'
+            f'const BOOT_HTTPS_FLOOR=">{floor}.";;\n' + body)
+    for old, new, what in (
+        ("type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH];;\n",
+         "type Httpreq=[cnxH inputH outputH indexH cbH typeH stateH startH sizeH tlsH];;\n",
+         "Httpreq type"),
+        ("fun httpsendreq ip x=\n", body + "\nfun httpsendreq ip x=\n", "httpsendreq"),
+        ("\t\tset httpreq.cnxH=opentcp netip nil useparamip ip port fixarg4 #tcpevent httpreq;\n",
+         "\t\tset httpreq.cnxH=if port==BOOT_HTTPS_PORT then opentcp netip nil useparamip ip port fixarg4 #bhttps_event httpreq\t// boot_https\n"
+         "\t\t\telse opentcp netip nil useparamip ip port fixarg4 #tcpevent httpreq;\n",
+         "the plain open"),
+        ("\tlet cuturl url ->[host port path] in",
+         "\tlet cuturl url ->[host port path] in\n"
+         "\tlet if port==80 && !strcmp host BOOT_HTTPS_HOST then BOOT_HTTPS_PORT else port -> port in\t// boot_https",
+         "httprequest's cuturl"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(old)}")
+        t = t.replace(old, new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: {host} over HTTPS, anchor {der_path.name} ({sum(map(len, a.values()))} B), floor {floor}")
+
+
+def patch_owner_unlock(root: Path) -> None:
+    """The owner can always leave: an unsigned image, by physical presence.
+
+    Since flash_verify, OPflashFirmware writes only an image signed with our
+    key, and the config page refuses anything else: a rabbit on Naboot could
+    not go back to Violet's firmware, nor to anyone else's, nor survive the
+    day we stop signing -- short of JTAG (Clara, 2026-11-13). Locking an
+    owner in is not what the signature is for: it is there against a remote
+    takeover, through the network or a warren.
+
+    So the gate also opens, in C, for a rabbit that was started with its head
+    button held (config mode: only the signed bootloader runs, no runtime
+    bytecode) AND whose button is held again at the moment of the write. Both
+    are read on the pin (push_button_value); no bytecode and no server can
+    press it. The second press is the owner's "yes": a neighbour on the open
+    config network cannot slip an image in on their own. The image must
+    still look like a firmware (nab_fw_plausible). The config page hands any
+    image that fails the signature to the flash anyway, and shows the error
+    page when the gate says no, as before.
+    """
+    m = root / "src/main.c"
+    t, nl = read_flat(m)
+    if "nab_boot_button" not in t:
+        a = "  init_io();\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {m}: init_io() not found once")
+        t = t.replace(a, a + "  /* owner_unlock: the head button at power-on, read once (apply-mods.py) */\n"
+                             "  { extern uint8_t push_button_value(void); nab_boot_button = push_button_value(); }\n", 1)
+        a = "int main(void)\n{\n"
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {m}: main() not found once")
+        t = t.replace(a, "uint8_t nab_boot_button;   /* owner_unlock */\n" + a, 1)
+        write_flat(m, t, nl)
+    q = root / "src/vm/vinterp.c"
+    t, nl = read_flat(q)
+    if "nab_boot_button" in t:
+        print(f"[skip] {q}: the owner can already flash an unsigned image")
+        return
+    a = "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: the signed-image guard is not there once")
+    t = t.replace(a, "              &&(nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
+                     "                 ||(nab_boot_button&&push_button_value()))   /* owner_unlock */\n", 1)
+    t = t.replace("#include <string.h>\n", "#include <string.h>\nextern uint8_t nab_boot_button;\n"
+                  "extern uint8_t push_button_value(void);\n", 1)
+    write_flat(q, t, nl)
+
+    b = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(b)
+    old = ("\tif firm!=nil then\n"
+           "\tif sig!=nil then\n"
+           "\tif (verifySig firm sig)!=0 then\n"
+           "\t(\n"
+           "\t\tnil;\n"
+           "\t\tsetleds 0xffffff;\n")
+    new = ("\tif firm==nil then (setleds 0xff; page_error)\n"
+           "\telse\n"
+           "\t(\n"
+           "\t\t// owner_unlock: an image without a valid signature goes to the\n"
+           "\t\t// flash too; the C gate takes it only from the owner's hand.\n"
+           "\t\tif (if sig==nil then 0 else verifySig firm sig)!=0 then setleds 0xffffff else setleds 0xff8000;\n")
+    tail_old = ("\t\tpage_error\n"
+                "\t)\n"
+                "\telse\n"
+                "\t(\n"
+                "\t\tnil;\n"
+                "\t\tsetleds 0xff;\n"
+                "\t\tpage_error\n"
+                "\t);;\n")
+    if "verifySig firm sig" not in t:
+        # The emulator's VM is built without the bootloader step: its
+        # bootloader bytecode comes from the image under test (bootbc.py).
+        print(f"[ok]   {q}: the gate opens for the owner; {b.name} has no signed httpflash here")
+        return
+    if t.count(old) != 1 or t.count(tail_old) != 1:
+        sys.exit(f"FAIL {b}: httpflash is not the shape owner_unlock expects")
+    t = t.replace(old, new, 1).replace(tail_old, "\t\tpage_error\n\t);;\n", 1)
+    write_flat(b, t, nl)
+    print(f"[ok]   {q}: an unsigned image flashes with the head button held at power-on and now")
+
+
+def patch_ccmp_replay_count(root: Path) -> None:
+    """Count the CCMP frames a replay check would refuse. Refuses nothing.
+
+    Nothing looked at the packet number of a received CCMP frame: the RXD's
+    Iv and Eiv words, "for replay attack checking" in rt2501usb_hw.h, were
+    never read, so a captured frame sent again decrypts again and is handed
+    up again (the 2026-11 review's deferred finding; scenarios/
+    ccmp-replay.txt shows it: one frame, delivered twice).
+
+    The check is 802.11's: per key, the last PN accepted; a frame is fresh
+    when its PN is strictly greater. What is not known is what the RT2571W
+    puts in those two words on this board. Linux's rt73usb reads the same
+    chip as: the CCMP header, stripped from the frame, word 2 = its bytes
+    0-3 (PN0 PN1 rsvd KeyID), word 3 = bytes 4-7 (PN2..PN5), so
+    PN = Eiv<<16 | (Iv & 0xffff) and the key id is Iv>>30. Nobody has read
+    them on a rabbit, the emulator fills them as that driver says, and a
+    wrong guess in the receive path is a deaf rabbit. So this step counts
+    and lets every frame through:
+
+      ieee80211_ccmp_seen        protected CCMP data frames examined
+      ieee80211_ccmp_replay_uc   unicast frames whose PN did not increase
+      ieee80211_ccmp_replay_gr   the same for group-addressed frames
+      ieee80211_ccmp_retry       frames whose PN did not increase and that
+                                 carry the Retry bit: the AP's own
+                                 retransmission, which legitimately repeats
+                                 a PN (nothing here removes duplicates)
+      ieee80211_ccmp_last_iv/eiv the two words of the last frame examined
+
+    One "last PN" for the pairwise key and one per group key id (the id is
+    in the frame, not the RXD's KeyIndex, whose numbering is one more
+    unknown). eapol.c's key installs go through eapol_set_key(), which
+    zeroes the slot of the key being installed -- PTK, GTK, rekeys; a
+    retransmitted message 3 installs nothing (eapol_ptk_install,
+    gtk_no_reinstall) and so resets nothing, which is KRACK's point.
+    Only frames the radio says it decrypted with AES are examined: a TKIP
+    group key (mixed mode) has another layout and is left alone.
+
+    Cost per received frame: three stores in rt2501_rx_callback; per
+    protected data frame from our AP, two compares and two stores more.
+
+    With dcc_telemetry before it in the step list, the status line grows
+    by ` N<seen> p<unicast>/<group>/<retry> V<Eiv>/<Iv>` (hex), after F,
+    so a reader of the fields before it sees no change. On a rabbit, N
+    rising with p0/0/0 and V rising from line to line says the words are a
+    PN and enforcing is safe; p rising with N says they are not what
+    rt73usb says, and V shows what they are.
+
+    ccmp_replay_enforce turns the count into a refusal. In no default mode.
+    """
+    h = root / "inc/net/ieee80211.h"
+    t, nl = read_flat(h)
+    if "ieee80211_rxd_iv" in t:
+        print(f"[skip] ccmp_replay_count: already applied")
+        return
+    a = "void ieee80211_input(uint8_t *frame, uint32_t length, int16_t rssi);\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {h}: ieee80211_input's prototype not found")
+    t = t.replace(a, a + (
+        "/* ccmp_replay_count: the receive descriptor of the frame being handed\n"
+        "   to ieee80211_input() -- CipherAlg, and words 2 and 3 (Iv, Eiv). */\n"
+        "extern uint32_t ieee80211_rxd_iv, ieee80211_rxd_eiv;\n"
+        "extern uint8_t ieee80211_rxd_alg;\n"
+        "/* A key went into the radio at this index: its packet numbers start over. */\n"
+        "void ieee80211_ccmp_key_installed(uint8_t index);\n"), 1)
+    write_flat(h, t, nl)
+
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    decl_at = "static void ieee80211_input_data(uint8_t *frame, uint32_t length, int16_t rssi)\n"
+    call_at = ("\t\t/* BSSID */\n"
+               "\t\tif(memcmp(fr->header.i_addr2, ieee80211_assoc_bssid, IEEE80211_ADDR_LEN) != 0) return;\n")
+    for a, what in ((decl_at, "ieee80211_input_data"), (call_at, "the managed-mode BSSID test")):
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {q}: expected one {what}, found {t.count(a)}")
+    t = t.replace(decl_at, (
+        "/* ccmp_replay_count (apply-mods.py). The RXD of the frame in hand, as\n"
+        "   rt2501_rx_callback() left it; what a replay check would have refused;\n"
+        "   and the last packet number taken per key: [0] pairwise, [1+id] group. */\n"
+        "uint32_t ieee80211_rxd_iv, ieee80211_rxd_eiv;\n"
+        "uint8_t ieee80211_rxd_alg;\n"
+        "uint16_t ieee80211_ccmp_seen;\n"
+        "uint16_t ieee80211_ccmp_replay_uc, ieee80211_ccmp_replay_gr, ieee80211_ccmp_retry;\n"
+        "uint32_t ieee80211_ccmp_last_iv, ieee80211_ccmp_last_eiv;\n"
+        "static struct { uint32_t hi; uint16_t lo; } ieee80211_ccmp_pn[5];\n"
+        "\n"
+        "void ieee80211_ccmp_key_installed(uint8_t index)\n"
+        "{\n"
+        "\tif(index > 3) return;\n"
+        "\tif(index == 0) {\n"
+        "\t\tieee80211_ccmp_pn[0].hi = 0;\n"
+        "\t\tieee80211_ccmp_pn[0].lo = 0;\n"
+        "\t}\n"
+        "\tieee80211_ccmp_pn[1 + index].hi = 0;\n"
+        "\tieee80211_ccmp_pn[1 + index].lo = 0;\n"
+        "}\n"
+        "\n"
+        "/* 1 when the frame's packet number is not above the last one taken\n"
+        "   under its key. PN = Eiv<<16 | Iv&0xffff, key id = Iv>>30: the CCMP\n"
+        "   header as rt73usb says the chip hands it over. */\n"
+        "static int32_t ieee80211_ccmp_stale(const struct ieee80211_frame *h)\n"
+        "{\n"
+        "\tuint32_t iv = ieee80211_rxd_iv, hi = ieee80211_rxd_eiv;\n"
+        "\tuint16_t lo = (uint16_t)iv;\n"
+        "\tuint8_t group = h->i_addr1[0] & 1;\n"
+        "\tuint8_t slot = group ? (uint8_t)(1 + (iv >> 30)) : 0;\n"
+        "\n"
+        "\tieee80211_ccmp_seen++;\n"
+        "\tieee80211_ccmp_last_iv = iv;\n"
+        "\tieee80211_ccmp_last_eiv = hi;\n"
+        "\tif(hi > ieee80211_ccmp_pn[slot].hi\n"
+        "\t   || (hi == ieee80211_ccmp_pn[slot].hi && lo > ieee80211_ccmp_pn[slot].lo)) {\n"
+        "\t\tieee80211_ccmp_pn[slot].hi = hi;\n"
+        "\t\tieee80211_ccmp_pn[slot].lo = lo;\n"
+        "\t\treturn 0;\n"
+        "\t}\n"
+        "\tif(h->i_fc[1] & IEEE80211_FC1_RETRY) ieee80211_ccmp_retry++;\n"
+        "\telse if(group) ieee80211_ccmp_replay_gr++;\n"
+        "\telse ieee80211_ccmp_replay_uc++;\n"
+        "\treturn 1;\n"
+        "}\n"
+        "\n") + decl_at, 1)
+    t = t.replace(call_at, call_at + (
+        "\t\t/* ccmp_replay_count: counted, and let through unless\n"
+        "\t\t   ccmp_replay_enforce defined IEEE80211_CCMP_REPLAY_ENFORCE. */\n"
+        "\t\tif((fr->header.i_fc[1] & IEEE80211_FC1_PROTECTED)\n"
+        "\t\t   && ieee80211_rxd_alg == RT2501_CIPHER_AES\n"
+        "\t\t   && ieee80211_ccmp_stale(&fr->header)) {\n"
+        "#ifdef IEEE80211_CCMP_REPLAY_ENFORCE\n"
+        "\t\t\treturn;\n"
+        "#endif\n"
+        "\t\t}\n"), 1)
+    write_flat(q, t, nl)
+
+    q = root / "src/usb/rt2501usb.c"
+    t, nl = read_flat(q)
+    a = "      ieee80211_input(rt2501_frame+sizeof(RXD_STRUC),\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: the call to ieee80211_input is not where ccmp_replay_count expects it")
+    t = t.replace(a, (
+        "      /* ccmp_replay_count: the cipher the radio decrypted with and the\n"
+        "         two words it says are the frame's IV and extended IV. */\n"
+        "      ieee80211_rxd_alg = rxd->CipherAlg;\n"
+        "      ieee80211_rxd_iv = rxd->Iv;\n"
+        "      ieee80211_rxd_eiv = rxd->Eiv;\n") + a, 1)
+    write_flat(q, t, nl)
+
+    q = root / "src/net/eapol.c"
+    t, nl = read_flat(q)
+    a = "static uint8_t replay_counter[EAPOL_RPC_LENGTH];"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: replay_counter declaration not found")
+    t, n = re.subn(r"(?<![A-Za-z0-9_])rt2501_set_key\((?!\))", "eapol_set_key(", t)
+    if n < 2:
+        sys.exit(f"FAIL {q}: expected the pairwise and group key installs, found {n}")
+    t = t.replace(a, (
+        "/* ccmp_replay_count: every key this file hands the radio starts its\n"
+        "   packet numbers over. */\n"
+        "void ieee80211_ccmp_key_installed(uint8_t index);\n"
+        "static int32_t eapol_set_key(uint8_t index, uint8_t *key, uint8_t *txmic,\n"
+        "                             uint8_t *rxmic, uint8_t cipher)\n"
+        "{\n"
+        "  ieee80211_ccmp_key_installed(index);\n"
+        "  return rt2501_set_key(index, key, txmic, rxmic, cipher);\n"
+        "}\n\n") + a, 1)
+    write_flat(q, t, nl)
+
+    d = root / "src/utils/dcctel.c"
+    if d.exists():
+        t = d.read_text()
+        edits = (
+            ("static char dcctel_line[96];\n", "static char dcctel_line[168];\n", "line buffer"),
+            ("#define TARGET_REQ_DEBUGCHAR 0x02\n",
+             "extern uint16_t ieee80211_ccmp_seen, ieee80211_ccmp_replay_uc;\n"
+             "extern uint16_t ieee80211_ccmp_replay_gr, ieee80211_ccmp_retry;\n"
+             "extern uint32_t ieee80211_ccmp_last_iv, ieee80211_ccmp_last_eiv;\n"
+             "#define TARGET_REQ_DEBUGCHAR 0x02\n", "DEBUGCHAR define"),
+            ("  *p++ = '\\n';\n",
+             "  /* ccmp_replay_count: N frames examined, p would-be-refused\n"
+             "     unicast/group/retransmitted, V the last frame's Eiv/Iv. */\n"
+             "  *p++ = ' '; *p++ = 'N'; p = dcctel_hex(p, ieee80211_ccmp_seen);\n"
+             "  *p++ = ' '; *p++ = 'p'; p = dcctel_hex(p, ieee80211_ccmp_replay_uc);\n"
+             "  *p++ = '/'; p = dcctel_hex(p, ieee80211_ccmp_replay_gr);\n"
+             "  *p++ = '/'; p = dcctel_hex(p, ieee80211_ccmp_retry);\n"
+             "  *p++ = ' '; *p++ = 'V'; p = dcctel_hex(p, ieee80211_ccmp_last_eiv);\n"
+             "  *p++ = '/'; p = dcctel_hex(p, ieee80211_ccmp_last_iv);\n"
+             "  *p++ = '\\n';\n", "end of line"),
+        )
+        for old, new, what in edits:
+            if t.count(old) != 1:
+                sys.exit(f"FAIL {d}: expected one {what}, found {t.count(old)}")
+            t = t.replace(old, new, 1)
+        d.write_text(t)
+        print(f"[ok]   {d}: N, p and V on the telemetry line")
+    else:
+        print(f"[note] ccmp_replay_count: no dcc_telemetry before it, the counters are JTAG-read only")
+    print(f"[ok]   ccmp_replay_count: CCMP packet numbers watched, nothing refused")
+
+
+def patch_ccmp_replay_enforce(root: Path) -> None:
+    """Refuse the frames ccmp_replay_count counts. IN NO DEFAULT MODE.
+
+    Defines IEEE80211_CCMP_REPLAY_ENFORCE: a protected CCMP data frame whose
+    packet number is not above the last one taken under its key is dropped
+    in ieee80211_input_data, the AP's own retransmissions included (they
+    are duplicates). The counters keep counting, and now count refusals.
+
+    Shown on Nabazprout on 2026-11-12 with ccmp_replay_count alone: N rose
+    to 37,573, p0/0/41, V rising. Should a rabbit's words not be the packet
+    number after all, the probation below keeps it from going deaf: more
+    than half of its first 256 protected frames flagged and that boot only
+    counts. Proven in the emulator (scenarios/ccmp-replay-enforce.txt).
+    """
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    if "#define IEEE80211_CCMP_REPLAY_ENFORCE" in t:
+        print(f"[skip] {q}: CCMP replays already refused")
+        return
+    a = "/* ccmp_replay_count (apply-mods.py). The RXD of the frame in hand, as\n"
+    if t.count(a) != 1:
+        sys.exit(f"FAIL {q}: ccmp_replay_enforce needs ccmp_replay_count first")
+    t = t.replace(a, "/* ccmp_replay_enforce: refuse what ccmp_replay_count counts. */\n"
+                     "#define IEEE80211_CCMP_REPLAY_ENFORCE 1\n\n" + a, 1)
+    # The guard (2026-11-12). Nabazprout's day of telemetry (37,573 frames,
+    # p0/0/41 on a UniFi AP) says the RXD words are the packet number; one
+    # rabbit and one AP is not every rabbit. So the verdict is the rabbit's
+    # own: over the first 256 protected frames after boot, a misread would
+    # flag nearly every frame, a real link nearly none. More than half
+    # flagged and this boot only counts, as 1.1.0.0 did, instead of going
+    # deaf; otherwise it refuses, and the verdict holds until the next boot
+    # -- a replay flood later cannot talk it back into counting.
+    s_at = "static int32_t ieee80211_ccmp_stale(const struct ieee80211_frame *h)\n"
+    if t.count(s_at) != 1:
+        sys.exit(f"FAIL {q}: ccmp_replay_enforce needs ieee80211_ccmp_stale")
+    t = t.replace(s_at, (
+        "/* ccmp_replay_enforce: 0 on probation (refusing), 1 refusing,\n"
+        "   -1 counting only for this boot (apply-mods.py). */\n"
+        "static int8_t ieee80211_ccmp_verdict;\n"
+        "static int32_t ieee80211_ccmp_enforcing(void)\n"
+        "{\n"
+        "\tif(!ieee80211_ccmp_verdict && ieee80211_ccmp_seen >= 256)\n"
+        "\t\tieee80211_ccmp_verdict = 2 * ((uint32_t)ieee80211_ccmp_replay_uc\n"
+        "\t\t\t+ ieee80211_ccmp_replay_gr) > ieee80211_ccmp_seen ? -1 : 1;\n"
+        "\treturn ieee80211_ccmp_verdict >= 0;\n"
+        "}\n\n") + s_at, 1)
+    r_at = "#ifdef IEEE80211_CCMP_REPLAY_ENFORCE\n\t\t\treturn;\n#endif\n"
+    if t.count(r_at) != 1:
+        sys.exit(f"FAIL {q}: the refusal is not where ccmp_replay_enforce expects it")
+    t = t.replace(r_at, "#ifdef IEEE80211_CCMP_REPLAY_ENFORCE\n"
+                        "\t\t\tif(ieee80211_ccmp_enforcing()) return;\n#endif\n", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: CCMP frames with a stale packet number are refused "
+          f"(after a 256-frame probation that can fall back to counting)")
+
+
+def patch_mixed_gtk(root: Path) -> None:
+    """Accept a 32-byte group key (mixed-mode WPA2: CCMP pairwise, TKIP group).
+
+    eapol_install_msg3_gtk() unwrapped the GTK into `gtk.s.ek` with a maximum
+    of `sizeof(gtk.s.ek)` (16), but a TKIP group key is 32 bytes (key + tx/rx
+    MIC). On a mixed-mode AP -- CCMP for unicast, TKIP for broadcast --
+    rsn_find_gtk then refused it, message 3 went on without a group key, and
+    the rabbit was deaf to broadcast and multicast. The destination is the
+    32-byte `gtk.b` union; the maximum is raised to match. CCMP (a 16-byte
+    key) writes the same 16 bytes as before, so a CCMP-only network is byte
+    for byte unchanged.
+
+    Patches eapol.c. Idempotent.
+    """
+    p = root / "src/net/eapol.c"
+    s = read_src(p)
+    old = "rsn_find_gtk(plain, wlen-8, gtk.s.ek, sizeof(gtk.s.ek),"
+    new = "rsn_find_gtk(plain, wlen-8, gtk.b, sizeof(gtk.b),  /* mixed-gtk: a TKIP group key is 32 */"
+    if new.split("/*")[0].strip() in s:
+        print(f"[skip] {p}: the GTK buffer already fits a 32-byte key")
+        return
+    if s.count(old) != 1:
+        sys.exit(f"FAIL {p}: the rsn_find_gtk call is not the shape this patch expects ({s.count(old)})")
+    s = s.replace(old, new, 1)
+    write_src(p, s)
+    print(f"[ok]   {p}: a 32-byte TKIP group key is accepted (mixed-mode broadcast)")
+
+
+def patch_usb_descriptor_bounds(root: Path) -> None:
+    """Clamp USB descriptor copies to the destination structure.
+
+    usbh_get_descriptor_all() copies each descriptor the device returns into a
+    struct allocated at the struct's fixed size, using the descriptor's own
+    bLength -- a byte the device controls, up to 255. A device that reports a
+    bLength larger than the struct overruns the heap on write. It needs
+    physical access to the USB port (a tampered Wi-Fi dongle), but it is the
+    one write corruption the audit found; confirmed under ASan
+    (firmware-arm/docs/VIOLET-FUZZING.txt). Each fixed-size copy is clamped to
+    its destination now; the `expansion` case already allocates bLength and is
+    left alone.
+
+    Patches usbhcore.c. Idempotent.
+    """
+    p = root / "src/usb/usbhcore.c"
+    s = read_src(p)
+    if "/* usb-descriptor-bounds */" in s:
+        print(f"[skip] {p}: the descriptor copies are already clamped")
+        return
+    subs = [
+        ("memcpy((uint32_t *)*pconfiguration, (uint8_t *)ptr, bLength);",
+         "memcpy((uint32_t *)*pconfiguration, (uint8_t *)ptr, bLength > sizeof(struct usb_configuration_descriptor) ? sizeof(struct usb_configuration_descriptor) : bLength); /* usb-descriptor-bounds */"),
+        ("memcpy((uint32_t *)*pinterface, (uint8_t *)ptr, *ptr);",
+         "memcpy((uint32_t *)*pinterface, (uint8_t *)ptr, *ptr > sizeof(struct usb_interface_descriptor) ? sizeof(struct usb_interface_descriptor) : *ptr); /* usb-descriptor-bounds */"),
+        ("memcpy((uint32_t *)*pendpoint, (uint8_t *)ptr, *ptr);",
+         "memcpy((uint32_t *)*pendpoint, (uint8_t *)ptr, *ptr > sizeof(struct usb_endpoint_descriptor) ? sizeof(struct usb_endpoint_descriptor) : *ptr); /* usb-descriptor-bounds */"),
+        ("memcpy((void *)otg, (uint8_t *)ptr, bLength);",
+         "memcpy((void *)otg, (uint8_t *)ptr, bLength > sizeof(struct usb_otg_descriptor) ? sizeof(struct usb_otg_descriptor) : bLength); /* usb-descriptor-bounds */"),
+    ]
+    for old, new in subs:
+        if s.count(old) != 1:
+            sys.exit(f"FAIL {p}: a descriptor memcpy is not where this patch expects it: {old}")
+        s = s.replace(old, new, 1)
+    write_src(p, s)
+    print(f"[ok]   {p}: USB descriptor copies clamped to their destination size")
+
+
+def patch_beacon_ie_bounds(root: Path) -> None:
+    """Bound the RSN/WPA suite-count loops in the beacon parser.
+
+    ieee80211_input_mgt(), parsing a beacon or probe response while scanning
+    -- before any association -- reads a 16-bit suite count out of the RSN and
+    vendor-WPA elements and walks that many 4-byte suites, with no bound
+    against the end of the frame. A forged beacon with a count of 0x7fff makes
+    it read up to ~256 KB past the frame: a pre-auth out-of-bounds read any
+    station in radio range can trigger. Confirmed under ASan
+    (firmware-arm/docs/VIOLET-FUZZING.txt). Each of the five loops is bounded
+    against frame_end now, and a count read off the end of the frame yields
+    zero so the loop does not run.
+
+    Violet-original code (identical in the uplg and RedoXyde ports); the
+    double-advance a line below is a separate, lower item. Patches
+    ieee80211.c. Idempotent.
+    """
+    p = root / "src/net/ieee80211.c"
+    s = read_src(p)
+    if "current + IEEE80211_OUI_LEN <= frame_end" in s:
+        print(f"[skip] {p}: the beacon suite-count loops are already bounded")
+        return
+    loop_old = "for(i=0;i<count;i++) {"
+    loop_new = "for(i=0;i<count && current + IEEE80211_OUI_LEN <= frame_end;i++) {"
+    if s.count(loop_old) != 5:
+        sys.exit(f"FAIL {p}: expected 5 suite-count loops, found {s.count(loop_old)}")
+    s = s.replace(loop_old, loop_new)
+    count_old = "count = (current[0] << 0)|(current[1] << 8);"
+    count_new = "count = (current + 2 <= frame_end) ? ((current[0] << 0)|(current[1] << 8)) : 0;"
+    if s.count(count_old) != 5:
+        sys.exit(f"FAIL {p}: expected 5 suite-count reads, found {s.count(count_old)}")
+    s = s.replace(count_old, count_new)
+    write_src(p, s)
+    print(f"[ok]   {p}: the beacon RSN/WPA suite-count loops are bounded against frame_end")
+
+
+def patch_config_no_password(root: Path) -> None:
+    """The configuration page no longer hands back the Wi-Fi password.
+
+    In config mode the rabbit is its own open access point and serves the
+    settings form, which pre-filled the password field with the stored key
+    (`value="<KEY>"`, "<KEY>" -> filterweb key). Anyone who joined that open
+    AP and fetched the page read the Wi-Fi password in clear. The field is
+    now rendered empty, and the handler keeps the stored password when the
+    field comes back empty -- the same shape the SSID field already uses, so
+    reconfiguring without retyping the password still works; only a non-empty
+    field changes it.
+
+    Patches boot.0.0.0.13.mtl. Idempotent.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t = read_src(q)
+    if "// config-no-password" in t:
+        print(f"[skip] {q}: the config page already hides the password")
+        return
+    render_old = "\t\t\t[\"<KEY>\" filterweb key]::"
+    render_new = "\t\t\t[\"<KEY>\" \"\"]::\t// config-no-password: never echo the stored key"
+    if t.count(render_old) != 1:
+        sys.exit(f"FAIL {q}: the <KEY> substitution is not the shape this patch expects ({t.count(render_old)})")
+    t = t.replace(render_old, render_new, 1)
+    handler_old = "\telse if v=='n' then confSetstr CONF_WIFIKEY0 val 64"
+    handler_new = "\telse if v=='n' then (if val!=nil && strlen val then confSetstr CONF_WIFIKEY0 val 64)\t// config-no-password: keep the old key when left blank"
+    if t.count(handler_old) != 1:
+        sys.exit(f"FAIL {q}: the password handler is not the shape this patch expects ({t.count(handler_old)})")
+    t = t.replace(handler_old, handler_new, 1)
+    write_src(q, t)
+    print(f"[ok]   {q}: the config page renders the password field empty and keeps the key when blank")
+
+
+def patch_probe_ssid_bound(root: Path) -> None:
+    """Bound the SSID copy in a probe request (config/master mode).
+
+    ieee80211_input_mgt(), for a PROBE_REQ while the rabbit is its own AP,
+    copies the SSID element into a 33-byte stack buffer using the element's
+    own length byte -- up to 255, from any station in radio range:
+
+        char ssid[IEEE80211_SSID_MAXLEN+1];
+        ...
+        for(i=0;i<frame_current[1];i++) ssid[i] = frame_current[i+2];
+
+    A length past 32 overruns the stack. Proven in the emulator
+    (scenarios/vm/probe-ssid-overflow.txt, directive inject-probe-ssid 255):
+    the firmware copied and read back 255 bytes from the 33-byte buffer. The
+    copy is bounded here, and ssid[0] is initialised so the `if(ssid[0]==0)`
+    just below never reads an uninitialised byte when there is no SSID
+    element at all.
+
+    Violet-original code, no step of ours is near it. Idempotent.
+    """
+    p = root / "src/net/ieee80211.c"
+    s = read_src(p)
+    if "probe_ssid_bound" in s:
+        print(f"[skip] {p}: the probe-request SSID copy is already bounded")
+        return
+    nl = "\r\n" if "\r\n" in s else "\n"
+
+    copy_old = ("\t\t\t\t\t\tfor(i=0;i<frame_current[1];i++)" + nl +
+                "\t\t\t\t\t\t\tssid[i] = frame_current[i+2];")
+    copy_new = ("\t\t\t\t\t\tfor(i=0;i<frame_current[1] && i<IEEE80211_SSID_MAXLEN;i++)\t/* probe_ssid_bound */" + nl +
+                "\t\t\t\t\t\t\tssid[i] = frame_current[i+2];")
+    if s.count(copy_old) != 1:
+        sys.exit(f"FAIL {p}: the probe-request SSID copy is not the shape this patch expects ({s.count(copy_old)})")
+    s = s.replace(copy_old, copy_new, 1)
+
+    decl_old = ("\t\t\t\tchar ssid[IEEE80211_SSID_MAXLEN+1];" + nl + nl +
+                "\t\t\t\tssid_present = 0;")
+    decl_new = ("\t\t\t\tchar ssid[IEEE80211_SSID_MAXLEN+1];" + nl + nl +
+                "\t\t\t\tssid[0] = 0;\t/* probe_ssid_bound: no SSID element -> ssid[0] is read below */" + nl +
+                "\t\t\t\tssid_present = 0;")
+    if s.count(decl_old) != 1:
+        sys.exit(f"FAIL {p}: the probe-request ssid declaration is not where this patch expects it ({s.count(decl_old)})")
+    s = s.replace(decl_old, decl_new, 1)
+
+    write_src(p, s)
+    print(f"[ok]   {p}: probe-request SSID copy bounded to IEEE80211_SSID_MAXLEN")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "lean-small", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -7544,52 +9157,52 @@ def main() -> int:
     # someone enabling gc-sections elsewhere. Only mode `lean` adds the
     # gc_sections step that actually USES the protection.
     default_steps = {
-        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
+        "full": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,boot_marker,linker_keep",
         # Minimal omits modernize_pages + bootloader — boot.mtl untouched, so
         # the rabbit's flash + config-mode behavior is byte-equivalent to the
         # vanilla wpa2 branch HEAD. Only the C side gains the verifySig opcode
         # (dormant until called).
-        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "minimal": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # Bisection helpers — same C-side as minimal, only ONE boot.mtl mod
         # added. Use them when full has bricked the rabbit to pinpoint which
         # of the two boot.mtl patches is the culprit.
-        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
-        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "signed-stock": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "pages-only":   "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,modernize_pages,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # max = full + mdns. The everything-bag for a fresh flash.
         # NOTE: mdns is NEW and untested on hardware as of 2026-05-31
         # — flash mdns-only first as a less-invasive smoke test.
-        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "max":       "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # mdns-only: vanilla boot.mtl + just the mDNS announcer. Use to
         # smoke-test the mdns add without entangling with bootloader/pages.
-        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep",
+        "mdns-only": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep",
         # lean: max + gc-sections. Drops the dead newlib printf glue
         # (~6 KB) that DEBUG_*-stripping made unreachable but the
         # linker still kept (no DCE). Safe because linker_keep protects
         # .intvec / .startup.* / .ramfunc / .bytecode.*.
-        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
-        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
+        "lean": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-marker": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,dcc_telemetry,linker_keep,gc_sections",
         # lean-wpa3 plus one timed SAE commit per boot, reported as &t= in the
         # bc.jsp query. A diagnostic build: it delays every boot by exactly
         # the thing it is measuring. Flash it, read the number off the
         # warren's HTTP log, flash lean-wpa3 back.
-        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
+        "lean-wpa3-timed": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,wpa3_timing,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections",
         # lean-nomdns: `lean` with the mDNS announcer/resolver removed and
         # NOTHING else changed. Diagnostic build for the connection drops
         # reported on `lean`: mdns is the only new *network* feature in that
         # mode, so flashing this isolates it from the rest of the stack.
         # A rabbit on this build needs working DNS to find its server.
-        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "lean-nomdns": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # phase8-rom: instead of modernize_pages (which stores pages as
         # Metal globals), use rom_pages — pages live in C-side const ROM
         # and are rendered via the new OPpageRender opcode. Measures the
         # flash budget trade-off. Mutually exclusive with modernize_pages.
-        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
+        "phase8-rom": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,makefile,bootloader,rom_pages,prune_orphans,inline_mkwav,strip_dump,inline_dump_calls,strip_echo_funs,strip_secho,strip_echo_opcodes,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,linker_keep,gc_sections",
         # lean-wpa3-os: lean-wpa3 compiled at -Os. A MEASUREMENT mode: it
         # says what the flag would buy and is not to be flashed (every
         # hardware-validated image is -O1; see patch_opt_size).
-        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
+        "lean-wpa3-os": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,linker_keep,gc_sections,opt_size",
         # lean-wpa3-slim: lean-wpa3 with the dead weight measured out of it,
         # and nothing the rabbit does changed. C side: the serial console
         # formats without sprintf (and so without newlib's printf and
@@ -7599,31 +9212,53 @@ def main() -> int:
         # UART pad is unwired on a production rabbit), mkwav is precomputed,
         # and five unreferenced functions are dropped. Each saving is in the
         # step's docstring with the measurement that justified it.
-        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
-        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
-        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-slim": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,linker_keep,gc_sections",
+        "lean-wpa3-slim-tel": "vbc,vinterp,stdlib,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-kx": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,boot_marker,flash_verify,persist_counters,reset_reason,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "lean-wpa3-tls": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # The published 1.0.0.0, frozen: firmware-arm/releases/ holds its signed
         # image, and this list must keep rebuilding those bytes.
-        "naboot-1.0.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "naboot-1.0.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.1: 1.0.0.0 with entropy_pool and rx_protected, and the EAPOL/SAE
         # hardening of the 2026-11-08 audit: eapol_ptk_install (F2), eapol_mic_len
         # (F3), gtk_no_reinstall (F4), no_tkip_pairwise (F8), sae_required (S2).
-        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "naboot-1.0.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.2: 1.0.0.1 with bc.jsp over TLS for a confirmed key (boot_tls).
-        "naboot-1.0.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "naboot-1.0.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.3: 1.0.0.2 with SAE hunting-and-pecking in constant time
         # (crypto/p256.c, crypto/sae.c, #113); the steps are the same.
-        "naboot-1.0.0.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
+        "naboot-1.0.0.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,dcc_telemetry,linker_keep,gc_sections",
         # 1.0.0.3 with small_strings, to measure it before a release takes it.
-        "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,no_tkip_pairwise,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
+        "lean-small": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,dcc_telemetry,linker_keep,gc_sections",
+        # lean-small plus the dead-code removals of docs/VIOLET-CODEMORT.txt,
+        # to measure each before a release takes them.
+        "lean-reclaim": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,dcc_telemetry,ccmp_replay_count,linker_keep,gc_sections",
+        # 1.1.0.0: 1.0.0.3 with the 2026-11 security review fixed, the dead
+        # code of docs/VIOLET-CODEMORT.txt removed (WEP, the factory test, the
+        # software codecs, pairwise TKIP), the flash writer that no longer
+        # returns into half-written code, the HTTP ceiling, and CCMP replays
+        # counted (not yet refused). The same steps as lean-reclaim, under
+        # the number the boot URL carries.
+        "naboot-1.1.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,dcc_telemetry,ccmp_replay_count,linker_keep,gc_sections",
+        # 1.1.0.0 without the DCC telemetry (Nabazprout's anti-replay day is
+        # read: 37,573 frames, p0/0/41), refusing CCMP replays behind the
+        # probation guard, and saying its RF chip (rfic_report).
+        "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+                # 1.2.0.0 with the live JTAG telemetry back (DCC, jtag/listen.sh): the
+                # diagnostic build to flash on a rabbit that misbehaves (Clara, 2026-11-13).
+                # Without boot_https: with it the image is 732 bytes over the flash; a
+                # diagnostic build boots in the clear, as every build before 1.2.0.0 did.
+                "naboot-1.2.0.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,owner_unlock,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
     }
     steps_str = args.steps if args.steps else default_steps[args.mode]
     steps = steps_str.split(",")
     # A release mode says its own version: naboot-1.0.0.1 is 1.0.0.1 in the
     # boot URL, whatever NAB_FIRMWARE_VERSION says.
+    # A variant (naboot-1.2.0.0-tel) says the release it is a variant of: the
+    # Terrier reads the version as four numbers, and anything else would be
+    # served the recovery runtime of a firmware before 1.0.0.0.
     if args.mode.startswith("naboot-") and not args.steps:
-        os.environ["NAB_FIRMWARE_VERSION"] = args.mode[len("naboot-"):]
+        os.environ["NAB_FIRMWARE_VERSION"] = args.mode[len("naboot-"):].split("-")[0]
     print(f"=== apply-mods.py mode={args.mode} steps={steps_str} ===")
 
     # linker_keep deliberately leaves *(.bss.*) out of the zero-loop, because
@@ -7743,6 +9378,27 @@ def main() -> int:
         sys.exit("FAIL step list: adoption_kx draws the adoption key through "
                  "ieee80211_rng_key_bytes, which entropy_pool provides. A key "
                  "from the timer is the 2026-11-08 audit's S1; add entropy_pool.")
+    if "ccmp_replay_enforce" in steps and (
+            "ccmp_replay_count" not in steps
+            or steps.index("ccmp_replay_count") > steps.index("ccmp_replay_enforce")):
+        sys.exit("FAIL step list: ccmp_replay_enforce refuses what "
+                 "ccmp_replay_count counts; it must come after it.")
+    # The N/p/V fields are appended to the line dcc_telemetry writes.
+    if ("ccmp_replay_count" in steps and "dcc_telemetry" in steps
+            and steps.index("dcc_telemetry") > steps.index("ccmp_replay_count")):
+        sys.exit("FAIL step list: ccmp_replay_count must come after "
+                 "dcc_telemetry, whose status line it extends.")
+    if "no_wep" in steps and "no_tkip_pairwise" not in steps:
+        sys.exit("FAIL step list: no_wep refuses a WEP network inside the refusal "
+                 "no_tkip_pairwise installs; add no_tkip_pairwise.")
+    if ("no_tkip_code" in steps and "ccmp_replay_count" in steps
+            and steps.index("ccmp_replay_count") < steps.index("no_tkip_code")):
+        sys.exit("FAIL step list: no_tkip_code must come before ccmp_replay_count, "
+                 "which rewrites the key installs it removes one of.")
+    if "no_tkip_code" in steps and "no_tkip_pairwise" not in steps:
+        sys.exit("FAIL step list: no_tkip_code removes the code that serves a "
+                 "TKIP pairwise cipher; without no_tkip_pairwise that cipher "
+                 "is still negotiated. Add no_tkip_pairwise.")
     if "rx_protected" in steps and "wpa2_gtk" not in steps:
         sys.exit("FAIL step list: rx_protected sets eapol_secure where message 3 "
                  "ends, text wpa2_gtk owns; add wpa2_gtk.")
@@ -7775,6 +9431,16 @@ def main() -> int:
             "and into the power-up block that persist_counters creates -- it "
             "must come after persist_counters."
         )
+    # flash_no_return rewrites the loop flash_verify leaves in flash_uc and
+    # stores into nab_flash_error, which flash_verify declares; and a writer
+    # that never comes back needs every refusal made before it is called.
+    if "flash_no_return" in steps:
+        for dep in ("flash_verify", "flash_precheck"):
+            if dep not in steps or steps.index(dep) > steps.index("flash_no_return"):
+                sys.exit(f"FAIL step list: flash_no_return must come after {dep}.")
+    if "flash_precheck" in steps and "vinterp" not in steps:
+        sys.exit("FAIL step list: flash_precheck extends the guard vinterp puts "
+                 "on flashFirmware.")
     if "persist_counters" in steps:
         order = steps.index("persist_counters")
         for dep in ("stdlib", "flash_verify"):
@@ -7838,11 +9504,27 @@ def main() -> int:
         "eapol_mic_len": patch_eapol_mic_len,
         "gtk_no_reinstall": patch_gtk_no_reinstall,
         "no_tkip_pairwise": patch_no_tkip_pairwise,
+        "probe_ssid_bound": patch_probe_ssid_bound,
+        "config_no_password": patch_config_no_password,
+        "beacon_ie_bounds": patch_beacon_ie_bounds,
+        "usb_descriptor_bounds": patch_usb_descriptor_bounds,
+        "mixed_gtk": patch_mixed_gtk,
+        "violet_hardening": patch_violet_hardening,
+        "strip_factory_test": patch_strip_factory_test,
+        "strip_eapol_dump": patch_strip_eapol_dump,
+        "uart_silent": patch_uart_silent,
+        "no_tkip_code": patch_no_tkip_code,
+        "stub_soft_codecs": patch_stub_soft_codecs,
+        "no_wep": patch_no_wep,
+        "no_wep_boot": patch_no_wep_boot,
+        "share_page_css": patch_share_page_css,
         "sae_required": patch_sae_required,
         "wpa3_h2e": patch_wpa3_h2e,
         "eapol_msg2_ie": patch_eapol_msg2_ie,
         "boot_marker": patch_boot_marker,
         "flash_verify": patch_flash_verify,
+        "flash_precheck": patch_flash_precheck,
+        "flash_no_return": patch_flash_no_return,
         "usb_robustness": patch_usb_robustness,
         "rx_recovery": patch_rx_recovery,
         "extbss": patch_extbss,
@@ -7869,6 +9551,13 @@ def main() -> int:
         "share_sbox": patch_share_sbox,
         "prune_dead_funs": patch_prune_dead_funs,
         "small_strings": patch_small_strings,
+        "http_cap": patch_http_cap,
+        "boot_https": patch_boot_https,
+        "owner_unlock": patch_owner_unlock,
+        "ccmp_replay_count": patch_ccmp_replay_count,
+        "ccmp_replay_enforce": patch_ccmp_replay_enforce,
+        "rfic_report": patch_rfic_report,
+        "tls_certs": patch_tls_certs,
         "opt_size": patch_opt_size,
     }
     for step in steps:

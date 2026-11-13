@@ -44,6 +44,7 @@ void gw_set_arp(int on);
 void gw_set_xmpp_port(uint16_t port);
 /* Send the rabbit's connections to port 80 to this port of the warren. */
 void gw_set_port80(uint16_t port);
+void gw_set_port443(uint16_t port);
 
 /** @brief An Ethernet payload from the rabbit: LLC/SNAP, then the packet. */
 void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);
@@ -51,6 +52,11 @@ void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length);
 /** @brief Called once per main-loop pass: moves socket traffic to the rabbit. */
 void gw_poll(void);
 
+void gw_dhcp_rogue(uint32_t rogue);
+/* From now on the gateway answers every non-XMPP connection itself, with a
+ * 200 and a body of `bytes` bytes; 0 hands them back to the warren. */
+void gw_http_big_set(uint32_t bytes);
+void gw_http_big_head_set(uint32_t bytes);
 void gw_server_drop(void);
 void gw_server_close(int graceful);
 /* The warren's sockets die and the rabbit never sees the FIN: whatever it

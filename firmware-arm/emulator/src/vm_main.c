@@ -14,6 +14,7 @@
  * hardware underneath — a radio that answers, LEDs and motors that report
  * what they were told, a flash page that remembers, and a clock.
  */
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,11 @@ extern void mypassword_to_pmk(const uint8_t *password, uint8_t *ssid,
  * for a step list without it. The VM sets nab_reset_reason=1 when it runs
  * out of memory, just before it asks for the reset. */
 extern int32_t nab_reset_reason;
+
+/* Where sim_flash_done() (below) takes the run when the rabbit flashes. */
+static jmp_buf flash_jmp;
+static int flash_jmp_armed;
+static int cpu_gone;
 /* The verifySig opcode's own tally (apply-mods' vinterp step). Weak, so a
  * VM built without the opcode still links. */
 extern int32_t nab_verify_calls __attribute__((weak));
@@ -154,6 +160,8 @@ void sim_run_events(void)
         }
         break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
+      case SIM_EV_INJECT_PROBE: vap_inject_probe((uint32_t)e->arg); break;
+      case SIM_EV_DHCP_ROGUE: gw_dhcp_rogue(0x0a090909u); break;  /* 10.9.9.9 */
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:
       case SIM_EV_EAPOL_OVERSIZED:
@@ -163,7 +171,13 @@ void sim_run_events(void)
       case SIM_EV_EXPECT_EAPOL_BADLEN:
       case SIM_EV_EXPECT_TKIP_REFUSED:
       case SIM_EV_EXPECT_SAE_REFUSED:
+      case SIM_EV_AP_DATA:
+      case SIM_EV_AP_REPLAY:
+      case SIM_EV_EXPECT_REPLAY:
+      case SIM_EV_EXPECT_DATA_UP:
         sim_audit_event(e); break;
+      case SIM_EV_HTTP_BIG: gw_http_big_set((uint32_t)e->arg); break;
+      case SIM_EV_HTTP_BIGHEAD: gw_http_big_head_set((uint32_t)e->arg); break;
       case SIM_EV_EXPECT_PLAIN_DROPPED:
         if(ieee80211_plain_dropped >= e->arg)
           sim_log("ok   %u plaintext data frame(s) refused on the protected "
@@ -215,6 +229,8 @@ void sim_run_events(void)
   }
 }
 
+uint8_t nab_boot_button;   /* owner_unlock: main.c's, on a rabbit */
+
 int main(int argc, char **argv)
 {
   const char *scenario = NULL;
@@ -238,7 +254,9 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--lease-ip") && i + 1 < argc) lease_ip = argv[++i];
     else if(!strcmp(argv[i], "--xmpp-port") && i + 1 < argc) gw_set_xmpp_port((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
+    else if(!strcmp(argv[i], "--port443") && i + 1 < argc) gw_set_port443((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
+    else if(!strcmp(argv[i], "--flash-out") && i + 1 < argc) hw_flash_out(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
     else if(argv[i][0] == '-') {
@@ -254,8 +272,11 @@ int main(int argc, char **argv)
         "  --xmpp-port   the warren's XMPP port (default 5222), for the session\n"
         "                bookkeeping and expect-xmpp-opens\n"
         "  --port80      the warren's port that connections to port 80 go to\n"
+        "  --port443     the host port that connections to port 443 go to\n"
         "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
         "                rabbit in config mode (scenario: config-mode, upload)\n"
+        "  --flash-out   keep the image the rabbit hands to flashFirmware, as the\n"
+        "                bytes flash_uc would write (flashsim/ takes it from there)\n"
         "  --trace-net   log every packet, not just what happened to it\n"
         "  --realtime    pace the run to the wall clock, so a server's own\n"
         "                timers line up with the rabbit's life\n",
@@ -283,6 +304,9 @@ int main(int argc, char **argv)
    * first thing it does, and that one read decides between a station and
    * an access point for the rest of the run. */
   if(sim.config_mode) hw_press(2, 1);
+  /* owner_unlock reads the button once at power-on, as main.c does on a
+   * rabbit: config mode is the first of its two presses. */
+  { extern uint8_t nab_boot_button; nab_boot_button = push_button_value(); }
 
   sim_log("scenario %s, tick %u ms, stop at %u ms",
           scenario ? scenario : "(default)", sim.tick_ms, sim.stop_ms);
@@ -310,6 +334,7 @@ int main(int argc, char **argv)
   gw_init(warren);
   hw_eeprom_open(eeprom);
   hw_audio_dir(audio_dir);
+  hw_audio_rate(sim.decoder_kbps);
 
   /* The entropy pool, as main.c starts it; the retained RAM is zeros here. */
   {
@@ -328,6 +353,15 @@ int main(int argc, char **argv)
   /* From here on it is main.c's sequence, in main.c's order. */
   sim_log("vmemInit");
   vmemInit(0);
+  /* Test fixture only: model a rabbit that has handed over to the runtime
+     (OPbytecode sets this latch on real hardware). With it set, OPload must
+     hide the adoption key and OPsave must refuse -- the key-leak proof runs
+     the runtime directly, so there is no bootloader to set it. */
+  if (getenv("NAB_FORCE_LATCH")) {
+    extern uint8_t nab_kx_latched;
+    nab_kx_latched = 1;
+    sim_log("NAB_FORCE_LATCH: nab_kx_latched=1 (post-handover model)");
+  }
   sim_log("loaderInit");
   loaderInit((uint8_t *)dumpbc);
   sim_log("bytecode loaded: %u functions", _bc_nbfun);
@@ -339,6 +373,21 @@ int main(int argc, char **argv)
 
   while(sim_now() < sim.stop_ms) {
     struct rt2501buffer *r;
+
+    /* sim_flash_done() comes back to here, from inside interpGo. */
+    flash_jmp_armed = 1;
+    if(setjmp(flash_jmp)) continue;
+    if(cpu_gone) {
+      vap_poll();
+      phone_poll();
+      gw_poll();
+      hw_tick();
+      while((r = rt2501_receive()) != NULL) hcd_free(r);
+      sim_run_events();
+      sim_advance(sim.tick_ms);
+      sim_pace();
+      continue;
+    }
 
     VPUSH(VCALLSTACKGET(_sys_start, SYS_CBLOOP));
     if(VSTACKGET(0) != NIL)
@@ -367,6 +416,7 @@ int main(int argc, char **argv)
     rec_check();
 
     while((r = rt2501_receive()) != NULL) {
+      sim.data_up++;
       netCb(r->data, r->length, r->source_mac);
       hcd_free(r);
       play_check(0);
@@ -428,6 +478,7 @@ int main(int argc, char **argv)
            phone_stats.uploads_finished ? "" : " (not finished)");
   printf("tcp bytes up/down   %u / %u\n", gw_stats.bytes_from_rabbit,
          gw_stats.bytes_to_rabbit);
+  sim_replay_summary();
   printf("audio clips played  %u (%u bytes)\n", hw_audio_clips(), hw_audio_bytes());
   printf("ears at count       %u / %u\n", hw_ear_position(0), hw_ear_position(1));
   printf("ear commands        %u / %u\n", hw_ear_commands(0), hw_ear_commands(1));
@@ -437,6 +488,21 @@ int main(int argc, char **argv)
   gw_close();
   hw_eeprom_flush();
   return sim_failures() == 0 ? 0 : 1;
+}
+
+/*
+ * flash_uc does not return on a rabbit: it writes the image and resets. The
+ * stub in stubs/hw.c writes nothing, and what comes after a real write is
+ * flashsim's subject, not this program's -- so the rabbit simply stops
+ * running here. The scenario goes on to its end, so that its expect lines
+ * are still evaluated, with nobody home: no bytecode, no frames taken in.
+ */
+void sim_flash_done(void)
+{
+  sim_log("flash_uc does not return: the rabbit would write the image and "
+          "reset here; the run goes on without it");
+  cpu_gone = 1;
+  if(flash_jmp_armed) longjmp(flash_jmp, 1);
 }
 
 /* The hardware's own reset. A real rabbit comes back from this with its radio

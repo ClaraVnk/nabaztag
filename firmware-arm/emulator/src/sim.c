@@ -245,6 +245,8 @@ void sim_note_fetch(void)
  *   at <ms> server-drop           the warren's TCP connections close
  *   at <ms> rfid <16 hex>|none    a tag is on the reader (eight bytes), or
  *                                 none is any more
+ *   at <ms> button down|up        the head button: down then up within half
+ *                                 a second is the click that stops a sound
  *   at <ms> server-close          …after announcing </stream:stream>, which
  *                                 is what a server shutting down does
  *   at <ms> rekey [<bssid>]       the AP rotates the group key
@@ -274,6 +276,10 @@ void sim_note_fetch(void)
  *                                 is the property a negative test is really
  *                                 about and cannot be satisfied by accident
  *
+ *   decoder <kbit/s>               the audio decoder takes a sound at this
+ *                                  bit rate, as a VS1003 does, instead of
+ *                                  swallowing all it is offered: what a
+ *                                  stream needs for its buffering to be seen
  *   config-mode                    the head button is held at power-on: the
  *                                  rabbit becomes an access point and serves
  *                                  its configuration pages (phone.c joins it)
@@ -284,6 +290,24 @@ void sim_note_fetch(void)
  *   at <ms> expect-flash [<n>]     assert flashFirmware was reached n times
  *   at <ms> expect-no-reset        assert the firmware never asked to reset
  *                                  (a VM out of memory does, reason 1)
+ *   at <ms> http-big <bytes>       from now on the gateway answers every
+ *                                  HTTP request itself, 200 and a body of
+ *                                  that many bytes; 0 turns it off
+ *   at <ms> http-bighead <bytes>   the same, but as one header line that
+ *                                  never ends: no blank line, ever
+ *   at <ms> data [group]           the AP sends one protected data frame,
+ *                                  next packet number of the pairwise key,
+ *                                  or of the group key to the broadcast
+ *                                  address
+ *   at <ms> replay [group] [retry] the last such frame again with the
+ *                                  number it had: a replay, or with `retry`
+ *                                  (the Retry bit) the AP's retransmission
+ *   at <ms> expect-replay <u> <g> <r>  exactly u unicast and g group frames
+ *                                  counted as replays, r as retransmissions
+ *                                  (ccmp_replay_count's counters)
+ *   at <ms> expect-data-up <n>     exactly n data frames handed up by the
+ *                                  driver so far (./rabbit: EAPOL is not
+ *                                  counted, and nothing else sends data)
  *
  *   fetch <ms> <event>             the same events, but <ms> after the rabbit
  *                                  starts downloading a sound or a
@@ -324,6 +348,8 @@ int sim_load(const char *path)
       sim.realtime = 1;
     } else if(!strcmp(tok[0], "config-mode")) {
       sim.config_mode = 1;
+    } else if(!strcmp(tok[0], "decoder") && n >= 2) {
+      sim.decoder_kbps = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "segment") && n >= 2) {
       sim.segment = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "tick") && n >= 2) {
@@ -460,6 +486,11 @@ int sim_load(const char *path)
           if(!strcmp(tok[i], "eapol")) e->arg = 1;
           else e->ap = ap_by_bssid(tok[i]);
         }
+      } else if(!strcmp(tok[2], "dhcp-rogue")) {
+        e->kind = SIM_EV_DHCP_ROGUE;
+      } else if(!strcmp(tok[2], "inject-probe-ssid") && n >= 4) {
+        e->kind = SIM_EV_INJECT_PROBE;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect-plain-dropped") && n >= 4) {
         e->kind = SIM_EV_EXPECT_PLAIN_DROPPED;
         e->arg = (int)strtol(tok[3], NULL, 10);
@@ -531,6 +562,30 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
+      } else if(!strcmp(tok[2], "http-big") && n >= 4) {
+        e->kind = SIM_EV_HTTP_BIG;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "http-bighead") && n >= 4) {
+        e->kind = SIM_EV_HTTP_BIGHEAD;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "data") || !strcmp(tok[2], "replay")) {
+        /* `data [group]`: one protected data frame from the AP, with the
+           next packet number. `replay [group] [retry]`: the last one
+           again, with the number it had. */
+        e->kind = !strcmp(tok[2], "data") ? SIM_EV_AP_DATA : SIM_EV_AP_REPLAY;
+        for(int i = 3; i < n; i++) {
+          if(!strcmp(tok[i], "group")) e->arg = 1;
+          else if(!strcmp(tok[i], "retry") && e->kind == SIM_EV_AP_REPLAY) e->arg2 = 1;
+          else e->ap = ap_by_bssid(tok[i]);
+        }
+      } else if(!strcmp(tok[2], "expect-replay") && n >= 6) {
+        e->kind = SIM_EV_EXPECT_REPLAY;
+        e->arg  = (int)strtol(tok[3], NULL, 10);
+        e->arg2 = (int)strtol(tok[4], NULL, 10);
+        e->arg3 = (int)strtol(tok[5], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-data-up") && n >= 4) {
+        e->kind = SIM_EV_EXPECT_DATA_UP;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect-sae") && n >= 4) {
         e->kind = SIM_EV_EXPECT_SAE;
         if(!strcmp(tok[3], "h2e")) e->arg = 1;
@@ -573,6 +628,23 @@ int sim_load(const char *path)
 extern uint8_t eapol_bad_length __attribute__((weak));
 extern uint8_t ieee80211_tkip_refused __attribute__((weak));
 extern uint8_t ieee80211_sae_refused __attribute__((weak));
+/* ccmp_replay_count's: frames examined, what would have been refused. */
+extern uint16_t ieee80211_ccmp_seen __attribute__((weak));
+extern uint16_t ieee80211_ccmp_replay_uc __attribute__((weak));
+extern uint16_t ieee80211_ccmp_replay_gr __attribute__((weak));
+extern uint16_t ieee80211_ccmp_retry __attribute__((weak));
+extern uint32_t ieee80211_ccmp_last_iv __attribute__((weak));
+extern uint32_t ieee80211_ccmp_last_eiv __attribute__((weak));
+
+void sim_replay_summary(void)
+{
+  if(&ieee80211_ccmp_seen == NULL) return;
+  printf("ccmp replay check   %u examined, replays %u unicast / %u group, "
+         "%u retransmitted; last Eiv/Iv %08x/%08x\n",
+         ieee80211_ccmp_seen, ieee80211_ccmp_replay_uc,
+         ieee80211_ccmp_replay_gr, ieee80211_ccmp_retry,
+         ieee80211_ccmp_last_eiv, ieee80211_ccmp_last_iv);
+}
 
 static void sim_expect_count(const char *what, const uint8_t *counter,
                              const char *step, int want)
@@ -633,6 +705,33 @@ int sim_audit_event(struct sim_event *e)
     case SIM_EV_EXPECT_SAE_REFUSED:
       sim_expect_count("PSK attempt(s) refused on a network that did SAE",
                        &ieee80211_sae_refused, "sae_required", e->arg);
+      return 1;
+    case SIM_EV_AP_DATA:   vap_send_data(e->ap, e->arg); return 1;
+    case SIM_EV_AP_REPLAY: vap_replay(e->ap, e->arg, e->arg2); return 1;
+    case SIM_EV_EXPECT_REPLAY:
+      if(&ieee80211_ccmp_seen == NULL) {
+        sim_note_failure("expected CCMP replay counters: this build has no "
+                         "ccmp_replay_count step, nothing looks at a packet number");
+      } else if(ieee80211_ccmp_replay_uc == e->arg
+                && ieee80211_ccmp_replay_gr == e->arg2
+                && ieee80211_ccmp_retry == e->arg3) {
+        sim_log("ok   replays counted: %u unicast, %u group, %u retransmitted "
+                "(%u frames examined, last Eiv/Iv %08x/%08x)",
+                ieee80211_ccmp_replay_uc, ieee80211_ccmp_replay_gr,
+                ieee80211_ccmp_retry, ieee80211_ccmp_seen,
+                ieee80211_ccmp_last_eiv, ieee80211_ccmp_last_iv);
+      } else {
+        char why[220];
+        snprintf(why, sizeof(why), "expected replays %d unicast / %d group / "
+                 "%d retransmitted, the rabbit counted %u / %u / %u (%u examined)",
+                 e->arg, e->arg2, e->arg3, ieee80211_ccmp_replay_uc,
+                 ieee80211_ccmp_replay_gr, ieee80211_ccmp_retry,
+                 ieee80211_ccmp_seen);
+        sim_note_failure(why);
+      }
+      return 1;
+    case SIM_EV_EXPECT_DATA_UP:
+      sim_expect_exact("data frame(s) handed up by the driver", sim.data_up, e->arg);
       return 1;
     default:
       return 0;

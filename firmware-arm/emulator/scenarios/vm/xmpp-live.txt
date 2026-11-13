@@ -1,0 +1,42 @@
+# bytecode: bootloader
+#
+# A radio or a podcast, pulled through the TLS session and played as it
+# arrives (bytecode/patch_live_in_session.py, the Terrier's live.py).
+#
+# Run as boot 2 of tools/xmpp-tls-proof.sh, the owner having confirmed the
+# key, with a fake upstream and the API calls on a clock:
+#
+#   tools/xmpp-tls-proof.sh ... --scenario scenarios/vm/xmpp-live.txt \
+#       --fake-radio 128 \
+#       --at 100 podcast '{"feed":"http://127.0.0.1:<BASE+81>/feed.xml","episode":1}' \
+#       --at 400 radio '{"stop":true}' \
+#       --at 420 speak '{"text":"..."}'
+#
+# episode 1 of that feed is an endless station at 128 kbit/s, episode 0 a
+# file served at once. `decoder 128` below makes the emulated VS1003 take
+# its sound at that rate, as the real one does: without it the stub swallows
+# all it is offered, nothing ever fills, and neither the buffering nor the
+# heap of a long stream is being measured.
+#
+# What the two warrens do with it, read in this log and the Terrier's:
+#
+#   control (a runtime without the patch, or a Terrier that never flips
+#      "xmpp-live:0"): `ST http://.../pod/<token>`, a port 80 open, `pod
+#      relay` in the Terrier's log, the sound after 80 000 bytes are in --
+#      the stream in the clear for anyone on the path;
+#   fix: `live: ST live:N`, `live: playing` a second or two later, in this
+#      log; `live <mac>: res:N <- <url>` in the Terrier's; no port 80 open
+#      after the boot's own; `live: cut` when the owner stops it or sends
+#      something else to play, and that sound then plays.
+#
+# Either way the verdict counts the times the decoder ran dry, gives the
+# heap after each collection (`#GC`), and checks what the decoder was fed
+# against what the upstream served.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+decoder 128
+stop 480000
+
+at 20000 expect RUN
+at 475000 expect RUN
+at 475000 expect-no-reset
