@@ -38,6 +38,11 @@ cp "$OTAFIX" "$OUT/data/bytecode/baseline-otafix.hybrid"
 cp "$SIM" "$OUT/data/ota/naboot-latest.signed.sim"
 python3 "$HERE/../tools/mtl_comp.py" "$HERE/../vendor/nabgcc/mtl/boot/boot.$BOOT.mtl" -o "$OUT/host/boot.bc" || exit 1
 
+# A registry image is pulled first: a copy left on the machine runs an old
+# warren and proves nothing about today's (2026-11-13, a 3-day-old image
+# looked like a regression).
+case "$TERRIER" in *.*/*) podman pull -q "$TERRIER" >/dev/null || exit 1 ;; esac
+echo "   terrier: $(podman run --rm --entrypoint sh "$TERRIER" -c 'echo ${TERRIER_VERSION:-unknown}' | cut -c1-12)"
 podman rm -f $NAME >/dev/null 2>&1
 podman run -d --name $NAME --network host -e TERRIER_DOMAIN=warren.test -e TERRIER_SECRET_KEY=proof \
   -e TERRIER_HTTP_PORT=$HTTP -e TERRIER_XMPP_PORT=$XMPP -e TERRIER_XMPP_TLS_PORT=0 -e TERRIER_UI_PORT=$UI \

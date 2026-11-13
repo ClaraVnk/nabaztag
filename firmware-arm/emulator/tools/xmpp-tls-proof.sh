@@ -102,6 +102,8 @@ cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"   # bootbc.py reads both
 
+# A registry image is pulled first: a stale local copy proves nothing.
+case "$TERRIER" in *.*/*) podman pull -q "$TERRIER" >/dev/null || exit 1 ;; esac
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --network host \
   -e TERRIER_DOMAIN=warren.test -e TERRIER_SECRET_KEY=emulator-proof-not-a-secret \
