@@ -24,7 +24,7 @@ experimental builds stay out of git (see `../.gitignore`).
 | | |
 |---|---|
 | **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
-| **Build mode** | `naboot-1.2.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3, plus HTTPS with the certificate checked (`tls_certs`), the first boot over HTTPS, and the owner's way out (`owner_unlock`) |
+| **Build mode** | `naboot-1.2.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3, plus the fixes of the 2026-11 security review and the safer flash writer (first shipped as the 1.1.0.0 beta, see `../docs/SECURITY-FINDINGS-2026-11.md`), HTTPS with the certificate checked (`tls_certs`), the first boot over HTTPS, and the owner's way out (`owner_unlock`). **No WEP.** |
 | **Firmware version** | `1.2.0.0` (the boot URL says `v=1.2.0.0`) |
 | **Size** | 126 696 of 126 976 bytes |
 | **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
@@ -40,8 +40,8 @@ What it brings:
   `.bin`: the rabbit downloads it over HTTPS itself and checks our signature,
   which comes with the order, before it writes a byte.
 - **Sounds and streams from any `https://` URL**, the certificate checked.
-- **The owner's way out.** Hold the head button while the rabbit starts
-  installing an image, and it accepts one we did not sign: you can always
+- **The owner's way out.** Start the rabbit with its head pressed, press it
+  again while the image is sent, and it accepts one we did not sign: you can always
   leave Naboot for another firmware. Without the button, only our signature.
 
 **In the emulator:** the HTTPS first boot (and the real Terrier's four-certificate

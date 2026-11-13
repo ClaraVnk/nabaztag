@@ -26,8 +26,8 @@ Alpine or Rocky; every Containerfile lives in the repository.
 
 ```sh
 cd firmware-arm
-./build.sh --mode naboot-1.0.0.3 --remote <dev-vm> --runtime podman
-# -> bin/naboot-1.0.0.3/firmware0.0.0.13.sim (unsigned), Nab.bin, Nab.elf
+./build.sh --mode naboot-1.2.0.0 --remote <dev-vm> --runtime podman
+# -> bin/naboot-1.2.0.0/firmware0.0.0.13.sim (unsigned), Nab.bin, Nab.elf
 ```
 
 - `--mode` picks the list of steps (`python3 apply-mods.py --help` lists the
@@ -41,9 +41,9 @@ cd firmware-arm
 **Signing** (only an image you will ship):
 
 ```sh
-./build.sh --mode naboot-1.0.0.3 --remote <dev-vm> --runtime podman --sign
-# -> bin/naboot-1.0.0.3/firmware0.0.0.13.signed.sim, verified by verify_sim.py
-python3 signing/verify_sim.py bin/naboot-1.0.0.3/firmware0.0.0.13.signed.sim
+./build.sh --mode naboot-1.2.0.0 --remote <dev-vm> --runtime podman --sign
+# -> bin/naboot-1.2.0.0/firmware0.0.0.13.signed.sim, verified by verify_sim.py
+python3 signing/verify_sim.py bin/naboot-1.2.0.0/firmware0.0.0.13.signed.sim
 ```
 
 The key is `~/.nabaztag/signing_key.bin` on the machine that signs; never
@@ -134,10 +134,10 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 ```sh
 # the emulator steps of a release (network, crypto, VM: what decides how it behaves)
 podman build -f firmware-arm/emulator/Containerfile \
-    --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.0.0.3) -t emu-1003 .
+    --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.2.0.0) -t emu-1200 .
 # a release taking an update in its TLS session (scenarios/vm/xmpp-ota.txt, 300 s)
 firmware-arm/emulator/tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
-    --bytecode <runtime.hybrid> --emulator emu-1003 --elf <bin/naboot-1.0.0.3/Nab.elf> \
+    --bytecode <runtime.hybrid> --emulator emu-1200 --elf <bin/naboot-1.2.0.0/Nab.elf> \
     --out /tmp/ota --speak-at 110 --speak "Bonjour" --ota <naboot-X.signed.sim> \
     --scenario scenarios/vm/xmpp-ota.txt
 
@@ -183,7 +183,7 @@ Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
 ./firmware-arm/jtag/station.sh check          # JTAG answers, the flash reads back
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
-./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.3.signed.sim
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.0.0.signed.sim
 ```
 
 Never halt a rabbit during its association (it can lose its Wi-Fi), never
