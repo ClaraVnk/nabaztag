@@ -29,7 +29,9 @@ CMD=${1:-}; OUT=${2:-}; shift 2 || true
 TERRIER= ; BYTECODE= ; EMU= ; ELF=
 BASE=${BASE:-19800}
 PY=${PY:-python3}
-CADDY=${CADDY:-docker.io/library/caddy:2.8.4-alpine}
+# The Caddy production runs (2.11.9, 2026-11-13): a proof on another one
+# passed while the rabbit hung on production's answer.
+CADDY=${CADDY:-docker.io/library/caddy@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9}
 while [ $# -gt 0 ]; do
   case "$1" in
     --terrier) TERRIER=$2; shift 2 ;;
@@ -109,14 +111,28 @@ caddy() {  # caddy <good|rogue>: Caddy in front of the Terrier, that chain
 {
 	admin off
 	auto_https off
+	servers {
+		protocols h1 h2
+	}
 }
 https://$HOST:$TLS {
 	tls /pki/$1-chain.pem /pki/$1-key.pem
+	# As in production's Caddyfile: compression and headers on every answer,
+	# the rabbit's paths included.
+	encode gzip zstd
+	reverse_proxy 127.0.0.1:$HTTP {
+		header_up Host {host}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
 	log {
 		output stderr
 		format console
 	}
-	reverse_proxy 127.0.0.1:$HTTP
 }
 EOF
   podman run -d --name "$NAME-caddy" --network host -v "$OUT/pki:/pki:z" "$CADDY" \
@@ -163,7 +179,7 @@ echo "   boot 3, the same rabbit with its key: $(grep -ac 'kx.jsp' "$OUT/caddy-a
 # 5 a key, 4 not a key (409), 3 connection/TLS failed, 2 no answer in time,
 # 1 no entropy, 0 never ran).
 for l in good rogue again; do
-  echo "   &k= in bc.jsp, $l: $(grep -ao 'bc.jsp?[^ "]*' "$OUT/caddy-$l.log" | grep -ao '&k=[0-9]*' | tr '\n' ' ')"
+  echo "   &k= in bc.jsp, $l: $(grep -ao 'bc.jsp?[^ "]*' "$OUT/caddy-$l.log" | grep -ao '&k=[0-9]*&kt=[0-9]*' | tr '\n' ' ')"
 done
 echo "   terrier: $(podman logs "$NAME" 2>&1 | grep -ac 'already has a') exchange(s) refused for a rabbit with a key"
 
