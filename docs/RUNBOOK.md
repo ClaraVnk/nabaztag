@@ -121,6 +121,10 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 - `--elf` is the bootloader you test: its `Nab.bin` must sit next to it.
 - `--ota` sends that image inside the session and stops at `flashFirmware`:
   there is no flash to write here, and the line says so.
+- `--split --web-restart-at 120 --speak-at 150` runs the warren as its two
+  containers (core and web, terrier/corelink.py) and restarts the web alone
+  while the rabbit is connected: the verdict shows the sound asked through
+  the restarted web reaching the rabbit (proven 2026-11-13).
 - `BASE=<port>` moves every port, so several proofs can run side by side.
 - A proof left running holds its ports: `podman ps`, then `podman rm -f
   terrier-proof-<base>`.

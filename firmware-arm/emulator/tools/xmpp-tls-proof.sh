@@ -62,7 +62,13 @@
 # The verdict is what the gateway prints -- which port the rabbit opened for
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
+# --split runs the warren as two containers, the core (the rabbits) and the
+# web (the pages and the API), as terrier/corelink.py does in production;
+# --web-restart-at S restarts the web alone S seconds into boot 2, and the
+# verdict says whether the core dropped the rabbit meanwhile (2026-11-13:
+# the point of the split is that it does not).
 set -u
+SPLIT= ; WEB_RESTART_AT=
 TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=() ; OTA=
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
@@ -84,6 +90,8 @@ while [ $# -gt 0 ]; do
     --speak) SPEAK=$2; shift 2 ;;
     --api) APIS+=("$2" "$3"); shift 3 ;;
     --ota) OTA=$2; shift 2 ;;
+    --split) SPLIT=1; shift ;;
+    --web-restart-at) WEB_RESTART_AT=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -105,11 +113,22 @@ cp "$ELF" "$OUT/host/Nab.elf"
 # A registry image is pulled first: a stale local copy proves nothing.
 case "$TERRIER" in *.*/*) podman pull -q "$TERRIER" >/dev/null || exit 1 ;; esac
 podman rm -f "$NAME" >/dev/null 2>&1 || true
-podman run -d --name "$NAME" --network host \
-  -e TERRIER_DOMAIN=warren.test -e TERRIER_SECRET_KEY=emulator-proof-not-a-secret \
-  -e TERRIER_HTTP_PORT=$HTTP -e TERRIER_XMPP_PORT=$XMPP -e TERRIER_XMPP_TLS_PORT=$XMPPS \
-  -e TERRIER_UI_PORT=$UI -e TERRIER_DATA=/data -e TERRIER_LOG_LEVEL=INFO \
-  -v "$OUT/data:/data:z" "$TERRIER" >/dev/null
+ROLE=() ; API=$NAME
+[ -n "$SPLIT" ] && { ROLE=(-e TERRIER_ROLE=core); API=$NAME-web; }
+terrier_run() {  # terrier_run <name> [-e ...]
+  local n=$1; shift
+  podman run -d --name "$n" --network host "$@" \
+    -e TERRIER_DOMAIN=warren.test -e TERRIER_SECRET_KEY=emulator-proof-not-a-secret \
+    -e TERRIER_HTTP_PORT=$HTTP -e TERRIER_XMPP_PORT=$XMPP -e TERRIER_XMPP_TLS_PORT=$XMPPS \
+    -e TERRIER_UI_PORT=$UI -e TERRIER_DATA=/data -e TERRIER_LOG_LEVEL=INFO \
+    -v "$OUT/data:/data:z" "$TERRIER" >/dev/null
+}
+terrier_run "$NAME" "${ROLE[@]}"
+if [ -n "$SPLIT" ]; then
+  sleep 4; podman rm -f "$NAME-web" >/dev/null 2>&1 || true
+  terrier_run "$NAME-web" -e TERRIER_ROLE=web
+  sleep 4; podman logs "$NAME-web" 2>&1 | grep -a "web only" | sed 's/^/   web: /'
+fi
 sleep 4
 podman logs "$NAME" 2>&1 | grep -a "listening on\|starting" | head -4
 
@@ -168,7 +187,7 @@ fi
 T0=$(date +%s)
 if [ -n "$SPEAK_AT" ]; then
   ( sleep "$SPEAK_AT"; echo "   [speak at +${SPEAK_AT}s, $(date +%T.%3N)]"
-    podman exec "$NAME" python3 -c "
+    podman exec "$API" python3 -c "
 import json, sys, urllib.request
 r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/speak', method='POST',
   data=json.dumps({'text': sys.argv[1]}).encode(),
@@ -176,7 +195,7 @@ r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/speak', method='
 print('   speak:', urllib.request.urlopen(r, timeout=60).read().decode())" "$SPEAK"
     for ((i = 0; i < ${#APIS[@]}; i += 2)); do
       sleep 10; echo "   [${APIS[i]} at $(date +%T.%3N)]"
-      podman exec "$NAME" python3 -c "
+      podman exec "$API" python3 -c "
 import sys, urllib.request
 r=urllib.request.Request('http://127.0.0.1:$UI/api/rabbits/$MAC/'+sys.argv[1], method='POST',
   data=sys.argv[2].encode(),
@@ -185,7 +204,7 @@ print('   '+sys.argv[1]+':', urllib.request.urlopen(r, timeout=60).read().decode
     done
     if [ -n "$OTA" ]; then
       sleep 10; echo "   [ota at $(date +%T.%3N)]"
-      podman exec "$NAME" python3 -c "
+      podman exec "$API" python3 -c "
 import http.cookiejar, re, urllib.parse, urllib.request
 base='http://127.0.0.1:$UI'
 op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -195,6 +214,10 @@ post('/login', {'_csrf': tok('/login'), 'email': 'proof@warren.test', 'password'
 r=post('/rabbit/$MAC/ota', {'_csrf': tok('/rabbit/$MAC')})
 print('   ota:', r.status, r.geturl())"
     fi ) &
+fi
+if [ -n "$WEB_RESTART_AT" ]; then
+  ( sleep "$WEB_RESTART_AT"; echo "   [web restarted alone at +${WEB_RESTART_AT}s, $(date +%T.%3N)]"
+    podman restart -t 2 "$NAME-web" >/dev/null ) &
 fi
 if [ -n "$DOWN_AT" ]; then
   ( sleep "$DOWN_AT"; podman stop -t 1 "$NAME" >/dev/null; echo "   [terrier stopped at +${DOWN_AT}s]";
@@ -221,6 +244,11 @@ fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"
   grep -a "RFID\|rfid" "$OUT/terrier.log" | sed 's/^/   /' | head -12
+fi
+if [ -n "$SPLIT" ]; then
+  echo "   core, the rabbit's sessions during boot 2 (a web restart must not close one):"
+  podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "XMPP disconnect\|bound and idle" | sed 's/^/   /' | head -12
+  podman logs "$NAME-web" > "$OUT/web.log" 2>&1; podman rm -f "$NAME-web" >/dev/null 2>&1
 fi
 podman rm -f "$NAME" >/dev/null 2>&1
 [ -n "$MITM_PID" ] && kill $MITM_PID 2>/dev/null
