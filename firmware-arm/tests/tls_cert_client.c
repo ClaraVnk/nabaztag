@@ -37,28 +37,17 @@ static int send_all(int fd, const uint8_t *p, int n)
 
 static uint8_t root_der[8192];
 
-int main(int argc, char **argv)
+/* One connection: the handshake, the request, the answer. */
+static int one(char **argv)
 {
   static uint8_t buf[32768];
   uint8_t random[32], secret[32], req[512], rec[1024];
   struct addrinfo hints, *res;
-  struct nab_tls_anchor anchor;
-  nab_cert root;
   FILE *f;
   long total = 0;
+  unsigned long t0 = ticks;
   char first[120] = "";
   int fd, n, sent = 0, rl;
-  if (argc < 7) { fprintf(stderr, "usage: see the header\n"); return 2; }
-  f = fopen(argv[5], "rb");
-  if (!f) { perror(argv[5]); return 2; }
-  n = (int)fread(root_der, 1, sizeof root_der, f);
-  fclose(f);
-  if (nab_x509_parse(&root, root_der, (uint32_t)n)) { fprintf(stderr, "anchor: not a certificate\n"); return 2; }
-  anchor.subject = root.subject.p; anchor.subject_len = root.subject.len;
-  anchor.alg = root.key_alg.p; anchor.alg_len = root.key_alg.len;
-  anchor.param = root.key_param.p; anchor.param_len = root.key_param.len;
-  anchor.key = root.key.p; anchor.key_len = root.key.len;
-  nab_tls_anchors(&anchor, 1);
 
   f = fopen("/dev/urandom", "rb");
   if (!f || fread(random, 1, 32, f) != 32 || fread(secret, 1, 32, f) != 32) return 2;
@@ -69,7 +58,6 @@ int main(int argc, char **argv)
   fd = socket(res->ai_family, res->ai_socktype, 0);
   if (connect(fd, res->ai_addr, res->ai_addrlen)) { perror("connect"); return 1; }
   freeaddrinfo(res);
-
   nab_tls_select(1);
   n = nab_tls_start_cert(argv[3], argv[4], random, secret, buf, sizeof buf);
   if (n <= 0) { printf("client: start refused\n"); return 1; }
@@ -97,7 +85,7 @@ int main(int argc, char **argv)
     if (n && send_all(fd, rec, n)) return 1;
     if (r == -2) break;
     if (!sent && nab_tls_state() == NAB_TLS_READY) {
-      printf("client: handshake complete, %lu watchdog ticks\n", ticks);
+      printf("client: handshake complete, %lu watchdog ticks\n", ticks - t0);
       rl = snprintf((char *)req, sizeof req, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", argv[6], argv[3]);
       n = nab_tls_out(req, (uint32_t)rl, buf, sizeof buf);
       if (n <= 0 || send_all(fd, buf, n)) return 1;
@@ -107,6 +95,31 @@ int main(int argc, char **argv)
   close(fd);
   printf("client: state %d, answer \"%s\", %ld bytes\n", nab_tls_state(), first, total);
   return sent && total > 0 ? 0 : 1;
+}
+
+/* NAB_TLS_ROUNDS=N connects N times in one process, as a rabbit plays one
+   episode after another: from the second on, the chain's links are already
+   proven (nab_tls.c signed_by) and the handshake costs far fewer ticks. */
+int main(int argc, char **argv)
+{
+  struct nab_tls_anchor anchor;
+  nab_cert root;
+  FILE *f;
+  int n, rounds = getenv("NAB_TLS_ROUNDS") ? atoi(getenv("NAB_TLS_ROUNDS")) : 1;
+  if (argc < 7) { fprintf(stderr, "usage: see the header\n"); return 2; }
+  f = fopen(argv[5], "rb");
+  if (!f) { perror(argv[5]); return 2; }
+  n = (int)fread(root_der, 1, sizeof root_der, f);
+  fclose(f);
+  if (nab_x509_parse(&root, root_der, (uint32_t)n)) { fprintf(stderr, "anchor: not a certificate\n"); return 2; }
+  anchor.subject = root.subject.p; anchor.subject_len = root.subject.len;
+  anchor.alg = root.key_alg.p; anchor.alg_len = root.key_alg.len;
+  anchor.param = root.key_param.p; anchor.param_len = root.key_param.len;
+  anchor.key = root.key.p; anchor.key_len = root.key.len;
+  nab_tls_anchors(&anchor, 1);
+  for (int i = 0; i < (rounds > 0 ? rounds : 1); i++)
+    if ((n = one(argv)) != 0) return n;
+  return 0;
 }
 
 /* tweetnacl wants one; the X25519 secret comes from the caller. */

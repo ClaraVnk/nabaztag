@@ -9,7 +9,7 @@ asked) under each cipher suite, and checks that the client gets it. Then
 what must fail: another host name, a date outside the certificate, a root
 it does not trust, a chain cut before its intermediate.
 """
-import argparse, datetime, os, socket, subprocess, sys, tempfile, time
+import argparse, datetime, os, re, socket, subprocess, sys, tempfile, time
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
@@ -37,7 +37,7 @@ def keypem(k): return k.private_bytes(serialization.Encoding.PEM, serialization.
 def free_port():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
-def run(client, d, chain, leafkey, suite, sni, now, anchor, want_ok, label):
+def run(client, d, chain, leafkey, suite, sni, now, anchor, want_ok, label, rounds=1):
     open(f"{d}/leaf.pem", "wb").write(pem(chain[0]))
     open(f"{d}/chain.pem", "wb").write(b"".join(pem(c) for c in chain[1:]))
     open(f"{d}/key.pem", "wb").write(keypem(leafkey))
@@ -50,11 +50,18 @@ def run(client, d, chain, leafkey, suite, sni, now, anchor, want_ok, label):
     time.sleep(0.8)
     try:
         out = subprocess.run([client, "127.0.0.1", str(port), sni, now, anchor, "/page.html"],
-                             capture_output=True, text=True, timeout=120)
+                             capture_output=True, text=True, timeout=240,
+                             env={**os.environ, "NAB_TLS_ROUNDS": str(rounds)})
     finally:
         srv.kill(); srv.wait()
     ok = out.returncode == 0 and "200" in out.stdout and "40" in out.stdout.split("answer")[-1]
     passed = ok if want_ok else out.returncode != 0
+    if rounds > 1:
+        # The second handshake finds its links proven (nab_tls.c signed_by):
+        # only the server's own signature and X25519 are left to compute.
+        ticks = [int(t) for t in re.findall(r"handshake complete, (\d+) watchdog ticks", out.stdout)]
+        passed = passed and len(ticks) == rounds and ticks[1] * 2 < ticks[0]
+        label += f" (ticks {ticks})"
     print(f"  {'ok  ' if passed else 'FAIL'}  {label}: {out.stdout.strip().splitlines()[-1] if out.stdout.strip() else out.stderr.strip()[-200:]}")
     return passed
 
@@ -83,6 +90,8 @@ def main():
         run(a.client, d, [lec, iec], le, CH, "podcast.example.test", NOW, R, True, "ECDSA chain, ChaCha20-Poly1305"),
         run(a.client, d, [lec, iec], le, AES, "podcast.example.test", NOW, R, True, "ECDSA chain, AES-128-GCM"),
         run(a.client, d, [lrc, irc], lr, CH, "radio.example.test", NOW, R, True, "RSA chain (PSS), ChaCha20-Poly1305"),
+        run(a.client, d, [lec, iec], le, CH, "podcast.example.test", NOW, R, True,
+            "the second connection reuses the proven chain", rounds=2),
         run(a.client, d, [lec, iec], le, CH, "evil.example.test", NOW, R, False, "another host name is refused"),
         run(a.client, d, [lec, iec], le, CH, "podcast.example.test", "20270301000000", R, False, "an expired certificate is refused"),
         run(a.client, d, [lec, iec], le, CH, "podcast.example.test", NOW, O, False, "a root it does not trust is refused"),

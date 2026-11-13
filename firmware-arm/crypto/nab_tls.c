@@ -512,6 +512,34 @@ static nab_cert CHAIN[CHAIN_MAX] SECTION_EXTBSS;
 
 void nab_tls_anchors(const struct nab_tls_anchor *a, uint32_t n) { ANCHORS = a; NANCHORS = n; }
 
+/* Links already proven since boot: SHA-256 of the child's signed bytes, its
+   signature and the signer's key. 2026-11-13: a second episode from the same
+   host sends the same chain, and the root's check alone is 35 M instructions
+   (RSA-4096) or 82 M (P-384) -- seconds of a 2006 ARM7. Collision-resistant,
+   so a different certificate or key never matches; dates are checked every
+   time, before this. */
+#define PROVEN_MAX 8
+static uint8_t PROVEN[PROVEN_MAX][32] SECTION_EXTBSS;
+static uint32_t NPROVEN;
+
+static int signed_by(const nab_cert *c, const nab_span *alg, const nab_span *par,
+                     const nab_span *key)
+{
+  uint8_t id[32];
+  sha256_ctx h;
+  sha256_init(&h);
+  sha256_update(&h, c->tbs.p, c->tbs.len);
+  sha256_update(&h, c->sig.p, c->sig.len);
+  sha256_update(&h, par->p, par->len);
+  sha256_update(&h, key->p, key->len);
+  sha256_final(&h, id);
+  for (uint32_t i = 0; i < PROVEN_MAX && i < NPROVEN; i++)
+    if (!memcmp(PROVEN[i], id, 32)) return 1;
+  if (!nab_x509_signed_by(c, alg, par, key, nab_verify_tick)) return 0;
+  memcpy(PROVEN[NPROVEN++ % PROVEN_MAX], id, 32);
+  return 1;
+}
+
 /* Signed by one of the built-in roots? Found by the issuer's name, proven
    by the root's key: a name alone is what anyone can write. */
 static int anchored(const nab_cert *c)
@@ -520,7 +548,7 @@ static int anchored(const nab_cert *c)
     const struct nab_tls_anchor *a = &ANCHORS[i];
     nab_span alg = { a->alg, a->alg_len }, par = { a->param, a->param_len }, key = { a->key, a->key_len };
     if (c->issuer.len != a->subject_len || memcmp(c->issuer.p, a->subject, a->subject_len)) continue;
-    if (nab_x509_signed_by(c, &alg, &par, &key, nab_verify_tick)) return 1;
+    if (signed_by(c, &alg, &par, &key)) return 1;
   }
   return 0;
 }
@@ -552,8 +580,8 @@ static int on_certificate(const uint8_t *m, uint32_t n)
     if (!nab_x509_valid_at(&CHAIN[i], T.now)) return fail(45);  /* certificate_expired */
     if (anchored(&CHAIN[i])) break;
     if (i + 1 == k || !CHAIN[i + 1].ca || !nab_x509_issued_by(&CHAIN[i], &CHAIN[i + 1])
-        || !nab_x509_signed_by(&CHAIN[i], &CHAIN[i + 1].key_alg, &CHAIN[i + 1].key_param,
-                               &CHAIN[i + 1].key, nab_verify_tick))
+        || !signed_by(&CHAIN[i], &CHAIN[i + 1].key_alg, &CHAIN[i + 1].key_param,
+                      &CHAIN[i + 1].key))
       return fail(48);                                           /* unknown_ca */
   }
   /* The leaf's key, kept: hs[] is overwritten by the next message. */
