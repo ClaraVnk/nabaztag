@@ -60,11 +60,13 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
-- 🔒 **Naboot 1.2.0.0 — HTTPS on the rabbit itself**: it opens radios,
-  podcasts and any typed sound address over HTTPS on its own (nothing
-  relayed), fetches its updates from this repository's releases, boots for
-  the very first time over HTTPS (ISRG Root X2 built in), and its owner can
-  always flash something else, unsigned: start it head pressed, press again during the send.
+- 🔒 **Naboot 1.2.0.1 — HTTPS on the rabbit itself**: it boots for the very
+  first time over HTTPS (ISRG Root X2 built in), its key exchange included
+  (1.2.0.1 gives it the 18 s a real ARM7 needs, and the boot URL says how it
+  went), and its owner can always flash something else, unsigned: start it
+  head pressed, press again during the send. The runtime that also opens
+  radios and sounds over HTTPS by itself is held back until its own update
+  path is proven on hardware (2026-11-13): updates go through the warren.
 - 🔧 **Under it, everything Naboot already did** (every item proven on a
   real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
   **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed
@@ -165,7 +167,7 @@ Put your rabbit on the public warren —
    is mode `naboot-1.2.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
    126 704 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.2.0.0.signed.sim`, with its sha256 and which way in from each
+   (`naboot-1.2.0.1.signed.sim`, with its sha256 and which way in from each
    starting firmware); every earlier release is in `firmware-arm/releases/archive/`.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
@@ -354,9 +356,10 @@ is the short version.
   what someone blocking 443 would ask for); other warrens as before. Proven
   in the emulator against a real Caddy: the right chain adopts, a rogue one
   is refused 13 times out of 13 with not one request in the clear.
-- **Updates from GitHub.** A rabbit on 1.2.0.0 fetches its image from this
-  repository's releases over HTTPS, the signature in the warren's order; the
-  warren checks first that the file there is byte for byte the image it signed.
+- **Updates from GitHub** (held back). A rabbit on 1.2.0.0 was to fetch its
+  image from this repository's releases over HTTPS. Proven in the emulator,
+  it failed on the first real rabbit (2026-11-13): updates go through the
+  warren's session again, the path every adopted rabbit has used.
 - **The owner can always leave.** An unsigned image (Violet's firmware,
   someone else's) is written only with the head held at power-on and again
   at the write, read on the pin: nobody remote can do it, the owner always

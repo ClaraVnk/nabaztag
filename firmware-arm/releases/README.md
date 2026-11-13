@@ -15,11 +15,41 @@
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware we ship: the hardware-verified release the
-community downloads (1.2.0.0). Every earlier release, and the old `minimal`
+community downloads (1.2.0.1). Every earlier release, and the old `minimal`
 rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.2.0.0.signed.sim` — the release
+## `naboot-1.2.0.1.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.2.0.1` (`firmware-arm/apply-mods.py`): 1.2.0.0 with `kx_report` |
+| **Firmware version** | `1.2.0.1` |
+| **Build mark** | `z=2611132047` |
+| **Size** | 126 952 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `a7d728a61088216e4bd160fc20d5f077b1a04cf70c54149f9bc3563fed31230f` (the `.sim`); the plain image is `9fb7be88acda…` |
+
+**Why:** a rabbit flashed straight to 1.2.0.0 never got its adoption key
+(Bunny, 2026-11-13). Its key exchange runs over HTTPS since 1.2.0.0, and on
+the real ARM7 that takes 18 s, against the 10 s it was given, once per boot;
+it then booted without a key, in silence. The emulator could not see it: its
+clock does not charge the crypto.
+
+**What changed:** the exchange waits up to 60 s and tries twice, and the boot
+URL says how it went (`&k=`: 0 the rabbit already has its key, 1 no entropy,
+2 no answer in time, 3 the request failed, 4 not a key, 5 a key; `&kt=` the
+seconds it took), so a stuck adoption tells a firmware bug from an owner's
+slip.
+
+**On a rabbit (2026-11-13 22:03):** flashed from the config page, its
+configuration wiped, it ran the exchange over HTTPS in 18 s (`k=5&kt=18`),
+showed its colours, and booted with the confirmed key.
+
+`naboot-1.2.0.0` is archived below.
+
+## `archive/naboot-1.2.0.0.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|
@@ -36,7 +66,7 @@ What it brings:
   fetches its bytecode on port 443 and checks the Terrier's chain against one
   root built into the firmware (ISRG Root X2), no fallback to plain HTTP.
   Certificates are refused if they expired before the build date.
-- **Updates from GitHub.** A Terrier can send the rabbit to this release's
+- **Updates from GitHub** (held back since 2026-11-13: it failed on the first real rabbit; updates go through the warren). A Terrier can send the rabbit to this release's
   `.bin`: the rabbit downloads it over HTTPS itself and checks our signature,
   which comes with the order, before it writes a byte.
 - **Sounds and streams from any `https://` URL**, the certificate checked.

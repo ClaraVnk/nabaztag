@@ -183,7 +183,7 @@ Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
 ./firmware-arm/jtag/station.sh check          # JTAG answers, the flash reads back
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
-./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.0.0.signed.sim
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.0.1.signed.sim
 ```
 
 Never halt a rabbit during its association (it can lose its Wi-Fi), never
