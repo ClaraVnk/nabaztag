@@ -39,7 +39,11 @@ HTTP=$((BASE+33)); XMPP=$((BASE+22)); XMPPS=$((BASE+23)); UI=$((BASE+34)); HOST_
 HOSTNAME=podcast.example.test
 mkdir -p "$OUT/data" "$OUT/host" "$OUT/www"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log
+# Both places: a Terrier from before 2026-11-13 reads /data/baseline.hybrid,
+# a later one the TLS runtime in /data/bytecode/ (terrier #164).
+mkdir -p "$OUT/data/bytecode"
 cp "$BYTECODE" "$OUT/data/baseline.hybrid"
+cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
 
