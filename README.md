@@ -6,6 +6,13 @@
 
 <h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
 
+> [!IMPORTANT]
+> **Do you own a Nabaztag v1 (2005) or a Karotz (v3, 2011)? Help bring it back!**
+> Both are supported in beta on [Le Terrier](https://terrier.cyberloutre.fr/), built from
+> their protocols without the hardware in hand. A tester, or better a **full dump** of one
+> (a v1's traffic with its server, a Karotz's flash), would make all the difference:
+> [**get in touch**](https://github.com/ClaraVnk/nabaztag/issues/new?title=I%20have%20a%20Nabaztag%20v1%20%2F%20Karotz&body=Which%20rabbit%20and%20what%20firmware%3A%0A%0AWhat%20I%20can%20do%20(test%2C%20dump)%3A).
+
 <p align="center">
   <strong>Bring the 2006 Wi-Fi rabbit back to life — new firmware, a new warren, driven from Home Assistant.</strong><br>
   <sub>WPA3 · TLS 1.3 · signed over-the-air updates · a per-rabbit adoption key. The Violet servers died in 2011; this is its new home.</sub>
