@@ -14,7 +14,7 @@ bootloader. The ones that matter for flashing and recovery:
 | Build | `Nab.bin` | Shipped? | What's modified |
 |---|---|---|---|
 | **lean** (stable) | 107 288 B | **yes** — `../releases/archive/naboot-lean-wpa2.signed.sim` (archived 2026-11-13), hardware-verified 2026-10-27 (a spoken sentence *and* both MIDI jingles, heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the WPA2 group key, the cold-state guards, the audio half-duplex fix, the bounded hardware waits — and, since 2026-10-27, `extbss`: every `.bss.*` zeroed at boot (the EAPOL state no longer starts on whatever the SRAM held), 8 KB of scratch moved to external RAM, 10 104 bytes of user stack instead of 1 916, and seven RT2501/USB failures that used to be detected and then dropped. The build the community runs. Superseded by 1.0.0.x; archived in `../releases/archive/`. |
-| **minimal** (rescue) | 119 800 B | **yes** — `../releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
+| **minimal** (rescue) | 119 800 B | archived 2026-11-13 — `../releases/archive/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
 | **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Untested on hardware as of 2026-06-01, and it no longer stacks on `lean-wpa3`: `rom_pages` and `wpa3_boot_pw` both take opcode 153. |
 | **lean-wpa3-slim** (proposed, 2026-11-08) | 107 228 B | no — not yet on hardware | `lean-wpa3` (117 692 B) with the dead weight measured out, nothing the rabbit does changed: the debug `sprintf` chain that pulled newlib's printf and nano malloc into the image (5 680 B), the bootloader's console literals, echo opcodes and hex dumpers plus five unreferenced functions (2 880 B of bytecode), MD5 as a loop instead of 64 unrolled steps (1 656 B), one AES S-box instead of two (256 B). Emulator suites green under its own bootloader bytecode; the console and USB files it edits make it hardware-risk until a rabbit has run it. |
@@ -32,7 +32,7 @@ files we actually **ship** live in `../releases/`:
 ```
 firmware-arm/releases/
 ├── naboot-1.0.0.3.signed.sim  ← upload this one (normal — the release)
-└── naboot-minimal.signed.sim  ← upload this one (rescue / rollback — mode `minimal`)
+└── archive/                   ← earlier releases and the old `minimal`, for rollback
 ```
 
 `full` is **not shipped**: there is no full build under `../releases/`. If you
@@ -102,8 +102,7 @@ check was the one thing that did not depend on the transport, and the
 transport is plain HTTP. For the length of one update, "is the server sound"
 stops being the whole question, and your DNS and network path join it. If that
 is not a trade you want, flash over JTAG instead — the steps are below — or
-roll back to `../releases/naboot-minimal.signed.sim` from your rabbit's own setup
-page, which has no gate.
+upload the release from your rabbit's own setup page.
 
 ## JTAG recovery via a Raspberry Pi — no probe needed (proven 2026-06-20)
 
@@ -174,9 +173,10 @@ directly (bit-bang) with **F/F Dupont wires**.
 
 If the rabbit boots into `full` but the modernized config-mode UI misbehaves
 (broken form, can't re-upload), enter config mode again (head button + power)
-and upload `../releases/naboot-minimal.signed.sim`. Minimal restores the
-2006-style stock UI exactly as it shipped, with the verifySig opcode kept
-in place so OTAs still work.
+and upload the release (`../releases/naboot-1.0.0.3.signed.sim`) again. The
+old `minimal` build, which put back the 2006 setup UI, is archived in
+`../releases/archive/`: it never ran on a rabbit and cannot take an update
+from the Terrier afterwards.
 
 If the flash itself failed and the rabbit can't be put in config mode at all
 — that's the brick scenario above. Recovery requires opening the shell to
