@@ -221,6 +221,27 @@ The plain port stays for every other rabbit.
 > **TLS**, **over-the-air updates**, the modern config UI, and dialing a remote
 > warren like Le Terrier.
 
+## The first Nabaztag (v1) and the Karotz (v3): on Le Terrier only, beta
+
+Everything above is the **Nabaztag:tag (v2, 2006)**, the rabbit this project
+was built on and is tested on, every day, on real hardware.
+
+- **Nabaztag v1 (2005)** — beta, on Le Terrier. It cannot be flashed: point it
+  at the Terrier in its setup page, ask for its code by e-mail on the
+  adoption page and hold its head down. It speaks, moves its ears and lights
+  up; it has no microphone and no RFID reader.
+- **Karotz (v3, 2011)** — in preparation, beta. A small client installed on a
+  Karotz running FreeRabbits OS and OpenKarotz makes it adopt like a v2 (its
+  own key, TLS 1.3) and take the same commands. It stays on WPA2: its Wi-Fi
+  chip cannot do WPA3.
+
+Both are supported **only through Le Terrier, and so through the HACS
+integration** — not in the Home Assistant add-on. Nobody here owns a v1 or a
+Karotz: they were built from the protocols and the code of the projects that
+ran them, and proven in emulation, but they cannot be tested on real hardware
+at home, which is what the local add-on would need. If you have one, the
+Terrier is the way in, and your feedback is what takes them out of beta.
+
 ## Home Assistant: the HACS integration
 
 **[The HACS integration](https://github.com/ClaraVnk/terrier-ha)** is the way to
