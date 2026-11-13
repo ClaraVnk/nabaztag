@@ -64,7 +64,7 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   podcasts and any typed sound address over HTTPS on its own (nothing
   relayed), fetches its updates from this repository's releases, boots for
   the very first time over HTTPS (ISRG Root X2 built in), and its owner can
-  always flash something else, unsigned, by holding its head down.
+  always flash something else, unsigned: start it head pressed, press again during the send.
 - 🔧 **Under it, everything Naboot already did** (every item proven on a
   real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
   **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed

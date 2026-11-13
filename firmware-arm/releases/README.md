@@ -40,8 +40,8 @@ What it brings:
   `.bin`: the rabbit downloads it over HTTPS itself and checks our signature,
   which comes with the order, before it writes a byte.
 - **Sounds and streams from any `https://` URL**, the certificate checked.
-- **The owner's way out.** Hold the head button while the rabbit starts
-  installing an image, and it accepts one we did not sign: you can always
+- **The owner's way out.** Start the rabbit with its head pressed, press it
+  again while the image is sent, and it accepts one we did not sign: you can always
   leave Naboot for another firmware. Without the button, only our signature.
 
 **In the emulator:** the HTTPS first boot (and the real Terrier's four-certificate
