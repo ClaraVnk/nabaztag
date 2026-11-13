@@ -49,7 +49,7 @@ python3 signing/verify_sim.py bin/naboot-1.0.0.3/firmware0.0.0.13.signed.sim
 The key is `~/.nabaztag/signing_key.bin` on the machine that signs; never
 print it, never copy it to a remote. Its backups: a password manager
 (age/YubiKey) and the OpenBao KV. A new machine gets the file back from
-there; `signing/gen_key.py` would make a *different* key, which no rabbit
+there; `firmware-arm/signing/gen_key.py` would make a *different* key, which no rabbit
 accepts.
 
 ## 2. Releasing
@@ -58,15 +58,15 @@ accepts.
 2. Prove it:
    - in the emulator (section 4);
    - on the test rabbit, by OTA from the Terrier as one rabbit's own image
-     (the Terrier's `deploy/RUNBOOK.md`, "Sending a firmware");
+     (the Terrier's own RUNBOOK, "Sending a firmware");
    - from the previous release, as every other rabbit will take it.
-3. Copy it as `firmware-arm/releases/naboot-X.Y.Z.W.signed.sim`, and **move
-   the previous release to `releases/archive/`** in the same change. Write
-   its section in `releases/README.md` (size, sha256, what changed, what was
-   proven), and point `jtag/README.md`'s flash example and `docs/RECOVERY.md`
+3. Copy it as firmware-arm/releases/naboot-X.Y.Z.W.signed.sim, and **move
+   the previous release to `firmware-arm/releases/archive/`** in the same change. Write
+   its section in `firmware-arm/releases/README.md` (size, sha256, what changed, what was
+   proven), and point `firmware-arm/jtag/README.md`'s flash example and `firmware-arm/docs/RECOVERY.md`
    at it.
 4. The Terrier's shared image: upload it on the admin page (Firmware image).
-   The Terrier's `/naboot` link to GitHub (`GITHUB_SIM` in `terrier/ui.py`)
+   The Terrier's `/naboot` link to GitHub (`GITHUB_SIM` in the Terrier's ui.py)
    names the release file: change it in the same week.
 
 ## 3. Host tests
@@ -170,13 +170,13 @@ The script applies every patch in order. It checks that each policy literal
 (`xmpp-tls:0`, `xmpp-ota:0`, ...) is in the result exactly once, because the
 Terrier flips them per rabbit. Prove it in the emulator (section 4,
 `--bytecode`). Then serve it to one rabbit first: the Terrier's
-`deploy/RUNBOOK.md`, "The runtime bytecode".
+RUNBOOK, "The runtime bytecode".
 
 ## 6. The JTAG station
 
 Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
 [`firmware-arm/jtag/RUNBOOK.md`](../firmware-arm/jtag/RUNBOOK.md); wiring in
-`jtag/wiring.svg`.
+`firmware-arm/jtag/wiring.svg`.
 
 ```sh
 ./firmware-arm/jtag/station.sh setup          # once, on the Pi
