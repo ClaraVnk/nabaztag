@@ -1,0 +1,18 @@
+# The emulator with Violet's own flash guard: OPflashFirmware checks the
+# image's length and nothing else, as on a rabbit that was never flashed.
+#
+# Our firmware binds flashFirmware to the image the last verifySig accepted
+# (apply-mods.py, vinterp). A stock 2006 bootloader never calls verifySig, so
+# under that binding its config page refuses every upload -- which is our
+# firmware's behaviour, not the rabbit's. Built on top of an emulator image:
+#
+#   podman build -f firmware-arm/emulator/Containerfile -t emu .
+#   podman build -f firmware-arm/emulator/Containerfile.stockflash \
+#       --build-arg BASE=emu -t emu-stockflash firmware-arm/emulator
+#
+# Used by tools/config-upload.sh (STOCK_FLASH=1) and tools/stock-ota-proof.sh.
+ARG BASE=localhost/nabaztag-emulator:latest
+FROM ${BASE}
+RUN grep -q '&&nab_fw_verified((const unsigned char\*)VSTARTBIN(firmware),VSIZEBIN(firmware))' /build/nabgcc/src/vm/vinterp.c \
+ && sed -i 's/&&nab_fw_verified((const unsigned char\*)VSTARTBIN(firmware),VSIZEBIN(firmware))//' /build/nabgcc/src/vm/vinterp.c \
+ && ! grep -q '&&nab_fw_verified' /build/nabgcc/src/vm/vinterp.c

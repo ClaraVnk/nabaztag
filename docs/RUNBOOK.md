@@ -125,6 +125,34 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 - A proof left running holds its ports: `podman ps`, then `podman rm -f
   terrier-proof-<base>`.
 
+**A rabbit of a given release, and a rabbit nobody ever flashed.**
+
+```sh
+# the emulator steps of a release (network, crypto, VM: what decides how it behaves)
+podman build -f firmware-arm/emulator/Containerfile \
+    --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.0.0.3) -t emu-1003 .
+# a release taking an update in its TLS session (scenarios/vm/xmpp-ota.txt, 300 s)
+firmware-arm/emulator/tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --bytecode <runtime.hybrid> --emulator emu-1003 --elf <bin/naboot-1.0.0.3/Nab.elf> \
+    --out /tmp/ota --speak-at 110 --speak "Bonjour" --ota <naboot-X.signed.sim> \
+    --scenario scenarios/vm/xmpp-ota.txt
+
+# Violet's own flash guard (a stock bootloader never calls verifySig)
+podman build -f firmware-arm/emulator/Containerfile -t nabaztag-emulator .
+podman build -f firmware-arm/emulator/Containerfile.stockflash \
+    --build-arg BASE=localhost/nabaztag-emulator -t emu-stockflash firmware-arm/emulator
+# a stock rabbit (Violet's boot 0.0.0.10) through its setup page, as a phone uploads
+python3 firmware-arm/tools/mtl_comp.py firmware-arm/vendor/nabgcc/mtl/boot/boot.0.0.0.10.mtl -o /tmp/boot-0010.bc
+NO_BUILD=1 TAG=emu-stockflash firmware-arm/emulator/tools/config-upload.sh /tmp/boot-0010.bc <naboot-X.signed.sim>
+# the same rabbit adopted on a Terrier and updated over the air (otafix, binary path)
+firmware-arm/emulator/tools/stock-ota-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --runtime <baseline-tls.hybrid> --otafix <baseline-otafix.hybrid> --sim <naboot-X.signed.sim> \
+    --emulator emu-stockflash --out /tmp/stock-ota
+```
+
+The verdict is the VM's last lines: `asked to flash itself with a N-byte
+image`, `flash writes 1`, `resets asked 0`, and the heap at its highest.
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
