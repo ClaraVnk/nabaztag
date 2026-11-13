@@ -156,7 +156,7 @@ Put your rabbit on the public warren —
    126 704 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
    (`naboot-1.2.0.0.signed.sim`, with its sha256 and which way in from each
-   starting firmware); every earlier release is in `releases/archive/`.
+   starting firmware); every earlier release is in `firmware-arm/releases/archive/`.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
