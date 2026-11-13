@@ -236,6 +236,12 @@ The other way — [this repository's add-on](#the-home-assistant-add-on-legacy),
 a warren inside Home Assistant itself with a REST control API — still works,
 but new work goes to the integration and to the warren rather than there.
 
+## Building, testing, releasing
+
+Every tool here from a shell — building and signing a firmware, the host
+tests, the emulator and its proofs against a Terrier, the runtime bytecode, the
+JTAG station, a release: **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)**.
+
 ## Roadmap
 
 The long, dated story of every phase — what was tried, what broke, what was

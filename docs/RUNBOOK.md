@@ -1,0 +1,164 @@
+# Naboot — runbook
+
+Every tool in this repository, from a shell. Each section gives the commands
+in order, then points at the document that explains them in depth.
+
+Placeholders: `<dev-vm>` is a Linux machine with podman (never the Home
+Assistant host: a build there starves it and drops the rabbit), `<pi>` the
+JTAG station, `<mac>` a rabbit's twelve hex digits. Container bases are
+Alpine or Rocky; every Containerfile lives in the repository.
+
+## 0. What is where
+
+| Path | What |
+|---|---|
+| `firmware-arm/` | the ARM firmware (Naboot): `build.sh`, `apply-mods.py` (every change, as steps and modes), `crypto/`, `preflight.py` |
+| `firmware-arm/releases/` | the shipped images: the release and `minimal`; earlier ones in `archive/` |
+| `firmware-arm/signing/` | Ed25519 signing of a `.sim` |
+| `firmware-arm/tests/` | host tests of the crypto and protocol code (`make`) |
+| `firmware-arm/tools/` | the Metal toolchain: compiler, assembler, disassembler (`run-tests.sh`) |
+| `firmware-arm/emulator/` | the rabbit without a rabbit: Wi-Fi scenarios, a whole rabbit (`rabbit-vm`), proofs against a real Terrier |
+| `firmware-arm/jtag/` | the JTAG station on a Raspberry Pi |
+| `bytecode/` | the runtime bytecode: `build-bytecode.sh` and one `patch_*.py` per change |
+| `nabaztag-violet/` | the Home Assistant add-on |
+
+## 1. Building a firmware
+
+```sh
+cd firmware-arm
+./build.sh --mode naboot-1.0.0.3 --remote <dev-vm> --runtime podman
+# -> bin/naboot-1.0.0.3/firmware0.0.0.13.sim (unsigned), Nab.bin, Nab.elf
+```
+
+- `--mode` picks the list of steps (`python3 apply-mods.py --help` lists the
+  modes; `naboot-X.Y.Z.W` are the releases).
+- The build runs on the remote, in `firmware-arm/Dockerfile`. Only the build
+  context goes there, never the key.
+- `preflight.py` checks the image as the build ends: it fits in flash
+  (126,976 bytes), the stack, the external RAM, the reset vector. A failed
+  check means no image.
+
+**Signing** (only an image you will ship):
+
+```sh
+./build.sh --mode naboot-1.0.0.3 --remote <dev-vm> --runtime podman --sign
+# -> bin/naboot-1.0.0.3/firmware0.0.0.13.signed.sim, verified by verify_sim.py
+python3 signing/verify_sim.py bin/naboot-1.0.0.3/firmware0.0.0.13.signed.sim
+```
+
+The key is `~/.nabaztag/signing_key.bin` on the machine that signs; never
+print it, never copy it to a remote. Its backups: a password manager
+(age/YubiKey) and the OpenBao KV. A new machine gets the file back from
+there; `signing/gen_key.py` would make a *different* key, which no rabbit
+accepts.
+
+## 2. Releasing
+
+1. Build with `--sign` (above).
+2. Prove it:
+   - in the emulator (section 4);
+   - on the test rabbit, by OTA from the Terrier as one rabbit's own image
+     (the Terrier's `deploy/RUNBOOK.md`, "Sending a firmware");
+   - from the previous release, as every other rabbit will take it.
+3. Copy it as `firmware-arm/releases/naboot-X.Y.Z.W.signed.sim`, and **move
+   the previous release to `releases/archive/`** in the same change. Write
+   its section in `releases/README.md` (size, sha256, what changed, what was
+   proven), and point `jtag/README.md`'s flash example and `docs/RECOVERY.md`
+   at it.
+4. The Terrier's shared image: upload it on the admin page (Firmware image).
+   The Terrier's `/naboot` link to GitHub (`GITHUB_SIM` in `terrier/ui.py`)
+   names the release file: change it in the same week.
+
+## 3. Host tests
+
+```sh
+make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
+make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
+make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
+firmware-arm/tools/run-tests.sh       # the Metal toolchain against the reference compiler
+```
+
+A missing `libasan` (some distributions) means: run them in a Rocky container,
+
+```sh
+podman run --rm -v $PWD/firmware-arm:/src:Z -w /src/tests quay.io/rockylinux/rockylinux:10 \
+  sh -c "dnf -q -y install gcc make libasan libubsan openssl python3-pip && pip3 -q install cryptography && make"
+```
+
+## 4. The emulator
+
+Details: [`firmware-arm/emulator/README.md`](../firmware-arm/emulator/README.md).
+
+```sh
+cd firmware-arm/emulator
+./run.sh                                  # every Wi-Fi scenario; exit status = failures
+./run.sh scenarios/wpa3-sae.txt           # one, with its transcript
+./run.sh --steps wpa2_gtk,mdns            # with the firmware steps you choose
+```
+
+**A whole rabbit** (bootloader, bytecode, Wi-Fi, a gateway) against your own
+Terrier:
+
+```sh
+python3 mkconf.py --ssid Terrier --security open --server <warren>:80/vl \
+    --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o open.eeprom
+./run.sh --vm scenarios/vm/boot-open.txt --eeprom open.eeprom --warren <warren>
+```
+
+**Proofs against a real Terrier container** (podman on `<dev-vm>`, nothing
+leaves it):
+
+```sh
+# the emulator image, with the firmware steps of the build you test
+podman build -f firmware-arm/emulator/Containerfile --build-arg MOD_STEPS=<steps> -t emu .
+# adoption + TLS session, then whatever you add
+firmware-arm/emulator/tools/xmpp-tls-proof.sh \
+    --terrier ghcr.io/claravnk/terrier:latest --bytecode <runtime.hybrid> \
+    --emulator emu --elf <bin/<mode>/Nab.elf> --out /tmp/proof \
+    [--speak-at 110 --speak "Bonjour"] [--ota <signed.sim>] [--scenario <file>] [--third]
+```
+
+- `--elf` is the bootloader you test: its `Nab.bin` must sit next to it.
+- `--ota` sends that image inside the session and stops at `flashFirmware`:
+  there is no flash to write here, and the line says so.
+- `BASE=<port>` moves every port, so several proofs can run side by side.
+- A proof left running holds its ports: `podman ps`, then `podman rm -f
+  terrier-proof-<base>`.
+
+## 5. The runtime bytecode
+
+Details: [`bytecode/README.md`](../bytecode/README.md).
+
+```sh
+cp -r firmware-arm/vendor/openjabnab/bootcode /tmp/tree     # stock Violet sources
+bash bytecode/build-bytecode.sh /tmp/tree firmware-arm/tools/mtl_comp.py /tmp/runtime.hybrid
+```
+
+The script applies every patch in order. It checks that each policy literal
+(`xmpp-tls:0`, `xmpp-ota:0`, ...) is in the result exactly once, because the
+Terrier flips them per rabbit. Prove it in the emulator (section 4,
+`--bytecode`). Then serve it to one rabbit first: the Terrier's
+`deploy/RUNBOOK.md`, "The runtime bytecode".
+
+## 6. The JTAG station
+
+Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
+[`firmware-arm/jtag/RUNBOOK.md`](../firmware-arm/jtag/RUNBOOK.md); wiring in
+`jtag/wiring.svg`.
+
+```sh
+./firmware-arm/jtag/station.sh setup          # once, on the Pi
+./firmware-arm/jtag/station.sh check          # JTAG answers, the flash reads back
+./firmware-arm/jtag/station.sh listen         # the live status line, no halt
+./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.0.0.3.signed.sim
+```
+
+Never halt a rabbit during its association (it can lose its Wi-Fi), never
+arm the watchdog over JTAG, and read symbols only from the ELF of the build
+that is in the rabbit.
+
+## 7. A rabbit that does not come back
+
+[`firmware-arm/docs/RECOVERY.md`](../firmware-arm/docs/RECOVERY.md): the
+config page and `minimal` first, the JTAG station last.

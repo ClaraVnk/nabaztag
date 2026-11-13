@@ -94,7 +94,11 @@ NAME=terrier-proof-$BASE
 mkdir -p "$OUT/data" "$OUT/host"
 OUT="$(cd "$OUT" && pwd)"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log "$OUT"/mitm.log
+# Both places: a Terrier from before 2026-11-13 reads /data/baseline.hybrid,
+# a later one the TLS runtime in /data/bytecode/ (terrier #164).
+mkdir -p "$OUT/data/bytecode"
 cp "$BYTECODE" "$OUT/data/baseline.hybrid"
+cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"   # bootbc.py reads both
 
