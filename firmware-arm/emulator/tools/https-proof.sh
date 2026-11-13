@@ -10,10 +10,12 @@
 #   tools/https-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #       --emulator <image> --elf <Nab.elf of naboot-1.2.0.0> --out <dir> \
 #       [--play-at 110] [--stop-at 170] [--suite TLS_CHACHA20_POLY1305_SHA256]
+#       [--seconds 3]   how long the sound is: longer than stop - play to see
+#                       the stop button cut it
 #
 # Needs python3 with `cryptography` on the host (or PY=path/to/python).
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; PLAY_AT=110 ; STOP_AT=170
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; PLAY_AT=110 ; STOP_AT=170 ; SECS=3
 SUITE=TLS_CHACHA20_POLY1305_SHA256
 BASE=${BASE:-19700}
 PY=${PY:-python3}
@@ -27,6 +29,7 @@ while [ $# -gt 0 ]; do
     --play-at) PLAY_AT=$2; shift 2 ;;
     --stop-at) STOP_AT=$2; shift 2 ;;
     --suite) SUITE=$2; shift 2 ;;
+    --seconds) SECS=$2; shift 2 ;;
     *) echo "unknown: $1"; exit 2 ;;
   esac
 done
@@ -41,13 +44,13 @@ cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
 
 # The host: a chain shaped like Let's Encrypt's, and three seconds of sound.
-"$PY" - "$OUT" "$HOSTNAME" <<'PY'
+"$PY" - "$OUT" "$HOSTNAME" "$SECS" <<'PY'
 import datetime, struct, sys, math
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
-out, host = sys.argv[1], sys.argv[2]
+out, host, secs = sys.argv[1], sys.argv[2], int(sys.argv[3])
 now = datetime.datetime.now(datetime.timezone.utc)
 def name(cn): return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 def cert(subject, key, issuer, ikey, h, ca, san=None):
@@ -74,7 +77,7 @@ open(f"{out}/host/inter.pem", "wb").write(pem(inter))
 open(f"{out}/host/key.pem", "wb").write(lk.private_bytes(serialization.Encoding.PEM,
     serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 # 3 s of a 440 Hz tone, 8 kHz mono 16-bit: something the player plays out.
-n = 8000 * 3
+n = 8000 * secs
 pcm = b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / 8000))) for i in range(n))
 hdr = (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 16000, 2, 16)
        + b"data" + struct.pack("<I", len(pcm)))

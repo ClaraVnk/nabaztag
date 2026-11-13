@@ -72,8 +72,18 @@ var HttpsNow;;	// "YYYYMMDDHHMMSS", the warren's clock
 const HTTPS_FAILED=3;;	// NAB_TLS_FAILED
 const HTTPS_CLOSED=4;;	// NAB_TLS_CLOSED
 
-fun _httpssend cnx s=
-	if s!=nil then (writetcp cnx s 0; 0);
+// What TLS has to write goes through the request's own queue (outputH from
+// indexH), which httptcpwrite empties as TCP takes it: two writetcp in a row
+// lose what the first left unsent (the emulator proof's second run, where
+// the request after our Finished never left).
+fun _httpsqueue cnx httpreq s=
+	if s!=nil then
+	(
+		if httpreq.outputH==nil then (set httpreq.outputH=s; set httpreq.indexH=0; 0)
+		else (set httpreq.outputH=strcat httpreq.outputH s; 0);
+		httptcpwrite cnx httpreq;
+		0
+	);
 	0;;
 
 // Every record nab_tls has decrypted, into the stock reader.
@@ -85,15 +95,17 @@ fun _httpsdrain cnx httpreq=
 fun _httpstcpevent t val msg httpreq=
 	if val==TCPWRITE then
 	(
-		set httpreq.stateH=HTTP_CONNECTED;
-		set httpreq.aliveH=time_ms;
-		if httpreq.indexH==0 then	// connected: the ClientHello, once
+		if httpreq.httpsReqH==nil then	// connected: the request kept, the ClientHello first
 		(
-			set httpreq.indexH=nil;
+			set httpreq.httpsReqH=httpreq.outputH;
+			set httpreq.outputH=nil;
+			set httpreq.stateH=HTTP_CONNECTED;
+			set httpreq.aliveH=time_ms;
 			let httpsStart httpreq.httpsH HttpsNow HttpsRoots -> ch in
 			if ch==nil then (Secholn "https: no start"; closetcp t; call httpreq.cbH [httpreq nil]; 0)
-			else (Secho "https: hello to "; Secholn httpreq.httpsH; _httpssend t ch; 0)
-		);
+			else (Secho "https: hello to "; Secholn httpreq.httpsH; _httpsqueue t httpreq ch; 0)
+		)
+		else (httptcpwrite t httpreq; 0);
 		0
 	)
 	else if val==TCPCLOSE then (httptcpread t nil httpreq; 0)
@@ -104,7 +116,7 @@ fun _httpstcpevent t val msg httpreq=
 		(
 			if p!=nil then httptcpread t p httpreq;
 			_httpsdrain t httpreq;
-			_httpssend t httpsOut nil;	// our Finished, or the alert that ends it
+			_httpsqueue t httpreq httpsOut nil;	// our Finished, or the alert that ends it
 			let httpsState -> s in
 			if s==HTTPS_FAILED then
 			(
@@ -113,11 +125,21 @@ fun _httpstcpevent t val msg httpreq=
 				call httpreq.cbH [httpreq nil];
 				0
 			)
-			else if s==2 && httpreq.outputH!=nil then
+			else if s==HTTPS_CLOSED then
+			(
+				// The host's close_notify is the end of the answer, whether
+				// or not it closes TCP after it (openssl s_server does not):
+				// the player gets its end of file and plays what it has.
+				Secholn "https: closed by the host";
+				closetcp t;
+				httptcpread t nil httpreq;
+				0
+			)
+			else if s==2 && (strlen httpreq.httpsReqH)>0 then
 			(
 				Secholn "https: ready, request sent";
-				_httpssend t httpsOut httpreq.outputH;
-				set httpreq.outputH=nil;
+				_httpsqueue t httpreq httpsOut httpreq.httpsReqH;
+				set httpreq.httpsReqH="";
 				0
 			)
 			else 0
@@ -220,7 +242,7 @@ def patch_http(path: Path) -> bool:
     for old, what in ((EVENT_ANCHOR, "_httptcpevent"), (OPEN_OLD, "the opentcp of httpsendreq"),
                       (CUT_OLD, "httprequest's cuturl"), (REC_OLD, "httprequest's record")):
         _once(text, old, what, path)
-    text = text[:m.start()] + m.group(1) + " httpsH];;\n" + text[m.end():]
+    text = text[:m.start()] + m.group(1) + " httpsH httpsReqH];;\n" + text[m.end():]
     text = text.replace(EVENT_ANCHOR, EVENT_FUNS + EVENT_ANCHOR, 1)
     text = text.replace(OPEN_OLD, OPEN_NEW, 1)
     text = text.replace(CUT_OLD, CUT_NEW, 1)
