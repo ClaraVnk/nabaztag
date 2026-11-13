@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/firmware-Naboot%201.0.0.3-8957e5?style=flat-square" alt="Naboot 1.0.0.3 custom firmware">
+  <img src="https://img.shields.io/badge/firmware-Naboot%201.2.0.0-8957e5?style=flat-square" alt="Naboot 1.2.0.0 custom firmware">
   <a href="https://terrier.cyberloutre.fr/"><img src="https://img.shields.io/badge/warren-Le%20Terrier-8957e5?style=flat-square" alt="Le Terrier, the hosted warren"></a>
   <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <img src="https://img.shields.io/badge/hardware-Nabaztag%3Atag%20v2-orange?style=flat-square" alt="Nabaztag:tag v2">
@@ -53,6 +53,11 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
+- 🔒 **Naboot 1.2.0.0 — HTTPS on the rabbit itself**: it opens radios,
+  podcasts and any typed sound address over HTTPS on its own (nothing
+  relayed), fetches its updates from this repository's releases, boots for
+  the very first time over HTTPS (ISRG Root X2 built in), and its owner can
+  always flash something else, unsigned, by holding its head down.
 - 🔧 **Custom firmware — Naboot 1.0.0.3** (2026-11-10, every item
   proven on a real rabbit): **WPA3-SAE** in constant time (and H2E, in beta), a per-rabbit
   **adoption key** (X25519, confirmed by five belly colours), **HMAC-signed
@@ -102,8 +107,8 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
   your automations.
 
 > ✅ **It works end-to-end — verified live on a real Nabaztag:tag&nbsp;v2.** The
-> custom **Naboot** firmware (1.0.0.3) adds WPA3, a per-rabbit adoption key,
-> signed bytecode, TLS and over-the-air updates; **Le Terrier** is the public
+> custom **Naboot** firmware (1.2.0.0) adds WPA3, a per-rabbit adoption key,
+> signed bytecode, TLS and HTTPS, and over-the-air updates; **Le Terrier** is the public
 > warren. A stock rabbit is a "dumb" Wi-Fi client that downloads its bytecode on
 > every boot (nothing flashed by default) and talks plain HTTP + XMPP. The rabbit
 > boots, breathes, speaks, plays jingles, moves its ears, lights up, listens
@@ -138,14 +143,13 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot 1.0.0.3** — the illustrated 5-minute flashing guide is
+1. **Download Naboot 1.2.0.0** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
-   is mode `naboot-1.0.0.3` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   123 564 of 126 976 bytes of flash. The signed file is also in
+   is mode `naboot-1.2.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   126 704 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.0.0.3.signed.sim`, with its sha256 and which way in from each
-   starting firmware), next to the previous 1.0.0.2, 1.0.0.0, the 0.0.0.13 `lean`
-   build and the `minimal` rescue build.
+   (`naboot-1.2.0.0.signed.sim`, with its sha256 and which way in from each
+   starting firmware); every earlier release is in `releases/archive/`.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
    the open `Nabaztag-XXXX` Wi-Fi, open `http://192.168.0.1`, tap *firmware
@@ -272,6 +276,31 @@ is the short version.
   the whole-rabbit emulator, and a Metal toolchain in Python whose
   `mtl_comp.py --check` type-checks the real runtime bytecode.
 
+**Done — Naboot 1.2.0.0 (2026-11-13; proven in the emulator; HTTPS streams and sounds on a real rabbit)**
+
+- **The rabbit speaks HTTPS itself.** A certificate session beside the
+  warren's TLS: X25519, ChaCha20-Poly1305 or AES-128-GCM, chains checked
+  up to roots the warren sends (ECDSA P-256/P-384, RSA, RSA-PSS), a link
+  proven once not checked again that boot. Radios, podcasts and any typed
+  address (`play`, a webradio, an MP3) are opened by the rabbit, nothing
+  relayed; an address that only exists in plain HTTP is marked so.
+- **Even the first boot is encrypted.** Before adoption, `kx.jsp` and
+  `bc.jsp` go to `terrier.cyberloutre.fr` over HTTPS, anchored on ISRG Root
+  X2 built into the firmware, with no fallback to port 80 (a fallback is
+  what someone blocking 443 would ask for); other warrens as before. Proven
+  in the emulator against a real Caddy: the right chain adopts, a rogue one
+  is refused 13 times out of 13 with not one request in the clear.
+- **Updates from GitHub.** A rabbit on 1.2.0.0 fetches its image from this
+  repository's releases over HTTPS, the signature in the warren's order; the
+  warren checks first that the file there is byte for byte the image it signed.
+- **The owner can always leave.** An unsigned image (Violet's firmware,
+  someone else's) is written only with the head held at power-on and again
+  at the write, read on the pin: nobody remote can do it, the owner always
+  can, without JTAG.
+- 126 704 of 126 976 bytes of flash; `naboot-1.2.0.0-tel`, the same with the
+  live JTAG telemetry back for a rabbit that misbehaves, boots in plain HTTP
+  to fit (126 872).
+
 **Done — Naboot 1.0.0.3 (2026-11-10; proven in the emulator and on a real rabbit)**
 
 - **Everything the rabbit exchanges travels encrypted.** What a TLS rabbit
@@ -293,7 +322,7 @@ is the short version.
     written (`verify_ok=1 flash=1 flash_errors=0` in the next boot's
     report), with no `/ota/` request.
 
-  Only radio and podcasts still stream in the clear (see Later).
+  Only radio and podcasts still streamed in the clear, until 1.2.0.0.
 - **The Mir:ror is a tag reader again.** Violet's USB RFID reader (2008),
   read on a real one and plugged into a Raspberry Pi
   ([`mirror/`](mirror/README.md)): a tag on it does what it does on the
@@ -355,11 +384,8 @@ is the short version.
   instead of plain HTTP, but playback starts once the whole file is in: about
   9 s for a 120 KB answer on a real rabbit, where HTTP started after 80 KB.
   Feeding the player as the records arrive would close the gap.
-- **Reclaim flash** — 3 412 bytes are spare in 1.0.0.3. `small_strings`
-  (merged, not yet in an image) gives 840 back; the measured savings are in
-  the history (Phase 8).
-- **Radio and podcasts inside the session** — they need playback while the
-  stream arrives, with the warren pacing it.
+- **Reclaim flash** — 272 bytes are spare in 1.2.0.0; the measured savings
+  still to take are in the history (Phase 8).
 
 ## Hardware
 
@@ -443,12 +469,12 @@ configuration flash sector, next to the Wi-Fi password.
 
 ```
 .
-├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.0.0.3. Forks
+├── firmware-arm/            # Naboot — custom ARM7 firmware, 1.2.0.0. Forks
 │   ├── apply-mods.py        #    RedoXyde/nabgcc wpa2: WPA3-SAE, the adoption
 │   ├── boot-mods/           #    key, HMAC bytecode, TLS 1.3 PSK, Ed25519-gated
 │   ├── crypto/              #    OTA, modernized config UI, mDNS, crash report.
 │   ├── pages/               #    Build via ./build.sh --remote HOST --runtime
-│   │                        #    {docker,podman} --mode naboot-1.0.0.3 (or
+│   │                        #    {docker,podman} --mode naboot-1.2.0.0 (or
 │   │                        #    minimal, lean, …).
 │   ├── releases/            #    the signed .sim images + their sha256 (README.md)
 │   ├── jtag/                #    ⭐ The JTAG station: a Raspberry Pi as the probe.
