@@ -13,7 +13,7 @@ Alpine or Rocky; every Containerfile lives in the repository.
 | Path | What |
 |---|---|
 | `firmware-arm/` | the ARM firmware (Naboot): `build.sh`, `apply-mods.py` (every change, as steps and modes), `crypto/`, `preflight.py` |
-| `firmware-arm/releases/` | the shipped images: the release and `minimal`; earlier ones in `archive/` |
+| `firmware-arm/releases/` | the shipped release; every earlier image in `archive/` |
 | `firmware-arm/signing/` | Ed25519 signing of a `.sim` |
 | `firmware-arm/tests/` | host tests of the crypto and protocol code (`make`) |
 | `firmware-arm/tools/` | the Metal toolchain: compiler, assembler, disassembler (`run-tests.sh`) |
@@ -161,4 +161,4 @@ that is in the rabbit.
 ## 7. A rabbit that does not come back
 
 [`firmware-arm/docs/RECOVERY.md`](../firmware-arm/docs/RECOVERY.md): the
-config page and `minimal` first, the JTAG station last.
+setup page and the release first, the JTAG station last.
