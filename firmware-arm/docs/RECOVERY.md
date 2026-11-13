@@ -13,7 +13,7 @@ bootloader. The ones that matter for flashing and recovery:
 
 | Build | `Nab.bin` | Shipped? | What's modified |
 |---|---|---|---|
-| **lean** (stable) | 107 288 B | **yes** — `../releases/naboot-lean-wpa2.signed.sim`, hardware-verified 2026-10-27 (a spoken sentence *and* both MIDI jingles, heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the WPA2 group key, the cold-state guards, the audio half-duplex fix, the bounded hardware waits — and, since 2026-10-27, `extbss`: every `.bss.*` zeroed at boot (the EAPOL state no longer starts on whatever the SRAM held), 8 KB of scratch moved to external RAM, 10 104 bytes of user stack instead of 1 916, and seven RT2501/USB failures that used to be detected and then dropped. The build the community runs. `../releases/naboot-stable.signed.sim` (113 256 B, June) is kept as the older verified fallback. |
+| **lean** (stable) | 107 288 B | **yes** — `../releases/archive/naboot-lean-wpa2.signed.sim` (archived 2026-11-13), hardware-verified 2026-10-27 (a spoken sentence *and* both MIDI jingles, heard) | Everything in `full` **plus** the mDNS announcer *and resolver*, `--gc-sections`, the WPA2 group key, the cold-state guards, the audio half-duplex fix, the bounded hardware waits — and, since 2026-10-27, `extbss`: every `.bss.*` zeroed at boot (the EAPOL state no longer starts on whatever the SRAM held), 8 KB of scratch moved to external RAM, 10 104 bytes of user stack instead of 1 916, and seven RT2501/USB failures that used to be detected and then dropped. The build the community runs. Superseded by 1.0.0.x; archived in `../releases/archive/`. |
 | **minimal** (rescue) | 119 800 B | **yes** — `../releases/naboot-minimal.signed.sim`, rebuilt 2026-10-23 | C side only: TweetNaCl + `nab_sig` + the `OPverifySig` opcode, plus the `.bss`/audio-FIFO fix and the EAPOL and interpreter fixes. **`boot.0.0.0.13.mtl` is byte-identical to vanilla wpa2 HEAD** — stock bootloader UI, stock `httpflash` (accepts any `.sim`, signed or not), no mDNS. The parachute. |
 | **full** | 114 456 B | no — build it yourself | Everything in `minimal` **plus**: `httpflash` rejects unsigned/tampered `.sim`, 4 config-mode HTML pages modernized (dark theme, semantic HTML, mobile viewport). |
 | **phase8-rom** (experimental) | 110 084 B | no | `full` + `--gc-sections` + the Phase 8 size work (portal pages moved to C-side flash ROM via an `OPpageRender` opcode, orphan helpers pruned, debug echoes removed). Untested on hardware as of 2026-06-01, and it no longer stacks on `lean-wpa3`: `rom_pages` and `wpa3_boot_pw` both take opcode 153. |
@@ -31,7 +31,7 @@ files we actually **ship** live in `../releases/`:
 
 ```
 firmware-arm/releases/
-├── naboot-stable.signed.sim   ← upload this one (normal — mode `lean`, hardware-verified)
+├── naboot-1.0.0.3.signed.sim  ← upload this one (normal — the release)
 └── naboot-minimal.signed.sim  ← upload this one (rescue / rollback — mode `minimal`)
 ```
 
@@ -158,8 +158,8 @@ directly (bit-bang) with **F/F Dupont wires**.
    *modernized* setup page (`page_a`), unless this is the first flash — in
    which case you still see the 2006 UI.
 5. Click **firmware upgrade** → `page_u` → upload
-   `../releases/naboot-stable.signed.sim`. (`full` is not shipped — see above; the
-   shipped stable build is mode `lean`.)
+   `../releases/naboot-1.0.0.3.signed.sim`. (`full` is not shipped — see above.
+   The old `naboot-stable` is archived in `../releases/archive/`.)
 6. **Do not power off during the flash** (~30 s). When done, the rabbit
    reboots on its own.
 7. **Wait a minute.** From the 2026-11-08 builds on the rabbit reboots and
