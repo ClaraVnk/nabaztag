@@ -15,27 +15,47 @@
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware we ship: the hardware-verified release the
-community downloads (1.0.0.3). Every earlier release, and the old `minimal`
+community downloads (1.2.0.0). Every earlier release, and the old `minimal`
 rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.1.0.0-beta.signed.sim` — beta, at your own risk
+## `naboot-1.2.0.0.signed.sim` — the release
 
 | | |
 |---|---|
-| **Status** | **Beta.** Not the release: Le Terrier offers 1.0.0.3, and this image only to a rabbit whose owner asked for it. **Ask Clara directly** to try it, with the runtime bytecode that goes with it. |
 | **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
-| **Build mode** | `naboot-1.1.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3 with the fixes of the 2026-11 security review ([`../docs/SECURITY-FINDINGS-2026-11.md`](../docs/SECURITY-FINDINGS-2026-11.md)), the safer flash writer ([`../docs/OTA-ANTIBRICK.md`](../docs/OTA-ANTIBRICK.md)) and 15 KB of dead code removed. **No WEP.** |
-| **Firmware version** | `1.1.0.0` |
-| **Build mark** | `z=2611121004` |
-| **Size** | 112 572 of 126 976 bytes (14 404 free) |
+| **Build mode** | `naboot-1.2.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3, plus HTTPS with the certificate checked (`tls_certs`), the first boot over HTTPS, and the owner's way out (`owner_unlock`) |
+| **Firmware version** | `1.2.0.0` (the boot URL says `v=1.2.0.0`) |
+| **Size** | 126 696 of 126 976 bytes |
 | **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
-| **sha256** | `1f1132a063abd87cb8daff25c99a20ba7cee25c4b295a5d3d684051152aafe5c` |
+| **sha256** | `fb26f171ba61510e85aa…` (the `.sim`); the plain image, `naboot-1.2.0.0.bin` on the GitHub release, is `ea1187fed55f…` |
 
-Proven in the emulator before anyone flashed it. CCMP replays are counted
-and reported over the JTAG telemetry, not refused yet: see the findings.
+What it brings:
 
-## `naboot-1.0.0.3.signed.sim` — the release
+- **The first boot over HTTPS.** Before the adoption key exists, the rabbit
+  fetches its bytecode on port 443 and checks the Terrier's chain against one
+  root built into the firmware (ISRG Root X2), no fallback to plain HTTP.
+  Certificates are refused if they expired before the build date.
+- **Updates from GitHub.** A Terrier can send the rabbit to this release's
+  `.bin`: the rabbit downloads it over HTTPS itself and checks our signature,
+  which comes with the order, before it writes a byte.
+- **Sounds and streams from any `https://` URL**, the certificate checked.
+- **The owner's way out.** Hold the head button while the rabbit starts
+  installing an image, and it accepts one we did not sign: you can always
+  leave Naboot for another firmware. Without the button, only our signature.
+
+**In the emulator:** the HTTPS first boot (and the real Terrier's four-certificate
+chain, checked by the same C code on the host), the owner's way out with and
+without the button, the GitHub update, and the upgrade to this image from the
+stock Violet firmware (config page), from a stock rabbit adopted on the
+Terrier (over the air), and from 1.0.0.3 (inside the session).
+
+**On a rabbit (2026-11-13):** installed over the air on 1.0.0.3 at 15:07; it
+plays `https://` streams and fetches its runtime over TLS.
+
+`naboot-1.0.0.3` is archived below: flash it back if this one gives you trouble.
+
+## `archive/naboot-1.0.0.3.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|
@@ -387,14 +407,13 @@ flash + recovery procedure and `../docs/BRICK_FORENSICS.md` if anything goes wro
 ## Reproducing it
 
 ```sh
-# on the dev VM (NEVER build on the HA host) — signing happens locally on the
-# Mac, and only with --sign
-./build.sh --mode lean --remote <user@dev-vm> --runtime podman --sign
+# on the dev VM (NEVER build on the HA host) — signing happens locally on the Mac
+./build.sh --mode lean --remote <user@dev-vm> --runtime podman
 ```
 
 ```sh
 # the minimal rescue build, same way
-./build.sh --mode minimal --remote <user@dev-vm> --runtime podman --sign
+./build.sh --mode minimal --remote <user@dev-vm> --runtime podman
 # → bin/minimal/firmware0.0.0.13.signed.sim, copied here as naboot-minimal.signed.sim
 ```
 
