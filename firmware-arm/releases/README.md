@@ -53,6 +53,19 @@ WPA2 holds.
 `naboot-1.0.0.2` below stays as the previous release: flash it back if this
 one gives you trouble.
 
+## `archive/naboot-1.1.0.0-beta.signed.sim` — archived (a beta, never the release)
+
+| | |
+|---|---|
+| **Status** | Archived 2026-11-13. A beta that only Nabazprout ran; never offered to everyone. Its fixes are all in 1.2.0.0. |
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.1.0.0` (`firmware-arm/apply-mods.py`): 1.0.0.3 with the fixes of the 2026-11 security review, the safer flash writer and 15 KB of dead code removed. **No WEP.** |
+| **Firmware version** | `1.1.0.0` |
+| **Build mark** | `z=2611121004` |
+| **Size** | 112 572 of 126 976 bytes (14 404 free) |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `1f1132a063abd87cb8daff25c99a20ba7cee25c4b295a5d3d684051152aafe5c` |
+
 ## `archive/naboot-1.0.0.2.signed.sim` — archived (the previous release)
 
 | | |
@@ -119,7 +132,7 @@ held it six times and could not take an image this size.
   never passes, on the config page too. Unplug and replug it — the warren
   then serves it the recovery bytecode — and use the update button.
 
-1.0.0.2, 1.0.0.0, `naboot-stable` (0.0.0.13) and `naboot-lean-wpa2` (the same
+1.1.0.0 (a beta), 1.0.0.2, 1.0.0.0, `naboot-stable` (0.0.0.13) and `naboot-lean-wpa2` (the same
 file as stable under another name) are **archived** (2026-11-13) in
 [`archive/`](archive/): no longer offered, kept so a rabbit can still be
 rolled back to them. Every new rabbit goes to 1.0.0.3.
