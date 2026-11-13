@@ -44,6 +44,14 @@
 # (bytecode/patch_ota_in_session.py: `ota:` lines, the verifySig gate,
 # flashFirmware) or an /ota/ fetch over HTTP.
 #
+# --ota-github (with --ota) puts the image on a fake GitHub instead: an
+# openssl s_server over HTTPS (a Let's Encrypt-shaped test chain, its root
+# given to the Terrier as TERRIER_ROOTS_BUNDLE) serving the plain image, and
+# /data/ota/naboot-latest.signed.sim.url naming it. A rabbit on Naboot
+# 1.2.0.0 with bytecode/patch_ota_https.py is then sent there and fetches
+# it itself (terrier ota_github.py): `ota: FW over https`, the verifySig
+# gate, flashFirmware.
+#
 # --speak-at S --speak TEXT has the warren make the rabbit say TEXT S seconds
 # into boot 2, the way an owner's script does: an owner account and an API
 # token are made for the rabbit after the confirmation, and at S the API's
@@ -77,7 +85,7 @@
 # XMPP -- and what the Terrier logs for that connection. Ports are chosen
 # high and odd so several runs can coexist on one host.
 set -u
-TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=() ; OTA=
+TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=() ; OTA= ; OTA_GH=
 ATS=() ; ENVS=() ; FAKE_RADIO= ; EPISODE_BYTES=600000
 BASE=${BASE:-18700}
 while [ $# -gt 0 ]; do
@@ -99,6 +107,7 @@ while [ $# -gt 0 ]; do
     --speak) SPEAK=$2; shift 2 ;;
     --api) APIS+=("$2" "$3"); shift 3 ;;
     --ota) OTA=$2; shift 2 ;;
+    --ota-github) OTA_GH=1; shift ;;
     --at) ATS+=("$2" "$3" "$4"); shift 4 ;;
     --env) ENVS+=(-e "$2"); shift 2 ;;
     --fake-radio) FAKE_RADIO=$2; shift 2 ;;
@@ -114,6 +123,8 @@ mkdir -p "$OUT/data" "$OUT/host"
 OUT="$(cd "$OUT" && pwd)"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log "$OUT"/mitm.log "$OUT"/audio-* "$OUT"/radio.log
 cp "$BYTECODE" "$OUT/data/baseline.hybrid"
+# A Terrier from 2026-11-13 on (terrier #164) reads the TLS runtime here.
+mkdir -p "$OUT/data/bytecode" && cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"   # bootbc.py reads both
 
@@ -122,6 +133,44 @@ if [ -n "$FAKE_RADIO" ]; then
   python3 "$HERE/tools/fake_radio.py" --port $RADIO --kbps "$FAKE_RADIO" --episode-bytes "$EPISODE_BYTES" > "$OUT/radio.log" 2>&1 &
   RADIO_PID=$!
   ENVS+=(-e TERRIER_WEBHOOK_ALLOW_PRIVATE=1)
+fi
+GH=$((BASE+82)); GH_PID=
+if [ -n "$OTA_GH" ]; then
+  mkdir -p "$OUT/gh"
+  "${PY:-python3}" - "$OUT" <<'PY' || { echo "!! the fake GitHub's chain could not be made (python3 with cryptography: PY=...)" >&2; exit 2; }
+import datetime, sys
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+out = sys.argv[1]
+now = datetime.datetime.now(datetime.timezone.utc)
+def name(cn): return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+def cert(subject, key, issuer, ikey, h, ca, san=None):
+    b = (x509.CertificateBuilder().subject_name(name(subject)).issuer_name(name(issuer))
+         .public_key(key.public_key()).serial_number(x509.random_serial_number())
+         .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=60))
+         .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+    if ca:
+        b = b.add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), critical=True)
+    if san:
+        b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(san)]), critical=False)
+    return b.sign(ikey, h)
+# Shaped like release-assets.githubusercontent.com's: an RSA root (ISRG X1),
+# an RSA intermediate, an RSA leaf.
+rk = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+ik = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+lk = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+root = cert("Proof Root X1", rk, "Proof Root X1", rk, hashes.SHA256(), True)
+inter = cert("Proof YR1", ik, "Proof Root X1", rk, hashes.SHA256(), True)
+leaf = cert("github.test", lk, "Proof YR1", ik, hashes.SHA256(), False, "github.test")
+pem = lambda c: c.public_bytes(serialization.Encoding.PEM)
+open(f"{out}/data/bundle.pem", "wb").write(pem(root))
+open(f"{out}/gh/chain.pem", "wb").write(pem(leaf) + pem(inter))
+open(f"{out}/gh/key.pem", "wb").write(lk.private_bytes(serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+PY
+  ENVS+=(-e TERRIER_ROOTS_BUNDLE=/data/bundle.pem -e TERRIER_WEBHOOK_ALLOW_PRIVATE=1 --add-host github.test:127.0.0.1)
 fi
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --network host "${ENVS[@]}" \
@@ -184,6 +233,16 @@ if [ -n "$OTA" ]; then
   podman exec "$NAME" mkdir -p /data/ota
   podman cp "$OTA" "$NAME":/data/ota/naboot-latest.signed.sim
   echo "   staged $(basename "$OTA") as naboot-latest"
+  if [ -n "$OTA_GH" ]; then
+    # The plain image, as the release's .bin would hold it: the warren's own
+    # binary form of the .sim it just staged.
+    podman exec "$NAME" python3 -c "import urllib.request; open('/data/gh.bin','wb').write(urllib.request.urlopen('http://127.0.0.1:$HTTP/ota/naboot-latest.signed.bin').read())"
+    mv "$OUT/data/gh.bin" "$OUT/gh/naboot.bin"
+    ( cd "$OUT/gh" && openssl s_server -accept $GH -tls1_3 -cert chain.pem -key key.pem -WWW -quiet > "$OUT/gh.log" 2>&1 ) &
+    GH_PID=$!
+    echo "https://github.test:$GH/naboot.bin" > "$OUT/data/ota/naboot-latest.signed.sim.url"
+    echo "   fake GitHub on :$GH serves $(stat -c %s "$OUT/gh/naboot.bin") bytes"
+  fi
 fi
 T0=$(date +%s)
 TIMERS=()     # the calls on a clock: waited for, unlike the fake radio
@@ -264,9 +323,9 @@ if [ ${#ATS[@]} -gt 0 ]; then
 fi
 if [ -n "$SPEAK_AT" ]; then
   echo "   the sound, rabbit side (boot 2):"
-  grep -a "res: \|mic: \|ota: \|verifySig gate\|flashFirmware\|microphone: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
+  grep -a "https: \|gw: the rabbit opened .*:$GH\$\|res: \|mic: \|ota: \|verifySig gate\|flashFirmware\|microphone: \|exec ST\|exec MU\|exec CH\|loading \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HTTP\$" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | tail -24
   echo "   the sound, terrier side:"
-  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: \|firmware image\|OTA: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
+  grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: \|firmware image\|OTA: \|fetches its firmware\|https: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 if [ -n "$SCENARIO2" ]; then
   echo "   terrier, the tag:"
@@ -275,4 +334,5 @@ fi
 podman rm -f "$NAME" >/dev/null 2>&1
 [ -n "$MITM_PID" ] && kill $MITM_PID 2>/dev/null
 [ -n "$RADIO_PID" ] && kill $RADIO_PID 2>/dev/null
+[ -n "$GH_PID" ] && kill $GH_PID 2>/dev/null
 echo "proof-done: $OUT"
