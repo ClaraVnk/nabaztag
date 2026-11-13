@@ -24,6 +24,9 @@ OpenJabNab, no openab. It replaces the dead Violet servers.
   and can push `violet:packet` commands. **Every byte the rabbit sends is
   logged** — this doubles as the platform to finish reverse-engineering the
   command/event packets on the real device.
+- **XMPP and boot over TLS (`:5223`)** — for a Naboot rabbit whose adoption
+  colours you confirmed: TLS 1.3 keyed from its own adoption key (see
+  *Adoption key and TLS* below).
 - **Control API (host `:8099`, container `:8080`)** — small HTTP API for Home Assistant.
 
 
@@ -58,15 +61,11 @@ required.
 > logged `bootcode file not found` and answered `/vl/bc.jsp` with a 500 — the
 > rabbit booted and sat there silently. If you see that, update the add-on.
 
-**The stock Violet / OpenJabNab bytecodes** are a different matter: they are
-Violet's proprietary firmware, so they are **not** committed here. The add-on
-image fetches them at build time, and you can fetch them the same way if you
-want the original behaviour instead of the hybrid:
-
-```sh
-curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.violet
-curl -fsSLO https://raw.githubusercontent.com/OpenJabNab/OpenJabNab/master/http-wrapper/ojn_local/bootcode/bootcode.ojn
-```
+**The stock Violet / OpenJabNab bytecodes** are in
+`nabaztag-violet/vendor/openjabnab/` (`bootcode.violet`, `bootcode.ojn`, from
+OpenJabNab's commit 640257f, with their SHA-256), copied into the image as
+`/app/bootcode.violet` and `/app/bootcode.ojn`. Use one of them if you want the
+original behaviour instead of the hybrid.
 
 Verify what you downloaded:
 
@@ -108,7 +107,7 @@ Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
    violet:iq:sources → bound and idle`. The rabbit then **breathes** = operational.
 
 > **Rabbit on its own VLAN/subnet?** Allow it through the firewall to this host on
-> TCP **80** and **5222**, and give it a **DHCP reservation** — a changed IP
+> TCP **80**, **5222** and **5223**, and give it a **DHCP reservation** — a changed IP
 > silently breaks the (IP-scoped) firewall rule (this cost us hours). On a flat
 > home network there's nothing to do.
 
@@ -135,17 +134,49 @@ add-on: the Wi-Fi is the firmware's business, not the server's.
 Later firmware updates can be pushed from Home Assistant through `/api/ota`
 (see *Control API*), no more trips to the configuration page.
 
-**What stays on the public warren for now:** the per-rabbit adoption key and
-the **TLS-encrypted** session are only spoken by
-[Le Terrier](https://terrier.cyberloutre.fr/). With this add-on, the rabbit
-talks to Home Assistant **in the clear on your local network**, as a stock
-rabbit always did. WPA3 with H2E-only access points is in beta.
+WPA3 with H2E-only access points is in beta.
 
-> **A rabbit already adopted on Le Terrier** (its colours confirmed) only
-> accepts a bytecode signed with its key, which this add-on cannot produce:
-> it will not boot here as it is. Reset its configuration first — head button
-> held at power-up, then `http://192.168.0.1/reset` — and set it up again as
-> above. Wi-Fi, server and key are all forgotten.
+### Adoption key and TLS (0.17.0)
+
+A Naboot rabbit (1.0.0.0 or later) runs one key exchange with its server the
+first time it boots there, and lights **five colours** on its belly. The
+add-on computes the same five. If they match, nobody stood in the middle of
+the exchange, and the key becomes the rabbit's:
+
+1. Plug the rabbit in. The add-on's log says
+   `kx: <mac> agreed a key; its belly shows top …, left …` and Home
+   Assistant shows a notification.
+2. Open **`http://<HAOS_IP>:8099/adoption`** (add `?token=<api_token>` if
+   you set one). Compare the five colours, laid out as on the belly, and
+   answer **Yes, the same** or **No, they differ**.
+3. Unplug the rabbit and plug it back in. From then on:
+   - its runtime bytecode is **signed** with its key — the rabbit refuses any
+     other, so nobody on your network can hand it a bytecode of their own;
+   - its XMPP session runs inside **TLS 1.3** on port **5223**, and from the
+     next boot on, so does the bytecode download. Nobody on the network can
+     read what it says or hears, or send it commands;
+   - what it plays comes down that session too: the add-on's sounds and
+     choreographies (up to 200 KB, three at a time), its microphone stream
+     (`RS session` instead of UDP), the RFID tags it reads, and the firmware
+     images pushed by `/api/ota`, which it still verifies itself before it
+     flashes;
+   - the plain port refuses that rabbit's MAC.
+
+A stock rabbit, or a Naboot one before you answer, is served exactly as
+before. What stays outside the session: radio and podcast streams, and any
+sound on another host's URL, which the rabbit fetches itself; a sound over
+200 KB, sent by URL as before; and a push-to-talk recording (head button
+held), which the runtime still posts to `record.jsp` over plain HTTP.
+
+The keys are in `/data/adoption-keys.json`, kept by Home Assistant's
+backups. **Losing that file locks a confirmed rabbit out**: it refuses every
+unsigned bytecode. The way back is the rabbit's own reset — head button held
+while plugging it in, `http://192.168.0.1/reset`, set it up again — then
+**Forget this key** on the adoption page, so it can run a new exchange.
+
+> **Moving a rabbit between Le Terrier and this add-on.** Its key belongs to
+> one server. A rabbit confirmed on Le Terrier needs the same reset before it
+> can be adopted here, and the other way round.
 
 ## Control API (Home Assistant)
 

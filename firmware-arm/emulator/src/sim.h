@@ -82,7 +82,7 @@ enum {
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
-  SIM_EV_BUTTON,        /* the head button goes down, or comes back up     */
+  SIM_EV_BUTTON,        /* the head button is pressed, or released */
   SIM_EV_INJECT_PLAIN,  /* an attacker's plaintext data frame     */
   SIM_EV_INJECT_PROBE,  /* a probe request with an oversized SSID (config mode) */
   SIM_EV_DHCP_ROGUE,    /* an attacker's unsolicited DHCP ACK */

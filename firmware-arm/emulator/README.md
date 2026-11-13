@@ -223,13 +223,14 @@ timing moves.
 
 Half of this firmware is Metal, so half the fixes are patches to `.mtl` files
 and until `tools/mkbytecode.sh` existed there was no way to put one in front
-of the emulator. It applies a patch, preprocesses and compiles, in a container
-that can load `mtl_compiler` — which is a 32-bit x86 binary that a current
-x86_64 host has no loader for, and which does not build from source with a
-current gcc either.
+of the emulator. It applies a patch, preprocesses and compiles with
+`firmware-arm/tools/mtl_comp.py`, byte-identical to nabgcc's 32-bit C++
+`mtl_compiler`: python3 and perl, no container. (It used to run that binary in
+a Debian image with an i386 loader; a current x86_64 host has none, and the
+binary does not build with a current gcc.)
 
 ```sh
-./tools/mkbytecode.sh --sources <OpenJabNab>/bootcode   --compiler <nabgcc>/mtl/mtl_compiler   --patch ../../bytecode/patch_wifi_reconnect.py --out with33.hybrid
+./tools/mkbytecode.sh --sources <OpenJabNab>/bootcode   --patch ../../bytecode/patch_wifi_reconnect.py --out with33.hybrid
 make NABGCC=<tree> BYTECODE=$PWD/with33.hybrid vm
 ```
 
@@ -880,8 +881,8 @@ uses it to prove the microphone inside the TLS session.
 
 **The rest of the body.** The RFID reader has a scenario-driven tag list
 (`at <ms> rfid <16 hex>`, `rfid none`) and no protocol: `rfid_read` returns
-zeros. Nothing presses a button yet; the hook is there (`hw_press`), the
-scenario directive is not.
+zeros. The head button is `at <ms> button down` and `at <ms> button up`
+(`hw_press`): held past the runtime's threshold it is a long click.
 
 ## Layout
 

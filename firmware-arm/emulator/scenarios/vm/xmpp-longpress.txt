@@ -1,0 +1,24 @@
+# bytecode: bootloader
+#
+# A long press of the head of a rabbit whose owner confirmed its adoption
+# key, against a real Terrier on the host (--realtime). Run as boot 2 of
+# tools/xmpp-tls-proof.sh --scenario, after the key is confirmed: the session
+# runs TLS 1.3 PSK (bound about 80 s in), and at 120 s the head button is
+# held for three seconds.
+#
+# What the two runtimes do with it, read in the Terrier's log:
+#
+#   control (the runtime before bytecode/patch_btn_in_session.py): the
+#      recording chime, then `POST /vl/record.jsp?...` on port 80 -- the room
+#      in plain HTTP, which the Terrier answers 404 (2026-11-12, an owner's
+#      first long press);
+#   fix: `button: <mac> long_click` in the Terrier's log, from inside the TLS
+#      session, and no connection to port 80 at all.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 160000
+
+at 20000 expect RUN
+at 120000 button down
+at 123000 button up
+at 155000 expect RUN

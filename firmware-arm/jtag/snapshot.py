@@ -76,7 +76,7 @@ def symbols(elf: Path) -> dict[str, tuple[int, int]]:
                      line.strip())
         if not m:
             continue
-        addr, size, kind, name = (int(m.group(1), 16), int(m.group(2), 16),
+        addr, size, _kind, name = (int(m.group(1), 16), int(m.group(2), 16),
                                   m.group(3), m.group(4))
         # Address, not section letter. This linker script puts some
         # initialised globals in a section nm reports as 'T', and filtering on
