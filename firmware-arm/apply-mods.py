@@ -3764,6 +3764,52 @@ def patch_firmware_version(root: Path) -> None:
     print(f"[ok]   {q}: FIRMWARE {want} (boot URL v= and the setup page)")
 
 
+def patch_factory_server(root: Path) -> None:
+    """After /reset, point the rabbit at the Terrier, not at Violet's server.
+
+    `confReset` (the config page's reset, any URI starting with `r`) copies
+    `conf0` over the configuration sector, and Violet's conf0 starts with
+    the server `r.nabaztag.com/vl`. On 2026-11-14 a second-hand rabbit wiped
+    that way breathed for the first time in its new home -- on a stranger's
+    OpenJabNab that answers at r.nabaztag.com today ("ping nabaztag.local"),
+    key exchange included, while the Terrier never saw it. Every rabbit an
+    owner resets goes there unless they retype the server.
+
+    The field is 41 bytes, NUL-terminated, padded with '-': the new name
+    keeps the same 41, so every offset after it (CONF_NETDHCP=41, ...) is
+    untouched. NAB_FACTORY_SERVER overrides it for another warren.
+
+    And the config page offers the same server in place of Violet's, or of
+    an empty field (Clara, the same day: "pré-remplir l'adresse du
+    terrier"): a rabbit flashed without a reset still holds its last
+    server, and the page showed r.nabaztag.com for the owner to save again.
+    Any other address -- a home warren -- is shown as it is.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    want = os.environ.get("NAB_FACTORY_SERVER") or "terrier.cyberloutre.fr/vl"
+    if not re.fullmatch(r"[A-Za-z0-9.:/-]{1,40}", want):
+        sys.exit(f"FAIL {q}: NAB_FACTORY_SERVER must be 1..40 plain characters, got {want!r}")
+    old = '"r.nabaztag.com/vl\\0-----------------------\\\n'
+    new = '"' + want + "\\0" + "-" * (40 - len(want)) + '\\\n'
+    if new in t:
+        print(f"[skip] {q}: factory server already {want}")
+        return
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: conf0 does not start with Violet's server line as "
+                 f"this step expects (found {t.count(old)})")
+    t = t.replace(old, new, 1)
+    page_old = '\t\t\t["<SERVER>" filterweb server]::\n'
+    page_new = ('\t\t\t["<SERVER>" filterweb (if (!strcmp server "r.nabaztag.com/vl") || '
+                f'(strlen server)==0 then "{want}" else server)]::\n')
+    if t.count(page_old) != 1:
+        sys.exit(f"FAIL {q}: the config page's <SERVER> line is not the one "
+                 f"this step expects (found {t.count(page_old)})")
+    t = t.replace(page_old, page_new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: factory server {want} (what /reset leaves, what the page offers)")
+
+
 def patch_boot_marker(root: Path) -> None:
     """Make the running build say so in its own boot URL, with no opcode.
 
@@ -9242,7 +9288,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.2", "naboot-1.2.0.1-kxprobe", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9379,6 +9425,9 @@ def main() -> int:
         "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # 1.2.0.0 with the key exchange that fits a real ARM7, and says how it went.
         "naboot-1.2.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+        # 1.2.0.1, and /reset leaves the Terrier as its server, not Violet's
+        # r.nabaztag.com, a stranger's server today (2026-11-14, …5503).
+        "naboot-1.2.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # A test image (kx_probe), never a release: the key exchange at every boot.
         "naboot-1.2.0.0-kxprobe": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,kx_probe,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # The test image leaves owner_unlock out to fit (32 bytes over, 2026-11-13).
@@ -9556,6 +9605,9 @@ def main() -> int:
             "Without it they land in .bss and the startup zero-loop erases "
             "them -- which is the whole thing this step exists to stop."
         )
+    if "factory_server" in steps and "bootloader" not in steps:
+        sys.exit("FAIL step list: factory_server edits the bootloader, which "
+                 "minimal must keep byte-identical to vanilla wpa2.")
     if "firmware_version" in steps and "bootloader" not in steps:
         sys.exit(
             "FAIL step list: firmware_version edits the bootloader, and a step "
@@ -9669,6 +9721,7 @@ def main() -> int:
         "extbss": patch_extbss,
         "persist_counters": patch_persist_counters,
         "firmware_version": patch_firmware_version,
+        "factory_server": patch_factory_server,
         "boot_tls": patch_boot_tls,
         "reset_reason": patch_reset_reason,
         "dcc_console": patch_dcc_console,
