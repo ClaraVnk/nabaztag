@@ -3778,6 +3778,12 @@ def patch_factory_server(root: Path) -> None:
     The field is 41 bytes, NUL-terminated, padded with '-': the new name
     keeps the same 41, so every offset after it (CONF_NETDHCP=41, ...) is
     untouched. NAB_FACTORY_SERVER overrides it for another warren.
+
+    And the config page offers the same server in place of Violet's, or of
+    an empty field (Clara, the same day: "pré-remplir l'adresse du
+    terrier"): a rabbit flashed without a reset still holds its last
+    server, and the page showed r.nabaztag.com for the owner to save again.
+    Any other address -- a home warren -- is shown as it is.
     """
     q = root / "mtl/boot/boot.0.0.0.13.mtl"
     t, nl = read_flat(q)
@@ -3792,8 +3798,16 @@ def patch_factory_server(root: Path) -> None:
     if t.count(old) != 1:
         sys.exit(f"FAIL {q}: conf0 does not start with Violet's server line as "
                  f"this step expects (found {t.count(old)})")
-    write_flat(q, t.replace(old, new, 1), nl)
-    print(f"[ok]   {q}: factory server {want} (what /reset leaves)")
+    t = t.replace(old, new, 1)
+    page_old = '\t\t\t["<SERVER>" filterweb server]::\n'
+    page_new = ('\t\t\t["<SERVER>" filterweb (if (!strcmp server "r.nabaztag.com/vl") || '
+                f'(strlen server)==0 then "{want}" else server)]::\n')
+    if t.count(page_old) != 1:
+        sys.exit(f"FAIL {q}: the config page's <SERVER> line is not the one "
+                 f"this step expects (found {t.count(page_old)})")
+    t = t.replace(page_old, page_new, 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: factory server {want} (what /reset leaves, what the page offers)")
 
 
 def patch_boot_marker(root: Path) -> None:

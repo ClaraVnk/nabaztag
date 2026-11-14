@@ -43,13 +43,21 @@ class FactoryServer(unittest.TestCase):
         self.assertEqual(len(after.replace("\\0", "\0")), len(before.replace("\\0", "\0")))
         self.assertEqual(len(after.replace("\\0", "\0")), 41)
 
-    def test_only_that_line_changes_and_crlf_is_kept(self):
+    def test_only_those_two_lines_change_and_crlf_is_kept(self):
         old = open(BOOT, newline="").read()
         am.patch_factory_server(self.root)
         new = open(self.q, newline="").read()
         self.assertEqual(old.count("\r\n"), new.count("\r\n"))
         diff = [i for i, (a, b) in enumerate(zip(old.split("\r\n"), new.split("\r\n"))) if a != b]
-        self.assertEqual(len(diff), 1)
+        self.assertEqual(len(diff), 2)
+
+    def test_the_page_offers_the_terrier_in_place_of_violet_or_nothing(self):
+        am.patch_factory_server(self.root)
+        t = open(self.q, newline="").read()
+        line = [x for x in t.split("\r\n") if '["<SERVER>" filterweb' in x][0]
+        self.assertIn('!strcmp server "r.nabaztag.com/vl"', line)
+        self.assertIn("(strlen server)==0", line)
+        self.assertIn('then "terrier.cyberloutre.fr/vl" else server', line)
 
     def test_it_runs_twice(self):
         am.patch_factory_server(self.root)
