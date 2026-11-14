@@ -180,6 +180,21 @@ image`, `flash writes 1`, `resets asked 0`, and the heap at its highest.
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
 
+The two runtimes the warren serves, rebuilt from this repository:
+
+```sh
+# today's: baseline-https (Naboot 1.2.x) and baseline-tls (firmwares 1.0.0.x)
+RUNTIME=https bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-https.hybrid
+RUNTIME=tls   bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-tls.hybrid
+# the control: the ones served now, byte for byte (prints match or not)
+bytecode/reproduce-served.sh https /tmp/served-https.hybrid
+bytecode/reproduce-served.sh tls   /tmp/served-tls.hybrid
+```
+
+`<tree>` is a copy of `firmware-arm/vendor/openjabnab/bootcode`. A new
+runtime is proven in the emulator against that control (same scenario, the
+control first) before it goes to `/data/bytecode/`.
+
 ```sh
 cp -r firmware-arm/vendor/openjabnab/bootcode /tmp/tree     # stock Violet sources
 bash bytecode/build-bytecode.sh /tmp/tree firmware-arm/tools/mtl_comp.py /tmp/runtime.hybrid

@@ -26,6 +26,14 @@
 #                   mtl_compiler binary (invoked `CC -s IN OUT`).
 #   [out.bin]       output (default: <bootcode-dir>/bootcode_hybrid.bin)
 #
+# RUNTIME=tls builds the warren's baseline-tls, for firmwares 1.0.0.x that
+# lack the https opcodes: no radio in the session, no DHCP/DNS hardening, no
+# HTTP cap, no https (they came later, on 1.2.x). Byte-identical to the one
+# served since 2026-11-12 (f62c1ca1...) with EARS_REARM=0; RUNTIME=https (the
+# default) is baseline-https, byte-identical to its 7d673c4b... with
+# EARS_REARM=0 (checked 2026-11-14). EARS_REARM=1 is the default since the
+# turned-ear fix.
+#
 # All patch scripts are idempotent; re-running on an already-patched tree is safe.
 set -euo pipefail
 
@@ -105,8 +113,10 @@ echo "==> patch_ota_in_session.py  (firmware updates inside the session)"
 python3 "$HERE/patch_ota_in_session.py" "$BC/sources/main.mtl"
 # A radio or a podcast comes down the session as well, pulled by the rabbit
 # and played as it arrives: `ST live:N`, when the warren flipped "xmpp-live:0".
-echo "==> patch_live_in_session.py  (radio and podcasts inside the session)"
-python3 "$HERE/patch_live_in_session.py" "$BC/sources/main.mtl"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_live_in_session.py  (radio and podcasts inside the session)"
+  python3 "$HERE/patch_live_in_session.py" "$BC/sources/main.mtl"
+fi
 # Blanks ahead of a stanza (a whitespace keepalive) no longer swallow it
 # and every stanza after it.
 echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
@@ -114,25 +124,35 @@ python3 "$HERE/patch_xml_leading_blank.py" "$BC/sources/xmlparser.mtl"
 
 # A DHCP reply is trusted only in a window after we asked and with our id;
 # without it an unsolicited ACK could rewrite the rabbit's IP/gateway/DNS.
-echo "==> patch_dhcp_xid.py  (DHCP replies checked)"
-python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_dhcp_xid.py  (DHCP replies checked)"
+  python3 "$HERE/patch_dhcp_xid.py" "$BC/sources/dhcp.mtl"
+fi
 
 # DNS query ids are random (harder to forge a reply, which the SRV path turns
 # into the XMPP server) and reply record counts are bounded (no reboot).
-echo "==> patch_dns_antispoof.py  (random DNS ids, bounded counts)"
-python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_dns_antispoof.py  (random DNS ids, bounded counts)"
+  python3 "$HERE/patch_dns_antispoof.py" "$BC/sources/dns.mtl"
+fi
 
 # An HTTP_NORMAL answer is counted as it arrives and dropped past 16 KB (the
 # hex .sim OTA request carries its own, larger ceiling): a server or a host
 # on the path can no longer fill the heap, which was a reboot.
-echo "==> patch_http_cap.py  (HTTP_NORMAL answers bounded)"
-python3 "$HERE/patch_http_cap.py" "$BC/sources"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_http_cap.py  (HTTP_NORMAL answers bounded)"
+  python3 "$HERE/patch_http_cap.py" "$BC/sources"
+fi
 
-echo "==> patch_https_play.py  (https:// streams played by the rabbit itself, Naboot 1.2.0.0)"
-python3 "$HERE/patch_https_play.py" "$BC/sources"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_https_play.py  (https:// streams played by the rabbit itself, Naboot 1.2.0.0)"
+  python3 "$HERE/patch_https_play.py" "$BC/sources"
+fi
 
-echo "==> patch_ota_https.py  (an update fetched by the rabbit itself over HTTPS, Naboot 1.2.0.0)"
-python3 "$HERE/patch_ota_https.py" "$BC/sources"
+if [ "${RUNTIME:-https}" != tls ]; then
+  echo "==> patch_ota_https.py  (an update fetched by the rabbit itself over HTTPS, Naboot 1.2.0.0)"
+  python3 "$HERE/patch_ota_https.py" "$BC/sources"
+fi
 
 # A long press of the head goes to the warren as a long_click when the
 # warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
@@ -147,8 +167,10 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
-echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
-python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"
+if [ "${EARS_REARM:-1}" = 1 ]; then
+  echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
+  python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"
+fi
 # A measurement build only (2026-11-14, ears turned by hand never reported):
 # never in the runtime the warren serves to everyone.
 if [ "${EARS_TELEMETRY:-}" = 1 ]; then
@@ -175,8 +197,12 @@ esac
 python3 - "$OUT" <<'PY'
 import sys
 b = open(sys.argv[1], "rb").read()
-for lit in (b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
-            b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0", b"xmpp-btn:0"):
+import os
+lits = [b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
+        b"xmpp-btn:0"]
+if os.environ.get("RUNTIME", "https") != "tls":
+    lits += [b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0"]
+for lit in lits:
     n = b.count(lit)
     if n != 1:
         sys.exit(f"FAIL: {n} {lit.decode()!r} literals in the bytecode, expected 1")
