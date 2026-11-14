@@ -129,6 +129,25 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 - A proof left running holds its ports: `podman ps`, then `podman rm -f
   terrier-proof-<base>`.
 
+**An ear turned by hand** (the "amoureux" pairing, 2026-11-14).
+`at <ms> ear <0|1> <holes>` in a scenario turns a still ear by hand;
+`firmware-arm/emulator/scenarios/vm/xmpp-ears.txt` turns each ear five holes and the verdict shows
+`ears moved` in the Terrier's log, or nothing.
+
+```sh
+firmware-arm/emulator/tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --bytecode <runtime.hybrid> --emulator emu --elf <bin/naboot-1.2.0.1/Nab.elf> \
+    --out /tmp/ears --scenario scenarios/vm/xmpp-ears.txt
+# the measurement runtime: the ears' state every 30 s inside the session
+EARS_TELEMETRY=1 bytecode/build-bytecode.sh <bootcode-tree> \
+    firmware-arm/tools/mtl_comp.py /tmp/ears-telemetry.hybrid
+```
+
+Served to one rabbit by copying it to the Terrier's `/data/bytecode/` and
+choosing `ears-telemetry` in that rabbit's Developer card (admin); the
+Terrier logs each `<earsdbg xmlns="violet:nabaztag:telemetry">`. Never the
+runtime everyone gets.
+
 **A rabbit of a given release, and a rabbit nobody ever flashed.**
 
 ```sh
@@ -160,6 +179,21 @@ image`, `flash writes 1`, `resets asked 0`, and the heap at its highest.
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
+
+The two runtimes the warren serves, rebuilt from this repository:
+
+```sh
+# today's: baseline-https (Naboot 1.2.x) and baseline-tls (firmwares 1.0.0.x)
+RUNTIME=https bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-https.hybrid
+RUNTIME=tls   bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-tls.hybrid
+# the control: the ones served now, byte for byte (prints match or not)
+bytecode/reproduce-served.sh https /tmp/served-https.hybrid
+bytecode/reproduce-served.sh tls   /tmp/served-tls.hybrid
+```
+
+`<tree>` is a copy of `firmware-arm/vendor/openjabnab/bootcode`. A new
+runtime is proven in the emulator against that control (same scenario, the
+control first) before it goes to `/data/bytecode/`.
 
 ```sh
 cp -r firmware-arm/vendor/openjabnab/bootcode /tmp/tree     # stock Violet sources

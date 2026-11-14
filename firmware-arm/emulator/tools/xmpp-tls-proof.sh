@@ -13,7 +13,9 @@
 # --scenario runs boot 2 (the owner confirmed) on another scenario file than
 # xmpp-tls.txt: scenarios/vm/xmpp-rfid.txt presents a tag to the reader at
 # 120 s, and the verdict adds whether the Terrier saw it as plain rfid.jsp or
-# inside the TLS session (bytecode/patch_rfid_xmpp.py).
+# inside the TLS session (bytecode/patch_rfid_xmpp.py). scenarios/vm/
+# xmpp-ears.txt turns an ear by hand; the verdict says whether the Terrier
+# heard `ears moved` (what the "amoureux" pairing relays).
 #
 # --third boots the rabbit once more after boot 2. A Naboot 1.0.0.2 rabbit
 # learns that its owner confirmed the key from the HMAC on boot 2's bytecode,
@@ -232,6 +234,7 @@ boot() {  # boot <label> <eeprom-name> [scenario]
   echo "== boot $1: vm exit $?  $(grep -a 'final state' "$OUT/vm-$1.log" | head -1)"
   grep -a "gw: the rabbit opened" "$OUT/vm-$1.log" | grep -v ":$HTTP$\|:$MITM$" | sed 's/^/   /' | head -6
   grep -a "rfid:" "$OUT/vm-$1.log" | sed 's/^/   /' | head -4
+  grep -a "turned by hand" "$OUT/vm-$1.log" | sed 's/^/   /' | head -4
 }
 
 boot 1-pending proof-a
@@ -372,8 +375,8 @@ if [ -n "$SPEAK_AT" ]; then
   grep -a "inside the session\|serving resource\|GET /res/\|GET /jingle/\|sent by URL\|mic: \|firmware image\|OTA: \|fetches its firmware\|https: " "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 if [ -n "$SCENARIO2" ]; then
-  echo "   terrier, the tag:"
-  grep -a "RFID\|rfid" "$OUT/terrier.log" | sed 's/^/   /' | head -12
+  echo "   terrier, the tag and the ears:"
+  grep -a "RFID\|rfid\|ears moved\|violet:nabaztag:ears" "$OUT/terrier.log" | sed 's/^/   /' | head -12
 fi
 podman rm -f "$NAME" >/dev/null 2>&1
 [ -n "$MITM_PID" ] && kill $MITM_PID 2>/dev/null
