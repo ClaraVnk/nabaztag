@@ -131,7 +131,7 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 
 **An ear turned by hand** (the "amoureux" pairing, 2026-11-14).
 `at <ms> ear <0|1> <holes>` in a scenario turns a still ear by hand;
-`scenarios/vm/xmpp-ears.txt` turns each ear five holes and the verdict shows
+`firmware-arm/emulator/scenarios/vm/xmpp-ears.txt` turns each ear five holes and the verdict shows
 `ears moved` in the Terrier's log, or nothing.
 
 ```sh
