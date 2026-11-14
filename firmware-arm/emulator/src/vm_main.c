@@ -591,6 +591,7 @@ int __wrap_crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned c
   return r;
 }
 
+#ifdef NAB_HAS_ECDSA   /* only linked with the https steps (Makefile) */
 int __real_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
                             const uint8_t *sig, uint32_t siglen,
                             const uint8_t *hash, uint32_t hlen, void *tick);
@@ -602,3 +603,4 @@ int __wrap_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
   crypto_charge(CRYPTO_MS_ECDSA, curve ? "ECDSA P-384 verify" : "ECDSA P-256 verify");
   return r;
 }
+#endif

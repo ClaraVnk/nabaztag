@@ -6,7 +6,7 @@
 #
 # The EEPROM is tools/vm-check.sh's wpa2 page (the name carries "wpa2").
 #
-# bytecode: bootloader
+# Runs under the runtime VM: tools/livebox-check.sh.
 
 ap 02:00:5e:10:00:01 Terrier 6 wpa2+wpa3 -52 livebox
 psk nabaztag

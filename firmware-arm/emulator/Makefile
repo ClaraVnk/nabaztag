@@ -84,6 +84,7 @@ VM += ../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab
 # NAB_BOOT_ANCHOR there, as the firmware build compiles it. With ../crypto's
 # the VM had no built-in root and refused every first boot (2026-11-13).
 VM += ../crypto/nab_sha384.c ../crypto/chachapoly.c $(NABGCC)/src/net/nab_https_vm.c
+HAS_ECDSA = 1
 endif
 # The tree's own copy when the container staged one (and sign_open_alias
 # patched it), the vendored one otherwise.
@@ -108,6 +109,9 @@ CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare
 CFLAGS += -Wno-pointer-to-int-cast -Wno-implicit-fallthrough -Wno-format
 CFLAGS += -Wno-unused-but-set-variable -Wno-return-type -Wno-pointer-sign
 CFLAGS += -Wno-missing-field-initializers -Wno-unused-function
+ifdef HAS_ECDSA
+CFLAGS += -DNAB_HAS_ECDSA
+endif
 
 SAN ?=
 
@@ -148,7 +152,12 @@ $(TARGET): $(WIFI_OBJ)
 # the firmware's own sources. GNU ld only; macOS's linker has no --wrap and
 # the wrapper then simply goes unused.
 ifeq ($(shell uname -s),Linux)
-VM_LDFLAGS = -Wl,--wrap=nab_verify_sig -Wl,--wrap=crypto_scalarmult_curve25519_tweet -Wl,--wrap=nab_ecdsa_verify
+VM_LDFLAGS = -Wl,--wrap=nab_verify_sig -Wl,--wrap=crypto_scalarmult_curve25519_tweet
+# Only when nab_ecdsa.c is linked: a step list without the https steps (the
+# emulator image's default) failed to link on the wrapper (2026-11-14).
+ifdef HAS_ECDSA
+VM_LDFLAGS += -Wl,--wrap=nab_ecdsa_verify
+endif
 endif
 
 $(VM_TARGET): $(VM_OBJ)
