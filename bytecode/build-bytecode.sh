@@ -147,6 +147,8 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
+echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
+python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"
 # A measurement build only (2026-11-14, ears turned by hand never reported):
 # never in the runtime the warren serves to everyone.
 if [ "${EARS_TELEMETRY:-}" = 1 ]; then

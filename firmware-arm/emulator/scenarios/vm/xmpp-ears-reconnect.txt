@@ -1,0 +1,22 @@
+# bytecode: bootloader
+#
+# An ear turned by hand after the session was lost and reopened. Run as
+# boot 2 of tools/xmpp-tls-proof.sh --scenario: bound about 80 s in; at
+# 100 s the server closes the session (the rabbit reconnects, and runs
+# stopEverythingAndResetToIdle, which resets the ears); at 150 s the left
+# ear is turned five holes.
+#
+# Measured on 2026-11-14 on Nabazprout (bytecode/patch_ears_telemetry.py):
+# after a reconnect the ears sat in EARSMODE_WAIT and a turned ear was never
+# reported.
+#
+#   control (no patch_ears_rearm.py): no `ears moved` after the turn;
+#   fix: `ears moved left=.. right=..` in the Terrier's log.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 190000
+
+at 20000  expect RUN
+at 100000 server-close
+at 150000 ear 0 5
+at 185000 expect RUN
