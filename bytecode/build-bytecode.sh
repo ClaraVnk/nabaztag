@@ -147,6 +147,12 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
+# A measurement build only (2026-11-14, ears turned by hand never reported):
+# never in the runtime the warren serves to everyone.
+if [ "${EARS_TELEMETRY:-}" = 1 ]; then
+  echo "==> patch_ears_telemetry.py  (MEASUREMENT: the ears' state every 30 s)"
+  python3 "$HERE/patch_ears_telemetry.py" "$BC/sources/main.mtl"
+fi
 
 echo "==> preprocessing + compiling (with $CC)"
 ( cd "$BC/sources" && ../preproc.pl < main.mtl | ../preproc_remove_extra_protos.pl > ../bootcode.mtl )

@@ -129,6 +129,25 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 - A proof left running holds its ports: `podman ps`, then `podman rm -f
   terrier-proof-<base>`.
 
+**An ear turned by hand** (the "amoureux" pairing, 2026-11-14).
+`at <ms> ear <0|1> <holes>` in a scenario turns a still ear by hand;
+`scenarios/vm/xmpp-ears.txt` turns each ear five holes and the verdict shows
+`ears moved` in the Terrier's log, or nothing.
+
+```sh
+firmware-arm/emulator/tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --bytecode <runtime.hybrid> --emulator emu --elf <bin/naboot-1.2.0.1/Nab.elf> \
+    --out /tmp/ears --scenario scenarios/vm/xmpp-ears.txt
+# the measurement runtime: the ears' state every 30 s inside the session
+EARS_TELEMETRY=1 bytecode/build-bytecode.sh <bootcode-tree> \
+    firmware-arm/tools/mtl_comp.py /tmp/ears-telemetry.hybrid
+```
+
+Served to one rabbit by copying it to the Terrier's `/data/bytecode/` and
+choosing `ears-telemetry` in that rabbit's Developer card (admin); the
+Terrier logs each `<earsdbg xmlns="violet:nabaztag:telemetry">`. Never the
+runtime everyone gets.
+
 **A rabbit of a given release, and a rabbit nobody ever flashed.**
 
 ```sh

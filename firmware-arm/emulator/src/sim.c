@@ -560,6 +560,17 @@ int sim_load(const char *path)
           fprintf(stderr, "%s:%d: button takes down or up, not \"%s\"\n", path, lineno, tok[3]);
           fclose(f); return -1;
         }
+      } else if(!strcmp(tok[2], "ear") && n >= 5) {
+        /* `ear <0|1> <holes>`: someone turns a still ear by hand, which is
+           what the "amoureux" pairing listens for. The runtime only notices
+           a jump of more than two holes between two looks (earWaitRun). */
+        e->kind = SIM_EV_EAR_HAND;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+        e->arg2 = (int)strtol(tok[4], NULL, 10);
+        if((e->arg != 0 && e->arg != 1) || e->arg2 < 1 || e->arg2 > 16) {
+          fprintf(stderr, "%s:%d: ear takes 0 or 1, then 1 to 16 holes\n", path, lineno);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "expect-no-reset")) {
         e->kind = SIM_EV_EXPECT_NO_RESET;
       } else if(!strcmp(tok[2], "http-big") && n >= 4) {

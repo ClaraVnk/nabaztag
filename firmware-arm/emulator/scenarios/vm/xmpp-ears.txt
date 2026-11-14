@@ -1,0 +1,21 @@
+# bytecode: bootloader
+#
+# An ear turned by hand on a rabbit whose owner confirmed its adoption key,
+# against a real Terrier on the host (--realtime). Run as boot 2 of
+# tools/xmpp-tls-proof.sh --scenario: the session is bound about 80 s in;
+# at 120 s the left ear is turned five holes, at 140 s the right one.
+#
+# The "amoureux" pairing moves the partner's ears when the Terrier hears
+# `<ears xmlns="violet:nabaztag:ears">` from this one (2026-11-14: Clara
+# turned Nabazprout's ear and the Terrier heard nothing).
+#
+#   fail: no `ears moved` in the Terrier's log after the turns;
+#   pass: `ears moved left=.. right=..` once per turn.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 170000
+
+at 20000 expect RUN
+at 120000 ear 0 5
+at 140000 ear 1 5
+at 165000 expect RUN

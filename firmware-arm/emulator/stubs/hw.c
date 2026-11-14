@@ -320,6 +320,18 @@ void hw_tick(void)
   }
 }
 
+void hw_turn_ear_by_hand(int ear, int holes)
+{
+  if(ear < 0 || ear >= HW_NB_EARS) return;
+  if(ears[ear].running) {
+    sim_log("ear %d: not turned by hand, its motor is running", ear);
+    return;
+  }
+  ears[ear].position += (uint16_t)holes;
+  sim_log("ear %d turned by hand, %d holes, now at count %u", ear, holes,
+          ears[ear].position);
+}
+
 uint16_t hw_ear_position(int ear)
 {
   return (ear >= 0 && ear < HW_NB_EARS) ? ears[ear].position : 0;

@@ -131,6 +131,9 @@ void sim_run_events(void)
       case SIM_EV_BUTTON:
         hw_press(2, e->arg);
         break;
+      case SIM_EV_EAR_HAND:
+        hw_turn_ear_by_hand(e->arg, e->arg2);
+        break;
       case SIM_EV_RFID:
         hw_clear_tags();
         if(e->arg) hw_present_tag(e->tag);
@@ -591,6 +594,7 @@ int __wrap_crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned c
   return r;
 }
 
+#ifdef NAB_HAS_ECDSA   /* only linked with the https steps (Makefile) */
 int __real_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
                             const uint8_t *sig, uint32_t siglen,
                             const uint8_t *hash, uint32_t hlen, void *tick);
@@ -602,3 +606,4 @@ int __wrap_nab_ecdsa_verify(int curve, const uint8_t *pub, uint32_t publen,
   crypto_charge(CRYPTO_MS_ECDSA, curve ? "ECDSA P-384 verify" : "ECDSA P-256 verify");
   return r;
 }
+#endif
