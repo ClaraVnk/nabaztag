@@ -1,0 +1,16 @@
+# Issue #163 (2026-11-14): a Livebox 5 the rabbit never joins, belly blinking
+# orange, Naboot 1.2.0.1. A Livebox cannot be emulated whole -- its radio and
+# its software are closed -- so each scenario of this family puts one of its
+# likely settings on the virtual AP and lets Naboot's own bootloader try:
+# a box's crowded beacon (country FR, ERP, HT, WMM, a full WPS element, a Broadcom vendor element), WPA2-CCMP.
+#
+# The EEPROM is tools/vm-check.sh's wpa2 page (the name carries "wpa2").
+#
+# Runs under the runtime VM: tools/livebox-check.sh.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52 livebox
+psk nabaztag
+tick 50
+stop 90000
+
+at 20000 expect RUN
