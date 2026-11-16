@@ -1,0 +1,27 @@
+#!/bin/bash
+# mplayer -quiet -slave -include ... -input file=/tmp/mplayer-control <url>
+# Fetches the URL whole and decodes it: what would not play fails here.
+. /karotz-stubs/hw.sh
+url="${@: -1}"
+f=$(mktemp)
+case "$url" in
+  */s/*)  # a stream (radio, podcast): its first 200 kB are enough to decode
+    curl -fsS --max-time 30 "$url" 2>/dev/null | head -c 200000 > "$f" ;;
+  *)
+    if ! curl -fsS --max-time 60 -o "$f" "$url"; then
+      hw "mplayer $url fetch-failed"; rm -f "$f"; exit 1
+    fi ;;
+esac
+[ -s "$f" ] || { hw "mplayer $url empty"; rm -f "$f"; exit 1; }
+n=$(stat -c %s "$f")
+if head -c4 "$f" | grep -q RIFF; then
+  secs=$(sox --i -D "$f" 2>/dev/null || echo "?"); kind=wav
+else
+  secs=$(mpg123 -t -q "$f" 2>&1 >/dev/null && mpg123 -t -v "$f" 2>&1 | grep -o 'Time: [0-9:.]*' | tail -1); kind=mp3
+  mpg123 -t -q "$f" >/dev/null 2>&1 || { hw "mplayer $url undecodable $n"; rm -f "$f"; exit 1; }
+fi
+sha=$(sha256sum "$f" | cut -c1-12)
+hw "mplayer $url $kind $n bytes sha=$sha ${secs}"
+# plays for a moment: the client watches for this process
+sleep 2
+rm -f "$f"
