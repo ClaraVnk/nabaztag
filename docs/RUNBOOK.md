@@ -205,6 +205,21 @@ for the whole scenario, about 2 MB in two minutes.
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
 
+### The Nabaztag v1 (2005)
+
+`firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
+`firmware-arm/vendor/newbaztag`) on an emulated PIC18 with its Prism 2 card,
+serial flash and ear sensors; see its README. From `firmware-arm/emulator`,
+on the dev VM:
+
+```sh
+tools/v1-proof.sh                          # joins, DHCP, DNS, the p3.jsp poll
+tools/v1-proof.sh --terrier <terrier checkout>
+# the Terrier's own handler (its tools/v1_warren.py): program taken, ears
+# 5/10 then 2/3 and stopped, a hand -> sd=8603, a 3 s press -> sd=0004,
+# two v1 in "amoureux" following each other. V1_PORT overrides 28080.
+```
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
