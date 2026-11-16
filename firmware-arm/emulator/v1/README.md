@@ -33,7 +33,7 @@ User-Agent: VIOLET
 | Part | File | Read from |
 |---|---|---|
 | PIC18 core, standard set (`CONFIG4L` 0x80: XINST off) | `pic18.c` | DS39646C ch. 26 |
-| Ports, timers, UART (the firmware's log, 9600), ADC, MSSP | `board.c` | DS39646C; Newbaztag `doc/components.md` |
+| Ports, timers, UART (the firmware's log, 9600), ADC, MSSP | `board.c` | DS39646C; Newbaztag `../../vendor/newbaztag/doc/components.md` |
 | AT45DB161 flash (the program frame `05` is written there) | `spi.c` | Atmel datasheet, tables 1–2 |
 | OKI ML2870A (register pairs logged), TLC5922 LEDs | `spi.c` | Newbaztag `hardware.c` |
 | Prism 2 PCMCIA card, I/O mode: COR, commands, RIDs, FIDs, BAPs | `prism.c` | the firmware's bus routines (`0x3E7C`–`0x3F16`) |
@@ -71,12 +71,12 @@ Read in the process, against what the sources said:
 
 ## Proofs
 
-`tools/v1-proof.sh` (from `firmware-arm/emulator`, on a machine with podman):
+`../tools/v1-proof.sh` (from `firmware-arm/emulator`, on a machine with podman):
 
 - alone: the rabbit joins, takes DHCP, resolves `p.nabaztag.com` and sends
   its poll;
 - `--terrier <checkout>`: the Terrier's own `p3.jsp` handler answers
-  (`tools/v1_warren.py` in the Terrier). The program is taken (`tc` becomes
+  (tools/v1_warren.py in the Terrier). The program is taken (`tc` becomes
   its id), the ears go to 5/10 then 2/3 and stop, a hand on the right ear is
   reported as `sd=8603`, a 3-second press as `sd=0004`, and two v1 of one
   owner in "amoureux" follow each other.
