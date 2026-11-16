@@ -15,7 +15,7 @@ podman build -t v1-wpa-cost -f emulator/v1/wpa/Containerfile .   # from firmware
 podman run --rm v1-wpa-cost
 ```
 
-## Measured (2026-11-16, SDCC 4.4.0, plain C)
+## Measured (2026-11-16, SDCC 4.4.0; AES also by hand, `aes_gen.py`)
 
 | Piece | Cycles | Time on a v1 |
 |---|---|---|
@@ -23,16 +23,21 @@ podman run --rm v1-wpa-cost
 | SHA-1, one block ("abc") | 119 207 | 19.9 ms |
 | HMAC-SHA-1, short message (RFC 2202 #2) | 480 383 | 80 ms |
 | CCMP, one 16-byte block | 89 140 | 14.9 ms |
+| AES-128, one block, **assembly** (same vector) | 2 874 | 0.48 ms |
+| CCMP, one 16-byte block, assembly AES, C glue | 7 572 | 1.26 ms |
 
-Projected: the 4-way handshake about 0.9 s; CCMP 1.1 KB/s (a 300-byte poll
-0.28 s, a 1500-byte frame 1.4 s); PBKDF2 from the passphrase 5.4 min.
+Projected with the assembly AES: the 4-way handshake about 0.8 s (SHA-1 in
+C is most of it); CCMP 12.4 KB/s (a 300-byte poll 24 ms, a 1500-byte frame
+0.12 s); PBKDF2 from the passphrase 5.4 min (SHA-1 in C).
 
 ## What it says
 
 - **Feasible in principle.** The handshake fits the access point's timeouts;
   a poll every 12 s costs a fraction of a second.
-- **AES has to be hand-written assembly.** SDCC's code is the upper bound:
-  CCMP is two AES per 16 bytes and nearly all of the per-frame time.
+- **AES has to be hand-written assembly, and is.** `aes_gen.py` writes it
+  (S-box read with TBLRD from a 256-byte boundary, ShiftRows folded into the
+  addressing, xtime on W): 15 times SDCC's, FIPS-197 checked. The C loops
+  around it are now a quarter of CCMP's time.
 - **PBKDF2 does not belong on the rabbit.** It runs once per passphrase:
   the configuration page can compute the 32-byte PMK in the browser, or the
   rabbit once at first start and keep it in its serial flash.

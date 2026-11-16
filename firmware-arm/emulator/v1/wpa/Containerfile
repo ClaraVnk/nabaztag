@@ -36,9 +36,11 @@ RUN curl -sSfL -o s.tbz https://downloads.sourceforge.net/project/sdcc/sdcc/$SDC
  && make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
 
 FROM sdcc AS cost
+RUN dnf -y -q install python3 && dnf -q clean all
 WORKDIR /src
 COPY emulator/v1/pic18.c emulator/v1/pic18.h /src/
 COPY emulator/v1/wpa/ /src/wpa/
-RUN cd wpa && sdcc -mpic16 -p18f6627 --use-non-free --opt-code-speed cost.c \
+RUN cd wpa && python3 aes_gen.py > aes.asm && gpasm -c -p18f6627 aes.asm \
+ && sdcc -mpic16 -p18f6627 --use-non-free --opt-code-speed cost.c aes.o \
  && gcc -std=c11 -O2 -Wall -Wextra -I.. -o harness harness.c ../pic18.c
 CMD ["/src/wpa/harness", "/src/wpa/cost.hex"]

@@ -57,6 +57,7 @@ int main(int argc, char **argv)
   ok &= check("SHA-1 (\"abc\")", 16, "a9993e364706816aba3e25717850c26c9cd0d89d");
   ok &= check("HMAC-SHA-1 (RFC 2202 #2)", 36, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79");
   ok &= check("RC4 (\"Key\", \"Plaintext\")", 56, "bbf316e8d940af0ad3");
+  ok &= check("AES-128 by hand (FIPS-197)", 65, "69c4e0d86a7b0430d8cdb78070b4c55a");
 
   printf("\nmeasured, instruction cycles at 6 MHz:\n");
   printf("  AES key expansion      %9llu  %8.2f ms\n", (unsigned long long)took[1], ms(took[1]));
@@ -65,10 +66,12 @@ int main(int argc, char **argv)
   printf("  HMAC-SHA-1 (short)     %9llu  %8.2f ms\n", (unsigned long long)took[7], ms(took[7]));
   printf("  RC4, 9 bytes + setup   %9llu  %8.2f ms\n", (unsigned long long)took[9], ms(took[9]));
   printf("  CCMP, one 16-B block   %9llu  %8.2f ms\n", (unsigned long long)took[11], ms(took[11]));
+  printf("  AES-128 block, by hand %9llu  %8.2f ms\n", (unsigned long long)took[13], ms(took[13]));
+  printf("  CCMP block, by hand    %9llu  %8.2f ms\n", (unsigned long long)took[15], ms(took[15]));
 
   /* What WPA2-PSK would ask of the v1, from the measured pieces. */
-  double sha = took[5], ccmp = took[11], aes = took[3];
-  printf("\nprojected (C, no BAP traffic counted):\n");
+  double sha = took[5], ccmp = took[15], aes = took[13];
+  printf("\nprojected (SHA-1 in C, AES by hand, no BAP traffic counted):\n");
   printf("  PBKDF2 (4096 x 2 x 2 SHA-1 blocks) %8.1f s   once per passphrase\n",
          16384 * sha / CYCLES_HZ);
   printf("  4-way handshake (~40 SHA-1, ~20 AES) %6.2f s\n",
