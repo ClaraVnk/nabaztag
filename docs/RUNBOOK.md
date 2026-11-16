@@ -52,6 +52,15 @@ print it, never copy it to a remote. Its backups: a password manager
 there; `firmware-arm/signing/gen_key.py` would make a *different* key, which no rabbit
 accepts.
 
+Where the flash goes, and what a change of compiler flags costs
+(`firmware-arm/docs/FLASH-MAP.md`): build the mode unsigned, then
+
+```sh
+python3 firmware-arm/tools/flash-map.py firmware-arm/bin/<mode>/Nab.elf firmware-arm/bin/<mode>/Nab.bin
+# crypto time at another level, in tools/cost's image (see run.sh's header):
+OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short p256 aes_block gcm_1k
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).

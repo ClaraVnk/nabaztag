@@ -6,7 +6,8 @@
 # script (results-2026-11-08.txt came from an earlier gcc 12.2 image; compare
 # counts from the same image only), with this directory mounted at /m:
 #   podman run --rm -v $PWD:/m:Z -w /m localhost/nab-qemu bash run.sh
-#   bash run.sh x25519 p256        a subset; NOSIZES=1 skips the size tables
+#   bash run.sh x25519 p256        a subset; NOSIZES=1 skips the size tables;
+#                                  OPT=-Os builds at another level than the firmware's -O1
 # Inputs, laid out by hand before the first run:
 #   fw/crypto/      copy of firmware-arm/crypto
 #   fw/tests/       copy of firmware-arm/tests (the sae_* cases include its
@@ -29,7 +30,7 @@ TN=${TN:-tweetnacl}             # patched tweetnacl.c (sign_open_alias + verify_
 MC=${MC:-third/monocypher}      # monocypher.c/.h + monocypher-ed25519.c/.h (mc_* cases only)
 C25=${C25:-third/c25519}        # c25519 sources (c25519_* cases only)
 OUT=${OUT:-out}; mkdir -p $OUT inc/net keys
-F="-O1 ${MODE:--mthumb} -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin \
+F="${OPT:--O1} ${MODE:--mthumb} -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin \
    -ffunction-sections -fdata-sections -I. -Iinc -I$TN -Istub -Ikeys -I$FW -I$MC -I$C25 -I$TESTS"
 CC=arm-none-eabi-gcc
 
