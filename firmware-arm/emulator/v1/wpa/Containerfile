@@ -1,0 +1,44 @@
+# What WPA would cost the v1's PIC: SDCC builds cost.c for the PIC18F6627,
+# the v1 emulator's PIC18 core runs it and counts the cycles (harness.c).
+#
+#   podman build -t v1-wpa-cost -f emulator/v1/wpa/Containerfile firmware-arm
+#   podman run --rm v1-wpa-cost
+#
+# SDCC and gputils are packaged neither for Alpine nor for Rocky (EPEL): both
+# are built from their release tarballs, pinned by checksum. The PIC18F6627
+# header and device library are in SDCC's non-free part (Microchip's licence):
+# they stay inside this image, nothing of them is committed.
+FROM quay.io/rockylinux/rockylinux:10 AS sdcc
+RUN dnf -y -q install dnf-plugins-core && dnf -q config-manager --set-enabled crb \
+ && dnf -y -q install gcc gcc-c++ make bzip2 bison flex boost-devel zlib-devel diffutils findutils \
+ && dnf -q clean all
+ARG GPUTILS=1.5.2
+ARG GPUTILS_SHA256=8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2
+ARG SDCC=4.4.0
+ARG SDCC_SHA256=ae8c12165eb17680dff44b328d8879996306b7241efa3a83b2e3b2d2f7906a75
+WORKDIR /build
+RUN curl -sSfL -o g.tbz https://downloads.sourceforge.net/project/gputils/gputils/1.5.0/gputils-$GPUTILS.tar.bz2 \
+ && echo "$GPUTILS_SHA256  g.tbz" | sha256sum -c - \
+ && tar xjf g.tbz && cd gputils-$GPUTILS && ./configure -q --prefix=/opt/sdcc >/dev/null \
+ && make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
+ENV PATH=/opt/sdcc/bin:$PATH
+RUN curl -sSfL -o s.tbz https://downloads.sourceforge.net/project/sdcc/sdcc/$SDCC/sdcc-src-$SDCC.tar.bz2 \
+ && echo "$SDCC_SHA256  s.tbz" | sha256sum -c - \
+ && tar xjf s.tbz && cd sdcc-$SDCC \
+ && CFLAGS="-O2 -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration" ./configure -q --prefix=/opt/sdcc --disable-mcs51-port --disable-z80-port --disable-z180-port \
+      --disable-r2k-port --disable-r2ka-port --disable-r3ka-port --disable-r4k-port --disable-r5k-port \
+      --disable-r6k-port --disable-gbz80-port --disable-tlcs90-port --disable-ez80_z80-port \
+      --disable-z80n-port --disable-r800-port --disable-ds390-port --disable-ds400-port \
+      --disable-hc08-port --disable-s08-port --disable-stm8-port --disable-pdk13-port \
+      --disable-pdk14-port --disable-pdk15-port --disable-pdk16-port --disable-mos6502-port \
+      --disable-mos65c02-port --disable-pic14-port --disable-ucsim --disable-sdcdb \
+      >/dev/null \
+ && make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
+
+FROM sdcc AS cost
+WORKDIR /src
+COPY emulator/v1/pic18.c emulator/v1/pic18.h /src/
+COPY emulator/v1/wpa/ /src/wpa/
+RUN cd wpa && sdcc -mpic16 -p18f6627 --use-non-free --opt-code-speed cost.c \
+ && gcc -std=c11 -O2 -Wall -Wextra -I.. -o harness harness.c ../pic18.c
+CMD ["/src/wpa/harness", "/src/wpa/cost.hex"]

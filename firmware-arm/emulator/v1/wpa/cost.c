@@ -1,0 +1,228 @@
+/*
+ * What WPA would cost the Nabaztag v1's PIC18F6627 (24 MHz crystal, HS, no
+ * PLL: 6 million instruction cycles a second), measured in the emulator.
+ *
+ * The v1's Prism 2.5 card encrypts WEP only; a WPA2 v1 has to do the
+ * handshake (HMAC-SHA-1, the PRF, AES key unwrap) and every frame's CCMP
+ * (AES-128 in CTR mode plus a CBC-MAC) on the PIC itself. This program runs
+ * the pieces once each on known test vectors, so a wrong answer is caught,
+ * and marks their start and end on LATA for harness.c to count the cycles:
+ *
+ *   LATA <- n     section n starts (odd) or ends (even)
+ *   LATB <- byte  one byte of a result, for the harness to check
+ *
+ * Plain C for SDCC: an upper bound. Hand-written assembly would be faster.
+ */
+#include <pic18fregs.h>
+#pragma config XINST=OFF
+#include <stdint.h>
+
+static void mark(uint8_t n) { LATA = n; }
+static void out(const uint8_t *p, uint8_t n) { while(n--) LATB = *p++; }
+
+/* ---- AES-128, encryption only (CTR and CBC-MAC need nothing else) ---- */
+
+static __code const uint8_t sbox[256] = {
+  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+};
+
+static uint8_t rk[176];                /* expanded key, once per PTK */
+
+static void aes_expand(const uint8_t *key)
+{
+  uint8_t i, rcon = 1, t0, t1, t2, t3;
+  for(i = 0; i < 16; i++) rk[i] = key[i];
+  for(i = 16; i < 176; i += 4) {
+    t0 = rk[i-4]; t1 = rk[i-3]; t2 = rk[i-2]; t3 = rk[i-1];
+    if((i & 15) == 0) {
+      uint8_t s = t0;
+      t0 = sbox[t1] ^ rcon; t1 = sbox[t2]; t2 = sbox[t3]; t3 = sbox[s];
+      rcon = (rcon << 1) ^ ((rcon & 0x80) ? 0x1b : 0);
+    }
+    rk[i]   = rk[i-16] ^ t0; rk[i+1] = rk[i-15] ^ t1;
+    rk[i+2] = rk[i-14] ^ t2; rk[i+3] = rk[i-13] ^ t3;
+  }
+}
+
+static uint8_t xt(uint8_t x) { return (x << 1) ^ ((x & 0x80) ? 0x1b : 0); }
+
+static void aes_encrypt(uint8_t *s)
+{
+  uint8_t r, i, t, a0, a1, a2, a3, x;
+  const uint8_t *k = rk;
+  for(i = 0; i < 16; i++) s[i] ^= k[i];
+  for(r = 1; r <= 10; r++) {
+    k += 16;
+    for(i = 0; i < 16; i++) s[i] = sbox[s[i]];
+    /* ShiftRows */
+    t = s[1]; s[1] = s[5]; s[5] = s[9]; s[9] = s[13]; s[13] = t;
+    t = s[2]; s[2] = s[10]; s[10] = t; t = s[6]; s[6] = s[14]; s[14] = t;
+    t = s[15]; s[15] = s[11]; s[11] = s[7]; s[7] = s[3]; s[3] = t;
+    if(r != 10)
+      for(i = 0; i < 16; i += 4) {     /* MixColumns */
+        a0 = s[i]; a1 = s[i+1]; a2 = s[i+2]; a3 = s[i+3];
+        x = a0 ^ a1 ^ a2 ^ a3;
+        s[i]   ^= x ^ xt(a0 ^ a1); s[i+1] ^= x ^ xt(a1 ^ a2);
+        s[i+2] ^= x ^ xt(a2 ^ a3); s[i+3] ^= x ^ xt(a3 ^ a0);
+      }
+    for(i = 0; i < 16; i++) s[i] ^= k[i];
+  }
+}
+
+/* ---- SHA-1 and HMAC-SHA-1 (handshake: PRF, EAPOL MIC; PBKDF2) ---- */
+
+static uint32_t h[5], w[16];
+
+static uint32_t rol(uint32_t x, uint8_t n) { return (x << n) | (x >> (32 - n)); }
+
+static void sha1_block(const uint8_t *p)
+{
+  uint32_t a, b, c, d, e, f, t;
+  uint8_t i, j;
+  for(i = 0; i < 16; i++, p += 4)
+    w[i] = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint16_t)p[2] << 8) | p[3];
+  a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4];
+  for(i = 0; i < 80; i++) {
+    j = i & 15;
+    if(i >= 16)
+      w[j] = rol(w[(j+13)&15] ^ w[(j+8)&15] ^ w[(j+2)&15] ^ w[j], 1);
+    if(i < 20)      f = ((b & c) | (~b & d)) + 0x5a827999UL;
+    else if(i < 40) f = (b ^ c ^ d) + 0x6ed9eba1UL;
+    else if(i < 60) f = ((b & c) | (b & d) | (c & d)) + 0x8f1bbcdcUL;
+    else            f = (b ^ c ^ d) + 0xca62c1d6UL;
+    t = rol(a, 5) + f + e + w[j];
+    e = d; d = c; c = rol(b, 30); b = a; a = t;
+  }
+  h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+}
+
+static void sha1_init(void)
+{
+  h[0] = 0x67452301UL; h[1] = 0xefcdab89UL; h[2] = 0x98badcfeUL;
+  h[3] = 0x10325476UL; h[4] = 0xc3d2e1f0UL;
+}
+
+static uint8_t blk[64], dig[20];
+
+static void sha1_out(uint8_t *d)
+{
+  uint8_t i;
+  for(i = 0; i < 5; i++) {
+    d[4*i] = h[i] >> 24; d[4*i+1] = h[i] >> 16; d[4*i+2] = h[i] >> 8; d[4*i+3] = h[i];
+  }
+}
+
+/* SHA-1 of a message shorter than 56 bytes, after `prefix` full blocks. */
+static void sha1_last(const uint8_t *m, uint8_t n, uint16_t prefix_blocks)
+{
+  uint8_t i;
+  uint16_t bits = (prefix_blocks * 64 + n) * 8;
+  for(i = 0; i < 64; i++) blk[i] = i < n ? m[i] : 0;
+  blk[n] = 0x80; blk[62] = bits >> 8; blk[63] = bits;
+  sha1_block(blk);
+}
+
+static uint8_t pad[64];
+
+/* HMAC-SHA-1 with a key of 32 bytes at most and a message under 56 bytes. */
+static void hmac_sha1(const uint8_t *key, uint8_t kn, const uint8_t *m, uint8_t n, uint8_t *mac)
+{
+  uint8_t i;
+  for(i = 0; i < 64; i++) pad[i] = (i < kn ? key[i] : 0) ^ 0x36;
+  sha1_init(); sha1_block(pad); sha1_last(m, n, 1); sha1_out(dig);
+  for(i = 0; i < 64; i++) pad[i] ^= 0x36 ^ 0x5c;
+  sha1_init(); sha1_block(pad); sha1_last(dig, 20, 1); sha1_out(mac);
+}
+
+/* ---- RC4 (WPA1-TKIP and the TKIP group key) ---- */
+
+static uint8_t S[256];
+
+static void rc4(const uint8_t *key, uint8_t kn, uint8_t *d, uint8_t n)
+{
+  uint8_t i = 0, j = 0, t, k = 0;
+  do { S[i] = i; } while(++i);
+  do {
+    j += S[i] + key[k]; t = S[i]; S[i] = S[j]; S[j] = t;
+    if(++k == kn) k = 0;
+  } while(++i);
+  i = j = 0;
+  while(n--) {
+    i++; j += S[i]; t = S[i]; S[i] = S[j]; S[j] = t;
+    *d++ ^= S[(uint8_t)(S[i] + S[j])];
+  }
+}
+
+/* ---- the sections ---- */
+
+static __code const uint8_t fips_key[16] = {
+  0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f };
+static uint8_t st[16], mac[16], key[16], msg[56];
+
+void main(void)
+{
+  uint8_t i, n;
+
+  TRISA = 0; TRISB = 0;
+
+  /* 1: AES key expansion, FIPS-197 C.1 key */
+  for(i = 0; i < 16; i++) { key[i] = fips_key[i]; st[i] = (i << 4) | i; }
+  mark(1); aes_expand(key); mark(2);
+  /* 3: one AES-128 block, FIPS-197 C.1 -> 69c4e0d8 6a7b0430 d8cdb780 70b4c55a */
+  mark(3); aes_encrypt(st); mark(4);
+  out(st, 16);
+
+  /* 5: one SHA-1 block: "abc" -> a9993e36 4706816a ba3e2571 7850c26c 9cd0d89d */
+  msg[0] = 'a'; msg[1] = 'b'; msg[2] = 'c';
+  mark(5); sha1_init(); sha1_last(msg, 3, 0); mark(6);
+  sha1_out(dig); out(dig, 20);
+
+  /* 7: HMAC-SHA-1, RFC 2202 case 2: key "Jefe",
+   * "what do ya want for nothing?" -> effcdf6a e5eb2fa2 d27416d5 f184df9c 259a7c79 */
+  {
+    static __code const char m2[] = "what do ya want for nothing?";
+    for(n = 0; m2[n]; n++) msg[n] = m2[n];
+    key[0] = 'J'; key[1] = 'e'; key[2] = 'f'; key[3] = 'e';
+    mark(7); hmac_sha1(key, 4, msg, n, dig); mark(8);
+    out(dig, 20);
+  }
+
+  /* 9: RC4 over 16 bytes, key "Key", "Plaintext" -> bbf316e8 d940af0a d3 */
+  {
+    static __code const char p3[] = "Plaintext";
+    for(n = 0; p3[n]; n++) msg[n] = p3[n];
+    key[0] = 'K'; key[1] = 'e'; key[2] = 'y';
+    mark(9); rc4(key, 3, msg, n); mark(10);
+    out(msg, n);
+  }
+
+  /* 11: CCMP's work for one 16-byte block of a frame: one AES for the
+   * CBC-MAC, one for the counter, two XORs. A 1500-byte frame is 94 of them,
+   * plus the reading and writing through the card's BAP (not counted here). */
+  aes_expand(key);
+  mark(11);
+  for(i = 0; i < 16; i++) mac[i] ^= msg[i];
+  aes_encrypt(mac);
+  for(i = 0; i < 16; i++) st[i] = i;
+  aes_encrypt(st);
+  for(i = 0; i < 16; i++) msg[i] ^= st[i];
+  mark(12);
+
+  mark(0xff);
+  __asm sleep __endasm;
+}

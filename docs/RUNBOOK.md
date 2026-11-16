@@ -220,6 +220,14 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
 ```
 
+What WPA2 would cost the v1's PIC (6 MHz instruction clock), measured on
+the same PIC18 core: `emulator/v1/wpa` (see its README). From `firmware-arm`:
+
+```sh
+podman build -t v1-wpa-cost -f emulator/v1/wpa/Containerfile .
+podman run --rm v1-wpa-cost      # test vectors PASS/FAIL, then cycles and ms
+```
+
 ### The Karotz (Nabaztag v3)
 
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
