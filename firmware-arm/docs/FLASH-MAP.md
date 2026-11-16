@@ -102,8 +102,8 @@ Sent over the air to the test rabbit only, at 17:33:23: the 114 224 bytes
 arrived in the session in 4.1 s and were installed. Then the nose and belly
 stayed orange; after unplugging it ten seconds, the first belly light
 blinked orange and the Terrier never saw the rabbit again: no `locate.jsp`,
-no XMPP, for more than 30 minutes. It went back to 1.2.0.1 through its
-configuration page.
+no XMPP, for more than 30 minutes. The way back: its configuration page
+(head button at power-on), uploading 1.2.0.1.
 
 So the image starts (the bootloader runs) but the rabbit never reaches the
 network. Nothing the emulators run could see it: the native emulator
