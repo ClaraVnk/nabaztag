@@ -220,6 +220,27 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
 ```
 
+### The Karotz (Nabaztag v3)
+
+`firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
+recorded, the client under qemu-arm (see its README; `measure.sh` is what a
+real Karotz must give for the whole-system emulator).
+
+```sh
+tools/karotz-proof.sh                          # the released client asks for its key
+tools/karotz-proof.sh --terrier <terrier checkout>   # the Terrier's scenario
+```
+
+### The three rabbits at once
+
+Every new rabbit feature is proven on the v1, the v2 and the v3:
+
+```sh
+tools/rabbits-proof.sh --terrier <terrier checkout> --v2 "<xmpp-tls-proof.sh inputs>"
+```
+
+One verdict per rabbit; one without its inputs is NOT RUN, never passed.
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).

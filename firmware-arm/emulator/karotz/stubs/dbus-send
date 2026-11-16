@@ -1,0 +1,13 @@
+#!/bin/bash
+# The Karotz's daemons answer these (com.mindscape.karotz.Led / .Ears):
+# recorded with the method and the arguments that matter.
+. /karotz-stubs/hw.sh
+method=""; args=()
+for a in "$@"; do
+  case "$a" in
+    com.mindscape.karotz.KarotzInterface.*) method="${a##*.}" ;;
+    string:*|int32:*) args+=("${a#*:}") ;;
+  esac
+done
+# the first string is a fresh uuid every call: dropped
+hw "dbus $method ${args[*]:1}"

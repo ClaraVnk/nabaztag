@@ -1,0 +1,3 @@
+#!/bin/bash
+. /karotz-stubs/hw.sh
+hw "led-bin $*"
