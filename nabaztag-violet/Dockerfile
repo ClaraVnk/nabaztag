@@ -71,10 +71,19 @@ RUN echo "c0ac2ecfb9942fcb4d451f2019bb162dcde76870ad7eb64bf9e8a3ba9c501f80  /app
 
 # The runtime for rabbits that ran the adoption exchange (Naboot 1.0.0.0 and
 # later): the hybrid plus the TLS client and the fixes since, built from
-# OpenJabNab 640257f by bytecode/build-bytecode.sh (see bytecode/README.md).
+# OpenJabNab 640257f by RUNTIME=tls bytecode/build-bytecode.sh (see bytecode/README.md).
 # Never served to a stock rabbit, which lacks the opcodes it calls.
 COPY bootcode.tls /app/bootcode.tls
-RUN echo "2c561ba955746c001eb5a778d5dbe9635d19be52a57c533ed53fde6b78be4cee  /app/bootcode.tls" \
+RUN echo "16efd859b467e04c6510045b8b399af5684e55ff90310991151258c7c226333e  /app/bootcode.tls" \
+    | sha256sum -c -
+
+# For adopted rabbits on Naboot 1.2.0.0 and later: the same plus DHCP and DNS
+# replies checked, HTTP answers bounded and https:// streams opened by the
+# rabbit itself -- Le Terrier's baseline-https, built by
+# bytecode/build-bytecode.sh with its default RUNTIME. It calls the https
+# opcodes, so it goes to no older image.
+COPY bootcode.https /app/bootcode.https
+RUN echo "a6500263f7e0181017c4f4ded48ebe6f11a9fdded0f0dea96ef21deb3f8f7de8  /app/bootcode.https" \
     | sha256sum -c -
 
 # Dependency-free server (Python stdlib only); reads /data/options.json at runtime.

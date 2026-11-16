@@ -112,6 +112,24 @@ def _resolve_bootcode_tls():
 
 
 BOOTCODE_TLS_FILE = _resolve_bootcode_tls()
+
+
+def _resolve_bootcode_https():
+    """The runtime for adopted rabbits on Naboot 1.2.0.0 and later, Le
+    Terrier's baseline-https: the TLS runtime plus DHCP and DNS replies
+    checked, HTTP answers bounded, and https:// streams opened by the rabbit
+    itself. It calls the https opcodes, which older images lack."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    explicit = os.environ.get("BOOTCODE_HTTPS_FILE")
+    if explicit:
+        return explicit
+    for cand in ("/data/bootcode.https", os.path.join(here, "bootcode.https")):
+        if os.path.exists(cand):
+            return os.path.normpath(cand)
+    return ""
+
+
+BOOTCODE_HTTPS_FILE = _resolve_bootcode_https()
 # Where /api/ota stages signed .sim files. The rabbit fetches them at the
 # matching /ota/<basename> URL when the server sends a FW program command.
 OTA_DIR = os.environ.get("OTA_DIR", "/data/ota")
@@ -270,6 +288,60 @@ _SID = itertools.count(1)
 # Resource ids for the TLS sessions, one counter for the whole add-on, so a
 # reconnect never meets an id it saw before.
 _RES_IDS = itertools.count(1)
+
+# --------------------------------------------------------------------------- #
+# https:// streams opened by the rabbit itself (patch_https_play.py)
+# --------------------------------------------------------------------------- #
+# The rabbit carries no roots of its own: with the order to play, it is sent
+# the one root the host's chain really ends at, as Le Terrier does
+# (terrier/https_roots.py). Found with this container's own store, cached a
+# day per host.
+HTTPS_ROOT_TTL_S = 24 * 3600
+_HTTPS_ROOTS: dict = {}
+_HTTPS_LOCK = threading.Lock()
+
+
+def _https_root(host: str, port: int = 443):
+    """The DER of the root the host's chain ends at, or None."""
+    key, now = (host.lower(), port), time.time()
+    with _HTTPS_LOCK:
+        hit = _HTTPS_ROOTS.get(key)
+    if hit and now - hit[0] < HTTPS_ROOT_TTL_S:
+        return hit[1]
+    try:
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        with socket.create_connection((host, port), timeout=10) as raw, \
+                ctx.wrap_socket(raw, server_hostname=host) as tls:
+            chain = tls.get_verified_chain()
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        log.warning("https: no verified chain for %s:%d (%s)", host, port, exc)
+        return None
+    if not chain:
+        return None
+    root = bytes(chain[-1])
+    with _HTTPS_LOCK:
+        _HTTPS_ROOTS[key] = (now, root)
+    return root
+
+
+def https_for_rabbit(url: str):
+    """(the URL after its redirects, the root its chain ends at) for an
+    https:// address; None when it cannot be opened or verified -- a host
+    this add-on cannot verify is one the rabbit could not either."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "nabaztag-addon"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            final = r.geturl()
+    except Exception as exc:  # noqa -- somebody else's server
+        log.warning("https: %s does not open (%s)", url[:80], exc)
+        return None
+    parts = urlparse(final)
+    if parts.scheme != "https" or not parts.hostname:
+        return (final, None) if parts.scheme == "http" else None
+    root = _https_root(parts.hostname, parts.port or 443)
+    return (final, root) if root else None
 # How long a sound inside the session waits for the one before it to start.
 RES_PACE_S = 40
 
@@ -1352,11 +1424,43 @@ class XmppSession(threading.Thread):
             lines[i] = f"{key} res:{rid}"
         return "\n".join(lines), sent
 
+    def _https_direct(self, program: str):
+        """For a rabbit that opens https streams itself (Naboot 1.2.0.0 on):
+        `ST https://...` becomes the URL after its redirects with
+        `#r<N>@<time>`, and the root its chain ends at goes first as res:N.
+        (None, []) when such a host cannot be verified: nothing is sent, as
+        on Le Terrier. Any other program as it is."""
+        if not self.rides("https"):
+            return program, []
+        lines, roots = program.split("\n"), []
+        for i, line in enumerate(lines):
+            if not line.startswith("ST https://"):
+                continue
+            got = https_for_rabbit(line[3:].strip())
+            if got is None:
+                log.warning("rabbit %s: %s cannot be verified, nothing sent", self.mac, line[3:83])
+                return None, []
+            final, root = got
+            final = final.split("#", 1)[0]
+            if root is None:
+                lines[i] = f"ST {final}"
+                continue
+            rid = next(_RES_IDS)
+            roots.append((rid, root))
+            lines[i] = f"ST {final}#r{rid}@{time.strftime('%Y%m%d%H%M%S', time.gmtime())}"
+            log.info("rabbit %s: opens %s itself over HTTPS (root %d bytes as res:%d)",
+                     self.mac, final[:80], len(root), rid)
+        return "\n".join(lines), roots
+
     def _send_with_resources(self, program: str):
         """The program, its resources first when they go down the session:
         each announced in a record of its own, its bytes, then the program,
         under one hold of the send lock so nothing comes between them."""
+        program, roots = self._https_direct(program)
+        if program is None:
+            return
         program, sent = self._resources_in_session(program)
+        sent = roots + sent
         if not sent:
             self.send_violet_packet(message_packet(program))
             return
@@ -2298,10 +2402,17 @@ class BootHandler(BaseHTTPRequestHandler):
                 self.send_error(403, "not the rabbit this session proved")
                 return
             row = KEYS.get(mac) if mac else None
+            fw = (q.get("v") or [""])[0]
             # A rabbit with a key on record ran the exchange, so its bootloader
-            # is Naboot's and has the TLS opcodes: it gets the TLS runtime. Any
-            # other rabbit gets the hybrid, which a stock firmware can run.
-            path_bc = BOOTCODE_TLS_FILE if (row is not None and BOOTCODE_TLS_FILE) else BOOTCODE_FILE
+            # is Naboot's and has the TLS opcodes: it gets the TLS runtime, or
+            # from Naboot 1.2.0.0 on the https one. Any other rabbit gets the
+            # hybrid, which a stock firmware can run.
+            if row is not None and BOOTCODE_HTTPS_FILE and adoption.has_https(fw):
+                path_bc = BOOTCODE_HTTPS_FILE
+            elif row is not None and BOOTCODE_TLS_FILE:
+                path_bc = BOOTCODE_TLS_FILE
+            else:
+                path_bc = BOOTCODE_FILE
             try:
                 with open(path_bc, "rb") as fh:
                     data = fh.read()
@@ -2309,9 +2420,9 @@ class BootHandler(BaseHTTPRequestHandler):
                 self.send_error(500, "bootcode missing")
                 return
             if row is not None:
-                KEYS.note_served(mac, adoption.session_policies(data)
+                KEYS.note_served(mac, adoption.session_policies(data, fw)
                                  if row["state"] == "confirmed" else ())
-            data = adoption.seal(data, row)
+            data = adoption.seal(data, row, fw)
             log.info("serving bootcode %s (%d bytes%s) to %s [%s]",
                      os.path.basename(path_bc), len(data),
                      ", TLS required, signed" if row and row["state"] == "confirmed" else "",
@@ -2575,7 +2686,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         if path == "/api/adoption":
             return self._json(200, {"keys": KEYS.listing(), "tls": TLS_CTX is not None,
                                     "tls_port": XMPP_TLS_PORT,
-                                    "tls_runtime": bool(BOOTCODE_TLS_FILE)})
+                                    "tls_runtime": bool(BOOTCODE_TLS_FILE),
+                                    "https_runtime": bool(BOOTCODE_HTTPS_FILE)})
 
         if path in ("/api/adoption/confirm", "/api/adoption/reject", "/api/adoption/forget"):
             # A decision that hands the rabbit to whoever holds the key: POST
@@ -3252,6 +3364,8 @@ def main():
         threading.Thread(target=xmpp_tls_server, daemon=True).start()
     if BOOTCODE_TLS_FILE:
         log.info("adopted rabbits get %s", BOOTCODE_TLS_FILE)
+    if BOOTCODE_HTTPS_FILE:
+        log.info("adopted rabbits on Naboot 1.2.0.0 and later get %s", BOOTCODE_HTTPS_FILE)
     else:
         log.warning("no TLS runtime bundled: adopted rabbits get the hybrid, "
                     "which never opens the TLS port")
