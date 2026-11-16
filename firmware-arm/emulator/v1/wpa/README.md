@@ -67,3 +67,31 @@ newer**: the RSN element of the association request goes in RID `FC4D`
 (`hostap_hw.c`, `sta_fw_ver >= PRISM2_FW_VER(1,7,0)`, v6.1). The emulator answers
 1.7.x, a guess; the real card's version is read from RID `FD20`, which takes
 a probe firmware flashed over ICSP.
+
+## Where WPA2 goes into Violet's firmware (design, 2026-11-16)
+
+Found with `nabv1 --trace-bus`, which now prints the PIC's PC and four return
+addresses for every card command and BAP seek, and read in Newbaztag's
+`nabaztag_.asm`:
+
+| Address | What it is | Hook |
+|---|---|---|
+| `0x3EC6` / `p_3E66` | write a card register (W = register, `0xFA:0xFB` = word) | none |
+| `0x3CDA` | issue a card command and wait | none |
+| `0x3694`-`0x3776` | **send a frame**: BAP1 to the TX buffer (fid in `0x138:0x139`), descriptor words, then command `010B` (TX with reclaim) at `0x375C`-`0x3764` | `call wpa_tx` in place of `0x375A`-`0x3764`: rewrite the buffer as an 802.11 frame (Protected, CCMP header, ciphertext, MIC), then the original command |
+| `0x6CC0` → `0x3D88` | RX event taken and acknowledged | before the firmware parses (`0x39E8` reads the descriptor): `wpa_rx` decrypts in the card's buffer and writes back the 802.3 layout the firmware expects (header at 46, LLC at 60); EtherType `888E` (the 4-way handshake) is consumed there and never reaches the firmware |
+| RID writes `FC28` (WEP flags), `FC2A` (authentication), `FC24`-`FC27` (keys) at join | WEP setup | WPA2 instead: open authentication, flags = privacy + host encrypt + host decrypt, RSN element (CCMP, PSK) in `FC4D` |
+
+The added code sits in free flash above `0xC8E1` (the firmware's last byte),
+its RAM in what `--ram-map` shows untouched; the PMK comes from the
+configuration page (computed in the browser, or once by the rabbit).
+
+Still to be proven on the emulator, in this order: the card model in
+host-encrypt mode with an access point that speaks WPA2 (authenticator and
+CCMP on the host side, `../../src/vapcrypto.c` has the PRF and key wrap),
+then `wpa_tx`/`wpa_rx` and the handshake on the PIC, then a v1 polling the
+Terrier through WPA2.
+
+Two things only the real card can answer: its station firmware version
+(1.7.0 at least), and whether it accepts BAP writes into a received frame's
+buffer (`wpa_rx` decrypts in place; otherwise it needs a copy through RAM).

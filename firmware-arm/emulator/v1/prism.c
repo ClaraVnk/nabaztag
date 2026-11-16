@@ -374,6 +374,17 @@ uint8_t prism_io_read(uint8_t a)
 
 static uint8_t pending_lo[64];
 
+/* --trace-bus: who asked, as the PIC's PC and its four latest return
+ * addresses: the call sites a firmware addition hooks. */
+static const char *callers(void)
+{
+  static char buf[64];
+  int n = snprintf(buf, sizeof buf, "pc %05X", B.pic.pc);
+  for(int i = B.pic.sp, k = 0; i > 0 && k < 4; i--, k++)
+    n += snprintf(buf + n, sizeof buf - (size_t)n, " <%05X", B.pic.stack[i]);
+  return buf;
+}
+
 void prism_io_write(uint8_t a, uint8_t v)
 {
   a &= 0x3F;
@@ -382,11 +393,12 @@ void prism_io_write(uint8_t a, uint8_t v)
   uint8_t r = (uint8_t)(a - 1);
   switch(r) {
     case R_CMD:
-      if(B.trace_bus) board_log("card: command %04X param %04X", w, reg[R_PARAM0 / 2]);
+      if(B.trace_bus) board_log("card: command %04X param %04X, %s", w, reg[R_PARAM0 / 2], callers());
       command(w);
       return;
     case R_EVACK:
       reg[R_EVSTAT / 2] &= (uint16_t)~w;
+      if(B.trace_bus && (w & EV_RX)) board_log("card: RX acknowledged, %s", callers());
       if(w & EV_INFO) fid_free(reg[R_INFOFID / 2]);
       if(w & EV_RX) fid_free(reg[R_RXFID / 2]);
       return;
@@ -397,6 +409,8 @@ void prism_io_write(uint8_t a, uint8_t v)
       int n = r == R_OFFSET1;
       bap[n].off = w & 0x0FFF;
       bap_seek(n);
+      if(B.trace_bus && bap[n].sel < 0xF000)
+        board_log("card: BAP%d at fid %04X offset %u, %s", n, bap[n].sel, bap[n].off, callers());
       return;
     }
     case R_DATA0: case R_DATA1:
