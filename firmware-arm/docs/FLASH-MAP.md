@@ -44,8 +44,8 @@ about 18.6 s.
 
 ## The levers, cheapest first
 
-1. **-Os instead of -O1: 12 728 bytes, measured** (`--mode
-   naboot-1.2.0.2`: 1.2.0.1 with `opt_size`). Every hardware-validated image
+1. **-Os instead of -O1: 12 728 bytes, measured, and FAILED on the test
+   rabbit** (`--mode naboot-1.2.0.2`: 1.2.0.1 with `opt_size`; see below). Every hardware-validated image
    was -O1, and a layout change has woken an old bug here before: it ships
    only after the emulator proofs, a crypto timing check (the key exchange
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
@@ -95,3 +95,23 @@ remove a test the C asks for. What it can change:
 - **undefined behaviour**: a latent C bug can show at one level and not the
   other; the host tests (`firmware-arm/tests`, ASan and UBSan) are the net,
   and the test rabbit the last word.
+
+## On Nabazprout: it does not come back (2026-11-16)
+
+Sent over the air to the test rabbit only, at 17:33:23: the 114 224 bytes
+arrived in the session in 4.1 s and were installed. Then the nose and belly
+stayed orange; after unplugging it ten seconds, the first belly light
+blinked orange and the Terrier never saw the rabbit again: no `locate.jsp`,
+no XMPP, for more than 30 minutes. It went back to 1.2.0.1 through its
+configuration page.
+
+So the image starts (the bootloader runs) but the rabbit never reaches the
+network. Nothing the emulators run could see it: the native emulator
+compiles the C for the host, and flashsim stops at `main()`; the radio's
+bring-up (USB host, rt2501) is on neither. Read and ruled out: `DelayMs`
+reads a `volatile` counter; `hcd_transfer_wait` re-reads `urb->status`
+after an opaque call. The cause is not known.
+
+**-Os does not ship as a whole.** Next, if it is taken up again: -Os file by
+file, keeping `src/usb`, `src/net` and `src/hal` at -O1, on the bench rabbit
+with the JTAG DCC telemetry (`jtag/listen.sh`) to see where it stops.
