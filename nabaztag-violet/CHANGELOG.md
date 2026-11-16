@@ -17,10 +17,10 @@
   sends the root the host's chain ends at as `res:N`, then
   `ST https://host/path#r<N>@<time>`; a host it cannot verify is not sent.
   Radio relayed in the session and updates fetched from GitHub stay off.
-- Proven in the emulator on 2026-11-16 (`tools/addon-https-proof.sh`,
+- Proven in the emulator on 2026-11-16 (`firmware-arm/emulator/tools/addon-https-proof.sh`,
   Naboot 1.2.0.1's bootloader, an image with `tls_certs`): the rabbit checks
   the host's chain (`https: ready`) and plays the sound (50 092 bytes), as
-  `tools/https-proof.sh` shows it through Le Terrier.
+  `firmware-arm/emulator/tools/https-proof.sh` shows it through Le Terrier.
 
 ## 0.17.0
 
