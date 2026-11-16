@@ -45,7 +45,7 @@ about 18.6 s.
 ## The levers, cheapest first
 
 1. **-Os instead of -O1: 12 728 bytes, measured** (`--mode
-   naboot-1.2.0.1-os`, a measurement build). Every hardware-validated image
+   naboot-1.2.0.2`: 1.2.0.1 with `opt_size`). Every hardware-validated image
    was -O1, and a layout change has woken an old bug here before: it ships
    only after the emulator proofs, a crypto timing check (the key exchange
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
@@ -63,3 +63,20 @@ about 18.6 s.
 
 Not a lever: rewriting in assembly (10 to 20 % of the C at most, months of
 work, a new bug surface).
+
+## Naboot 1.2.0.2 in flashsim (2026-11-16)
+
+The built ARM image on the Unicorn ARM7 model (`emulator/flashsim`), unsigned:
+
+- `boot`: main() after 4 559 instructions, `.data` in place;
+- 1.2.0.1 writes 1.2.0.2: 28 erases, reset, the new image boots; watchdog
+  fed 28 times, longest unfed 76 ms;
+- 1.2.0.2 writes 1.2.0.1 back (testers must be able to return): 31 erases,
+  boots;
+- `sweep --mid`: a power cut in the middle leaves a mixed flash that does not
+  boot, as for every update on this hardware (`OTA-ANTIBRICK.md`), no new
+  fatal window.
+
+The native emulator proofs (section 4 of the RUNBOOK) compile the C for the
+host, so a compiler flag on the ARM build is invisible to them; the
+bytecode inside the image is byte-identical (27 400 bytes either way).
