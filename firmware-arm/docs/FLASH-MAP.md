@@ -28,7 +28,7 @@ configuration pages (HTML, CSS, JS; the shared stylesheet alone 2 777).
 
 ## What -Os costs in time
 
-`tools/cost/run.sh` (qemu-arm, executed instructions, the firmware's crypto
+`firmware-arm/tools/cost/run.sh` (qemu-arm, executed instructions, the firmware's crypto
 sources), `OPT=-O1` against `OPT=-Os`, 2026-11-16:
 
 | Case | -O1 | -Os | |
@@ -88,7 +88,7 @@ The source is the same, so are the checks: an optimisation level does not
 remove a test the C asks for. What it can change:
 
 - **timing**: a compiler may turn constant-time code into a branch.
-  `tools/cost/ct.sh` (SAE's hunting-and-pecking, the WPA3 password path)
+  `firmware-arm/tools/cost/ct.sh` (SAE's hunting-and-pecking, the WPA3 password path)
   at `OPT=-O1` and `OPT=-Os`, 2026-11-16: the pairs stay equal at both
   levels (`pwe_round1` = `pwe_round12`, 161 060 360 and 162 240 014
   instructions; `dec_valid`/`dec_invalid` one apart at both, as before);
@@ -114,4 +114,4 @@ after an opaque call. The cause is not known.
 
 **-Os does not ship as a whole.** Next, if it is taken up again: -Os file by
 file, keeping `src/usb`, `src/net` and `src/hal` at -O1, on the bench rabbit
-with the JTAG DCC telemetry (`jtag/listen.sh`) to see where it stops.
+with the JTAG DCC telemetry (`firmware-arm/jtag/listen.sh`) to see where it stops.
