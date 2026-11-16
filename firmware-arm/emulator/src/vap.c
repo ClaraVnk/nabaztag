@@ -223,8 +223,9 @@ static const uint8_t wpa_vendor[4] = {0x00,0x50,0xf2,0x01};
  * Anything that changes either of those — and WPA3 does not — walks the
  * parser off by four bytes.
  */
-static uint8_t *put_rsn_ie(uint8_t *p, int security)
+static uint8_t *put_rsn_ie(uint8_t *p, const struct sim_ap *a)
 {
+  int security = a->security;
   uint8_t body[64];
   uint8_t *b = body;
   uint8_t pairwise[2];
@@ -239,6 +240,7 @@ static uint8_t *put_rsn_ie(uint8_t *p, int security)
       break;
     case SIM_SEC_WPA2_CCMP:
       group = RSN_CIPHER_CCMP; pairwise[0] = RSN_CIPHER_CCMP; akm[0] = RSN_AKM_PSK;
+      if(a->mfpc) caps = 0x0080;   /* MFPC: capable, optional, as boxes ship */
       break;
     case SIM_SEC_WPA2_MIXED:
       group = RSN_CIPHER_TKIP;
@@ -347,12 +349,62 @@ static uint32_t build_beacon(uint8_t *out, const struct sim_ap *a,
   *p++ = capinfo & 0xff; *p++ = (capinfo >> 8) & 0xff;
 
   p = put_ie(p, IEEE80211_ELEMID_SSID, a->ssid, (uint8_t)strlen(a->ssid));
-  p = put_ie(p, IEEE80211_ELEMID_RATES, rates, sizeof(rates));
+  if(a->n_only) {
+    /* HT required: 802.11-2020 9.4.2.3, the BSS membership selector 127
+     * (0xFF with the basic bit) among the basic rates, the OFDM ones only. */
+    static const uint8_t nrates[8] = {0x8c,0x12,0x98,0x24,0xb0,0x48,0x60,0xff};
+    p = put_ie(p, IEEE80211_ELEMID_RATES, nrates, sizeof(nrates));
+  } else {
+    p = put_ie(p, IEEE80211_ELEMID_RATES, rates, sizeof(rates));
+  }
   p = put_ie(p, IEEE80211_ELEMID_DSPARMS, &a->channel, 1);
+  if(a->livebox) {
+    /* TIM, country FR channels 1-13, ERP: before the extended rates, in
+     * element-ID order, as a box sends them. */
+    static const uint8_t tim[4] = {0x00,0x01,0x00,0x00};
+    static const uint8_t country[6] = {'F','R',0x20, 0x01,0x0d,0x14};
+    static const uint8_t erp = 0x00;
+    p = put_ie(p, 5, tim, sizeof(tim));
+    p = put_ie(p, 7, country, sizeof(country));
+    p = put_ie(p, 42, &erp, 1);
+  }
   p = put_ie(p, IEEE80211_ELEMID_XRATES, xrates, sizeof(xrates));
-  p = put_rsn_ie(p, a->security);
+  p = put_rsn_ie(p, a);
   p = put_wpa_ie(p, a->security);
   p = put_rsnxe(p, a);
+  if(a->livebox) {
+    /* HT Capabilities (26 bytes) and Operation (22), Extended Capabilities,
+     * WMM parameters, a WPS element of the usual size, and a Broadcom vendor
+     * element: the order and lengths of a Wi-Fi 5 box on its 2.4 GHz radio. */
+    static const uint8_t htcap[26] = {0xef,0x19,0x17,0xff,0xff,0,0,0,0,0,0,0,0,0,
+                                      0,0,0,0,0,0,0,0,0,0,0,0};
+    uint8_t htop[22] = {0};
+    static const uint8_t extcap[8] = {0x04,0x00,0x08,0x00,0x00,0x00,0x00,0x40};
+    static const uint8_t wmm[24] = {0x00,0x50,0xf2,0x02,0x01,0x01,0x80,0x00,
+                                    0x03,0xa4,0x00,0x00,0x27,0xa4,0x00,0x00,
+                                    0x42,0x43,0x5e,0x00,0x62,0x32,0x2f,0x00};
+    static const uint8_t wps[] = {0x00,0x50,0xf2,0x04,
+      0x10,0x4a,0x00,0x01,0x10, 0x10,0x44,0x00,0x01,0x02,
+      0x10,0x3b,0x00,0x01,0x03,
+      0x10,0x47,0x00,0x10, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,
+      0x10,0x21,0x00,0x07,'S','a','g','e','m','c','o',
+      0x10,0x23,0x00,0x09,'L','i','v','e','b','o','x',' ','5',
+      0x10,0x24,0x00,0x01,'5',
+      0x10,0x42,0x00,0x01,'0',
+      0x10,0x54,0x00,0x08,0x00,0x06,0x00,0x50,0xf2,0x04,0x00,0x01,
+      0x10,0x11,0x00,0x09,'L','i','v','e','b','o','x',' ','5',
+      0x10,0x08,0x00,0x02,0x20,0x08,
+      0x10,0x3c,0x00,0x01,0x01,
+      0x10,0x49,0x00,0x06,0x00,0x37,0x2a,0x00,0x01,0x20};
+    static const uint8_t brcm[7] = {0x00,0x10,0x18,0x02,0x00,0x00,0x1c};
+    htop[0] = a->channel;
+    p = put_ie(p, 45, htcap, sizeof(htcap));
+    p = put_ie(p, 61, htop, sizeof(htop));
+    p = put_ie(p, 127, extcap, sizeof(extcap));
+    p = put_ie(p, IEEE80211_ELEMID_VENDOR, wmm, sizeof(wmm));
+    p = put_ie(p, IEEE80211_ELEMID_VENDOR, wps, sizeof(wps));
+    p = put_ie(p, IEEE80211_ELEMID_VENDOR, brcm, sizeof(brcm));
+  }
 
   return (uint32_t)(p - out);
 }

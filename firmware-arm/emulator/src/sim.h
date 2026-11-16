@@ -46,6 +46,12 @@ struct sim_ap {
   int      associated;      /* the rabbit completed assoc with this one  */
   int      authenticated;   /* open-system auth done                     */
   int      mute;            /* 1 = drops data from the station, says nothing */
+  int      livebox;         /* 1 = a box's crowded beacon: country, ERP, HT,
+                               WMM, WPS, vendor elements (issue #163)        */
+  int      n_only;          /* 1 = HT required: the basic rate set carries
+                               the HT PHY membership selector                */
+  int      mfpc;            /* 1 = WPA2 announcing PMF capable (MFPC), not
+                               required, nothing else changed                */
   int      sae_auth;        /* ...and it was SAE, so the AKM-defined key
                                schedule applies to the handshake         */
   uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */
