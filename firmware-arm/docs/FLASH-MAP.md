@@ -81,3 +81,17 @@ The native emulator proofs (section 4 of the RUNBOOK) compile the C for the
 host, so a compiler flag on the ARM build is invisible to them; the
 bytecode inside the image is the same 27 400 bytes but for seven: the
 version byte (1 -> 2) and the build mark, twice.
+
+## Does -Os change the security?
+
+The source is the same, so are the checks: an optimisation level does not
+remove a test the C asks for. What it can change:
+
+- **timing**: a compiler may turn constant-time code into a branch.
+  `tools/cost/ct.sh` (SAE's hunting-and-pecking, the WPA3 password path)
+  at `OPT=-O1` and `OPT=-Os`, 2026-11-16: the pairs stay equal at both
+  levels (`pwe_round1` = `pwe_round12`, 161 060 360 and 162 240 014
+  instructions; `dec_valid`/`dec_invalid` one apart at both, as before);
+- **undefined behaviour**: a latent C bug can show at one level and not the
+  other; the host tests (`firmware-arm/tests`, ASan and UBSan) are the net,
+  and the test rabbit the last word.
