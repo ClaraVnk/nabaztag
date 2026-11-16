@@ -606,7 +606,7 @@ configuration flash sector, next to the Wi-Fi password.
 ## The Home Assistant add-on (legacy)
 
 This repository is a **Home Assistant OS add-on repository** (`repository.yaml`
-at the root). Its add-on, **Nabaztag Violet Server** (`nabaztag-violet/`), is a
+at the root). Its add-on, **Nabaztag Terrier** (`nabaztag-violet/`), is a
 small, **dependency-free server that speaks the original Violet protocol**
 directly: the rabbit phones home to it, and Home Assistant drives the rabbit —
 ears, belly weather icons, nose — through a simple control API. A **stock**
@@ -648,7 +648,7 @@ proxy — one clean process.
 
 1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**,
    add `https://github.com/ClaraVnk/nabaztag`.
-2. Install **Nabaztag Violet Server**. In **Configuration**, set `server_address`
+2. Install **Nabaztag Terrier**. In **Configuration**, set `server_address`
    to a **hostname** such as `nabaztag.lan` — **not a raw IP**: the bytecode
    resolves the XMPP server by **DNS**, so an IP literal fails. **Start** the
    add-on.

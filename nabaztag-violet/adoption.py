@@ -309,25 +309,44 @@ def sign_bytecode(blob: bytes, key: bytes) -> bytes:
 #   rsc   MU, MC and CH res:N likewise
 #   mic   `RS session`: the microphone as <mic len=N/> + raw bytes
 #   ota   `FW res:N <sig>`: the plain image down the session
+#   https `ST https://host/path#r<N>@<time>`: the rabbit opens the host
+#         itself over HTTPS, the root its chain ends at sent first as res:N
+#         (patch_https_play.py) -- Naboot 1.2.0.0 on only, see has_https
 # `live` (radio and podcasts pulled through the session) stays off: this
-# add-on does not relay streams, the rabbit fetches them itself.
+# add-on does not relay streams, the rabbit fetches them itself. So does
+# `otahttps` (an update fetched from GitHub by the rabbit): it failed on the
+# first real rabbit (2026-11-13), updates go down the session. And `btn`: a
+# long press records to record.jsp, the add-on's push-to-talk.
 SESSION_POLICIES = ("rfid", "res", "rsc", "mic", "ota")
+HTTPS_POLICIES = ("https",)
 
 
-def session_policies(blob: bytes) -> frozenset[str]:
-    """The policies seal() turns on in this bytecode: those it carries
-    exactly once."""
-    return frozenset(p for p in SESSION_POLICIES
+def has_https(fw_version: str | None) -> bool:
+    """Naboot 1.2.0.0 on carries the https opcodes (tls_certs); an older
+    image has none, and its policy is what keeps the code calling them from
+    ever running there. The version is the boot URL's v=."""
+    try:
+        parts = tuple(int(x) for x in (fw_version or "").split("."))
+    except ValueError:
+        return False
+    return len(parts) == 4 and parts >= (1, 2, 0, 0)
+
+
+def session_policies(blob: bytes, fw_version: str | None = None) -> frozenset[str]:
+    """The policies seal() turns on in this bytecode for this firmware:
+    those it carries exactly once."""
+    wanted = SESSION_POLICIES + (HTTPS_POLICIES if has_https(fw_version) else ())
+    return frozenset(p for p in wanted
                      if blob.count(b"xmpp-%s:0" % p.encode()) == 1)
 
 
-def seal(blob: bytes, row: dict | None) -> bytes:
+def seal(blob: bytes, row: dict | None, fw_version: str | None = None) -> bytes:
     """What bc.jsp sends: for a confirmed key, TLS required and every
     session policy on (session_policies), then the HMAC, so the HMAC covers
     them; the bytecode as it is otherwise."""
     if row is None or row.get("state") != "confirmed":
         return blob
-    for p in session_policies(blob):
+    for p in session_policies(blob, fw_version):
         blob = blob.replace(b"xmpp-%s:0" % p.encode(), b"xmpp-%s:1" % p.encode())
     return sign_bytecode(require_tls(blob), row["key"])
 

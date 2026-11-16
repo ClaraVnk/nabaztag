@@ -1,4 +1,4 @@
-# Nabaztag Violet Server — Add-on documentation
+# Nabaztag Terrier — Add-on documentation
 
 A clean, dependency-free server (Python stdlib) that revives an **original
 Nabaztag / Nabaztag:tag** by speaking the **Violet protocol** directly — no
@@ -84,7 +84,7 @@ Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
 2. Still running the old **"Nabaztag Server (OpenJabNab)"** add-on from this
    repo's early days? **Stop it** — it uses the same `:80`/`:5222` ports. (It is
    no longer offered in the store; see `legacy/nabaztag-server/`.)
-3. Install **Nabaztag Violet Server**. Set `server_address` to a **hostname**
+3. Install **Nabaztag Terrier**. Set `server_address` to a **hostname**
    (e.g. `nabaztag.lan`) — **not a raw IP**: the bytecode resolves the XMPP server
    by DNS, so it must be a resolvable name. Then **Start**. (The runtime bytecode
    is bundled — a *hybrid* build, so passive listening and volume work out of the
@@ -167,6 +167,15 @@ before. What stays outside the session: radio and podcast streams, and any
 sound on another host's URL, which the rabbit fetches itself; a sound over
 200 KB, sent by URL as before; and a push-to-talk recording (head button
 held), which the runtime still posts to `record.jsp` over plain HTTP.
+
+**Naboot 1.2.0.0 and later** (since 0.18.0) get the runtime Le Terrier
+serves them: DHCP and DNS replies checked, HTTP answers bounded, and
+**`https://` streams opened by the rabbit itself**. For `/api/play?url=https://…`
+the add-on follows the redirects, checks the host's certificate chain with
+its own store and sends the rabbit the one root that chain ends at; the
+rabbit then checks the host against that root, encrypted end to end. A host
+whose chain the add-on cannot verify is not sent at all (the log says
+`cannot be verified`). `http://` addresses play as before.
 
 The keys are in `/data/adoption-keys.json`, kept by Home Assistant's
 backups. **Losing that file locks a confirmed rabbit out**: it refuses every

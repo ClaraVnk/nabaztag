@@ -176,6 +176,30 @@ firmware-arm/emulator/tools/stock-ota-proof.sh --terrier ghcr.io/claravnk/terrie
 The verdict is the VM's last lines: `asked to flash itself with a N-byte
 image`, `flash writes 1`, `resets asked 0`, and the heap at its highest.
 
+**The Home Assistant add-on** (`nabaztag-violet/`, run from the checkout;
+port 5223 must be free):
+
+```sh
+# adoption, a sentence inside TLS, then bc.jsp over TLS (bootcode.tls)
+firmware-arm/emulator/tools/addon-tls-proof.sh --emulator nabaztag-emulator \
+    --elf <bin/naboot-1.2.0.1/Nab.elf> --out /tmp/addon-tls
+# Naboot 1.2.x: bootcode.https, and an https:// stream the rabbit opens itself.
+# Its own image: the https opcodes are the tls_certs step, which neither the
+# default MOD_STEPS nor emu-steps.py include. Without it httpsStart is no
+# opcode at all, the rabbit writes the root it was given where its
+# ClientHello should be and the host answers "wrong version number"
+# (2026-11-16, a morning lost to it).
+podman build -f firmware-arm/emulator/Containerfile -t emu-https \
+    --build-arg MOD_STEPS=$(grep -m1 '^STEPS=' firmware-arm/emulator/run.sh | cut -d= -f2),tls_certs .
+PY=<python with cryptography> firmware-arm/emulator/tools/addon-https-proof.sh \
+    --emulator emu-https --elf <bin/naboot-1.2.0.1/Nab.elf> --out /tmp/addon-https
+```
+
+The same image for `tools/https-proof.sh` (Le Terrier's side).
+
+Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
+lines and `audio: the rabbit started`.
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
@@ -190,6 +214,9 @@ RUNTIME=tls   bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /
 bytecode/reproduce-served.sh https /tmp/served-https.hybrid
 bytecode/reproduce-served.sh tls   /tmp/served-tls.hybrid
 ```
+
+The add-on ships both, built by these two commands: `nabaztag-violet/bootcode.https` and
+`bootcode.tls` (checksums in its Dockerfile).
 
 `<tree>` is a copy of `firmware-arm/vendor/openjabnab/bootcode`. A new
 runtime is proven in the emulator against that control (same scenario, the
