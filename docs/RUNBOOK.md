@@ -197,6 +197,11 @@ PY=<python with cryptography> firmware-arm/emulator/tools/addon-https-proof.sh \
 
 The same image for `tools/https-proof.sh` (Le Terrier's side).
 
+`--real icecast.radiofrance.fr/fip-midfi.mp3` plays a real station instead of
+the test host: a relay passes the rabbit's bytes to the station untouched and
+writes `relay.log` (bytes each way, who closed). Proven 2026-11-16: FIP played
+for the whole scenario, about 2 MB in two minutes.
+
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
 

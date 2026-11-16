@@ -10,7 +10,15 @@
 # --play-at /api/play?url=https://... is called.
 #
 #   tools/addon-https-proof.sh --emulator <image> --elf <Nab.elf of naboot-1.2.0.x> \
-#       --out <dir> [--play-at 110]
+#       --out <dir> [--play-at 110] [--real <host/path>]
+#
+# --real icecast.radiofrance.fr/fip-midfi.mp3: no test host, the real one.
+# A relay on the host port passes the rabbit's bytes to <host>:443 untouched,
+# so the rabbit meets that server's own chain, extensions and endless stream,
+# and the add-on verifies it with its image's own store. relay.log says how
+# many bytes went each way and who closed. Born 2026-11-16: every https
+# radio on Le Terrier stopped by itself after 2 to 31 s while the test host's
+# three-second file played whole.
 #
 # What to read: the add-on's "opens ... itself over HTTPS (root N bytes as
 # res:M)", then in the rabbit's log `https: hello to`, `https: ready`, the
@@ -19,7 +27,7 @@
 # Needs python3 with `cryptography` on the host (or PY=path/to/python), and
 # port 5223 free: the bootloader knows no other TLS port.
 set -u
-EMU= ; ELF= ; OUT= ; PLAY_AT=110 ; SECS=3
+EMU= ; ELF= ; OUT= ; PLAY_AT=110 ; SECS=3 ; REAL=
 SUITE=TLS_CHACHA20_POLY1305_SHA256
 BASE=${BASE:-19800}
 PY=${PY:-python3}
@@ -29,6 +37,7 @@ while [ $# -gt 0 ]; do
     --elf) ELF=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --play-at) PLAY_AT=$2; shift 2 ;;
+    --real) REAL=$2; shift 2 ;;
     *) echo "unknown: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,7 +45,8 @@ for v in EMU ELF OUT; do [ -n "${!v}" ] || { echo "--$(echo $v | tr A-Z a-z) is 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 ADDON="$(cd "$HERE/../../nabaztag-violet" && pwd)"
 HTTP=$((BASE+33)); XMPP=$((BASE+22)); XMPPS=5223; API=$((BASE+34)); HOST_PORT=$((BASE+43))
-HOSTNAME=podcast.example.test
+HOSTNAME=podcast.example.test ; URLPATH=/ep.wav
+[ -n "$REAL" ] && { HOSTNAME=${REAL%%/*}; URLPATH=/${REAL#*/}; }
 NAME=addon-https-$BASE
 mkdir -p "$OUT/data" "$OUT/host" "$OUT/www"
 OUT="$(cd "$OUT" && pwd)"
@@ -44,6 +54,38 @@ rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log
 cp "$ELF" "$OUT/host/Nab.elf"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
 
+CERT_ENV=(-e SSL_CERT_FILE=/data/bundle.pem)
+if [ -n "$REAL" ]; then
+CERT_ENV=()
+pkill -f "[r]elay-real $HOST_PORT" 2>/dev/null
+"$PY" - "$HOST_PORT" "$HOSTNAME" relay-real > "$OUT/relay.log" 2>&1 <<'PY' &
+# relay-real: <port> -> <host>:443, untouched, counting each way
+import socket, sys, threading, time
+port, host = int(sys.argv[1]), sys.argv[2]
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", port)); s.listen(8)
+t0 = time.time()
+def pipe(a, b, n, way, tot):
+    while True:
+        try: d = a.recv(65536)
+        except OSError as e: print(f"#{n} {way} error {e}", flush=True); break
+        if not d: print(f"#{n} {way} closed by {'the rabbit' if way == 'up' else 'the host'} after {tot[0]} bytes, {time.time()-t0:.1f} s", flush=True); break
+        tot[0] += len(d)
+        try: b.sendall(d)
+        except OSError as e: print(f"#{n} {way} send error {e}", flush=True); break
+    for x in (a, b):
+        try: x.shutdown(socket.SHUT_RDWR)
+        except OSError: pass
+n = 0
+while True:
+    c, _ = s.accept(); n += 1
+    u = socket.create_connection((host, 443), timeout=15); u.settimeout(None)
+    print(f"#{n} open at {time.time()-t0:.1f} s", flush=True)
+    threading.Thread(target=pipe, args=(c, u, n, "up", [0]), daemon=True).start()
+    threading.Thread(target=pipe, args=(u, c, n, "down", [0]), daemon=True).start()
+PY
+HOST_PID=$!
+else
 # The host: a chain shaped like Let's Encrypt's, and three seconds of sound.
 "$PY" - "$OUT" "$HOSTNAME" "$SECS" <<'PY'
 import datetime, struct, sys, math
@@ -89,12 +131,13 @@ pkill -f "s_server -accept $HOST_PORT" 2>/dev/null
     -cert "$OUT/host/leaf.pem" -cert_chain "$OUT/host/inter.pem" -key "$OUT/host/key.pem" \
     -WWW -state > "$OUT/host.log" 2>&1 ) &
 HOST_PID=$!
+fi
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --network host --add-host "$HOSTNAME:127.0.0.1" \
   -e SERVER_ADDRESS=127.0.0.1 -e HTTP_PORT=$HTTP -e XMPP_PORT=$XMPP -e XMPP_TLS_PORT=$XMPPS \
   -e API_PORT=$API -e ADOPTION_KEYS_FILE=/data/adoption-keys.json -e LOG_LEVEL=INFO \
-  -e SSL_CERT_FILE=/data/bundle.pem \
+  "${CERT_ENV[@]}" \
   -v "$ADDON:/app:ro,z" -v "$OUT/data:/data:z" docker.io/library/python:3.13-alpine \
   python3 -u /app/server.py >/dev/null
 for _ in $(seq 60); do podman logs "$NAME" 2>&1 | grep -q "HTTP boot server" && break; sleep 1; done
@@ -128,7 +171,7 @@ FP=$(api /api/adoption | python3 -c "import json,sys; k=json.load(sys.stdin)['ke
 set -- $FP
 api /api/adoption/confirm "{\"mac\":\"$1\",\"fingerprint\":\"$2\"}" | cut -c1-120 | sed 's/^/   /'
 ( sleep "$PLAY_AT"; echo "   [play at +${PLAY_AT}s]"
-  api "/api/play?url=https://$HOSTNAME:$HOST_PORT/ep.wav" "" | sed 's/^/   play: /' ) &
+  api "/api/play?url=https://$HOSTNAME:$HOST_PORT$URLPATH" "" | sed 's/^/   play: /' ) &
 PLAY_PID=$!
 boot 2-confirmed scenarios/vm/https-play.txt
 wait $PLAY_PID   # a bare `wait` waited for s_server too, forever (2026-11-15)
@@ -138,7 +181,7 @@ grep -a "serving bootcode\|itself over HTTPS\|cannot be verified\|https:" "$OUT/
 echo "   rabbit:"
 grep -a "https: \|audio: the rabbit started\|audio: end of clip\|audio clips played\|gw: the rabbit opened .*:$HOST_PORT" "$OUT/vm-2-confirmed.log" | sed 's/^/   /' | head -20
 echo "   host:"
-tail -5 "$OUT/host.log" | sed 's/^/   /'
+if [ -n "$REAL" ]; then tail -8 "$OUT/relay.log"; else tail -5 "$OUT/host.log"; fi | sed 's/^/   /'
 podman rm -f "$NAME" >/dev/null 2>&1
 kill $HOST_PID 2>/dev/null; pkill -f "s_server -accept $HOST_PORT" 2>/dev/null
 echo "proof-done: $OUT"
