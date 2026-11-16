@@ -79,4 +79,5 @@ The built ARM image on the Unicorn ARM7 model (`emulator/flashsim`), unsigned:
 
 The native emulator proofs (section 4 of the RUNBOOK) compile the C for the
 host, so a compiler flag on the ARM build is invisible to them; the
-bytecode inside the image is byte-identical (27 400 bytes either way).
+bytecode inside the image is the same 27 400 bytes but for seven: the
+version byte (1 -> 2) and the build mark, twice.
