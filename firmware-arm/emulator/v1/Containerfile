@@ -1,0 +1,17 @@
+# The v1 emulator, in a container.
+#
+#   podman build -t nabaztag-v1 -f firmware-arm/emulator/v1/Containerfile firmware-arm
+#   podman run --rm --network host nabaztag-v1 --seconds 30 --warren 127.0.0.1 --port80 8080
+#
+# Rocky, like the tag's emulator next door. The context is firmware-arm: the
+# v1 shares its gateway (emulator/src/gw.c) with the tag's, and its firmware
+# is vendored in vendor/newbaztag.
+FROM quay.io/rockylinux/rockylinux:10
+RUN dnf -y install gcc make && dnf clean all
+WORKDIR /fw
+COPY vendor/newbaztag/firmware/original/nabaztag.hex vendor/newbaztag/firmware/original/
+COPY emulator/src/gw.c emulator/src/gw.h emulator/src/
+COPY emulator/v1/ emulator/v1/
+WORKDIR /fw/emulator/v1
+RUN make nabv1 hex
+ENTRYPOINT ["./nabv1", "--hex", "nabaztag.hex"]

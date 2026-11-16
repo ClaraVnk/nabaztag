@@ -20,7 +20,17 @@ survives upstream vanishing.
   cross-checking and because `apply-mods.py` reads
   `mtl/mtl_linux/src/vcomp/stdlib_core.cpp`.
 
-Both `LICENSE` files are kept beside the code they cover; nothing here is ours.
+- `newbaztag/` — the Nabaztag v1's own firmware, read from a real rabbit's
+  PIC18F6627 over ICSP, with its disassembly, the pin notes and Violet's FCC
+  schematics (TYR-NABAZTAG, exhibits 630159 and 630165), at commit
+  `27e571fd8d4732d987f70844cc9804ab9418170c`
+  (`https://github.com/trcwm/Newbaztag`, MIT). `firmware/original/nabaztag.hex`
+  has SHA-256 `f1f78e557484fea6da185f9527b7a5ad4c60ac247f5422a276ad3d5324dbb1e0`;
+  the v1 emulator (`../emulator/v1`) runs it. A v1 cannot update itself, so
+  this dump is the only firmware a v1 will ever run. Newbaztag's own new
+  firmware and its third-party datasheets are not copied.
+
+The `LICENSE` files are kept beside the code they cover; nothing here is ours.
 
 ## What was removed
 
