@@ -68,6 +68,7 @@ Read in the process, against what the sources said:
 | `--press AT HOLD` | the head button, pressed at AT seconds for HOLD seconds |
 | `--flash FILE` | keep the serial flash (configuration page, program) across runs |
 | `--trace-bus`, `--trace-pins`, `--trace-net`, `--hot` | what the card, the pins, the gateway and the PC did |
+| `--ram-map FILE` | the general-purpose RAM the firmware never touched, and never read, during the run; the stack's depth |
 
 ## Proofs
 

@@ -81,7 +81,7 @@ uint8_t pic18_peek(struct pic18 *pic, uint16_t a)
 static uint8_t rd(struct pic18 *pic, uint16_t a)
 {
   if(a == 0xFFFF) return 0;
-  if(a < PIC_SFR_BASE) return pic->ram[a];
+  if(a < PIC_SFR_BASE) { if(pic->touched) pic->touched[a] |= 1; return pic->ram[a]; }
   switch(a) {
     case SFR_PCL:
       pic->ram[SFR_PCLATH] = (uint8_t)(pic->pc >> 8);
@@ -99,7 +99,7 @@ static uint8_t rd(struct pic18 *pic, uint16_t a)
 static void wr(struct pic18 *pic, uint16_t a, uint8_t v)
 {
   if(a == 0xFFFF) return;
-  if(a < PIC_SFR_BASE) { pic->ram[a] = v; return; }
+  if(a < PIC_SFR_BASE) { if(pic->touched) pic->touched[a] |= 2; pic->ram[a] = v; return; }
   switch(a) {
     case SFR_PCL:
       pic->ram[SFR_PCL] = v;
@@ -126,6 +126,7 @@ static void push(struct pic18 *pic, uint32_t v)
     return;
   }
   pic->stack[++pic->sp] = v;
+  if(pic->sp > pic->sp_max) pic->sp_max = pic->sp;
 }
 
 static uint32_t pop(struct pic18 *pic)

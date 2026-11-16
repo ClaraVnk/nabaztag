@@ -63,9 +63,38 @@ static void report_hot(void)
   for(int k = 0; k < 12 && best[k]; k++) printf("    %05X  %u\n", at[k], best[k]);
 }
 
+/* --ram-map: what of the 3 936 bytes of general-purpose RAM Violet's
+ * firmware left alone during this run, as ranges, and how deep the
+ * 31-level hardware stack went: the room a firmware addition has. */
+static void report_ram(const char *path, const uint8_t *touched)
+{
+  FILE *f = fopen(path, "w");
+  unsigned n[2] = { 0, 0 };
+  if(!f) { perror(path); return; }
+  /* Pass 0: never touched. Pass 1: never read -- written only, as by a
+   * clearing loop at boot: free too, once that loop is told to stop short. */
+  for(int pass = 0; pass < 2; pass++) {
+    unsigned start = 0, in = 0;
+    for(unsigned a = 0; a <= PIC_SFR_BASE; a++) {
+      int idle = a < PIC_SFR_BASE && !(touched[a] & (pass ? 1 : 3));
+      if(idle) n[pass]++;
+      if(idle && !in) { start = a; in = 1; }
+      if(!idle && in) {
+        fprintf(f, "%s %03X-%03X %u\n", pass ? "never-read" : "never-touched", start, a - 1, a - start);
+        in = 0;
+      }
+    }
+  }
+  fprintf(f, "never touched %u, never read %u, of %u; stack depth %u of %u\n",
+          n[0], n[1], PIC_SFR_BASE, B.pic.sp_max, PIC_STACK_DEPTH);
+  fclose(f);
+  board_log("ram: %u bytes never touched, %u never read, stack depth %u (map in %s)",
+            n[0], n[1], B.pic.sp_max, path);
+}
+
 int main(int argc, char **argv)
 {
-  const char *hex = "nabaztag.hex", *flash = NULL, *warren = NULL;
+  const char *hex = "nabaztag.hex", *flash = NULL, *warren = NULL, *ram_map = NULL;
   double seconds = 10;
   int want_hot = 0;
 
@@ -77,6 +106,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--trace-pins")) B.trace_pins = 1;
     else if(!strcmp(argv[i], "--trace-bus")) B.trace_bus = 1;
     else if(!strcmp(argv[i], "--hot")) want_hot = 1;
+    else if(!strcmp(argv[i], "--ram-map") && i + 1 < argc) ram_map = argv[++i];
     else if(!strcmp(argv[i], "--warren") && i + 1 < argc) warren = argv[++i];
     else if(!strcmp(argv[i], "--ssid") && i + 1 < argc) snprintf(prism_ssid, sizeof(prism_ssid), "%s", argv[++i]);
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
@@ -96,6 +126,8 @@ int main(int argc, char **argv)
   }
 
   board_reset();
+  static uint8_t touched[PIC_SFR_BASE];
+  if(ram_map) B.pic.touched = touched;
   int n = pic18_load_hex(&B.pic, hex);
   if(n <= 0) { fprintf(stderr, "cannot read %s\n", hex); return 2; }
   board_log("firmware: %d bytes from %s, CONFIG4L %02X", n, hex, B.pic.config[6]);
@@ -111,6 +143,7 @@ int main(int argc, char **argv)
   }
   if(B.pic.halted) board_log("halted at %05X: %s", B.pic.pc, B.pic.halt_reason);
   if(want_hot) report_hot();
+  if(ram_map) report_ram(ram_map, touched);
   flash_save();
   gw_close();
   return 0;

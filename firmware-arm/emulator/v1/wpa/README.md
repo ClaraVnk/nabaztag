@@ -42,8 +42,22 @@ C is most of it); CCMP 12.4 KB/s (a 300-byte poll 24 ms, a 1500-byte frame
   the configuration page can compute the 32-byte PMK in the browser, or the
   rabbit once at first start and keep it in its serial flash.
 - Not counted: moving each frame through the card's BAP twice (CCMP reads
-  the plaintext for the MAC, then writes the ciphertext), and RAM: the
-  firmware's own use of the 3 936 bytes is still to be measured.
+  the plaintext for the MAC, then writes the ciphertext).
+
+## RAM and stack
+
+WPA2 needs about 450 bytes: round keys 176 (or none, expanded on the fly at
+a cost in time), PTK 48, GTK 16, packet numbers 12, SHA-1 state and block
+84, AES state and temporaries 34, the handshake's nonces 64.
+
+`nabv1 --ram-map` on 140 s against the Terrier's v1 handler (boot, join,
+polls, program, ears, a hand on an ear, a 3 s press), 2026-11-16:
+
+- **172 bytes never touched**: `0x258-0x2A3` (76) and `0xF00-0xF5F` (96);
+- **2 157 never read** (written only), among them `0xD00-0xF5F` (608),
+  `0x7D0-0x9D0` (513) and `0xC00-0xCF8` (249): free only if no path this run
+  did not take reads them (sound, the configuration page, a scan);
+- the hardware stack reached **13 of 31** levels.
 
 ## What only a real v1 can tell
 

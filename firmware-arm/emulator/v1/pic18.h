@@ -71,6 +71,10 @@ struct pic18 {
   int      halted;                   /* SLEEP, RESET or an unknown opcode */
   const char *halt_reason;
   const struct pic18_board *board;
+  /* --ram-map: per general-purpose byte, 1 = read, 2 = written; and the
+   * deepest the hardware stack went. NULL: not kept. */
+  uint8_t *touched;
+  uint8_t  sp_max;
   void    *ctx;
 };
 
