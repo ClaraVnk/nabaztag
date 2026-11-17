@@ -111,6 +111,7 @@ def main() -> int:
         f"#   est.    ~{len(live) * 19 // 60000} min at 19 ms per word",
         "",
         "halt",
+        "oki_mask_irq",
         "oki_wd_off",
         # The core must be halted before anything is erased: taking sector 0
         # away from a running core mid-instruction is what wrecked the write

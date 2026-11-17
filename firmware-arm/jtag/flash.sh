@@ -36,7 +36,7 @@ for pass in $(seq 1 "$passes"); do
   rm -f /tmp/current.bin
   echo "=== reading the flash first: $(date +%H:%M:%S) ===" | tee -a "$log"
   openocd -f nabaztag-pi.cfg -f oki.tcl \
-    -c "halt; oki_wd_off; oki_dump /tmp/current.bin 0x08000000 $(printf 0x%x "$len"); shutdown" 2>&1 \
+    -c "halt; oki_mask_irq; oki_dump /tmp/current.bin 0x08000000 $(printf 0x%x "$len"); shutdown" 2>&1 \
     | grep --line-buffered -E "dumped|Error|failed" | tee -a "$log"
   # A read that fails is a pass spent, never a reason to write everything
   # blind: that would erase what an earlier run already put in place.

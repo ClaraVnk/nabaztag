@@ -200,6 +200,17 @@ proc oki_erase_firmware {{last 30}} {
 # Read the whole flash back to a file. This is the only thing in this project
 # that can answer "what is this rabbit actually running", which three
 # successful-looking flashes in a row could not.
+# A running rabbit takes USB interrupts all the time, and OpenOCD's memory
+# reads run instructions on the core: an interrupt steals one and the read
+# dies on "timeout waiting for SYSCOMP & DBGACK". I and F set in CPSR, every
+# read holds (snapshot.py learnt it first). A bricked rabbit takes none,
+# which is why flash.sh only met this on 2026-11-17, restoring a rabbit whose
+# firmware ran but whose Wi-Fi never came up.
+proc oki_mask_irq {} {
+    regexp {0x[0-9a-fA-F]+} [reg cpsr] v
+    reg cpsr [format 0x%08x [expr {$v | 0xc0}]]
+}
+
 proc oki_dump {path {base 0} {len 0}} {
     global FLASH_BASE FLASH_SIZE
     if {$base == 0} { set base $FLASH_BASE }
