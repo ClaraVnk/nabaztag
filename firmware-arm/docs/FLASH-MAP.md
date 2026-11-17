@@ -112,6 +112,31 @@ bring-up (USB host, rt2501) is on neither. Read and ruled out: `DelayMs`
 reads a `volatile` counter; `hcd_transfer_wait` re-reads `urb->status`
 after an opaque call. The cause is not known.
 
-**-Os does not ship as a whole.** Next, if it is taken up again: -Os file by
-file, keeping `src/usb`, `src/net` and `src/hal` at -O1, on the bench rabbit
-with the JTAG DCC telemetry (`firmware-arm/jtag/listen.sh`) to see where it stops.
+**-Os does not ship as a whole.**
+
+## Three more tries, and the end of -Os (2026-11-17)
+
+`tools/os-diff.sh` compares two builds' assembly listings file by file
+(`tools/os-diff.py`: memcpy/memset calls, stores and loads by width).
+
+1. **`naboot-1.2.0.2-safe`**: -Os without store merging, strict aliasing or
+   loops turned into memset/memcpy (`opt_size_safe`). 12 016 bytes spare;
+   the byte stores of the association path are back (ieee80211.c `strb`
+   326 → 319, against 187 at plain -Os). Same failure on Nabazprout. A JTAG
+   snapshot (`jtag/snapshot.py` with that build's ELF) read the cause: the
+   main loop runs, but the Wi-Fi dongle never enumerates (`rt2501_dev`,
+   `usb_devmap` 0) and the VM never starts.
+2. **`naboot-1.2.0.2-usb`**: -Os everywhere but `src/usb/`, which stays at
+   -O1 (`opt_size_usb_o1`; its listings identical to 1.2.0.1's). 10 600 bytes
+   spare.
+3. **`naboot-1.2.0.2-usb-tel`**: the same with `dcc_telemetry` (9 636 bytes
+   spare). Live over `listen.sh`: the dongle is up (`K1`), SAE passes (`W2`
+   → `W3`), then association falls back to idle (`W0`), twice. Telemetry
+   lines came every 40 to 80 s, against 7 to 17 s at -O1. Twenty JTAG
+   samples found no -Os function eating the time: 7 in `rt2501_receive`
+   (-O1 code), 8 in the main loop and `play_check`, the rest scattered.
+
+Each -Os image passed flashsim and failed on the rabbit with a different
+symptom the emulators cannot see. **-Os is stopped.** The flash is to be
+won by moving stable pieces of the bytecode to C, one at a time, each tried
+on the rabbit (`phase8-rom` measures it).
