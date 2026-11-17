@@ -8589,6 +8589,32 @@ def patch_boot_https(root: Path) -> None:
     print(f"[ok]   {q}: {host} over HTTPS, anchor {der_path.name} ({sum(map(len, a.values()))} B), floor {floor}")
 
 
+def patch_default_server(root: Path) -> None:
+    """A reset sends the rabbit back to Le Terrier, not to Violet's server.
+
+    confReset (the config page's reset) and confInit on a blank conf.bin both
+    copy conf0, whose SERVERURL was Violet's "r.nabaztag.com/vl". 2026-11-14,
+    …5503: after a reset it booted against r.nabaztag.com -- today a live
+    third-party OpenJabNab -- said no code, and its owner could not tell why.
+
+    Same 41-byte SERVERURL field (name, NUL, dashes), so every later CONF_*
+    offset stays where it was.
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    t, nl = read_flat(q)
+    old = '"r.nabaztag.com/vl\\0-----------------------\\\n'
+    new = '"terrier.cyberloutre.fr/vl\\0---------------\\\n'
+    if new in t:
+        print(f"[skip] {q}: conf0 already names Le Terrier")
+        return
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: expected one conf0 server line, found {t.count(old)}")
+    if len(old) != len(new):
+        sys.exit(f"FAIL {q}: the server field changed length")
+    write_flat(q, t.replace(old, new, 1), nl)
+    print("[ok]   default_server: a reset points the rabbit at terrier.cyberloutre.fr/vl")
+
+
 def patch_kx_report(root: Path) -> None:
     """The key exchange gets its own time, a second try, and says how it went.
 
@@ -9245,7 +9271,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.2", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.2", "naboot-1.2.0.3", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9382,6 +9408,8 @@ def main() -> int:
         "naboot-1.2.0.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # 1.2.0.0 with the key exchange that fits a real ARM7, and says how it went.
         "naboot-1.2.0.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
+        # 1.2.0.1 + a reset that points the rabbit at Le Terrier (2026-11-17).
+        "naboot-1.2.0.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,default_server,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # 1.2.0.1 at -Os: 12 728 bytes back, the crypto within 4 %, and on the test
         # rabbit it never reached the network (2026-11-16, docs/FLASH-MAP.md). Do not ship.
         "naboot-1.2.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections,opt_size",
@@ -9700,6 +9728,7 @@ def main() -> int:
         "boot_https": patch_boot_https,
         "owner_unlock": patch_owner_unlock,
         "kx_report": patch_kx_report,
+        "default_server": patch_default_server,
         "kx_probe": patch_kx_probe,
         "ccmp_replay_count": patch_ccmp_replay_count,
         "ccmp_replay_enforce": patch_ccmp_replay_enforce,

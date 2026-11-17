@@ -1,0 +1,11 @@
+# bytecode: bootloader
+#
+# A rabbit with an empty config page, for tools/default-server-proof.sh.
+#
+# confInit finds no 0x47 byte, copies conf0 into the page and saves it --
+# exactly what the config page's reset does (confReset). The page written
+# back to --eeprom then holds the server a reset sends the rabbit to.
+# The VM wants an AP declared; a blank rabbit never looks for one.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 15000
