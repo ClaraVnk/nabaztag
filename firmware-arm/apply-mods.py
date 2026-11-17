@@ -7944,6 +7944,29 @@ def patch_opt_size(root: Path) -> None:
     print(f"[ok]   {p}: -O1 -> -Os (measurement build only)")
 
 
+def patch_opt_size_usb_o1(root: Path) -> None:
+    """-Os everywhere but the USB host, which stays at -O1.
+
+    1.2.0.2 and 1.2.0.2-safe both never reached the network on the test
+    rabbit. Read over JTAG with the right ELF (2026-11-17): the main loop
+    runs, but the Wi-Fi dongle never enumerates (rt2501_dev, usb_devmap 0)
+    and the VM never starts. So src/usb/ keeps the code every validated image
+    ran; the rest takes -Os. A measurement build, in no shipped mode.
+    """
+    p = root / "Makefile"
+    s = p.read_text()
+    if "obj/src/usb/%.o : CFLAGS += -O1" in s:
+        print(f"[skip] {p}: usb/ already at -O1")
+        return
+    if "CFLAGS += -O1\n" not in s:
+        sys.exit(f"FAIL {p}: 'CFLAGS += -O1' anchor missing")
+    s = s.replace("CFLAGS += -O1\n", "CFLAGS += -Os\n", 1)
+    # A pattern-specific variable: the later -O1 wins for these objects only.
+    s += "\n# opt_size_usb_o1: the USB host stays at -O1\nobj/src/usb/%.o : CFLAGS += -O1\n"
+    p.write_text(s)
+    print(f"[ok]   {p}: -Os, src/usb/ at -O1 (measurement build only)")
+
+
 def patch_opt_size_safe(root: Path) -> None:
     """-Os without the three passes that rewrite how the C touches memory.
 
@@ -9269,7 +9292,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9412,6 +9435,9 @@ def main() -> int:
         # 1.2.0.2 without store merging, strict aliasing or loops turned into
         # memset/memcpy (opt_size_safe): does -Os still save flash without them?
         "naboot-1.2.0.2-safe": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections,opt_size_safe",
+        # 1.2.0.2 with src/usb/ back at -O1 (opt_size_usb_o1), after JTAG showed
+        # the dongle never enumerating at -Os.
+        "naboot-1.2.0.2-usb": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections,opt_size_usb_o1",
         # A test image (kx_probe), never a release: the key exchange at every boot.
         "naboot-1.2.0.0-kxprobe": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,kx_probe,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections",
         # The test image leaves owner_unlock out to fit (32 bytes over, 2026-11-13).
@@ -9734,6 +9760,7 @@ def main() -> int:
         "tls_certs": patch_tls_certs,
         "opt_size": patch_opt_size,
         "opt_size_safe": patch_opt_size_safe,
+        "opt_size_usb_o1": patch_opt_size_usb_o1,
     }
     for step in steps:
         step = step.strip()
