@@ -240,6 +240,17 @@ tools/karotz-proof.sh                          # the released client asks for it
 tools/karotz-proof.sh --terrier <terrier checkout>   # the Terrier's scenario
 ```
 
+### WPA3 on the Karotz's kernel
+
+Two patches for LapinLibre's Linux 2.6.32.71 (SAE through nl80211 and
+mac80211, 802.11w on the RT73 in software), proven in QEMU against a
+control kernel without them: `firmware-arm/emulator/karotz/wpa3/README.md`.
+
+```sh
+podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
+podman run --rm karotz-wpa3     # control: not connected; patched: connected
+```
+
 ### The three rabbits at once
 
 Every new rabbit feature is proven on the v1, the v2 and the v3:

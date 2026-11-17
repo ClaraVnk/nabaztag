@@ -1,0 +1,466 @@
+diff --git a/include/linux/ieee80211.h b/include/linux/ieee80211.h
+index a1c9e21..05c5ee3 100644
+--- a/include/linux/ieee80211.h
++++ b/include/linux/ieee80211.h
+@@ -894,6 +894,7 @@ struct ieee80211_ht_info {
+ #define WLAN_AUTH_OPEN 0
+ #define WLAN_AUTH_SHARED_KEY 1
+ #define WLAN_AUTH_FT 2
++#define WLAN_AUTH_SAE 3
+ #define WLAN_AUTH_LEAP 128
+ 
+ #define WLAN_AUTH_CHALLENGE_LEN 128
+@@ -1226,6 +1227,8 @@ enum ieee80211_sa_query_action {
+ /* AKM suite selectors */
+ #define WLAN_AKM_SUITE_8021X		0x000FAC01
+ #define WLAN_AKM_SUITE_PSK		0x000FAC02
++#define WLAN_AKM_SUITE_PSK_SHA256	0x000FAC06
++#define WLAN_AKM_SUITE_SAE		0x000FAC08
+ 
+ #define WLAN_MAX_KEY_LEN		32
+ 
+diff --git a/include/linux/nl80211.h b/include/linux/nl80211.h
+index a8d71ed..9faf96b 100644
+--- a/include/linux/nl80211.h
++++ b/include/linux/nl80211.h
+@@ -575,6 +575,10 @@ enum nl80211_commands {
+  *	with %NL80211_KEY_* sub-attributes
+  *
+  * @NL80211_ATTR_PID: Process ID of a network namespace.
++ * @NL80211_ATTR_FEATURE_FLAGS: This u32 attribute contains flags from
++ *	&enum nl80211_feature_flags and is advertised in wiphy information.
++ * @NL80211_ATTR_SAE_DATA: SAE elements in Authentication frames. This starts
++ *	with the Authentication transaction sequence number field.
+  *
+  * @NL80211_ATTR_GENERATION: Used to indicate consistent snapshots for
+  *	dumps. This number increases whenever the object list being
+@@ -714,6 +718,14 @@ enum nl80211_attrs {
+ 
+ 	NL80211_ATTR_PID,
+ 
++	/*
++	 * WPA3 (SAE) on 2.6.32, for the Karotz: these two carry the numbers
++	 * Linux gave them in 3.8, which wpa_supplicant sends; the numbers in
++	 * between are not used here.
++	 */
++	NL80211_ATTR_FEATURE_FLAGS = 143,
++	NL80211_ATTR_SAE_DATA = 156,
++
+ 	/* add attributes here, update the policy in nl80211.c */
+ 
+ 	__NL80211_ATTR_AFTER_LAST,
+@@ -1313,6 +1325,7 @@ enum nl80211_bss_status {
+  * @NL80211_AUTHTYPE_SHARED_KEY: Shared Key authentication (WEP only)
+  * @NL80211_AUTHTYPE_FT: Fast BSS Transition (IEEE 802.11r)
+  * @NL80211_AUTHTYPE_NETWORK_EAP: Network EAP (some Cisco APs and mainly LEAP)
++ * @NL80211_AUTHTYPE_SAE: Simultaneous authentication of equals (WPA3)
+  * @__NL80211_AUTHTYPE_NUM: internal
+  * @NL80211_AUTHTYPE_MAX: maximum valid auth algorithm
+  * @NL80211_AUTHTYPE_AUTOMATIC: determine automatically (if necessary by
+@@ -1324,6 +1337,7 @@ enum nl80211_auth_type {
+ 	NL80211_AUTHTYPE_SHARED_KEY,
+ 	NL80211_AUTHTYPE_FT,
+ 	NL80211_AUTHTYPE_NETWORK_EAP,
++	NL80211_AUTHTYPE_SAE,
+ 
+ 	/* keep last */
+ 	__NL80211_AUTHTYPE_NUM,
+@@ -1388,4 +1402,14 @@ enum nl80211_key_attributes {
+ 	NL80211_KEY_MAX = __NL80211_KEY_AFTER_LAST - 1
+ };
+ 
++/**
++ * enum nl80211_feature_flags - device/driver features
++ * @NL80211_FEATURE_SAE: This driver supports simultaneous authentication of
++ *	equals (SAE) with user space SME (NL80211_CMD_AUTHENTICATE) in station
++ *	mode
++ */
++enum nl80211_feature_flags {
++	NL80211_FEATURE_SAE				= 1 << 5,
++};
++
+ #endif /* __LINUX_NL80211_H */
+diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
+index 3d874c6..68dbf22 100644
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -670,6 +670,8 @@ struct cfg80211_auth_request {
+ 	enum nl80211_auth_type auth_type;
+ 	const u8 *key;
+ 	u8 key_len, key_idx;
++	const u8 *sae_data;	/* SAE: transaction, status, then the body */
++	size_t sae_data_len;
+ };
+ 
+ /**
+@@ -1125,6 +1127,9 @@ struct wiphy {
+ 	bool strict_regulatory;
+ 	bool disable_beacon_hints;
+ 
++	/* &enum nl80211_feature_flags, advertised to user space */
++	u32 features;
++
+ 	bool netnsok;
+ 	bool ps_default;
+ 
+diff --git a/net/mac80211/ibss.c b/net/mac80211/ibss.c
+index 07600a6..6f83d07 100644
+--- a/net/mac80211/ibss.c
++++ b/net/mac80211/ibss.c
+@@ -56,7 +56,7 @@ static void ieee80211_rx_mgmt_auth_ibss(struct ieee80211_sub_if_data *sdata,
+ 	 * has actually implemented this.
+ 	 */
+ 	if (auth_alg == WLAN_AUTH_OPEN && auth_transaction == 1)
+-		ieee80211_send_auth(sdata, 2, WLAN_AUTH_OPEN, NULL, 0,
++		ieee80211_send_auth(sdata, 2, WLAN_AUTH_OPEN, 0, NULL, 0,
+ 				    sdata->u.ibss.bssid, NULL, 0, 0);
+ }
+ 
+diff --git a/net/mac80211/ieee80211_i.h b/net/mac80211/ieee80211_i.h
+index ca62bfe..5c5e76a 100644
+--- a/net/mac80211/ieee80211_i.h
++++ b/net/mac80211/ieee80211_i.h
+@@ -245,6 +245,7 @@ struct ieee80211_mgd_work {
+ 	unsigned long timeout;
+ 	enum ieee80211_mgd_state state;
+ 	u16 auth_alg, auth_transaction;
++	u16 sae_trans, sae_status;	/* SAE: what user space asked to send */
+ 
+ 	int tries;
+ 
+@@ -1168,7 +1169,7 @@ int ieee80211_add_pending_skbs(struct ieee80211_local *local,
+ 			       struct sk_buff_head *skbs);
+ 
+ void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
+-			 u16 transaction, u16 auth_alg,
++			 u16 transaction, u16 auth_alg, u16 status,
+ 			 u8 *extra, size_t extra_len, const u8 *bssid,
+ 			 const u8 *key, u8 key_len, u8 key_idx);
+ int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
+diff --git a/net/mac80211/main.c b/net/mac80211/main.c
+index 2dfe176..e7d7b24 100644
+--- a/net/mac80211/main.c
++++ b/net/mac80211/main.c
+@@ -836,6 +836,9 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
+ 	if (!(local->hw.flags & IEEE80211_HW_MFP_CAPABLE))
+ 		local->hw.wiphy->n_cipher_suites--;
+ 
++	/* SAE (WPA3) with user space SME: mac80211 carries its frames */
++	local->hw.wiphy->features |= NL80211_FEATURE_SAE;
++
+ 	result = wiphy_register(local->hw.wiphy);
+ 	if (result < 0)
+ 		goto fail_wiphy_register;
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index e67eea7..9bf1790 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -1024,9 +1024,20 @@ ieee80211_authenticate(struct ieee80211_sub_if_data *sdata,
+ 	printk(KERN_DEBUG "%s: authenticate with AP %pM (try %d)\n",
+ 	       sdata->dev->name, wk->bss->cbss.bssid, wk->tries);
+ 
+-	ieee80211_send_auth(sdata, 1, wk->auth_alg, wk->ie, wk->ie_len,
+-			    wk->bss->cbss.bssid, NULL, 0, 0);
+-	wk->auth_transaction = 2;
++	if (wk->auth_alg == WLAN_AUTH_SAE) {
++		/*
++		 * SAE: user space built the frame (commit or confirm); the AP
++		 * answers with the same transaction number.
++		 */
++		ieee80211_send_auth(sdata, wk->sae_trans, WLAN_AUTH_SAE,
++				    wk->sae_status, wk->ie, wk->ie_len,
++				    wk->bss->cbss.bssid, NULL, 0, 0);
++		wk->auth_transaction = wk->sae_trans;
++	} else {
++		ieee80211_send_auth(sdata, 1, wk->auth_alg, 0, wk->ie,
++				    wk->ie_len, wk->bss->cbss.bssid, NULL, 0, 0);
++		wk->auth_transaction = 2;
++	}
+ 
+ 	wk->timeout = jiffies + IEEE80211_AUTH_TIMEOUT;
+ 	run_again(ifmgd, wk->timeout);
+@@ -1296,7 +1307,7 @@ static void ieee80211_auth_challenge(struct ieee80211_sub_if_data *sdata,
+ 	ieee802_11_parse_elems(pos, len - (pos - (u8 *) mgmt), &elems);
+ 	if (!elems.challenge)
+ 		return;
+-	ieee80211_send_auth(sdata, 3, wk->auth_alg,
++	ieee80211_send_auth(sdata, 3, wk->auth_alg, 0,
+ 			    elems.challenge - 2, elems.challenge_len + 2,
+ 			    wk->bss->cbss.bssid,
+ 			    wk->key, wk->key_len, wk->key_idx);
+@@ -1337,6 +1348,19 @@ ieee80211_rx_mgmt_auth(struct ieee80211_sub_if_data *sdata,
+ 	}
+ 
+ 	switch (wk->auth_alg) {
++	case WLAN_AUTH_SAE:
++		if (auth_transaction == 1) {
++			/*
++			 * The AP's commit: user space answers it with its
++			 * confirm, a new NL80211_CMD_AUTHENTICATE and so a
++			 * new work item. This one is done.
++			 */
++			list_del(&wk->list);
++			kfree(wk);
++			return RX_MGMT_CFG80211_AUTH;
++		}
++		ieee80211_auth_completed(sdata, wk);
++		return RX_MGMT_CFG80211_AUTH;
+ 	case WLAN_AUTH_OPEN:
+ 	case WLAN_AUTH_LEAP:
+ 	case WLAN_AUTH_FT:
+@@ -2397,19 +2421,31 @@ int ieee80211_mgd_auth(struct ieee80211_sub_if_data *sdata,
+ 	case NL80211_AUTHTYPE_NETWORK_EAP:
+ 		auth_alg = WLAN_AUTH_LEAP;
+ 		break;
++	case NL80211_AUTHTYPE_SAE:
++		auth_alg = WLAN_AUTH_SAE;
++		break;
+ 	default:
+ 		return -EOPNOTSUPP;
+ 	}
+ 
+-	wk = kzalloc(sizeof(*wk) + req->ie_len, GFP_KERNEL);
++	wk = kzalloc(sizeof(*wk) + req->sae_data_len + req->ie_len, GFP_KERNEL);
+ 	if (!wk)
+ 		return -ENOMEM;
+ 
+ 	wk->bss = (void *)req->bss;
+ 
++	/* SAE: transaction and status, then the body sent before any IEs */
++	if (req->sae_data_len >= 4) {
++		__le16 *pos = (__le16 *) req->sae_data;
++		wk->sae_trans = le16_to_cpu(pos[0]);
++		wk->sae_status = le16_to_cpu(pos[1]);
++		memcpy(wk->ie, req->sae_data + 4, req->sae_data_len - 4);
++		wk->ie_len = req->sae_data_len - 4;
++	}
++
+ 	if (req->ie && req->ie_len) {
+-		memcpy(wk->ie, req->ie, req->ie_len);
+-		wk->ie_len = req->ie_len;
++		memcpy(wk->ie + wk->ie_len, req->ie, req->ie_len);
++		wk->ie_len += req->ie_len;
+ 	}
+ 
+ 	if (req->key && req->key_len) {
+@@ -2423,6 +2459,9 @@ int ieee80211_mgd_auth(struct ieee80211_sub_if_data *sdata,
+ 	wk->ssid_len = ssid[1];
+ 
+ 	wk->state = IEEE80211_MGD_STATE_PROBE;
++	/* an SAE confirm follows the commit at once: the AP is known */
++	if (auth_alg == WLAN_AUTH_SAE && wk->sae_trans != 1)
++		wk->state = IEEE80211_MGD_STATE_AUTH;
+ 	wk->auth_alg = auth_alg;
+ 	wk->timeout = jiffies; /* run right away */
+ 
+diff --git a/net/mac80211/util.c b/net/mac80211/util.c
+index 31b1085..16bf929 100644
+--- a/net/mac80211/util.c
++++ b/net/mac80211/util.c
+@@ -843,7 +843,7 @@ u32 ieee80211_mandatory_rates(struct ieee80211_local *local,
+ }
+ 
+ void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
+-			 u16 transaction, u16 auth_alg,
++			 u16 transaction, u16 auth_alg, u16 status,
+ 			 u8 *extra, size_t extra_len, const u8 *bssid,
+ 			 const u8 *key, u8 key_len, u8 key_idx)
+ {
+@@ -870,7 +870,7 @@ void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
+ 	memcpy(mgmt->bssid, bssid, ETH_ALEN);
+ 	mgmt->u.auth.auth_alg = cpu_to_le16(auth_alg);
+ 	mgmt->u.auth.auth_transaction = cpu_to_le16(transaction);
+-	mgmt->u.auth.status_code = cpu_to_le16(0);
++	mgmt->u.auth.status_code = cpu_to_le16(status);
+ 	if (extra)
+ 		memcpy(skb_put(skb, extra_len), extra, extra_len);
+ 
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index 376798f..466d170 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -298,13 +298,15 @@ int __cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+ 			 const u8 *bssid,
+ 			 const u8 *ssid, int ssid_len,
+ 			 const u8 *ie, int ie_len,
+-			 const u8 *key, int key_len, int key_idx);
++			 const u8 *key, int key_len, int key_idx,
++			 const u8 *sae_data, int sae_data_len);
+ int cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+ 		       struct net_device *dev, struct ieee80211_channel *chan,
+ 		       enum nl80211_auth_type auth_type, const u8 *bssid,
+ 		       const u8 *ssid, int ssid_len,
+ 		       const u8 *ie, int ie_len,
+-		       const u8 *key, int key_len, int key_idx);
++		       const u8 *key, int key_len, int key_idx,
++		       const u8 *sae_data, int sae_data_len);
+ int __cfg80211_mlme_assoc(struct cfg80211_registered_device *rdev,
+ 			  struct net_device *dev,
+ 			  struct ieee80211_channel *chan,
+diff --git a/net/wireless/mlme.c b/net/wireless/mlme.c
+index ec9a9d4..0ae8846 100644
+--- a/net/wireless/mlme.c
++++ b/net/wireless/mlme.c
+@@ -23,6 +23,13 @@ void cfg80211_send_rx_auth(struct net_device *dev, const u8 *buf, size_t len)
+ 	u8 *bssid = mgmt->bssid;
+ 	int i;
+ 	u16 status = le16_to_cpu(mgmt->u.auth.status_code);
++	/*
++	 * SAE takes two rounds, each its own NL80211_CMD_AUTHENTICATE from
++	 * user space: after the commit (transaction 1) the BSS is not
++	 * authenticated yet, and must not hold a slot the confirm needs.
++	 */
++	bool sae_commit = le16_to_cpu(mgmt->u.auth.auth_alg) == WLAN_AUTH_SAE &&
++			  le16_to_cpu(mgmt->u.auth.auth_transaction) == 1;
+ 	bool done = false;
+ 
+ 	wdev_lock(wdev);
+@@ -31,7 +38,7 @@ void cfg80211_send_rx_auth(struct net_device *dev, const u8 *buf, size_t len)
+ 		if (wdev->authtry_bsses[i] &&
+ 		    memcmp(wdev->authtry_bsses[i]->pub.bssid, bssid,
+ 							ETH_ALEN) == 0) {
+-			if (status == WLAN_STATUS_SUCCESS) {
++			if (status == WLAN_STATUS_SUCCESS && !sae_commit) {
+ 				wdev->auth_bsses[i] = wdev->authtry_bsses[i];
+ 			} else {
+ 				cfg80211_unhold_bss(wdev->authtry_bsses[i]);
+@@ -379,7 +386,8 @@ int __cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+ 			 const u8 *bssid,
+ 			 const u8 *ssid, int ssid_len,
+ 			 const u8 *ie, int ie_len,
+-			 const u8 *key, int key_len, int key_idx)
++			 const u8 *key, int key_len, int key_idx,
++			 const u8 *sae_data, int sae_data_len)
+ {
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
+ 	struct cfg80211_auth_request req;
+@@ -417,6 +425,8 @@ int __cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+ 	req.key = key;
+ 	req.key_len = key_len;
+ 	req.key_idx = key_idx;
++	req.sae_data = sae_data;
++	req.sae_data_len = sae_data_len;
+ 	if (!req.bss)
+ 		return -ENOENT;
+ 
+@@ -455,14 +465,16 @@ int cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
+ 		       enum nl80211_auth_type auth_type, const u8 *bssid,
+ 		       const u8 *ssid, int ssid_len,
+ 		       const u8 *ie, int ie_len,
+-		       const u8 *key, int key_len, int key_idx)
++		       const u8 *key, int key_len, int key_idx,
++		       const u8 *sae_data, int sae_data_len)
+ {
+ 	int err;
+ 
+ 	wdev_lock(dev->ieee80211_ptr);
+ 	err = __cfg80211_mlme_auth(rdev, dev, chan, auth_type, bssid,
+ 				   ssid, ssid_len, ie, ie_len,
+-				   key, key_len, key_idx);
++				   key, key_len, key_idx,
++				   sae_data, sae_data_len);
+ 	wdev_unlock(dev->ieee80211_ptr);
+ 
+ 	return err;
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index bf08d1d..49df091 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -138,6 +138,7 @@ static struct nla_policy nl80211_policy[NL80211_ATTR_MAX+1] __read_mostly = {
+ 	[NL80211_ATTR_CIPHER_SUITE_GROUP] = { .type = NLA_U32 },
+ 	[NL80211_ATTR_WPA_VERSIONS] = { .type = NLA_U32 },
+ 	[NL80211_ATTR_PID] = { .type = NLA_U32 },
++	[NL80211_ATTR_SAE_DATA] = { .type = NLA_BINARY, },
+ };
+ 
+ /* policy for the attributes */
+@@ -420,6 +421,8 @@ static int nl80211_send_wiphy(struct sk_buff *msg, u32 pid, u32 seq, int flags,
+ 	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_RTS_THRESHOLD,
+ 		    dev->wiphy.rts_threshold);
+ 
++	if (dev->wiphy.features)
++		NLA_PUT_U32(msg, NL80211_ATTR_FEATURE_FLAGS, dev->wiphy.features);
+ 	NLA_PUT_U8(msg, NL80211_ATTR_MAX_NUM_SCAN_SSIDS,
+ 		   dev->wiphy.max_scan_ssids);
+ 	NLA_PUT_U16(msg, NL80211_ATTR_MAX_SCAN_IE_LEN,
+@@ -3196,8 +3199,12 @@ static bool nl80211_valid_wpa_versions(u32 wpa_versions)
+ 
+ static bool nl80211_valid_akm_suite(u32 akm)
+ {
++	/* SAE (WPA3) and PSK-SHA256 (WPA2 with 802.11w required): user space
++	 * runs their handshakes, the kernel only carries the suite */
+ 	return akm == WLAN_AKM_SUITE_8021X ||
+-		akm == WLAN_AKM_SUITE_PSK;
++		akm == WLAN_AKM_SUITE_PSK ||
++		akm == WLAN_AKM_SUITE_PSK_SHA256 ||
++		akm == WLAN_AKM_SUITE_SAE;
+ }
+ 
+ static bool nl80211_valid_cipher_suite(u32 cipher)
+@@ -3215,8 +3222,8 @@ static int nl80211_authenticate(struct sk_buff *skb, struct genl_info *info)
+ 	struct cfg80211_registered_device *rdev;
+ 	struct net_device *dev;
+ 	struct ieee80211_channel *chan;
+-	const u8 *bssid, *ssid, *ie = NULL;
+-	int err, ssid_len, ie_len = 0;
++	const u8 *bssid, *ssid, *ie = NULL, *sae_data = NULL;
++	int err, ssid_len, ie_len = 0, sae_data_len = 0;
+ 	enum nl80211_auth_type auth_type;
+ 	struct key_parse key;
+ 
+@@ -3297,9 +3304,31 @@ static int nl80211_authenticate(struct sk_buff *skb, struct genl_info *info)
+ 		goto out;
+ 	}
+ 
++	/* SAE: the frames' bodies come from user space (wpa_supplicant) */
++	if (auth_type == NL80211_AUTHTYPE_SAE &&
++	    (!(rdev->wiphy.features & NL80211_FEATURE_SAE) ||
++	     !info->attrs[NL80211_ATTR_SAE_DATA])) {
++		err = -EINVAL;
++		goto out;
++	}
++	if (info->attrs[NL80211_ATTR_SAE_DATA]) {
++		if (auth_type != NL80211_AUTHTYPE_SAE) {
++			err = -EINVAL;
++			goto out;
++		}
++		sae_data = nla_data(info->attrs[NL80211_ATTR_SAE_DATA]);
++		sae_data_len = nla_len(info->attrs[NL80211_ATTR_SAE_DATA]);
++		/* sae_data is supposed to contain an authentication frame */
++		if (sae_data_len < 4) {
++			err = -EINVAL;
++			goto out;
++		}
++	}
++
+ 	err = cfg80211_mlme_auth(rdev, dev, chan, auth_type, bssid,
+ 				 ssid, ssid_len, ie, ie_len,
+-				 key.p.key, key.p.key_len, key.idx);
++				 key.p.key, key.p.key_len, key.idx,
++				 sae_data, sae_data_len);
+ 
+ out:
+ 	cfg80211_unlock_rdev(rdev);
+@@ -3871,6 +3900,9 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
+ 			nla_get_u32(info->attrs[NL80211_ATTR_AUTH_TYPE]);
+ 		if (!nl80211_valid_auth_type(connect.auth_type))
+ 			return -EINVAL;
++		/* the kernel's own SME cannot do SAE: user space does it */
++		if (connect.auth_type == NL80211_AUTHTYPE_SAE)
++			return -EINVAL;
+ 	} else
+ 		connect.auth_type = NL80211_AUTHTYPE_AUTOMATIC;
+ 
+diff --git a/net/wireless/sme.c b/net/wireless/sme.c
+index b2930e3..d0779bd 100644
+--- a/net/wireless/sme.c
++++ b/net/wireless/sme.c
+@@ -132,7 +132,7 @@ static int cfg80211_conn_do_work(struct wireless_dev *wdev)
+ 					    params->ssid, params->ssid_len,
+ 					    NULL, 0,
+ 					    params->key, params->key_len,
+-					    params->key_idx);
++					    params->key_idx, NULL, 0);
+ 	case CFG80211_CONN_ASSOCIATE_NEXT:
+ 		BUG_ON(!rdev->ops->assoc);
+ 		wdev->conn->state = CFG80211_CONN_ASSOCIATING;

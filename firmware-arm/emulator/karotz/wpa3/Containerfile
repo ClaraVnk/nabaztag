@@ -1,0 +1,52 @@
+# WPA3 (SAE + 802.11w) on the Karotz's kernel, in QEMU: the proof for
+# patches/74-mac80211-sae.patch and 75-rt73usb-mfp.patch, written for
+# LapinLibre's Linux 2.6.32.71 (github.com/sweetlilmre/LapinLibre).
+#
+# Two kernels for ARM Versatile, the same 2.6.32.71 with LapinLibre's
+# modern-GCC patch: without our patches (the control: SAE must fail) and
+# with them. Each has mac80211_hwsim's two radios. In an initramfs, static
+# ARMv5 (ARM926; the Karotz's ARM920T runs the same code) init.c,
+# hostapd 2.11 and wpa_supplicant 2.11 on OpenSSL 3.5: hostapd is a
+# WPA3-only access point on one radio (SAE, PMF required), wpa_supplicant
+# joins it from the other. run.sh boots both kernels and reads the logs.
+#
+#   podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
+#   podman run --rm karotz-wpa3
+FROM docker.io/library/alpine:3.22 AS kernel
+RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi bc perl xz patch curl
+ARG KSHA=60a5ffe0206a0ea8997c29ccc595aa7dae55f6cb20c7d92aab88029ca4fef598
+RUN curl -fsSLO https://cdn.kernel.org/pub/linux/kernel/v2.6/longterm/v2.6.32/linux-2.6.32.71.tar.xz && \
+    echo "${KSHA}  linux-2.6.32.71.tar.xz" | sha256sum -c - && tar xJf linux-2.6.32.71.tar.xz
+# LapinLibre's patch for building 2.6.32 with today's GCC, from its tree at
+# the commit the Karotz emulator pins.
+ARG LL_COMMIT=e26916806a8c7876559c61e07b3a1d586787a752
+ARG GCC_PATCH_SHA=2c908adbeeccd4881a2bacf0c4c53007899477fb5edb9e16827abf809496cfc9
+RUN curl -fsSL -o /modern-gcc.patch \
+      "https://raw.githubusercontent.com/sweetlilmre/LapinLibre/${LL_COMMIT}/system/kernel/linux-2.6.32-modern-gcc.patch" && \
+    echo "${GCC_PATCH_SHA}  /modern-gcc.patch" | sha256sum -c -
+COPY patches/ /p/
+COPY kernel.config /kernel.config
+COPY build-kernel.sh /build-kernel.sh
+RUN sh /build-kernel.sh control && sh /build-kernel.sh wpa3
+
+FROM docker.io/library/alpine:3.22 AS user
+RUN apk add --no-cache zig make perl curl pkgconf bison flex linux-headers file build-base
+COPY sources.sha256 /src/
+WORKDIR /src
+RUN for u in https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz \
+             https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-3.11.0.tar.gz \
+             https://w1.fi/releases/hostapd-2.11.tar.gz \
+             https://w1.fi/releases/wpa_supplicant-2.11.tar.gz; do curl -fsSLO "$u"; done && \
+    sha256sum -c sources.sha256
+COPY build-user.sh /src/
+RUN sh /src/build-user.sh libs
+COPY hostapd.config wpa_supplicant.config init.c /src/
+RUN sh /src/build-user.sh apps
+
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache qemu-system-arm cpio
+COPY --from=kernel /out/ /wpa3/
+COPY --from=user /out/ /wpa3/rootfs/
+COPY hostapd.conf wpa_supplicant.conf /wpa3/rootfs-etc/
+COPY run.sh /wpa3/run.sh
+CMD ["sh", "/wpa3/run.sh"]
