@@ -9,3 +9,5 @@ f96f10338190f2fa7f9a6b568753f286b829584d:firmware-arm/apply-mods.py:generic-api-
 # firmware-arm/tests/test_chachapoly.c: RFC 8439 section 2.5.2's Poly1305
 # test key, published in the RFC itself. No secret.
 f563d79fcc181dd67e69644a135a287f48f4df71:firmware-arm/tests/test_chachapoly.c:generic-api-key:28
+fc5abf354ccbd03ab72b191f39424ee5686e32c7:firmware-arm/emulator/karotz/wpa3/hostapd.conf:generic-api-key:11
+fc5abf354ccbd03ab72b191f39424ee5686e32c7:firmware-arm/emulator/karotz/wpa3/wpa_supplicant.conf:generic-api-key:4
