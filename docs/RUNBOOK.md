@@ -240,7 +240,7 @@ tools/karotz-proof.sh                          # the released client asks for it
 tools/karotz-proof.sh --terrier <terrier checkout>   # the Terrier's scenario
 ```
 
-A whole Karotz's own system, from a dump (`karotz/fros/`, see its README): its
+A whole Karotz's own system, from a dump (`firmware-arm/emulator/karotz/fros/README.md`): its
 root ramdisk and its /usr on a mainline ARM kernel in QEMU. The dump stays
 outside the repository (it holds the owner's Wi-Fi password). On the dev VM,
 one heavy job at a time (the image builds a kernel):
