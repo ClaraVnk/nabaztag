@@ -77,6 +77,22 @@ Measured 2026-11-17 on FR's controller:
   hex(md5(pwd + token))}` with `correlationId` = the token message's id;
 - then the rabbit pings (`ping`, field 1000) and drops the platform after
   two unanswered ones; a ping back with its `correlationId` keeps it;
-- `interactiveMode START` without `configId` is refused (`voosMsgid !=
-  currentId`); with one, the controller looks for that app's configuration.
-  Next: send the `Config` that lists an app and its `configInstance` first.
+- `config` (field 600) lists the apps: one app, `deployment: "external"`
+  (it runs on a server), with one `configInstance{name, uuid}`. The
+  controller answers with `karotzinfo_response` (MAC, IP, rootfs and system
+  versions, language) and becomes AVAILABLE. It still fetches the app's zip
+  from `url_app` (`/file/<apiKey>/<version>/get`, a `descriptor.xml` inside)
+  and drops the app when there is none -- next to serve;
+- `interactiveMode START` with `configId` = that instance's uuid: the rabbit
+  becomes INTERACTIVE (ttl 900 s) and answers `response{code: OK}`;
+  without a `configId` it is refused (`voosMsgid != currentId`);
+- then, with the interactive id: `led.light{color: "00FF00"}` → OK, and the
+  LED goes green on the SPI bus (registers 6-8 on, 0-5 off; red was 0-2);
+  `tts{START, text, lang}` → OK, the voice daemon fetches the speech from
+  the TTS server its configuration names and hands it to madplay (no sound
+  card here); `ears{left, right}` → ERROR: the ears daemon opens
+  `/dev/rabbit_ears` and never writes to it, waiting, it seems, on an answer
+  from the real driver -- to measure on a real Karotz.
+
+`PLATFORM=1` also starts the ears, voice and multimedia daemons, which the
+controller drives over D-Bus and FROS does not start.

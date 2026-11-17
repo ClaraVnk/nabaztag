@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import socket
 import struct
+import time
 
 AUTH_TOKEN = 400        # VoosMsg.authenticationToken
 AUTH_RESPONSE = 401     # VoosMsg.authenticationResponse
@@ -51,10 +52,17 @@ def vfield(num, n):
 # What the platform asks once the rabbit is in: Voos-message.proto's fields
 # (interactiveMode 201, led 102 light 4, ears 101 sint32, tts 104).
 IID = b"terrier-interactive-1"
+UUID = b"terrier-instance-1"
+# Config (VoosMsg field 600): one app, deployed "external" -- it runs on a
+# server, nothing to download -- with one instance. The interactive mode is
+# then opened in that instance's name (configId), the way Mindscape's
+# platform opened it for an app (2026-11-17: without it, "handKill").
+CONFIG = field(600, field(1,
+    field(1, b"terrier") + field(2, b"1") + field(3, b"Le Terrier") + field(4, b"external")
+    + field(100, field(13, b"terrier") + field(14, UUID))))
 SCRIPT = [
-    # configId "voosConfig": the controller's own way in without an app
-    # config ("configid = voosConfig. ok and continue", 2026-11-17).
-    ("interactive mode START", field(201, vfield(1, 1) + field(2, IID) + field(10, b"voosConfig"))),
+    ("Config: app terrier (external), instance terrier-instance-1", CONFIG),
+    ("interactive mode START", field(201, vfield(1, 1) + field(2, IID) + field(10, UUID))),
     ("LED 00FF00", field(3, IID) + field(102, field(4, field(1, b"00FF00")))),
     ("ears left 5 right -3", field(3, IID) + field(101, vfield(1, zigzag(5)) + vfield(2, zigzag(-3)))),
     ("TTS", field(3, IID) + field(104, vfield(1, 1) + field(2, b"Bonjour le Terrier") + field(3, b"fr-FR"))),
@@ -171,6 +179,7 @@ def main():
                     for k, (what, body) in enumerate(SCRIPT):
                         send(conn, field(1, b"terrier-cmd-%d" % k) + body)
                         print(f"platform: sent {what}", flush=True)
+                        time.sleep(2)
 
 
 if __name__ == "__main__":

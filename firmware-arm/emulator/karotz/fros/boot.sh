@@ -47,6 +47,10 @@ fi
 if [ -n "${PLATFORM:-}" ]; then
 	sed -i 's/^ip_server=.*/ip_server=10.0.2.2/' "$W/usr/etc/conf/karotz.conf"
 	printf '[voos]\nid=0123456789abcdef\npwd=terrier-test-pwd\n' > "$W/usr/etc/conf/voos.conf"
+	# The daemons the controller drives over D-Bus that FROS does not start.
+	for d in ears voice multimedia; do
+		echo "/usr/karotz/bin/immortaldog /var/run/karotz/$d.pid /usr/karotz/bin/$d-daemon" >> "$W/usr/scripts/startup.sh"
+	done
 	echo '/usr/karotz/bin/controller &' >> "$W/usr/scripts/startup.sh"
 	python3 -u /fros/fake_platform.py > "$W/platform.log" 2>&1 &
 	trap 'echo "== the platform:"; cat "$W/platform.log"' EXIT
