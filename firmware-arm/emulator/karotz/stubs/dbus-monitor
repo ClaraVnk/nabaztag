@@ -1,0 +1,5 @@
+#!/bin/bash
+# The system bus as dbus-monitor prints it: lines the proof writes to
+# /proof/dbus.fifo (karotz/proof/scenario.py), in dbus-monitor's own format.
+[ -p /proof/dbus.fifo ] || mkfifo /proof/dbus.fifo
+while true; do cat /proof/dbus.fifo; done

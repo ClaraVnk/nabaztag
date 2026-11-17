@@ -11,6 +11,7 @@
 #   podman run --rm -v $PWD:/m:Z -w /m/firmware-arm/tools/cost localhost/nab-qemu bash ct.sh
 #   ... bash ct.sh /tmp/old/firmware-arm/crypto      # another version, e.g. from git archive
 #   DIFF=1 bash ct.sh                                  # which functions differ, per pair
+#   OPT=-Os bash ct.sh                                 # at another optimisation level
 #
 # It counts instructions, not cycles: the ARM7TDMI's multiplier finishes
 # early on small operands and no instruction count can see that.
@@ -19,7 +20,7 @@ cd "$(dirname "$0")"
 FW=${1:-../../crypto}
 OUT=out/ct-$(echo "$FW" | tr / _); mkdir -p $OUT inc/net
 for h in $FW/*.h; do ln -sf "$(realpath $h)" inc/net/$(basename $h); done
-F="-O1 -mthumb -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin -ffunction-sections -fdata-sections -I. -Iinc -Istub -I$FW"
+F="${OPT:--O1} -mthumb -mthumb-interwork -mcpu=arm7tdmi -ffreestanding -nostdlib -fno-builtin -ffunction-sections -fdata-sections -I. -Iinc -Istub -I$FW"
 for c in dec_valid dec_invalid pwe_round1 pwe_round12; do
   o=""
   for s in rt.c ct.c $FW/p256.c $FW/sha256.c; do

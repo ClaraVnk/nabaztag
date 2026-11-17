@@ -29,13 +29,17 @@ BODY = (b"\x00" * 40 + b"xmpp-tls:0" + b"xmpp-rfid:0" + b"xmpp-res:0" + b"xmpp-r
         + b"xmpp-mic:0" + b"xmpp-ota:0" + b"xmpp-live:0" + b"\x01" * 40)
 TLS_RUNTIME = b"amber" + b"%08x" % len(BODY) + BODY + b"Mind"
 HYBRID = b"amber" + b"%08x" % 4 + b"oldz" + b"Mind"
-for name, data in (("bootcode.tls", TLS_RUNTIME), ("bootcode.hybrid", HYBRID)):
+HTTPS_BODY = BODY + b"xmpp-https:0" + b"xmpp-otahttps:0" + b"xmpp-btn:0"
+HTTPS_RUNTIME = b"amber" + b"%08x" % len(HTTPS_BODY) + HTTPS_BODY + b"Mind"
+for name, data in (("bootcode.tls", TLS_RUNTIME), ("bootcode.hybrid", HYBRID),
+                   ("bootcode.https", HTTPS_RUNTIME)):
     with open(os.path.join(TMP, name), "wb") as fh:
         fh.write(data)
 os.environ.update({
     "ADOPTION_KEYS_FILE": os.path.join(TMP, "keys.json"),
     "BOOTCODE_FILE": os.path.join(TMP, "bootcode.hybrid"),
     "BOOTCODE_TLS_FILE": os.path.join(TMP, "bootcode.tls"),
+    "BOOTCODE_HTTPS_FILE": os.path.join(TMP, "bootcode.https"),
     "SERVER_ADDRESS": "127.0.0.1",
 })
 
@@ -126,6 +130,18 @@ class Seal(unittest.TestCase):
         self.assertIn(b"xmpp-live:0", out)
         self.assertEqual(adoption.session_policies(TLS_RUNTIME),
                          {"rfid", "res", "rsc", "mic", "ota"})
+
+    def test_https_only_for_naboot_1_2(self):
+        row = {"state": "confirmed", "key": bytes(32)}
+        self.assertNotIn("https", adoption.session_policies(HTTPS_RUNTIME, "1.0.0.3"))
+        self.assertNotIn("https", adoption.session_policies(HTTPS_RUNTIME, None))
+        self.assertIn("https", adoption.session_policies(HTTPS_RUNTIME, "1.2.0.1"))
+        out = adoption.seal(HTTPS_RUNTIME, row, "1.2.0.1")
+        self.assertIn(b"xmpp-https:1", out)
+        # Left off here: no relay, updates down the session, push-to-talk.
+        for p in (b"live", b"otahttps", b"btn"):
+            self.assertIn(b"xmpp-%s:0" % p, out)
+        self.assertIn(b"xmpp-https:0", adoption.seal(HTTPS_RUNTIME, row, "1.0.0.3"))
 
     def test_a_policy_carried_twice_is_left_alone(self):
         body = BODY + b"xmpp-res:0"
@@ -310,6 +326,35 @@ class EndToEnd(unittest.TestCase):
         b.settimeout(3)
         self.assertIn(b"id='ka-", b.recv(4096))
         sess.close()
+
+    def test_naboot_1_2_gets_the_https_runtime(self):
+        rpub = adoption.public_key(bytes.fromhex(EXCHANGES[0]["rpriv"]))
+        self._get(f"/vl/kx.jsp?m={MAC}&p={rpub.hex()}")
+        self.assertEqual(self._get(f"/vl/bc.jsp?v=1.2.0.1&m={MAC}"), HTTPS_RUNTIME)
+        self.assertEqual(self._get(f"/vl/bc.jsp?v=1.0.0.3&m={MAC}"), TLS_RUNTIME)
+        self._adopt_pending()
+        self.assertIn(b"xmpp-https:1", self._get(f"/vl/bc.jsp?v=1.2.0.1&m={MAC}"))
+        self.assertIn("https", server.KEYS.get(MAC)["served"])
+        self.assertEqual(self._get("/vl/bc.jsp?v=1.2.0.1&m=00:19:db:aa:bb:cc"), HYBRID)
+
+    def test_an_https_stream_goes_with_its_root(self):
+        sess = server.XmppSession(socket.socketpair()[0], ("127.0.0.1", 1))
+        sess.rides = lambda p: p == "https"
+        real = server.https_for_rabbit
+        server.https_for_rabbit = lambda url: ("https://cdn.example.com/a.mp3#x", b"ROOT")
+        try:
+            prog, roots = sess._https_direct("ST https://example.com/a.mp3\nMW")
+            self.assertEqual(roots[0][1], b"ROOT")
+            self.assertRegex(prog, r"^ST https://cdn\.example\.com/a\.mp3#r%d@\d{14}\nMW$" % roots[0][0])
+            self.assertEqual(sess._https_direct("ST http://example.com/a.mp3"),
+                             ("ST http://example.com/a.mp3", []))
+            server.https_for_rabbit = lambda url: None
+            self.assertEqual(sess._https_direct("ST https://example.com/a.mp3"), (None, []))
+            sess.rides = lambda p: False
+            self.assertEqual(sess._https_direct("ST https://example.com/a.mp3"),
+                             ("ST https://example.com/a.mp3", []))
+        finally:
+            server.https_for_rabbit = real
 
     def test_bc_records_what_the_session_may_carry(self):
         rpub = adoption.public_key(bytes.fromhex(EXCHANGES[0]["rpriv"]))

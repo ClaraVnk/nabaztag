@@ -23,6 +23,8 @@ uint32_t    hw_led(int led);
 const char *hw_led_name(int led);
 uint16_t    hw_ear_position(int ear);
 uint32_t    hw_ear_commands(int ear);
+/* A hand turns a still ear: the encoder moves on by `holes`. */
+void        hw_turn_ear_by_hand(int ear, int holes);
 
 void hw_audio_dir(const char *dir);
 void hw_audio_rate(uint32_t kbps);

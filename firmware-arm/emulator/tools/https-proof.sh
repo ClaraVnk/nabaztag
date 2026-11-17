@@ -91,7 +91,7 @@ PY
 pkill -f "s_server -accept $HOST_PORT" 2>/dev/null
 ( cd "$OUT/www" && openssl s_server -accept $HOST_PORT -tls1_3 -ciphersuites "$SUITE" \
     -cert "$OUT/host/leaf.pem" -cert_chain "$OUT/host/inter.pem" -key "$OUT/host/key.pem" \
-    -WWW -quiet > "$OUT/host.log" 2>&1 ) &
+    -WWW -state > "$OUT/host.log" 2>&1 ) &
 HOST_PID=$!
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
@@ -138,8 +138,9 @@ print('   radio:', urllib.request.urlopen(r, timeout=60).read().decode())" "$1"
 }
 ( sleep "$PLAY_AT"; echo "   [play at +${PLAY_AT}s]"; api '{"station":"proof"}'
   sleep $((STOP_AT - PLAY_AT)); echo "   [stop at +${STOP_AT}s]"; api '{"stop":1}' ) &
+PLAY_PID=$!
 boot 2-confirmed proof-h scenarios/vm/https-play.txt
-wait
+wait $PLAY_PID   # a bare `wait` waited for s_server too, forever (2026-11-15)
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1
 echo "   terrier:"
 grep -a "bc_https\|plays .* itself\|cannot be verified\|https:\|bound and idle" "$OUT/terrier.log" | sed 's/^/   /' | tail -8
@@ -148,5 +149,5 @@ grep -a "https: \|live: cut\|audio: the rabbit started\|audio: end of clip\|audi
 echo "   host:"
 tail -5 "$OUT/host.log" | sed 's/^/   /'
 podman rm -f "$NAME" >/dev/null 2>&1
-kill $HOST_PID 2>/dev/null
+kill $HOST_PID 2>/dev/null; pkill -f "s_server -accept $HOST_PORT" 2>/dev/null
 echo "proof-done: $OUT"

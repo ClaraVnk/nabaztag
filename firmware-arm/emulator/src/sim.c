@@ -389,6 +389,11 @@ int sim_load(const char *path)
            rabbit never exercises that path, and the path is the most
            likely reason a real association fails. */
         if(!strcmp(tok[i], "sae-token")) a->sae_token = 1;
+        /* What a Livebox puts on the air (issue #163, 2026-11-14): its
+           beacon, an HT-only rate set, PMF announced on WPA2. */
+        if(!strcmp(tok[i], "livebox")) a->livebox = 1;
+        if(!strcmp(tok[i], "n-only")) a->n_only = 1;
+        if(!strcmp(tok[i], "mfpc")) a->mfpc = 1;
       }
       sim.nb_aps++;
     } else if((!strcmp(tok[0], "at") || !strcmp(tok[0], "fetch")) && n >= 3) {
@@ -558,6 +563,17 @@ int sim_load(const char *path)
         else if(!strcmp(tok[3], "up")) e->arg = 0;
         else {
           fprintf(stderr, "%s:%d: button takes down or up, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
+      } else if(!strcmp(tok[2], "ear") && n >= 5) {
+        /* `ear <0|1> <holes>`: someone turns a still ear by hand, which is
+           what the "amoureux" pairing listens for. The runtime only notices
+           a jump of more than two holes between two looks (earWaitRun). */
+        e->kind = SIM_EV_EAR_HAND;
+        e->arg = (int)strtol(tok[3], NULL, 10);
+        e->arg2 = (int)strtol(tok[4], NULL, 10);
+        if((e->arg != 0 && e->arg != 1) || e->arg2 < 1 || e->arg2 > 16) {
+          fprintf(stderr, "%s:%d: ear takes 0 or 1, then 1 to 16 holes\n", path, lineno);
           fclose(f); return -1;
         }
       } else if(!strcmp(tok[2], "expect-no-reset")) {

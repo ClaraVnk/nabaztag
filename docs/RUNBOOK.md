@@ -52,6 +52,15 @@ print it, never copy it to a remote. Its backups: a password manager
 there; `firmware-arm/signing/gen_key.py` would make a *different* key, which no rabbit
 accepts.
 
+Where the flash goes, and what a change of compiler flags costs
+(`firmware-arm/docs/FLASH-MAP.md`): build the mode unsigned, then
+
+```sh
+python3 firmware-arm/tools/flash-map.py firmware-arm/bin/<mode>/Nab.elf firmware-arm/bin/<mode>/Nab.bin
+# crypto time at another level, in tools/cost's image (see run.sh's header):
+OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short p256 aes_block gcm_1k
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).
@@ -129,6 +138,25 @@ firmware-arm/emulator/tools/xmpp-tls-proof.sh \
 - A proof left running holds its ports: `podman ps`, then `podman rm -f
   terrier-proof-<base>`.
 
+**An ear turned by hand** (the "amoureux" pairing, 2026-11-14).
+`at <ms> ear <0|1> <holes>` in a scenario turns a still ear by hand;
+`firmware-arm/emulator/scenarios/vm/xmpp-ears.txt` turns each ear five holes and the verdict shows
+`ears moved` in the Terrier's log, or nothing.
+
+```sh
+firmware-arm/emulator/tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --bytecode <runtime.hybrid> --emulator emu --elf <bin/naboot-1.2.0.1/Nab.elf> \
+    --out /tmp/ears --scenario scenarios/vm/xmpp-ears.txt
+# the measurement runtime: the ears' state every 30 s inside the session
+EARS_TELEMETRY=1 bytecode/build-bytecode.sh <bootcode-tree> \
+    firmware-arm/tools/mtl_comp.py /tmp/ears-telemetry.hybrid
+```
+
+Served to one rabbit by copying it to the Terrier's `/data/bytecode/` and
+choosing `ears-telemetry` in that rabbit's Developer card (admin); the
+Terrier logs each `<earsdbg xmlns="violet:nabaztag:telemetry">`. Never the
+runtime everyone gets.
+
 **A rabbit of a given release, and a rabbit nobody ever flashed.**
 
 ```sh
@@ -157,9 +185,104 @@ firmware-arm/emulator/tools/stock-ota-proof.sh --terrier ghcr.io/claravnk/terrie
 The verdict is the VM's last lines: `asked to flash itself with a N-byte
 image`, `flash writes 1`, `resets asked 0`, and the heap at its highest.
 
+**The Home Assistant add-on** (`nabaztag-violet/`, run from the checkout;
+port 5223 must be free):
+
+```sh
+# adoption, a sentence inside TLS, then bc.jsp over TLS (bootcode.tls)
+firmware-arm/emulator/tools/addon-tls-proof.sh --emulator nabaztag-emulator \
+    --elf <bin/naboot-1.2.0.1/Nab.elf> --out /tmp/addon-tls
+# Naboot 1.2.x: bootcode.https, and an https:// stream the rabbit opens itself.
+# Its own image: the https opcodes are the tls_certs step, which neither the
+# default MOD_STEPS nor emu-steps.py include. Without it httpsStart is no
+# opcode at all, the rabbit writes the root it was given where its
+# ClientHello should be and the host answers "wrong version number"
+# (2026-11-16, a morning lost to it).
+podman build -f firmware-arm/emulator/Containerfile -t emu-https \
+    --build-arg MOD_STEPS=$(grep -m1 '^STEPS=' firmware-arm/emulator/run.sh | cut -d= -f2),tls_certs .
+PY=<python with cryptography> firmware-arm/emulator/tools/addon-https-proof.sh \
+    --emulator emu-https --elf <bin/naboot-1.2.0.1/Nab.elf> --out /tmp/addon-https
+```
+
+The same image for `tools/https-proof.sh` (Le Terrier's side).
+
+`--real icecast.radiofrance.fr/fip-midfi.mp3` plays a real station instead of
+the test host: a relay passes the rabbit's bytes to the station untouched and
+writes `relay.log` (bytes each way, who closed). Proven 2026-11-16: FIP played
+for the whole scenario, about 2 MB in two minutes.
+
+Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
+lines and `audio: the rabbit started`.
+
+Where a reset sends the rabbit (`factory_server`, Naboot 1.2.0.3): each
+image's bootloader on an empty config page, and the server it writes there,
+which is what the config page's reset writes too. 1.2.0.1 first, as the
+control:
+
+```sh
+cd firmware-arm/emulator
+NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.0.3/Nab.elf
+# ../bin/naboot-1.2.0.1/Nab.elf   r.nabaztag.com/vl
+# ../bin/naboot-1.2.0.3/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
+```
+
+### The Nabaztag v1 (2005)
+
+`firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
+`firmware-arm/vendor/newbaztag`) on an emulated PIC18 with its Prism 2 card,
+serial flash and ear sensors; see its README. From `firmware-arm/emulator`,
+on the dev VM:
+
+```sh
+tools/v1-proof.sh                          # joins, DHCP, DNS, the p3.jsp poll
+tools/v1-proof.sh --terrier <terrier checkout>
+# the Terrier's own handler (its tools/v1_warren.py): program taken, ears
+# 5/10 then 2/3 and stopped, a hand -> sd=8603, a 3 s press -> sd=0004,
+# two v1 in "amoureux" following each other. V1_PORT overrides 28080.
+```
+
+### The Karotz (Nabaztag v3)
+
+`firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
+recorded, the client under qemu-arm (see its README; `measure.sh` is what a
+real Karotz must give for the whole-system emulator).
+
+```sh
+tools/karotz-proof.sh                          # the released client asks for its key
+tools/karotz-proof.sh --terrier <terrier checkout>   # the Terrier's scenario
+```
+
+### The three rabbits at once
+
+Every new rabbit feature is proven on the v1, the v2 and the v3:
+
+```sh
+tools/rabbits-proof.sh --terrier <terrier checkout> --v2 "<xmpp-tls-proof.sh inputs>"
+```
+
+One verdict per rabbit; one without its inputs is NOT RUN, never passed.
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).
+
+The two runtimes the warren serves, rebuilt from this repository:
+
+```sh
+# today's: baseline-https (Naboot 1.2.x) and baseline-tls (firmwares 1.0.0.x)
+RUNTIME=https bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-https.hybrid
+RUNTIME=tls   bytecode/build-bytecode.sh <tree> firmware-arm/tools/mtl_comp.py /tmp/baseline-tls.hybrid
+# the control: the ones served now, byte for byte (prints match or not)
+bytecode/reproduce-served.sh https /tmp/served-https.hybrid
+bytecode/reproduce-served.sh tls   /tmp/served-tls.hybrid
+```
+
+The add-on ships both, built by these two commands: `nabaztag-violet/bootcode.https` and
+`bootcode.tls` (checksums in its Dockerfile).
+
+`<tree>` is a copy of `firmware-arm/vendor/openjabnab/bootcode`. A new
+runtime is proven in the emulator against that control (same scenario, the
+control first) before it goes to `/data/bytecode/`.
 
 ```sh
 cp -r firmware-arm/vendor/openjabnab/bootcode /tmp/tree     # stock Violet sources

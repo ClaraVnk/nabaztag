@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.18.0
+
+- **Renamed Nabaztag Terrier.** Same slug (`nabaztag_violet`): an installed
+  add-on updates in place and keeps its adopted rabbits and options.
+- **Today's runtime for Naboot rabbits** (`bootcode.tls`, 112 054 bytes,
+  `RUNTIME=tls bytecode/build-bytecode.sh`), with Le Terrier's fixes since
+  0.17.0: an ear turned by hand is noticed again after a lost session (the
+  "amoureux" ears), a whitespace keepalive no longer swallows every later
+  stanza, and the runtime knows `xmpp-btn`. The add-on leaves that one off:
+  a long press still records to `record.jsp`, the add-on's push-to-talk.
+- **Naboot 1.2.0.0 and later get Le Terrier's baseline-https**
+  (`bootcode.https`, 116 281 bytes, the default `bytecode/build-bytecode.sh`),
+  chosen by the boot URL's `v=`: DHCP and DNS replies checked, HTTP answers
+  bounded, and `https://` streams opened by the rabbit itself. The add-on
+  sends the root the host's chain ends at as `res:N`, then
+  `ST https://host/path#r<N>@<time>`; a host it cannot verify is not sent.
+  Radio relayed in the session and updates fetched from GitHub stay off.
+- Proven in the emulator on 2026-11-16 (`firmware-arm/emulator/tools/addon-https-proof.sh`,
+  Naboot 1.2.0.1's bootloader, an image with `tls_certs`): the rabbit checks
+  the host's chain (`https: ready`) and plays the sound (50 092 bytes), as
+  `firmware-arm/emulator/tools/https-proof.sh` shows it through Le Terrier.
+
 ## 0.17.0
 
 - **The adoption key and TLS, as on Le Terrier.** A Naboot rabbit (1.0.0.0

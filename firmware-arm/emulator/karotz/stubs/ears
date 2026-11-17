@@ -1,0 +1,4 @@
+#!/bin/bash
+# /karotz/bin/ears <left> <left speed> <right> <right speed>; none = reset
+. /karotz-stubs/hw.sh
+hw "ears-bin $*"
