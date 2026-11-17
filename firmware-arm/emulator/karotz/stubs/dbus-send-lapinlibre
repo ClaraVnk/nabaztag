@@ -1,0 +1,41 @@
+#!/bin/bash
+# LapinLibre's API calls the Karotz's daemons over D-Bus and reads their
+# replies (dbus-send --print-reply): recorded, then answered as the daemons
+# answer, after LapinLibre's own stub (tests/image/test_web_api.py). The
+# controller is AVAILABLE (16): nobody holds the rabbit.
+#
+# Recorded in the OpenKarotz image's words ("dbus light 00FF00", "dbus move
+# 12 100 3 100", mplayer's line for a sound) so that one scenario reads both:
+# Multimedia.play goes to the same recorder, under LapinLibre's player's
+# name (karotz-player): the client must see that one playing too.
+. /karotz-stubs/hw.sh
+dest="" member="" args=()
+for a in "$@"; do
+  case "$a" in
+    --dest=com.mindscape.karotz.*) dest=${a#--dest=com.mindscape.karotz.} ;;
+    com.mindscape.karotz.KarotzInterface.*) member=${a##*.} ;;
+    string:*|int32:*) args+=("${a#*:}") ;;
+  esac
+done
+reply() {
+  echo "method return time=1760000000.2 sender=:1.4 -> destination=:1.9 serial=7 reply_serial=2"
+  echo "   boolean true"
+}
+case "$dest.$member" in
+  Controller.get_status)
+    echo "method return time=1760000000.1 sender=:1.3 -> destination=:1.9 serial=5 reply_serial=2"
+    printf '   int32 16\n   int32 1\n   int32 1\n'
+    exit 0 ;;
+  Multimedia.stop)
+    # the daemon stops what plays before the next play (LapinLibre's sound)
+    killall karotz-player 2>/dev/null
+    hw "dbus $member ${args[*]:1}"
+    reply; exit 0 ;;
+  Multimedia.play)
+    # the first string is the caller's id, the second the URL
+    /usr/bin/karotz-player "${args[1]}" >/dev/null 2>&1 &
+    reply; exit 0 ;;
+esac
+# the first string is the caller's id: dropped
+hw "dbus $member ${args[*]:1}"
+reply

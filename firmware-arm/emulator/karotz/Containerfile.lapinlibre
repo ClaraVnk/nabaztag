@@ -1,0 +1,39 @@
+# The same Karotz without the Karotz, on LapinLibre's web API instead of
+# OpenKarotz's (github.com/sweetlilmre/LapinLibre, MIT): its real cgi-bin and
+# web library behind busybox httpd, the daemons behind D-Bus replaced by a
+# recorder that answers as they do (stubs/dbus-send-lapinlibre, after
+# LapinLibre's own tests/image/test_web_api.py). The client, its runner and
+# the other recorders are the OpenKarotz image's.
+#
+#   podman build -t nabaztag-karotz-ll -f Containerfile.lapinlibre firmware-arm/emulator/karotz
+#   OS=lapinlibre tools/karotz-proof.sh ...
+FROM docker.io/library/alpine:3.22
+
+RUN apk add --no-cache bash busybox-extras qemu-arm curl mpg123 util-linux-misc \
+        procps coreutils sox git
+
+# By commit: its id pins the content. GitHub's tarballs of one commit do not
+# keep the same bytes (two sha256 within the hour, 2026-11-17).
+ARG LL_COMMIT=e26916806a8c7876559c61e07b3a1d586787a752
+RUN git init -q /tmp/ll && cd /tmp/ll && \
+    git fetch -q --depth 1 https://github.com/sweetlilmre/LapinLibre "${LL_COMMIT}" && \
+    git -c advice.detachedHead=false checkout -q FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "${LL_COMMIT}" && \
+    cp -a /tmp/ll/image/core/usr/www /usr/www && ln -s /usr/www /www && \
+    mkdir -p /usr/share && cp -a /tmp/ll/image/core/usr/share/lapinlibre /usr/share/lapinlibre && \
+    mkdir -p /usr/etc/conf/web /var/run/lapinlibre-web /var/run/karotz /usr/karotz/sounds \
+             /usr/karotz/res/sounds /var/lock && \
+    chmod -R a+rx /usr/www/cgi-bin && rm -rf /tmp/ll
+
+COPY stubs/ /karotz-stubs/
+RUN mkdir -p /karotz/bin && \
+    install -m 755 /karotz-stubs/ears /karotz/bin/ears && \
+    install -m 755 /karotz-stubs/led /karotz/bin/led && \
+    install -m 755 /karotz-stubs/dbus-send-lapinlibre /usr/bin/dbus-send && \
+    install -m 755 /karotz-stubs/mplayer /usr/bin/mplayer && \
+    install -m 755 /karotz-stubs/mplayer /usr/bin/karotz-player && \
+    install -m 755 /karotz-stubs/madplay /usr/bin/madplay && \
+    install -m 755 /karotz-stubs/dbus-monitor /usr/bin/dbus-monitor && \
+    install -m 755 /karotz-stubs/karotz.sh /karotz.sh
+
+CMD ["/karotz.sh"]
