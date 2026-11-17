@@ -61,6 +61,14 @@ python3 firmware-arm/tools/flash-map.py firmware-arm/bin/<mode>/Nab.elf firmware
 OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short p256 aes_block gcm_1k
 ```
 
+How two builds touch memory, file by file (calls to memcpy/memset, stores
+by width), from the images build.sh left on the dev VM; run it there:
+
+```sh
+firmware-arm/tools/os-diff.sh localhost/nab-firmware-build:naboot-1.2.0.1 \
+    localhost/nab-firmware-build:naboot-1.2.0.2-safe src/net src/usb
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).
