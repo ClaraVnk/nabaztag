@@ -6,14 +6,6 @@
 
 <h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
 
-> [!IMPORTANT]
-> **The Karotz (v3, 2011) works on [Le Terrier](https://terrier.cyberloutre.fr/karotz)**:
-> since 16 November 2026, real ones are adopted with their own key.
-> **The first real Nabaztag v1 (2005) was adopted on 17 November 2026**, through a
-> phone's hotspot. It is still in beta. **Do you own one? Help bring it back!** A
-> tester, or better a capture of its traffic with its server, makes all the difference:
-> [**get in touch**](https://github.com/ClaraVnk/nabaztag/issues/new?title=I%20have%20a%20Nabaztag%20v1%20%2F%20Karotz&body=Which%20rabbit%20and%20what%20firmware%3A%0A%0AWhat%20I%20can%20do%20(test%2C%20dump)%3A).
-
 <p align="center">
   <strong>Bring the 2006 Wi-Fi rabbit back to life — new firmware, a new warren, driven from Home Assistant.</strong><br>
   <sub>WPA3 · TLS 1.3 · signed over-the-air updates · a per-rabbit adoption key. The Violet servers died in 2011; this is its new home.</sub>
@@ -262,12 +254,10 @@ was built on and is tested on, every day, on real hardware.
   their own key ([issue #167](https://github.com/ClaraVnk/nabaztag/issues/167)).
 
 Both are supported **only through Le Terrier, and so through the HACS
-integration** — not in the Home Assistant add-on. Nobody here owns a v1 or a
-Karotz: they were built from the protocols and the code of the projects that
-ran them, and proven in emulation; both were then proven by their first
-owners. Neither can be tested on real hardware at home, which is what the
-local add-on would need. If you have a v1, the Terrier is the way in, and your
-feedback is what takes it out of beta.
+integration** — not in the Home Assistant add-on. Both run on real rabbits:
+real Karotz have been adopted since 16 November 2026, and the first real v1
+on 17 November 2026, by their owners. If you have a v1, the Terrier is the
+way in, and your feedback is what takes it out of beta.
 
 ## Home Assistant: the HACS integration
 
