@@ -116,14 +116,14 @@ after an opaque call. The cause is not known.
 
 ## Three more tries, and the end of -Os (2026-11-17)
 
-`tools/os-diff.sh` compares two builds' assembly listings file by file
-(`tools/os-diff.py`: memcpy/memset calls, stores and loads by width).
+`firmware-arm/tools/os-diff.sh` compares two builds' assembly listings file by file
+(`firmware-arm/tools/os-diff.py`: memcpy/memset calls, stores and loads by width).
 
 1. **`naboot-1.2.0.2-safe`**: -Os without store merging, strict aliasing or
    loops turned into memset/memcpy (`opt_size_safe`). 12 016 bytes spare;
    the byte stores of the association path are back (ieee80211.c `strb`
    326 → 319, against 187 at plain -Os). Same failure on Nabazprout. A JTAG
-   snapshot (`jtag/snapshot.py` with that build's ELF) read the cause: the
+   snapshot (`firmware-arm/jtag/snapshot.py` with that build's ELF) read the cause: the
    main loop runs, but the Wi-Fi dongle never enumerates (`rt2501_dev`,
    `usb_devmap` 0) and the VM never starts.
 2. **`naboot-1.2.0.2-usb`**: -Os everywhere but `src/usb/`, which stays at
