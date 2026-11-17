@@ -69,8 +69,8 @@ SECONDS_UP=240 podman run --rm -e SECONDS_UP -e PLATFORM=1 -v <dump dir>:/dump:r
 ```
 
 [LapinLibre](https://github.com/sweetlilmre/LapinLibre) (MIT, GPL-2.0)
-already documents this protocol and serves it (`tools/app-server/`,
-`docs/system.md`), on a free firmware for the Karotz built from source: read
+already documents this protocol and serves it (its app server and its
+system notes), on a free firmware for the Karotz built from source: read
 it first. What follows was measured independently on Mindscape's own
 binary, and agrees with it.
 
