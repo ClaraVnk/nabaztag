@@ -35,9 +35,22 @@ for pass in $(seq 1 "$passes"); do
   # What does the flash hold now? Read it, and plan only what is missing.
   rm -f /tmp/current.bin
   echo "=== reading the flash first: $(date +%H:%M:%S) ===" | tee -a "$log"
-  openocd -f nabaztag-pi.cfg -f oki.tcl \
-    -c "halt; oki_mask_irq; oki_dump /tmp/current.bin 0x08000000 $(printf 0x%x "$len"); shutdown" 2>&1 \
-    | grep --line-buffered -E "dumped|Error|failed" | tee -a "$log"
+  # In 16 KB pieces, each its own OpenOCD session and retried three times,
+  # as snapshot.py does: on a running rabbit one long read died after 16 KB
+  # every time (2026-11-17), even with interrupts masked.
+  : > /tmp/current.bin
+  for off in $(seq 0 16384 $((len - 1))); do
+    n=$(( len - off < 16384 ? len - off : 16384 ))
+    for try in 1 2 3; do
+      rm -f /tmp/piece.bin
+      openocd -f nabaztag-pi.cfg -f oki.tcl \
+        -c "halt; oki_mask_irq; oki_dump /tmp/piece.bin $(printf 0x%x $((0x08000000 + off))) $(printf 0x%x "$n"); shutdown" 2>&1 \
+        | grep --line-buffered -E "Error|failed" | tee -a "$log"
+      [ -f /tmp/piece.bin ] && [ "$(wc -c < /tmp/piece.bin | tr -d ' ')" -eq "$n" ] && break
+    done
+    [ -f /tmp/piece.bin ] && [ "$(wc -c < /tmp/piece.bin | tr -d ' ')" -eq "$n" ] || break
+    cat /tmp/piece.bin >> /tmp/current.bin
+  done
   # A read that fails is a pass spent, never a reason to write everything
   # blind: that would erase what an earlier run already put in place.
   if [ ! -f /tmp/current.bin ] || [ "$(wc -c < /tmp/current.bin | tr -d ' ')" -ne "$len" ]; then
