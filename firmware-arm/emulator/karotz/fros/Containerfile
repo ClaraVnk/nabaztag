@@ -20,7 +20,10 @@ RUN wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz \
  && tar xJf linux-$KVER.tar.xz && rm linux-$KVER.tar.xz
 
 COPY kernel.config /kernel.config
+# The Karotz's own drivers as stand-ins, built into the kernel.
+COPY karotz_stubs.c /karotz_stubs.c
 RUN cd linux-$KVER \
+ && cp /karotz_stubs.c drivers/char/ && echo 'obj-y += karotz_stubs.o' >> drivers/char/Makefile \
  && make -s ARCH=arm CROSS_COMPILE=arm-none-eabi- versatile_defconfig \
  && scripts/kconfig/merge_config.sh -m .config /kernel.config >/dev/null \
  && make -s ARCH=arm CROSS_COMPILE=arm-none-eabi- olddefconfig \
@@ -29,5 +32,5 @@ RUN cd linux-$KVER \
  && cp .config /fros/kernel.config \
  && cd / && rm -rf linux-$KVER
 
-COPY boot.sh usr-from-yaffs.py root-for-qemu.py /fros/
+COPY boot.sh usr-from-yaffs.py root-for-qemu.py waitfornetwork.sh fake_platform.py /fros/
 ENTRYPOINT ["sh", "/fros/boot.sh"]

@@ -33,6 +33,24 @@ if [ "$(cat "$W/usr/etc/inittab" 2>/dev/null)" = "::once:/sbin/reboot" ]; then
 	echo "usr: /etc/inittab only reboots; removed, linuxrc puts the factory one back" >&2
 	rm -f "$W/usr/etc/inittab"
 fi
+# No radio here: FROS's Wi-Fi script gives way to the emulator's (and the
+# owner's Wi-Fi password, in that script and in wpa.conf, stays out of the disk).
+if [ -f "$W/usr/scripts/waitfornetwork.sh" ]; then
+	cp /fros/waitfornetwork.sh "$W/usr/scripts/waitfornetwork.sh"
+	chmod 755 "$W/usr/scripts/waitfornetwork.sh"
+	rm -f "$W/usr/etc/conf/wpa.conf"
+fi
+# PLATFORM=1: Mindscape's platform is fake_platform.py on this side of QEMU
+# (10.0.2.2 from the rabbit), the rabbit's voos.conf holds test credentials
+# instead of the owner's, and startup.sh starts the controller, which FROS
+# no longer starts. The platform's log is $W/platform.log, printed at the end.
+if [ -n "${PLATFORM:-}" ]; then
+	sed -i 's/^ip_server=.*/ip_server=10.0.2.2/' "$W/usr/etc/conf/karotz.conf"
+	printf '[voos]\nid=0123456789abcdef\npwd=terrier-test-pwd\n' > "$W/usr/etc/conf/voos.conf"
+	echo '/usr/karotz/bin/controller &' >> "$W/usr/scripts/startup.sh"
+	python3 -u /fros/fake_platform.py > "$W/platform.log" 2>&1 &
+	trap 'echo "== the platform:"; cat "$W/platform.log"' EXIT
+fi
 mke2fs -q -t ext2 -L usr -d "$W/usr" "$W/usr.ext2" 256M
 
 # The bootloader's own line (BIOS v1.16, mtd0) with the console moved from
@@ -47,5 +65,5 @@ set -- qemu-system-arm -M versatilepb -m 64 -nographic -no-reboot \
 if [ -n "${SECONDS_UP:-}" ]; then
 	timeout "$SECONDS_UP" "$@" </dev/null || true
 else
-	exec "$@"
+	"$@"
 fi
