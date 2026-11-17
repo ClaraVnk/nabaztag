@@ -1,0 +1,33 @@
+# FreeRabbits OS on an emulated ARM board.
+#
+# QEMU has no S3C2440, so the Karotz's own kernel (machine 1912, "RABBITV3
+# BY PRAGMATEC") cannot boot here. What boots is the rabbit's own root
+# filesystem -- its linuxrc, busybox init and scripts -- on a mainline
+# kernel for ARM Versatile (ARM926, ARMv5: runs the Karotz's ARMv4T EABI
+# binaries as they are).
+#
+# No dump goes into this image: boot.sh takes the dump directory at run time.
+FROM docker.io/library/alpine:3.22
+
+RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi \
+        bc bison flex perl xz openssl-dev elfutils-dev linux-headers \
+        qemu-system-arm util-linux-misc e2fsprogs python3
+
+ARG KVER=6.12.116
+ARG KSHA=cb3ed3dfdd47e6ade49dc933db334fd86e24cadee920da612c262b0e9b6a511b
+RUN wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz \
+ && echo "$KSHA  linux-$KVER.tar.xz" | sha256sum -c - \
+ && tar xJf linux-$KVER.tar.xz && rm linux-$KVER.tar.xz
+
+COPY kernel.config /kernel.config
+RUN cd linux-$KVER \
+ && make -s ARCH=arm CROSS_COMPILE=arm-none-eabi- versatile_defconfig \
+ && scripts/kconfig/merge_config.sh -m .config /kernel.config >/dev/null \
+ && make -s ARCH=arm CROSS_COMPILE=arm-none-eabi- olddefconfig \
+ && make -s -j"$(nproc)" ARCH=arm CROSS_COMPILE=arm-none-eabi- zImage dtbs \
+ && mkdir /fros && cp arch/arm/boot/zImage arch/arm/boot/dts/arm/versatile-pb.dtb /fros/ \
+ && cp .config /fros/kernel.config \
+ && cd / && rm -rf linux-$KVER
+
+COPY boot.sh usr-from-yaffs.py root-for-qemu.py /fros/
+ENTRYPOINT ["sh", "/fros/boot.sh"]
