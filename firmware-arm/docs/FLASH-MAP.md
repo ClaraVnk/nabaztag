@@ -181,4 +181,6 @@ The image: 124 720 bytes, 2 256 spare, against 126 952 for 1.2.0.1
 each one gzipped behind the right Content-Type, and each inflates to the
 page 1.2.0.1 serves; 1.2.0.1 itself, as the control, fails every gzip check.
 What the emulator does not show: a real browser fetching the page and its
-stylesheet on two connections at once. That is Nabazprout's to confirm.
+stylesheet on two connections at once. Nabazprout confirmed it on
+2026-11-18 (`-gz-tel`, installed by OTA): setup, upgrade and saved pages
+styled in a phone's browser, and loading faster than before.
