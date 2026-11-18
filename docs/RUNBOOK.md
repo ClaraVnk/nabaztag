@@ -248,6 +248,19 @@ tools/karotz-proof.sh                          # the released client asks for it
 tools/karotz-proof.sh --terrier <terrier checkout>   # the Terrier's scenario
 ```
 
+A whole Karotz's own system, from a dump (`firmware-arm/emulator/karotz/fros/README.md`): its
+root ramdisk and its /usr on a mainline ARM kernel in QEMU. The dump stays
+outside the repository (it holds the owner's Wi-Fi password). On the dev VM,
+one heavy job at a time (the image builds a kernel):
+
+```sh
+cd firmware-arm/emulator/karotz/fros
+podman build -t fros -f Containerfile .
+SECONDS_UP=240 podman run --rm -e SECONDS_UP -v <dump dir>:/dump:ro,Z fros
+# 2026-11-17, FR's Karotz: FROS banner, karotz_init.sh, startup.sh, its
+# binaries and libraries load; stops at the hardware (wlan0, LED, /dev/rabbit_*)
+```
+
 ### WPA3 on the Karotz's kernel
 
 Two patches for LapinLibre's Linux 2.6.32.71 (SAE through nl80211 and
