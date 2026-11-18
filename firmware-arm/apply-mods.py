@@ -9902,15 +9902,30 @@ def patch_ccmp_no_probation(root: Path) -> None:
 
 
 def patch_vm_strcmp_bound(root: Path) -> None:
-    """OPstrcmp compares the shorter string, then the lengths (S-4).
+    """OPstrcmp compares the shorter string, then the longer one's tail (S-4).
 
     memcmp ran over the LONGER of the two lengths, reading past the shorter
     string into the next VM object -- or past the heap end for the last one
     -- and "ab" compared equal to "abc" whenever the byte after "ab"
     happened to be 'c'. violet_hardening fixed the same mistake in sysCmp
     and left this copy (vendor line byte-identical). Now the common prefix
-    decides, then the shorter string sorts first, as strcmp does.
-    tests/test_vm_strcmp.c holds both expressions under ASan. Idempotent.
+    decides, then the tail of the longer string, read within its own length.
+
+    The tail is not simply "the shorter sorts first": a VM string sits in a
+    block whose last word is zero (vmemAllocBin), so the old read saw the
+    shorter string's terminator, and two strings that differ only by
+    trailing NULs compared EQUAL. Violet's runtime relies on it: B64toS
+    sizes its result from the base64 length and leaves one or two NULs
+    behind the last token of a DIGEST-MD5 challenge, and `strcmp sAlgo
+    "md5-sess"` must still be 0. The first cut of this step (1.2.1.0,
+    2026-11-18) returned the length difference there: with a 22-character
+    domain the challenge is 95 bytes, one NUL, and the rabbit never answered
+    it -- a bind loop every 30 s on hardware, invisible with the proof's
+    11-character domain (84 bytes, no padding). So: NULs in the tail are
+    the end of the string; anything else sorts the longer string last.
+    tests/test_vm_strcmp.c holds all three expressions under ASan;
+    emulator/tools/xmpp-tls-proof.sh binds with a domain of the
+    production's shape. Idempotent.
     """
     p = root / "src/vm/vinterp.c"
     t, nl = read_flat(p)
@@ -9918,8 +9933,19 @@ def patch_vm_strcmp_bound(root: Path) -> None:
         print(f"[skip] {p}: OPstrcmp already bounded")
         return
     old = "            VSTACKSET(0,INTTOVAL(memcmp(VSTARTBIN(p),VSTARTBIN(q),(pl>ql)?pl:ql)));\n"
-    new = ("            int32_t r=memcmp(VSTARTBIN(p),VSTARTBIN(q),(pl<ql)?pl:ql);  /* vm_strcmp_bound: the shorter */\n"
-           "            VSTACKSET(0,INTTOVAL(r?r:pl-ql));\n")
+    new = ("            int32_t n=(pl<ql)?pl:ql;\n"
+           "            int32_t r=memcmp(VSTARTBIN(p),VSTARTBIN(q),n);  /* vm_strcmp_bound: the shorter */\n"
+           "            if (!r && pl!=ql)\n"
+           "            {\n"
+           "              /* The longer string's tail, within its length: NULs are the\n"
+           "                 end of the string (B64toS leaves them), anything else sorts\n"
+           "                 it last -- what the old read of the terminator gave. */\n"
+           "              uint8_t* t=((pl>ql)?VSTARTBIN(p):VSTARTBIN(q))+n;\n"
+           "              int32_t e=((pl>ql)?pl:ql)-n;\n"
+           "              while (e&&!*t) { t++; e--; }\n"
+           "              if (e) r=(pl>ql)?1:-1;\n"
+           "            }\n"
+           "            VSTACKSET(0,INTTOVAL(r));\n")
     if t.count(old) != 1:
         sys.exit(f"FAIL {p}: OPstrcmp is not the shape vm_strcmp_bound expects ({t.count(old)})")
     write_flat(p, t.replace(old, new, 1), nl)

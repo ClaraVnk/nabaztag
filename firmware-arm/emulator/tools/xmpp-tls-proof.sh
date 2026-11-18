@@ -79,6 +79,14 @@
 # The rabbit's connections to port 80 (the ping server locate.jsp names, so
 # rfid.jsp) go to the Terrier's HTTP port (rabbit-vm --port80).
 #
+# --domain names the Terrier (TERRIER_DOMAIN, the realm of its DIGEST-MD5
+# challenge). Default terrier.warren.test, 19 characters: the challenge is
+# then 92 bytes, which base64 pads, and Violet's B64toS leaves a NUL behind
+# its last token -- the production's shape (22 characters, 95 bytes). With
+# warren.test the challenge was 84 bytes, no padding, and Naboot 1.2.1.0's
+# OPstrcmp bound here while no rabbit answered its challenge on the real
+# Terrier (2026-11-18). The verdict counts the challenges and the answers.
+#
 # --tls-port sets the Terrier's TLS port (default BASE+23). The stripped case
 # only ends in TLS when it is 5223: with the line gone the rabbit has nothing
 # but the bytecode's XMPP_TLS_DEFAULT_PORT to go on, which is the point.
@@ -96,9 +104,11 @@ SPLIT= ; WEB_RESTART_AT=
 TERRIER= ; BYTECODE= ; EMU= ; ELF= ; OUT= ; STRIP= ; STRIP_PORT= ; TLS_PORT= ; SCENARIO2= ; THIRD= ; DOWN_AT= ; UP_AT= ; SPEAK_AT= ; SPEAK= ; APIS=() ; OTA= ; OTA_GH=
 ATS=() ; ENVS=() ; FAKE_RADIO= ; EPISODE_BYTES=600000
 BASE=${BASE:-18700}
+DOMAIN=terrier.warren.test
 while [ $# -gt 0 ]; do
   case "$1" in
     --terrier) TERRIER=$2; shift 2 ;;
+    --domain) DOMAIN=$2; shift 2 ;;
     --bytecode) BYTECODE=$2; shift 2 ;;
     --emulator) EMU=$2; shift 2 ;;
     --elf) ELF=$2; shift 2 ;;
@@ -194,7 +204,7 @@ ROLE=() ; API=$NAME
 terrier_run() {  # terrier_run <name> [-e ...]
   local n=$1; shift
   podman run -d --name "$n" --network host "${ENVS[@]}" "$@" \
-    -e TERRIER_DOMAIN=warren.test -e TERRIER_SECRET_KEY=emulator-proof-not-a-secret \
+    -e TERRIER_DOMAIN=$DOMAIN -e TERRIER_SECRET_KEY=emulator-proof-not-a-secret \
     -e TERRIER_HTTP_PORT=$HTTP -e TERRIER_XMPP_PORT=$XMPP -e TERRIER_XMPP_TLS_PORT=$XMPPS \
     -e TERRIER_UI_PORT=$UI -e TERRIER_DATA=/data -e TERRIER_LOG_LEVEL=INFO \
     -v "$OUT/data:/data:z" "$TERRIER" >/dev/null
@@ -283,6 +293,10 @@ srv.serve_forever()" $GH > "$OUT/gh.log" 2>&1 ) &
   fi
 fi
 T0=$(date +%s)
+# The log from a point on, by line count: podman 5.6's `logs --since "@$T0"`
+# returned nothing and the boot 2 verdict was empty (2026-11-18).
+N0=$(podman logs "$NAME" 2>&1 | wc -l)
+logs_after() { podman logs "$NAME" 2>&1 | tail -n +$(( $1 + 1 )); }
 TIMERS=()     # the calls on a clock: waited for, unlike the fake radio
 if [ -n "$SPEAK_AT" ]; then
   ( sleep "$SPEAK_AT"; echo "   [speak at +${SPEAK_AT}s, $(date +%T.%3N)]"
@@ -338,17 +352,22 @@ fi
 boot 2-confirmed proof-a ${SCENARIO2:-scenarios/vm/xmpp-tls.txt}
 [ ${#TIMERS[@]} -gt 0 ] && wait "${TIMERS[@]}"
 echo "   terrier, since the owner confirmed:"
-podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode\|rfid\|RFID" | sed 's/^/   /' | head -16
+logs_after "$N0" | grep -a "TLS\|registered\|bound and idle\|refused\|plain port\|locate.jsp\|serving bytecode\|rfid\|RFID" | sed 's/^/   /' | head -16
+# The SASL exchange of boot 2: a challenge the rabbit never answers is the
+# 2026-11-18 regression (OPstrcmp and B64toS's trailing NULs), which binds
+# fine with a shorter realm; the challenge's size says which shape this was.
+B2LOG=$(logs_after "$N0")
+echo "   sasl (boot 2, realm $DOMAIN): $(grep -ac '<challenge>' <<< "$B2LOG") challenge(s)$(grep -a -o '<challenge> [0-9]* bytes' <<< "$B2LOG" | head -1 | sed 's/<challenge>/ of/'), $(grep -ac "<- rabbit.*<response xmlns" <<< "$B2LOG") answer(s) from the rabbit, $(grep -ac '<success>' <<< "$B2LOG") success"
 if [ -n "$THIRD" ]; then
-  T1=$(date +%s)
+  T1=$(date +%s); N1=$(podman logs "$NAME" 2>&1 | wc -l)
   boot 3-tls-boot proof-a
   echo "   terrier, boot 3:"
-  podman logs --since "@$T1" "$NAME" 2>&1 | grep -a "TLS\|bc.jsp\|serving bytecode\|bound and idle\|refused" | sed 's/^/   /' | head -12
+  logs_after "$N1" | grep -a "TLS\|bc.jsp\|serving bytecode\|bound and idle\|refused" | sed 's/^/   /' | head -12
 fi
 [ -n "$STRIP" ] && { echo "   attacker:"; sed 's/^/   /' "$OUT/mitm.log" | grep -v forwarded; }
 if [ -n "$SPLIT" ]; then
   echo "   core, the rabbit's sessions during boot 2 (a web restart must not close one):"
-  podman logs --since "@$T0" "$NAME" 2>&1 | grep -a "XMPP disconnect\|bound and idle" | sed 's/^/   /' | head -12
+  logs_after "$N0" | grep -a "XMPP disconnect\|bound and idle" | sed 's/^/   /' | head -12
   podman logs "$NAME-web" > "$OUT/web.log" 2>&1; podman rm -f "$NAME-web" >/dev/null 2>&1
 fi
 podman logs "$NAME" > "$OUT/terrier.log" 2>&1

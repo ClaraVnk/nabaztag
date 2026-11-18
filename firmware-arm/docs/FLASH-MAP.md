@@ -248,6 +248,17 @@ section) in `naboot-1.2.1.0` and `-tel`, built unsigned on the dev VM with
 | `naboot-1.2.1.0-tel` with the review | 122 484 | 4 492 |
 | `naboot-1.2.1.0-oscrypto` (+ opt_size_crypto, measurement) | 116 832 (-4 640) | 10 144 |
 | `naboot-1.2.1.0-chacha` (+ tls_chacha_only, measurement) | 120 536 (-936) | 6 440 |
+| `naboot-1.2.1.0`, `vm_strcmp_bound` reading the longer string's tail (22:28) | 121 552 (+80) | 5 424 |
+| `naboot-1.2.1.0-tel`, the same | 122 564 (+80) | 4 412 |
+
+The last two rows are the images after the bind loop of 2026-11-18 22:00:
+`naboot-1.2.1.0-tel` (122 484 bytes, signed, on the test rabbit by OTA)
+took the Terrier's DIGEST-MD5 challenge and never answered it, because the
+first cut of `vm_strcmp_bound` made `"md5-sess\0"` differ from
+`"md5-sess"` (`SECURITY-FINDINGS-2026-11.md`, S-4). Reproduced in the
+emulator with a realm of the production's shape (control binds, 1.2.1.0
+leaves two challenges unanswered in 160 s), fixed, proven bound; the tail
+walk costs 80 bytes.
 
 What the review's steps add and take: C for the bounds and the overflow
 alert (`ie_walk_bounds`, `vm_strcmp_bound`, `vm_seed_hidden`,

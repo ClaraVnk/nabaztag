@@ -82,7 +82,9 @@ firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/N
 
 1. Build with `--sign` (above).
 2. Prove it:
-   - in the emulator (section 4);
+   - in the emulator (section 4), the XMPP session bound included
+     (`xmpp-tls-proof.sh`, as many answers as challenges: 1.2.1.0 shipped
+     to the test rabbit without it and never answered one, 2026-11-18);
    - on the test rabbit, by OTA from the Terrier as one rabbit's own image
      (the Terrier's own RUNBOOK, "Sending a firmware");
    - from the previous release, as every other rabbit will take it.
@@ -102,6 +104,7 @@ make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
 make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
 make -C firmware-arm/tests tls-interop-chacha   # the same, ChaCha20-Poly1305 only (tls_chacha_only)
 BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.1.0: an ASan READ (review S-4)
+FIRSTCUT=1 make -C firmware-arm/tests vm_strcmp # S-4's first cut: bounded, and "md5-sess\0" no longer equals "md5-sess" (the 2026-11-18 bind loop)
 make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
 firmware-arm/tools/run-tests.sh       # the Metal toolchain against the reference compiler
 python3 -m unittest discover -s firmware-arm/tests/apply_mods   # apply-mods' own steps and its mode table
@@ -286,6 +289,29 @@ tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and wi
 NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-6: who may change the server
 # the control: the base image's Nab.elf (before config_presence) takes the stranger's server
 ```
+
+**The XMPP session, bound, on every release** (2026-11-18: 1.2.1.0's first
+cut of S-4 took the Terrier's DIGEST-MD5 challenge and never answered it,
+a TLS bind loop every 30 s on the test rabbit, while the proof above had
+bound). The emulator with the release's VM steps, the production runtime,
+the production Terrier image; the realm of the proof's Terrier has the
+production's shape (19 characters, a padded challenge, `--domain`) because
+the shorter `warren.test` hid it. The control first:
+
+```sh
+cd firmware-arm/emulator
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-tel) -t emu-1210 ../..
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator <the previous release's image> --elf ../bin/<previous release>/Nab.elf --out /tmp/bind-control
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0-tel/Nab.elf --out /tmp/bind
+#   sasl (boot 2, realm terrier.warren.test): 1 challenge(s) of 188 bytes, 1 answer(s) from the rabbit, 1 success
+# the regression: "2 challenge(s) of 188 bytes, 0 answer(s) from the rabbit, 0 success" (a reconnect at 134 s)
+```
+
+`emu-steps.py` lists the release's network, crypto and VM steps (`run.sh`'s
+list, which the review's VM steps joined that day). A verdict with fewer
+answers than challenges is a release that does not bind.
 
 ### The Nabaztag v1 (2005)
 

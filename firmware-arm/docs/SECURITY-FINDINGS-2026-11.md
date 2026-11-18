@@ -244,11 +244,26 @@ read only.
   measured).** Item 11 fixed the same mistake in `sysCmp` and left this
   copy: `memcmp` over `max(pl, ql)` reads past the shorter string into the
   next VM object, and "ab" equals "abc" when the byte after "ab" happens to
-  be 'c'. `vm_strcmp_bound`: the shorter length, then the lengths. Proof:
-  `../tests/test_vm_strcmp.c`, the two expressions as they stand in
+  be 'c'. `vm_strcmp_bound`: the shorter length, then the longer string's
+  tail within its own length -- NULs there are the end of the string,
+  anything else sorts it last. Not "then the lengths", which was the first
+  cut and a regression: a VM string's block ends in a zero word
+  (`vmemAllocBin`), so the old read saw the terminator and strings that
+  differ only by trailing NULs compared equal, and Violet's runtime leans
+  on it -- `B64toS` sizes its result from the base64 length and leaves one
+  or two NULs behind the last token of a DIGEST-MD5 challenge, so
+  `strcmp sAlgo "md5-sess"` was 0 before and 1 after. On the test rabbit
+  the 1.2.1.0 image took the challenge and never answered, a TLS bind loop
+  every 30 s (2026-11-18 22:00); the emulator proof had bound because its
+  realm `warren.test` makes an 84-byte challenge, no padding, no NUL. Proof:
+  `../tests/test_vm_strcmp.c`, the three expressions as they stand in
   `vinterp.c` over heap strings of exact length under ASan (`BEFORE=1 make
-  vm_strcmp` reports the READ; `make vm_strcmp` is clean and ordered). A
-  host replica of one line, not the ARM binary.
+  vm_strcmp` reports the READ; `FIRSTCUT=1 make vm_strcmp` fails the NUL
+  cases; `make vm_strcmp` is clean and ordered), and
+  `../emulator/tools/xmpp-tls-proof.sh`, whose realm now has the
+  production's shape (`--domain`, 19 characters: control binds, the first
+  cut leaves the challenge unanswered, the fix binds). A host replica of
+  one line, not the ARM binary, plus the whole-rabbit VM.
 
 - **S-5, the RNG seed was readable and writable by runtime bytecode (Low,
   read).** Item 1 hid the key (conf 224..256) after the hand-over; the
