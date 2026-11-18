@@ -226,3 +226,11 @@ warren confirmed the image at 13:42. Wi-Fi works on the RF2528-only driver,
 and the setup page shows every field, the radio and the scan list filled
 from /v.js in a phone's browser. The stuck first boot is not explained
 yet: the next OTA from this branch is to be watched over DCC.
+
+The first fix image cached every page for an hour: a phone that had
+already seen "Settings saved" showed it again from its cache, the save
+never reached the rabbit and it stayed in setup mode, blue. Only `s.css`
+is cached now; `config-pages.sh` saves with `z=1` and expects RUN. With
+that image (sent in session at 14:01) the rabbit came back on its own in
+72 s, no stuck boot. At 17:49 a save from setup mode left setup mode on
+its own (DCC: A0 B0 → A2 B1) and the rabbit was back in the warren.
