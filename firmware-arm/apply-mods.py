@@ -9372,7 +9372,7 @@ def patch_ccmp_replay_count(root: Path) -> None:
     PN and enforcing is safe; p rising with N says they are not what
     rt73usb says, and V shows what they are.
 
-    ccmp_replay_enforce turns the count into a refusal. In no default mode.
+    ccmp_replay_enforce turns the count into a refusal. In every naboot mode from 1.2.0.0 on.
     """
     h = root / "inc/net/ieee80211.h"
     t, nl = read_flat(h)
@@ -9524,7 +9524,8 @@ def patch_ccmp_replay_count(root: Path) -> None:
 
 
 def patch_ccmp_replay_enforce(root: Path) -> None:
-    """Refuse the frames ccmp_replay_count counts. IN NO DEFAULT MODE.
+    """Refuse the frames ccmp_replay_count counts. In every naboot mode from
+    1.2.0.0 on (2026-11-12).
 
     Defines IEEE80211_CCMP_REPLAY_ENFORCE: a protected CCMP data frame whose
     packet number is not above the last one taken under its key is dropped

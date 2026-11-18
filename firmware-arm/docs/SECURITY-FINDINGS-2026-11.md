@@ -152,10 +152,14 @@ version, for the reason given under its heading.
   The refusal is written and proven the same way (`ccmp_replay_enforce`,
   `../emulator/scenarios/enforce/ccmp-replay.txt`: the replayed frames and the
   duplicate are dropped, everything else arrives, the other 35 scenarios
-  pass with it on) and is in no mode. It goes into the next version if a
-  real rabbit shows N rising, `p0/0/0` and a rising packet number in V
-  over a day that includes a group rekey. If p rises with N instead, the
-  words are not what the Linux driver says and V shows what they are.
+  pass with it on). It waited for a real rabbit to show N rising,
+  `p0/0/0` and a rising packet number in V over a day that includes a
+  group rekey: Nabazprout did on 2026-11-12 (N 37,573, p0/0/41, V
+  rising), and **the refusal ships from Naboot 1.2.0.0 on**, with a
+  probation: if more than half of a boot's first 256 protected frames
+  are flagged, that boot only counts, so wrong words cannot make the
+  rabbit deaf. On 2026-11-18 Nabazprout's `-gzrf-tel` showed N 0x644c,
+  p0/0/2e: nothing refused but the AP's own retransmissions.
   Known limits when enforced: a TKIP group key (mixed mode) is not
   examined, and neither are protected management frames.
 
