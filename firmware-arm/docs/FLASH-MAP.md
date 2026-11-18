@@ -49,8 +49,10 @@ about 18.6 s.
    was -O1, and a layout change has woken an old bug here before: it ships
    only after the emulator proofs, a crypto timing check (the key exchange
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
-2. **The configuration pages**: about 6.9 KB of text in the bytecode; a
-   tighter stylesheet and shared fragments, perhaps 1 to 2 KB.
+2. **The configuration pages**: 7 039 bytes of text. Moving them to C
+   frees nothing (see below). Served gzipped, the stylesheet and the three
+   fixed pages would shrink from 4 785 to about 2 340 bytes; the setup page
+   keeps its fifteen fields filled at run time and stays plain.
 3. **Radio tables for chips the rabbit does not have** (`RF5225RegTable`,
    `RF5226RegTable`, `RF2528RegTable`, 280 bytes each): ~560 bytes, once
    `rfic_report` says which RF chip every rabbit seen so far carries.
@@ -140,3 +142,27 @@ Each -Os image passed flashsim and failed on the rabbit with a different
 symptom the emulators cannot see. **-Os is stopped.** The flash is to be
 won by moving stable pieces of the bytecode to C, one at a time, each tried
 on the rabbit (`phase8-rom` measures it).
+
+## The pages in C: no flash either (2026-11-17)
+
+`--mode naboot-1.2.0.1-rom` is 1.2.0.1 with `pages_to_rom`: the four
+configuration pages and their stylesheet (7 039 bytes) leave the bytecode
+for C constants, served by a new `pageRender` opcode that fills the fields.
+The image grew by 196 bytes (127 148, 172 over the flash). Text weighs the
+same in the bytecode and in C, both live in the flash, and the renderer is
+new code. What moves is RAM: the VM no longer copies the pages at boot.
+
+Rewriting bytecode logic in C will not win flash either: the Metal bytecode
+is denser than ARM code for the same work. **Moving to C is closed as a
+flash lever.** What is left is in the list above: gzipped pages, unused
+radio tables, a pinned TLS key, one signature scheme.
+
+Gzip sizes of the pages, measured on the 1.2.0.1 sources (`gzip -9n`):
+
+| Part | Plain | Gzipped |
+|---|---|---|
+| setup page (15 fields) | 2 254 | 922 |
+| saved | 664 | 430 |
+| update | 752 | 488 |
+| error | 592 | 402 |
+| stylesheet | 2 777 | 1 017 |
