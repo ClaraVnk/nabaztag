@@ -56,7 +56,15 @@
 #define NAB_RNG_SEED_LEN   32
 /** Bits of credit before a secret may be drawn. */
 #define NAB_RNG_MIN_CREDIT 128
-/** Credit per received frame. */
+/** Credit per received frame -- whoever sent it. A station flooding
+ *  probe requests supplies 64 frames it knows, and the only bytes it does
+ *  not choose are the timer and the RSSI. That is the review's S-8
+ *  (2026-11-18): the exposure is the first boot ever, on a board whose
+ *  SRAM powers up quiet, with a flooder present; every later boot holds
+ *  128 bits of credit in the stored seed before the first frame. A
+ *  per-source cap was weighed and left out: a rabbit alone with its one
+ *  access point would then never reach NAB_RNG_MIN_CREDIT on that first
+ *  boot, and SAE would never start. */
 #define NAB_RNG_FRAME_CREDIT 2
 
 /**

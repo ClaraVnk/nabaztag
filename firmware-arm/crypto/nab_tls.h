@@ -92,6 +92,13 @@ int nab_tls_start(const uint8_t psk[NAB_TLS_PSK],
 int nab_tls_in(const uint8_t *data, uint32_t len);
 
 /**
+ * @brief End the session with record_overflow: what the caller says when
+ *        `nab_tls_in` took fewer bytes than it was given, so the stream does
+ *        not go on desynchronised into bad_record_mac (review S-7). -2.
+ */
+int nab_tls_overflow(void);
+
+/**
  * @brief Decrypt and consume records at the head of the receive buffer.
  *
  * Handshake, alert and change_cipher_spec records are handled here;

@@ -1,0 +1,16 @@
+# bytecode: bootloader
+#
+# Review S-6 (2026-11-18), the phone's ordinary save: the Wi-Fi fields and
+# the server the page offered (field `a` as /v.js filled it, the factory
+# server), nobody touching the rabbit. That flow must not change: the save
+# is taken, the rabbit leaves config mode and joins the network. The
+# server to send is the one the build offers (config-presence.sh fills
+# <OFFERED> from EXPECT_SERVER).
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 90000
+
+at 5000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=<OFFERED>&z=1
+at 85000 expect RUN
+at 89000 expect-no-reset

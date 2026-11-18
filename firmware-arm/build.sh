@@ -82,7 +82,11 @@ BOOT_ARGS="--build-arg BOOT_FLOOR=${BOOT_FLOOR:-$(date -u +%Y%m%d%H%M)}"
 [ -n "${BOOT_ANCHOR:-}" ] && BOOT_ARGS="$BOOT_ARGS --build-arg BOOT_ANCHOR=$BOOT_ANCHOR"
 [ -n "${BOOT_HTTPS_HOST:-}" ] && BOOT_ARGS="$BOOT_ARGS --build-arg BOOT_HTTPS_HOST=$BOOT_HTTPS_HOST"
 [ -n "${KX_HTTPTIMEOUT:-}" ] && BOOT_ARGS="$BOOT_ARGS --build-arg KX_HTTPTIMEOUT=$KX_HTTPTIMEOUT"
-if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $RUNTIME build --build-arg MODE=$MODE --build-arg BUILD_MARK=$BUILD_MARK $BOOT_ARGS -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
+# REMOTE_LOCK=~/heavy.lock: the build waits its turn behind `flock` on the
+# remote. Two builds at once froze the shared dev VM on 2026-11-17.
+LOCK=""
+[ -n "${REMOTE_LOCK:-}" ] && LOCK="flock $REMOTE_LOCK "
+if ! "${SSH[@]}" "$REMOTE_HOST" "set -o pipefail; cd $REMOTE_DIR && $LOCK$RUNTIME build --build-arg MODE=$MODE --build-arg BUILD_MARK=$BUILD_MARK $BOOT_ARGS -t $TAG . 2>&1; exit \${PIPESTATUS[0]}" > "$LOGFILE"; then
   echo "!! $RUNTIME build FAILED on $REMOTE_HOST — last 80 lines:" >&2
   tail -80 "$LOGFILE" >&2
   echo "(full log at $LOGFILE)" >&2
@@ -97,7 +101,7 @@ mkdir -p "$OUTDIR"
 # stale .signed.sim must not survive next to a fresh unsigned .sim — that
 # pair looks current and is exactly how an old signature gets published.
 rm -f "$OUTDIR/firmware0.0.0.13.signed.sim" "$HERE/bin/naboot-${MODE}.signed.sim"
-if ! "${SSH[@]}" "$REMOTE_HOST" "$RUNTIME run --rm $TAG" | tar -xv -C "$OUTDIR/"; then
+if ! "${SSH[@]}" "$REMOTE_HOST" "$LOCK$RUNTIME run --rm $TAG" | tar -xv -C "$OUTDIR/"; then
   echo "!! extracting the artifact tar FAILED — nothing signed, nothing stale left" >&2
   exit 1
 fi

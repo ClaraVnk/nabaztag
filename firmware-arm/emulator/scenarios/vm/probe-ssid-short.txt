@@ -1,0 +1,14 @@
+# Review S-1 (2026-11-18), the probe request's side: probe_ssid_bound
+# (finding #3) capped the SSID copy at its 33-byte destination, not at the
+# frame. A probe request whose SSID element says 32 bytes in a 4-byte body
+# makes the walk read 28 bytes past the frame while the rabbit is its own
+# access point (config mode). Reads only; they show under ASan
+# (tools/ie-walk-proof.sh), with ie_walk_bounds left out as the control.
+# Run: ./run.sh --vm scenarios/vm/probe-ssid-short.txt --no-eeprom
+
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 15000
+at 6000 inject-probe-short
+at 7000 inject-probe-short

@@ -12,8 +12,10 @@
 #include "net/nab_tls.h"
 #include "net/sha256.h"
 #include "net/cmac.h"
-#ifdef NAB_TLS_CERTS
+#if defined(NAB_TLS_CERTS) || defined(NAB_TLS_CHACHA_ONLY)
 #include "net/chachapoly.h"
+#endif
+#ifdef NAB_TLS_CERTS
 #include "net/nab_pki.h"
 int crypto_scalarmult_curve25519_tweet(unsigned char *q, const unsigned char *n, const unsigned char *p);
 #endif
@@ -178,6 +180,10 @@ void nab_tls_psk(uint8_t psk[NAB_TLS_PSK], const uint8_t key[32])
 
 /* --- AES-128-GCM ------------------------------------------------------------ */
 
+/* tls_chacha_only (apply-mods.py, a measurement build): one AEAD, so GCM
+   and its bit-serial GHASH are not compiled at all. */
+#ifndef NAB_TLS_CHACHA_ONLY
+
 /* y = (y ^ x) * H in GF(2^128), GCM's bit order. */
 static void ghash_block(uint32_t y[4], const uint32_t h[4], const uint8_t x[16])
 {
@@ -246,13 +252,18 @@ static int gcm(const uint8_t key[16], const uint8_t iv[12],
 /* The session's AEAD: AES-128-GCM, or ChaCha20-Poly1305 when the server
    chose it (a session with a certificate offers it first: about six
    times cheaper on this processor, tools/cost). */
+#endif /* !NAB_TLS_CHACHA_ONLY */
 static int aead(const uint8_t *key, const uint8_t iv[12], const uint8_t *aad, uint32_t aadlen,
                 uint8_t *buf, uint32_t len, uint8_t tag[16], int enc)
 {
+#ifdef NAB_TLS_CHACHA_ONLY
+  return chachapoly(key, iv, aad, aadlen, buf, len, tag, enc);
+#else
 #ifdef NAB_TLS_CERTS
   if (T.suite) return chachapoly(key, iv, aad, aadlen, buf, len, tag, enc);
 #endif
   return gcm(key, iv, aad, aadlen, buf, len, tag, enc);
+#endif
 }
 
 static void nonce(uint8_t out[12], const uint8_t iv[12], uint32_t hi, uint32_t lo)
@@ -306,6 +317,15 @@ enum {
   A_DECODE_ERROR = 50, A_PROTOCOL_VERSION = 70, A_INTERNAL_ERROR = 80
 };
 
+/* What the opcode calls when nab_tls_in took less than it was given: the
+   stream would otherwise desynchronise into bad_record_mac with nothing
+   to say why (review S-7, 2026-11-18). */
+int nab_tls_overflow(void)
+{
+  if (T.state != NAB_TLS_HANDSHAKE && T.state != NAB_TLS_READY) return -2;
+  return fail(A_RECORD_OVERFLOW);
+}
+
 /* --- ClientHello ------------------------------------------------------------ */
 
 int nab_tls_start(const uint8_t psk[NAB_TLS_PSK],
@@ -336,7 +356,11 @@ int nab_tls_start(const uint8_t psk[NAB_TLS_PSK],
   m[4] = 3; m[5] = 3;                             /* legacy_version */
   memcpy(m + 6, random, 32);
   m[38] = 0;                                      /* legacy_session_id: empty */
+#ifdef NAB_TLS_CHACHA_ONLY
+  put16(m + 39, 2); m[41] = 0x13; m[42] = 0x03;   /* TLS_CHACHA20_POLY1305_SHA256 */
+#else
   put16(m + 39, 2); m[41] = 0x13; m[42] = 0x01;   /* TLS_AES_128_GCM_SHA256 */
+#endif
   m[43] = 1; m[44] = 0;                           /* legacy_compression_methods */
   ext = m + 47;
   /* supported_versions (4.2.1): TLS 1.3 only */
@@ -385,12 +409,16 @@ static int on_server_hello(const uint8_t *m, uint32_t n)
   p = 34;
   if (m[p] != 0) return fail(A_ILLEGAL_PARAMETER);
   p++;
+#ifdef NAB_TLS_CHACHA_ONLY
+  if (m[p] != 0x13 || m[p + 1] != 0x03) return fail(A_ILLEGAL_PARAMETER);
+#else
   if (m[p] != 0x13 || m[p + 1] != 0x01) {
 #ifdef NAB_TLS_CERTS
     if (!(T.certs && m[p] == 0x13 && m[p + 1] == 0x03))
 #endif
     return fail(A_ILLEGAL_PARAMETER);
   }
+#endif
   T.suite = m[p + 1] == 0x03;                     /* what we offered: ours, or AES */
   p += 2;
   memset(ikm, 0, sizeof ikm);
@@ -653,7 +681,11 @@ int nab_tls_start_cert(const char *host, const char now[14], const uint8_t rando
   T.certs = 1;
   sha256_init(&T.th);
   if (hl == 0 || hl >= sizeof T.host) return 0;
+#ifdef NAB_TLS_CHACHA_ONLY
+  n = 5 + 4 + 2 + 32 + 1 + 2 + 2 + 2 + 2 + (9 + hl) + sizeof fixed + 42;
+#else
   n = 5 + 4 + 2 + 32 + 1 + 2 + 4 + 2 + 2 + (9 + hl) + sizeof fixed + 42;
+#endif
   if (cap < n) return 0;
   memcpy(T.host, host, hl + 1);
   memcpy(T.now, now, 14);
@@ -666,11 +698,18 @@ int nab_tls_start_cert(const char *host, const char now[14], const uint8_t rando
   m[4] = 3; m[5] = 3;
   memcpy(m + 6, random, 32);
   m[38] = 0;
+#ifdef NAB_TLS_CHACHA_ONLY
+  put16(m + 39, 2);
+  m[41] = 0x13; m[42] = 0x03;                       /* TLS_CHACHA20_POLY1305_SHA256 alone */
+  m[43] = 1; m[44] = 0;
+  e = m + 47;
+#else
   put16(m + 39, 4);
   m[41] = 0x13; m[42] = 0x03;                       /* TLS_CHACHA20_POLY1305_SHA256 first */
   m[43] = 0x13; m[44] = 0x01;                       /* then TLS_AES_128_GCM_SHA256 */
   m[45] = 1; m[46] = 0;
   e = m + 49;
+#endif
   put16(e, 0x0000); put16(e + 2, hl + 5); put16(e + 4, hl + 3); e[6] = 0; put16(e + 7, hl);
   memcpy(e + 9, host, hl); e += 9 + hl;             /* server_name (RFC 6066 3) */
   memcpy(e, fixed, sizeof fixed); e += sizeof fixed;
@@ -682,7 +721,11 @@ int nab_tls_start_cert(const char *host, const char now[14], const uint8_t rando
     crypto_scalarmult_curve25519_tweet(e + 10, T.eph, nine);
   }
   e += 42;                                          /* key_share */
+#ifdef NAB_TLS_CHACHA_ONLY
+  put16(m + 45, (uint32_t)(e - (m + 47)));
+#else
   put16(m + 47, (uint32_t)(e - (m + 49)));
+#endif
   m[1] = 0; put16(m + 2, (uint32_t)(e - m) - 4);
   put16(out + 3, (uint32_t)(e - m));
   sha256_update(&T.th, m, (uint32_t)(e - m));
@@ -810,8 +853,12 @@ int nab_tls_next(void)
     if (T.srv_keys == 0) {
       /* Plaintext: only the ServerHello, or an alert refusing us (5.1). */
       if (type == 21) {
+        /* The description before drop(): drop() memmoves rx[] down and
+           body[1] is then a byte of whatever record was buffered behind
+           the alert -- right only when nothing was (review S-3, 2026-11-18). */
+        uint8_t desc = len == 2 ? body[1] : 0xff;
         drop(5 + len);
-        if (len == 2 && body[1] == A_CLOSE_NOTIFY) { T.state = NAB_TLS_CLOSED; return -2; }
+        if (desc == A_CLOSE_NOTIFY) { T.state = NAB_TLS_CLOSED; return -2; }
         return fail(A_UNEXPECTED_MESSAGE);
       }
       if (type != 22) return fail(A_UNEXPECTED_MESSAGE);
@@ -838,8 +885,9 @@ int nab_tls_next(void)
         continue;
       }
       if (ct == 21) {
+        uint8_t desc = plen == 2 ? body[1] : 0xff;   /* before drop(), as above */
         drop(5 + len);
-        if (plen == 2 && body[1] == A_CLOSE_NOTIFY) { T.state = NAB_TLS_CLOSED; T.rxlen = 0; return -2; }
+        if (desc == A_CLOSE_NOTIFY) { T.state = NAB_TLS_CLOSED; T.rxlen = 0; return -2; }
         T.state = NAB_TLS_FAILED; T.rxlen = 0;    /* theirs: nothing to answer */
         return -2;
       }

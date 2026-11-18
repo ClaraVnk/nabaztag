@@ -201,6 +201,8 @@ void sim_run_events(void)
       case SIM_EV_DROP_EAPOL:  vap_drop_eapol(e->arg); break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
       case SIM_EV_INJECT_PROBE: vap_inject_probe((uint32_t)e->arg); break;
+      case SIM_EV_INJECT_PROBE_SHORT: vap_inject_probe_short(); break;
+      case SIM_EV_INJECT_BEACON: vap_inject_beacon(e->arg); break;
       case SIM_EV_DHCP_ROGUE: break;  /* whole-rabbit only */
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:

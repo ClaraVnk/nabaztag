@@ -1795,6 +1795,81 @@ void vap_inject_probe(uint32_t ssid_len)
   vap_inject(out, (uint32_t)(p - out));
 }
 
+/* The source side of the same copy (review S-1, 2026-11-18): the element
+ * says 32 bytes and the frame ends after 4 of them. probe_ssid_bound caps
+ * the destination; without ie_walk_bounds the walk reads the other 28
+ * past the frame, which ASan sees because every frame is delivered in a
+ * buffer of exactly its length (vap_poll). */
+void vap_inject_probe_short(void)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+  uint8_t *p = out + sizeof(*fr);
+  static const uint8_t attacker[6] = { 0x02, 0xde, 0xad, 0xbe, 0xef, 0x01 };
+
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_REQ;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+  memcpy(fr->i_addr1, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, attacker, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  *p++ = IEEE80211_ELEMID_SSID; *p++ = 32;
+  memcpy(p, "Naba", 4); p += 4;
+  sim_log("attacker: probe request whose SSID element says 32 bytes, 4 follow");
+  vap_inject(out, (uint32_t)(p - out));
+}
+
+int vap_forged_kind(const char *name)
+{
+  static const char *names[] = { NULL, "rates", "ssid", "ds", "vendor", "rsnxe" };
+  for(int i = 1; i < (int)(sizeof names / sizeof names[0]); i++)
+    if(!strcmp(name, names[i])) return i;
+  return 0;
+}
+
+/* A beacon from a stranger with one element the frame does not hold
+ * (review S-1, 2026-11-18): the scan parser's SSID, RATES, DSPARMS, vendor
+ * and RSNXE cases each read the element's length byte or body, and
+ * beacon_ie_bounds bounded only the RSN/WPA suite loops. Delivered while
+ * the rabbit scans, on the channel it listens to; the SSID names the
+ * forger so the scan list shows whether it was parsed. */
+void vap_inject_beacon(int kind)
+{
+  uint8_t out[VAP_FRAME_MAX];
+  struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
+  uint8_t *p = out + sizeof(*fr);
+  static const uint8_t forger[6] = { 0x02, 0xde, 0xad, 0xbe, 0xef, 0x02 };
+  const char *what = "?";
+
+  memset(fr, 0, sizeof(*fr));
+  fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON;
+  fr->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+  memcpy(fr->i_addr1, ieee80211_broadcast_address, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr2, forger, IEEE80211_ADDR_LEN);
+  memcpy(fr->i_addr3, forger, IEEE80211_ADDR_LEN);
+  memset(p, 0, 12); p[8] = 0x64; p[10] = IEEE80211_CAPINFO_ESS; p += 12;   /* timestamp, interval, capinfo */
+  if(kind != VAP_FORGED_SSID) p = put_ie(p, IEEE80211_ELEMID_SSID, "Forged", 6);
+  switch(kind) {
+  case VAP_FORGED_RATES:
+    *p++ = IEEE80211_ELEMID_RATES; *p++ = 60; *p++ = 0x82; *p++ = 0x84;
+    what = "RATES says 60 bytes, 2 follow"; break;
+  case VAP_FORGED_SSID:
+    *p++ = IEEE80211_ELEMID_SSID; *p++ = 30; memcpy(p, "For", 3); p += 3;
+    what = "SSID says 30 bytes, 3 follow"; break;
+  case VAP_FORGED_DS:
+    *p++ = IEEE80211_ELEMID_DSPARMS;
+    what = "DSPARMS id as the frame's last byte"; break;
+  case VAP_FORGED_VENDOR:
+    *p++ = IEEE80211_ELEMID_VENDOR; *p++ = 24; *p++ = 0x00; *p++ = 0x50;
+    what = "a vendor element says 24 bytes, 2 follow"; break;
+  case VAP_FORGED_RSNXE:
+    *p++ = 244; *p++ = 1;
+    what = "RSNXE says 1 byte, none follows"; break;
+  }
+  sim_log("attacker: beacon with %s", what);
+  vap_inject(out, (uint32_t)(p - out));
+}
+
 /* What the radio's own header calls these. Key slot 0 is the pairwise key;
  * anything else is a group key. */
 #define RT2501_CIPHER_NONE_ 0
