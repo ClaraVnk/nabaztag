@@ -13,4 +13,5 @@ stop 90000
 
 at 5000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=<OFFERED>&z=1
 at 85000 expect RUN
+at 85000 expect-mode managed
 at 89000 expect-no-reset

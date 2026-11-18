@@ -307,6 +307,24 @@ refusal, in no default step list: what the emulator cannot say is whether
 those two words hold a packet number on a real rabbit, and the count mode
 exists to find out (`../jtag/ccmp-pn.py`).
 
+Two rabbits answered (2026-11-12 and 2026-11-18), the refusal ships, and the
+2026-11-18 review then showed its probation could be gamed:
+`scenarios/enforce/ccmp-probation.txt` sends 60 genuine frames and 200
+replays of the last one in the first seconds; with the probation the 256th
+frame decided "count only" for the boot and the replays went through
+(65, 67, 68 handed up); `ccmp_no_probation` refuses them all (60, 61).
+`tools/ccmp-enforce-proof.sh` runs both scenarios with and without it. The
+same review's `scenarios/forged-beacon-elements.txt` and
+`scenarios/vm/probe-ssid-short.txt` (`forged-beacons rates,ssid,...` beside
+every beacon round, since the scan runs before the first timed event;
+`inject-beacon <which>` and `inject-probe-short` as events) feed the scan
+parser elements the frame does not hold; the over-read is a few bytes past the frame, which only `make asan`
+sees, so `tools/ie-walk-proof.sh` builds the sanitised emulator with and
+without `ie_walk_bounds`. `tools/config-presence.sh` boots a built
+bootloader in config mode three ways (`scenarios/vm/config-server-*.txt`,
+`config-wifi-nohead.txt`): a stranger's new server is refused, the owner's
+with the head held is taken, the ordinary save is unchanged.
+
 **Why a rabbit stays "connected" to an access point that has forgotten it,
 2026-11-08.** Two of the four needs-the-mains failures measured over JTAG
 the day before were reproduced here on the first try, because both are one

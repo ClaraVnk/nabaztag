@@ -110,6 +110,10 @@ class ConfigPresence(unittest.TestCase):
         self.assertNotIn("\t\tupdateconf args;\n\t\tif page==1", t)
         self.assertIn("if page==1 then (if needhead args then page_error else (updateconf args; httpdone))", t)
         self.assertIn("if n=='a' && (strcmp v (webserver confGetServerUrl)) && !button2 then 1", t)
+        # Metal's `if` jumps on 0 only (OPelse: `if (!VPULL())`), so nil is
+        # true: needhead must answer an int both ways (2026-11-18, the plain
+        # GET /b.htm answered the error page).
+        self.assertIn("\tif args==nil then 0\n", t)
         lit = re.search(r'fun page_a=strcat http_gzip (".*?");;', t).group(1)
         raw = am._metal_literal_bytes(lit)
         page = gzip.decompress(raw.split(b"\r\n\r\n", 1)[1])

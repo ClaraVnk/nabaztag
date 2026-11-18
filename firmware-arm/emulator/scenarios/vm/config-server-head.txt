@@ -14,4 +14,5 @@ at 5000 button down
 at 5500 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
 at 9000 button up
 at 85000 expect RUN
+at 85000 expect-mode managed
 at 89000 expect-no-reset

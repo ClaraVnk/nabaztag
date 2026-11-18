@@ -2,36 +2,23 @@
 # length byte and body past the end of the frame -- SSID, RATES/XRATES (the
 # Violet audit's A3), DSPARMS, a vendor element's OUI, the RSNXE -- and
 # beacon_ie_bounds had bounded the RSN/WPA suite loops only. A stranger's
-# beacon with one such element arrives while the rabbit scans; the rabbit
-# joins its own network afterwards all the same.
+# beacons, one per such element, go out beside every beacon round on the
+# access point's channel, so the scan hears them where it hears the AP (the
+# scan runs before the first timed event, which is why they are not `at`
+# events); the rabbit joins its own network all the same.
 #
 # The over-read is a read of a few bytes past a frame: nothing a counter
 # sees. It shows under `make asan`, which delivers every frame in a heap
 # block of exactly its length: a build without ie_walk_bounds reports
 # heap-buffer-overflow READ in ieee80211_input_mgt at the first forged
 # beacon; with it the scan list shows "Forged" with what the frame held.
-# tools/ie-walk-proof.sh runs both. Each element three times, because the
-# radio hops while it scans and a frame on another channel is not heard.
+# tools/ie-walk-proof.sh runs both.
 
 ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
 psk nabaztag
+forged-beacons rates,ssid,ds,vendor,rsnxe
 tick 50
 stop 20000
 
-at 200 inject-beacon rates
-at 250 inject-beacon ssid
-at 300 inject-beacon ds
-at 350 inject-beacon vendor
-at 400 inject-beacon rsnxe
-at 700 inject-beacon rates
-at 750 inject-beacon ssid
-at 800 inject-beacon ds
-at 850 inject-beacon vendor
-at 900 inject-beacon rsnxe
-at 1200 inject-beacon rates
-at 1250 inject-beacon ssid
-at 1300 inject-beacon ds
-at 1350 inject-beacon vendor
-at 1400 inject-beacon rsnxe
 at 10000 expect RUN
 at 19000 expect RUN

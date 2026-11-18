@@ -95,8 +95,10 @@ static struct tls *S = &T0;
 
 /* --- small helpers -------------------------------------------------------- */
 
+#ifndef NAB_TLS_CHACHA_ONLY   /* GHASH's only; -Werror on the host otherwise */
 static uint32_t be32(const uint8_t *p)
 { return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3]; }
+#endif
 static void put32(uint8_t *p, uint32_t v)
 { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static void put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }

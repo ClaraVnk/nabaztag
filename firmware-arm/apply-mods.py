@@ -10044,8 +10044,10 @@ def patch_config_presence(root: Path) -> None:
     t = t.replace(at, (
         "\n// config_presence (apply-mods.py): a save that changes the server needs the\n"
         "// head button held; the Wi-Fi fields do not. Arguments count on the save only.\n"
+        "// An int both ways: Metal's `if` jumps on 0 only, nil is true (OPelse).\n"
         "fun needhead args=\n"
-        "\tif args!=nil then let hd args->[n v] in\n"
+        "\tif args==nil then 0\n"
+        "\telse let hd args->[n v] in\n"
         f"\tif n=='a' && (strcmp v {offered}) && !button2 then 1 else needhead tl args;;\n"
         + at), 1)
 

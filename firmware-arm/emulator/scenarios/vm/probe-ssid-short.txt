@@ -3,8 +3,9 @@
 # frame. A probe request whose SSID element says 32 bytes in a 4-byte body
 # makes the walk read 28 bytes past the frame while the rabbit is its own
 # access point (config mode). Reads only; they show under ASan
-# (tools/ie-walk-proof.sh), with ie_walk_bounds left out as the control.
-# Run: ./run.sh --vm scenarios/vm/probe-ssid-short.txt --no-eeprom
+# (tools/ie-walk-proof.sh <Nab.elf>), with ie_walk_bounds left out as the
+# control. Config mode is the bootloader's: the VM must run a built image's
+# bootloader (bootbc.py), not the warren's runtime.
 
 config-mode
 ap 02:00:5e:10:00:01 Terrier 6 open -52

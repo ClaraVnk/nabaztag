@@ -1833,13 +1833,23 @@ int vap_forged_kind(const char *name)
  * beacon_ie_bounds bounded only the RSN/WPA suite loops. Delivered while
  * the rabbit scans, on the channel it listens to; the SSID names the
  * forger so the scan list shows whether it was parsed. */
+static uint32_t build_forged_beacon(uint8_t *out, int kind, const char **what);
+
 void vap_inject_beacon(int kind)
 {
   uint8_t out[VAP_FRAME_MAX];
+  const char *what;
+  uint32_t n = build_forged_beacon(out, kind, &what);
+  sim_log("attacker: beacon with %s", what);
+  vap_inject(out, n);
+}
+
+static uint32_t build_forged_beacon(uint8_t *out, int kind, const char **what)
+{
   struct ieee80211_frame *fr = (struct ieee80211_frame *)out;
   uint8_t *p = out + sizeof(*fr);
   static const uint8_t forger[6] = { 0x02, 0xde, 0xad, 0xbe, 0xef, 0x02 };
-  const char *what = "?";
+  *what = "?";
 
   memset(fr, 0, sizeof(*fr));
   fr->i_fc[0] = IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON;
@@ -1852,22 +1862,21 @@ void vap_inject_beacon(int kind)
   switch(kind) {
   case VAP_FORGED_RATES:
     *p++ = IEEE80211_ELEMID_RATES; *p++ = 60; *p++ = 0x82; *p++ = 0x84;
-    what = "RATES says 60 bytes, 2 follow"; break;
+    *what = "RATES says 60 bytes, 2 follow"; break;
   case VAP_FORGED_SSID:
     *p++ = IEEE80211_ELEMID_SSID; *p++ = 30; memcpy(p, "For", 3); p += 3;
-    what = "SSID says 30 bytes, 3 follow"; break;
+    *what = "SSID says 30 bytes, 3 follow"; break;
   case VAP_FORGED_DS:
     *p++ = IEEE80211_ELEMID_DSPARMS;
-    what = "DSPARMS id as the frame's last byte"; break;
+    *what = "DSPARMS id as the frame's last byte"; break;
   case VAP_FORGED_VENDOR:
     *p++ = IEEE80211_ELEMID_VENDOR; *p++ = 24; *p++ = 0x00; *p++ = 0x50;
-    what = "a vendor element says 24 bytes, 2 follow"; break;
+    *what = "a vendor element says 24 bytes, 2 follow"; break;
   case VAP_FORGED_RSNXE:
     *p++ = 244; *p++ = 1;
-    what = "RSNXE says 1 byte, none follows"; break;
+    *what = "RSNXE says 1 byte, none follows"; break;
   }
-  sim_log("attacker: beacon with %s", what);
-  vap_inject(out, (uint32_t)(p - out));
+  return (uint32_t)(p - out);
 }
 
 /* What the radio's own header calls these. Key slot 0 is the pairwise key;
@@ -2600,6 +2609,15 @@ void vap_poll(void)
       uint32_t n = build_beacon(out, &sim.aps[i], 0, NULL);
       queue_frame(out, n, sim.aps[i].rssi, sim.aps[i].channel);
       vap_stats.beacons_sent++;
+    }
+    /* forged-beacons: the stranger, on the first AP's channel, so the
+       scan hears it where it hears the AP (review S-1). Logged once. */
+    for(int k=0;k<sim.nb_forged && sim.nb_aps > 0;k++) {
+      const char *what;
+      uint32_t n = build_forged_beacon(out, sim.forged[k], &what);
+      if(vap_stats.beacons_sent <= (uint32_t)sim.nb_aps)
+        sim_log("attacker: beacon with %s, beside every beacon round", what);
+      queue_frame(out, n, -40, sim.aps[0].channel);
     }
   }
 

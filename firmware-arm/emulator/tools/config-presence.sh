@@ -58,9 +58,19 @@ for s in config-server-nohead config-server-head config-wifi-nohead; do
     "make -s NABGCC=/build/nabgcc BYTECODE=/work/boot.bc vm >/dev/null \
      && ./rabbit-vm /work/scenario.txt --eeprom /work/conf.eeprom --save-dir /work/out" \
     > "$WORK/$s/run.log" 2>&1 && status=PASS || status=FAIL
-  server=$(head -c 41 "$WORK/$s/conf.eeprom" | tr -d '\000-')
-  # The phone keeps each answer under the path it asked for, query included.
-  answer=$(cat "$WORK/$s"/out/b.htm* 2>/dev/null | grep -a -o -E 'Settings saved|Something went wrong' | head -1 || true)
+  server=$(head -c 41 "$WORK/$s/conf.eeprom" | tr '\000' '\n' | head -1)
+  # The phone keeps each answer under the path it asked for, query included;
+  # the body is gzipped (gzip_pages).
+  answer=$(python3 - "$WORK/$s"/out/b.htm* <<'PY' 2>/dev/null || true
+import gzip, re, sys
+for f in sys.argv[1:]:
+    head, _, body = open(f, 'rb').read().partition(b'\r\n\r\n')
+    if b'Content-Encoding: gzip' in head:
+        body = gzip.decompress(body)
+    m = re.search(rb'Settings saved|Something went wrong', body)
+    print(m.group(0).decode() if m else '?', end=' ')
+PY
+)
   printf '%-6s %-22s server=%-28s save answered: %s\n' "$status" "$s" "${server:-(blank)}" "${answer:-(nothing)}"
   grep -E 'FAIL|the head button|button 2' "$WORK/$s/run.log" | head -4 | sed 's/^/       /'
   [ "$status" = PASS ] || ok=0

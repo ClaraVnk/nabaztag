@@ -8,7 +8,8 @@
 # the head button is not held, the rabbit stays in config mode and the page
 # written back to --eeprom still names the server it had.
 # tools/config-presence.sh reads that page; a build without the step takes
-# the server and joins the network (the control: expect-not RUN fails).
+# the server and joins the network (the control: expect-mode master fails,
+# the rabbit is a station by then).
 config-mode
 ap 02:00:5e:10:00:01 Terrier 6 open -52
 tick 50
@@ -16,5 +17,5 @@ stop 60000
 
 at 5000 get /s.css?a=evil.example&z=1
 at 6000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=evil.example&z=1
-at 55000 expect-not RUN
+at 55000 expect-mode master
 at 59000 expect-no-reset

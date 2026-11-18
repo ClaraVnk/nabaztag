@@ -100,8 +100,23 @@ firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/N
 ```sh
 make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
 make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
+make -C firmware-arm/tests tls-interop-chacha   # the same, ChaCha20-Poly1305 only (tls_chacha_only)
+BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.0.3: an ASan READ (review S-4)
 make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
 firmware-arm/tools/run-tests.sh       # the Metal toolchain against the reference compiler
+python3 -m unittest discover -s firmware-arm/tests/apply_mods   # apply-mods' own steps and its mode table
+```
+
+apply-mods.py without a compiler: every mode applied to a staged copy of
+the vendored tree, a hash of each tree (and one with CRLF read as LF), a
+FAIL naming the anchor that broke. The before of a before/after is any
+other copy of the script (`--apply`). How the modes differ, as steps:
+
+```sh
+firmware-arm/tools/mods-matrix.py --all --out after.txt
+git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
+firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt
+firmware-arm/tools/mode-diff.py naboot-1.2.0.3 naboot-1.2.0.3-tel
 ```
 
 A missing `libasan` (some distributions) means: run them in a Rocky container,
@@ -252,6 +267,17 @@ EEPROM=violet-conf.eeprom EXPECT_SERVER=terrier.cyberloutre.fr/vl NO_BUILD=1 \
   tools/config-pages.sh ../bin/naboot-1.2.0.3-tel/Nab.elf
 # ok  v.js: offers the server 'terrier.cyberloutre.fr/vl'          (2026-11-18)
 # naboot-1.2.0.1-gz-tel, the control: FAIL, it offers r.nabaztag.com/vl
+```
+
+**The 2026-11-18 review** (`firmware-arm/docs/SECURITY-FINDINGS-2026-11.md`,
+its last section), each with its control, on the dev VM:
+
+```sh
+cd firmware-arm/emulator
+tools/ie-walk-proof.sh ../bin/naboot-1.2.0.3-tel/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
+tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and without ccmp_no_probation
+NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.0.3-tel/Nab.elf   # S-6: who may change the server
+# the control: the base image's Nab.elf (before config_presence) takes the stranger's server
 ```
 
 ### The Nabaztag v1 (2005)

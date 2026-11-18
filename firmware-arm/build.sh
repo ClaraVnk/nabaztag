@@ -126,7 +126,9 @@ else
   echo ">> bin/$MODE/ holds the UNSIGNED .sim only — do not flash or publish it" >&2
 fi
 
-ls -la "$OUTDIR/" "$HERE/bin/"naboot-*.signed.sim 2>/dev/null
+# `|| true`: with no signed image the glob stays literal, ls fails, and set -e
+# ended the script here, before preflight -- which then never ran (2026-11-18).
+ls -la "$OUTDIR/" "$HERE/bin/"naboot-*.signed.sim 2>/dev/null || true
 
 # Static checks on the image, before anybody flashes it. A Nabaztag has no
 # bootloader to fall back on: an image that faults early dead-loops in the
