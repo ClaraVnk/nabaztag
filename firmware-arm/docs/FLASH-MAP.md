@@ -51,8 +51,8 @@ about 18.6 s.
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
 2. **The configuration pages**: 7 039 bytes of text. Moving them to C
    frees nothing (see below). Served gzipped, the stylesheet and the three
-   fixed pages would shrink from 4 785 to about 2 340 bytes; the setup page
-   keeps its fifteen fields filled at run time and stays plain.
+   fixed pages give back 2 232 bytes (`gzip_pages`, measured below); the
+   setup page keeps its fifteen fields filled at run time and stays plain.
 3. **Radio tables for chips the rabbit does not have** (`RF5225RegTable`,
    `RF5226RegTable`, `RF2528RegTable`, 280 bytes each): ~560 bytes, once
    `rfic_report` says which RF chip every rabbit seen so far carries.
@@ -166,3 +166,19 @@ Gzip sizes of the pages, measured on the 1.2.0.1 sources (`gzip -9n`):
 | update | 752 | 488 |
 | error | 592 | 402 |
 | stylesheet | 2 777 | 1 017 |
+
+## Gzipped pages: 2 232 bytes back (2026-11-18)
+
+`--mode naboot-1.2.0.1-gz` is 1.2.0.1 with `gzip_pages`: the stylesheet
+moves to `/s.css`, and it and the three fixed pages are stored as their gzip
+bytes behind a ready header (`Content-Encoding: gzip`), which the server
+sends as it is. The setup page keeps its fields and stays plain, the
+stylesheet linked instead of inlined. 4 844 bytes of text become 2 354.
+
+The image: 124 720 bytes, 2 256 spare, against 126 952 for 1.2.0.1
+(2 232 bytes back, net of the routing code). In the emulator
+(`firmware-arm/emulator/tools/config-pages.sh`), a phone asking for every page gets
+each one gzipped behind the right Content-Type, and each inflates to the
+page 1.2.0.1 serves; 1.2.0.1 itself, as the control, fails every gzip check.
+What the emulator does not show: a real browser fetching the page and its
+stylesheet on two connections at once. That is Nabazprout's to confirm.

@@ -85,6 +85,7 @@ enum {
   SIM_EV_EXPECT_STATE,  /* assert ieee80211_state at this tick   */
   SIM_EV_REFUSE_STATE,  /* assert it is NOT that state            */
   SIM_EV_UPLOAD,        /* the phone POSTs --upload to the upgrade page */
+  SIM_EV_GET,           /* the phone GETs a page of the config server */
   SIM_EV_EXPECT_FLASH,  /* assert flashFirmware was reached n times     */
   SIM_EV_EXPECT_NO_RESET, /* assert the firmware never asked for a reset */
   SIM_EV_RFID,          /* a tag is presented to the reader, or taken away */
@@ -127,6 +128,8 @@ struct sim_event {
   int      rel_fetch;
   /* `rfid <16 hex>`: the tag's eight bytes; arg says whether one is there. */
   uint8_t  tag[8];
+  /* `get <path>`: the page the phone asks for. */
+  char     path[64];
 };
 
 /* The scenario, parsed once from a file. */

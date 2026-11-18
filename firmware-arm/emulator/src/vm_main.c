@@ -128,6 +128,9 @@ void sim_run_events(void)
       case SIM_EV_UPLOAD:
         phone_start_upload();
         break;
+      case SIM_EV_GET:
+        phone_get(e->path);
+        break;
       case SIM_EV_BUTTON:
         hw_press(2, e->arg);
         break;
@@ -261,6 +264,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--port443") && i + 1 < argc) gw_set_port443((uint16_t)atoi(argv[++i]));
     else if(!strcmp(argv[i], "--upload") && i + 1 < argc) phone_set_upload(argv[++i]);
+    else if(!strcmp(argv[i], "--save-dir") && i + 1 < argc) phone_set_save_dir(argv[++i]);
     else if(!strcmp(argv[i], "--flash-out") && i + 1 < argc) hw_flash_out(argv[++i]);
     else if(!strcmp(argv[i], "--trace-net")) trace_net = 1;
     else if(!strcmp(argv[i], "--realtime")) realtime = 1;
@@ -281,6 +285,7 @@ int main(int argc, char **argv)
         "  --port443     the host port that connections to port 443 go to\n"
         "  --upload      the .sim the phone POSTs to the upgrade page of a\n"
         "                rabbit in config mode (scenario: config-mode, upload)\n"
+        "  --save-dir    keep every answer the phone gets, under the page's name\n"
         "  --flash-out   keep the image the rabbit hands to flashFirmware, as the\n"
         "                bytes flash_uc would write (flashsim/ takes it from there)\n"
         "  --trace-net   log every packet, not just what happened to it\n"

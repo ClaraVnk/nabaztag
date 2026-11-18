@@ -6848,6 +6848,103 @@ int32_t rom_page_render(int32_t idx, int32_t reps)
 """
 
 
+def _metal_bytes_literal(raw: bytes) -> str:
+    """Bytes as a Metal string literal: printable ASCII as is, the rest as
+    the compiler's two-digit hex escape (\\$XX), so gzip data survives."""
+    out = []
+    for b in raw:
+        if 32 <= b < 127 and b not in (0x22, 0x5C):
+            out.append(chr(b))
+        else:
+            out.append(f"\\${b:02x}")
+    return '"' + "".join(out) + '"'
+
+
+def patch_gzip_pages(root: Path) -> None:
+    """The stylesheet and the three fixed pages, served gzipped.
+
+    The pages in C freed no flash (+196 bytes, 2026-11-17): text weighs the
+    same wherever it lives. Compressed, it does not. The stylesheet leaves
+    every page for /s.css; page_done, page_u and page_error become their
+    gzip bytes behind a ready HTTP header, which tcpread sends as it is.
+    page_a keeps its fifteen fields filled at run time and stays plain.
+    Run after every step that edits the pages.
+    """
+    import gzip as _gzip
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "http_gzip" in s:
+        print(f"[skip] gzip_pages: already done in {boot}")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+    link = "<link rel=stylesheet href=s.css>"
+    crlf = b"\r\n\r\n"
+
+    def take(pattern: str, what: str) -> re.Match:
+        m = re.search(pattern, t, re.S)
+        if not m:
+            sys.exit(f"FAIL gzip_pages: {what} not found in {boot}")
+        return m
+
+    def plain(toks: list, what: str) -> str:
+        out = []
+        for k, v in toks:
+            if k == "s":
+                out.append(v)
+            elif v == "page_css":
+                out.append(link)
+            elif v != "nil":
+                sys.exit(f"FAIL gzip_pages: {what} uses {v}, not a literal")
+        return "".join(out)
+
+    def gz(text: str) -> bytes:
+        return _gzip.compress(text.encode("latin-1"), 9, mtime=0)
+
+    css_m = take(r'\nvar page_css="<style>\n?(.*?)</style>";;\n', "var page_css")
+    if "\\" in css_m.group(1):
+        sys.exit("FAIL gzip_pages: an escape in page_css")
+    css_gz = gz(css_m.group(1))
+    total_plain, total_gz = len(css_m.group(1)), len(css_gz)
+    t = (t[:css_m.start()]
+         + '\nconst http_gzip="HTTP/1.0 200 OK\\13\\10Content-Encoding: gzip\\13\\10'
+           'Cache-Control: max-age=3600\\13\\10Content-Type: text/";;\n'
+         + f'var page_css="{link}";;\n'
+         + f'fun page_style=strcat http_gzip {_metal_bytes_literal(b"css" + crlf + css_gz)};;\n'
+         + t[css_m.end():])
+
+    for name in ("page_done", "page_u", "page_error"):
+        m = take(rf"\nfun {name}=strcatlist (.*?);;\n", f"fun {name}")
+        if re.search(r'\\[0-9nz$]', m.group(1)):
+            sys.exit(f"FAIL gzip_pages: an escape {name} would misread")
+        text = plain(_metal_tokens(m.group(1)), name)
+        data = gz(text)
+        total_plain += len(text)
+        total_gz += len(data)
+        t = (t[:m.start()]
+             + f'\nfun {name}=strcat http_gzip {_metal_bytes_literal(b"html" + crlf + data)};;\n'
+             + t[m.end():])
+
+    for old, new, what in (
+        ("tcpsend sock strcat http_header res;",
+         "tcpsend sock (if (strget res 0)=='H' then res else strcat http_header res);",
+         "tcpread header"),
+        ("\telse if x=='r' then 5\n",
+         "\telse if x=='r' then 5\n\telse if x=='s' then 6\n",
+         "extractpage"),
+        ("\t\telse if page==5 then confReset\n",
+         "\t\telse if page==5 then confReset\n\t\telse if page==6 then page_style\n",
+         "cbhttp"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL gzip_pages: {what} anchor not matched once")
+        t = t.replace(old, new)
+
+    boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print(f"[ok]   gzip_pages: stylesheet + 3 pages, {total_plain} bytes of text "
+          f"-> {total_gz} gzipped")
+
+
 def patch_pages_to_rom(root: Path) -> None:
     """The configuration pages out of the bytecode, into flash as C data.
 
@@ -9441,7 +9538,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9581,6 +9678,8 @@ def main() -> int:
         # 1.2.0.1 with its configuration pages in C (rom_pages) instead of
         # bytecode globals: a measurement of the first step to C, 2026-11-17.
         "naboot-1.2.0.1-rom": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,pages_to_rom,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gz": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gz-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,linker_keep,gc_sections",
         # 1.2.0.1 at -Os: 12 728 bytes back, the crypto within 4 %, and on the test
         # rabbit it never reached the network (2026-11-16, docs/FLASH-MAP.md). Do not ship.
         "naboot-1.2.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections,opt_size",
@@ -9916,6 +10015,7 @@ def main() -> int:
         "opt_size_safe": patch_opt_size_safe,
         "opt_size_usb_o1": patch_opt_size_usb_o1,
         "pages_to_rom": patch_pages_to_rom,
+        "gzip_pages": patch_gzip_pages,
     }
     for step in steps:
         step = step.strip()

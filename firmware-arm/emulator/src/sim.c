@@ -287,6 +287,8 @@ void sim_note_fetch(void)
  *                                  with; 800 is the rabbit's own window
  *   at <ms> upload                 the phone POSTs --upload <file> to the
  *                                  upgrade page, as the browser form does
+ *   at <ms> get <path>             the phone GETs that page (queued, one
+ *                                  connection after the other)
  *   at <ms> expect-flash [<n>]     assert flashFirmware was reached n times
  *   at <ms> expect-no-reset        assert the firmware never asked to reset
  *                                  (a VM out of memory does, reason 1)
@@ -534,6 +536,9 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "upload")) {
         e->kind = SIM_EV_UPLOAD;
+      } else if(!strcmp(tok[2], "get") && n >= 4) {
+        e->kind = SIM_EV_GET;
+        snprintf(e->path, sizeof(e->path), "%s", tok[3]);
       } else if(!strcmp(tok[2], "expect-flash")) {
         e->kind = SIM_EV_EXPECT_FLASH;
         e->arg = (n >= 4) ? (int)strtol(tok[3], NULL, 10) : 1;

@@ -68,9 +68,20 @@ static char     upload_path[512];
 static uint32_t segment_size = 800;
 static int      upload_wanted;      /* a scenario asked for it */
 
+#define GET_MAX 8
+static char     get_queue[GET_MAX][64];
+static int      get_queued, get_next;
+static char     current_get[64];    /* "" while the connection is the upload */
+static char     save_dir[256];
+
 void phone_set_upload(const char *path)
 {
   snprintf(upload_path, sizeof(upload_path), "%s", path ? path : "");
+}
+
+void phone_set_save_dir(const char *dir)
+{
+  snprintf(save_dir, sizeof(save_dir), "%s", dir ? dir : "");
 }
 
 void phone_set_segment(uint32_t bytes)
@@ -394,10 +405,24 @@ static void response_report(void)
   if(sscanf(line, "HTTP/%*d.%*d %d", &phone_stats.response_status) != 1)
     phone_stats.response_status = 0;
   sim_log("phone: answer \"%s\", %u bytes", line, tcp.response_length);
+  if(save_dir[0]) {
+    char name[400];
+    FILE *f;
+    const char *p = current_get[0] ? current_get + 1 : "upload";
+    snprintf(name, sizeof(name), "%s/%s", save_dir, *p ? p : "index");
+    f = fopen(name, "wb");
+    if(f) { fwrite(tcp.response, 1, tcp.response_length, f); fclose(f); }
+  }
 
   body = strstr((const char *)tcp.response, "\r\n\r\n");
   if(body == NULL) return;
   body += 4;
+  if((uint8_t)body[0] == 0x1f && (uint8_t)body[1] == 0x8b) {
+    /* A page the firmware keeps gzipped: the browser inflates it. */
+    sim_log("phone: a gzipped body, %u bytes",
+            tcp.response_length - (uint32_t)(body - (const char *)tcp.response));
+    return;
+  }
   if(*body == 0) {
     /* httpflash returns nil when it hands the image to flashFirmware: the
      * header goes out and nothing follows. A browser shows a blank page. */
@@ -426,6 +451,13 @@ static void tcp_finish(void)
   phone_stats.uploads_finished++;
   phone_stats.upload_finished_ms = sim_now();
   response_report();
+  if(current_get[0]) {
+    sim_log("phone: GET %s done in %u ms", current_get,
+            phone_stats.upload_finished_ms - phone_stats.upload_started_ms);
+    free(tcp.request);
+    tcp.request = NULL;
+    return;
+  }
   sim_log("phone: upload done in %u ms: %u segments (%u resent), %u bytes up, %u down",
           phone_stats.upload_finished_ms - phone_stats.upload_started_ms,
           phone_stats.segments_sent, phone_stats.segments_resent,
@@ -616,6 +648,33 @@ int phone_start_upload(void)
   return tcp_open();
 }
 
+void phone_get(const char *path)
+{
+  if(get_queued < GET_MAX)
+    snprintf(get_queue[get_queued++], sizeof(get_queue[0]), "%s", path);
+}
+
+static int start_next_get(void)
+{
+  char head[256];
+
+  snprintf(current_get, sizeof(current_get), "%s", get_queue[get_next++]);
+  snprintf(head, sizeof(head),
+      "GET %s HTTP/1.1\r\n"
+      "Host: 192.168.0.1\r\n"
+      "User-Agent: Mozilla/5.0 (a phone, in the emulator)\r\n"
+      "Accept-Encoding: gzip, deflate\r\n"
+      "Connection: close\r\n\r\n", current_get);
+  tcp.request_length = (uint32_t)strlen(head);
+  tcp.request = malloc(tcp.request_length);
+  if(tcp.request == NULL) return -1;
+  memcpy(tcp.request, head, tcp.request_length);
+  sim_log("phone: GET %s", current_get);
+  phone_stats.uploads_started++;
+  phone_stats.upload_started_ms = sim_now();
+  return tcp_open();
+}
+
 void phone_poll(void)
 {
   if(ieee80211_mode != IEEE80211_M_MASTER) return;
@@ -634,6 +693,8 @@ void phone_poll(void)
       break;
     case ST_JOINED:
       if(upload_wanted && tcp.state == TCP_CLOSED) phone_start_upload();
+      else if(get_next < get_queued && (tcp.state == TCP_CLOSED || tcp.state == TCP_DONE))
+        start_next_get();
       break;
   }
 

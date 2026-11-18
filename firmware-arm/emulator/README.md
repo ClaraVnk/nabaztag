@@ -733,6 +733,13 @@ gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
 way, as the runtime OTA's hex path does for images of 117 KB and up. The
 config page does not: see the scenario's header for the figures.
 
+The phone also reads pages: `at <ms> get <path>` queues a GET (sent with
+`Accept-Encoding: gzip`, one connection after the other), and `--save-dir`
+keeps each answer whole. `tools/config-pages.sh <Nab.elf>` runs
+`scenarios/vm/config-pages.txt` that way and checks every answer: the setup
+page plain with its fields filled, the stylesheet and the fixed pages
+gzipped behind the right Content-Type.
+
 ## Naboot 1.2.0.0's first boot over HTTPS
 
 `boot_https` sends kx.jsp and bc.jsp to the pinned warren on port 443, the

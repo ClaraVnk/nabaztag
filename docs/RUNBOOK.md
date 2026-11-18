@@ -69,6 +69,15 @@ firmware-arm/tools/os-diff.sh localhost/nab-firmware-build:naboot-1.2.0.1 \
     localhost/nab-firmware-build:naboot-1.2.0.2-safe src/net src/usb
 ```
 
+What the configuration pages serve, as a phone's browser gets them
+(`gzip_pages`: stylesheet and fixed pages gzipped), checked answer by
+answer; run it on the dev VM with the build's `Nab.elf` and `Nab.bin` side
+by side:
+
+```sh
+firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/Nab.elf
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).
