@@ -1,0 +1,18 @@
+# bytecode: bootloader
+#
+# Review S-6 (2026-11-18), the owner's side: the same save with a new
+# server while the head button is held, as the setup page says to do. The
+# save is taken, the rabbit leaves config mode and joins the network, and
+# the page written back to --eeprom names the new server
+# (tools/config-presence.sh checks it).
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 90000
+
+at 5000 button down
+at 5500 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
+at 9000 button up
+at 85000 expect RUN
+at 85000 expect-mode managed
+at 89000 expect-no-reset

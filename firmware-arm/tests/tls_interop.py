@@ -37,6 +37,8 @@ PSK = bytes(range(32))
 IDENTITY = "001d92aabbcc"
 # The client's 32 random bytes, fixed so the OpenSSL transcript replays.
 RANDOM = bytes(0xa0 + i for i in range(32))
+# What openssl s_server may pick: the one suite a build offers (--suite).
+SUITE = "TLS_AES_128_GCM_SHA256"
 
 
 def free_port():
@@ -58,7 +60,7 @@ def run_client(client, port, message, dump=None):
 def openssl_server(port, log):
     cmd = ["openssl", "s_server", "-accept", f"127.0.0.1:{port}", "-tls1_3",
            "-psk", PSK.hex(), "-psk_identity", IDENTITY,
-           "-ciphersuites", "TLS_AES_128_GCM_SHA256", "-nocert",
+           "-ciphersuites", SUITE, "-nocert",
            "-allow_no_dhe_kex", "-rev", "-trace"]
     return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
 
@@ -110,10 +112,13 @@ class PyServer(threading.Thread):
 
 
 def main():
+    global SUITE
     ap = argparse.ArgumentParser()
     ap.add_argument("--client", default="/tmp/t_tls_client")
+    ap.add_argument("--suite", default=SUITE, help="the TLS 1.3 suite the server offers")
     ap.add_argument("--keep")
     a = ap.parse_args()
+    SUITE = a.suite
     work = a.keep or tempfile.mkdtemp(prefix="nab-tls-")
     os.makedirs(work, exist_ok=True)
     long_msg = "x" * 8997 + "END"

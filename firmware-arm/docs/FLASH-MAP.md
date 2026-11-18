@@ -234,3 +234,42 @@ is cached now; `config-pages.sh` saves with `z=1` and expects RUN. With
 that image (sent in session at 14:01) the rabbit came back on its own in
 72 s, no stuck boot. At 17:49 a save from setup mode left setup mode on
 its own (DCC: A0 B0 → A2 B1) and the rabbit was back in the warren.
+
+## Naboot 1.2.0.3 with the review's fixes (2026-11-18)
+
+The 2026-11-18 review's steps (`SECURITY-FINDINGS-2026-11.md`, last
+section) in `naboot-1.2.0.3` and `-tel`, built unsigned on the dev VM with
+`BUILD_MARK=2611182200 BOOT_FLOOR=202611182200`:
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `naboot-1.2.0.3`, the base branch (gzip, factory_server) | 121 656 | 5 320 |
+| `naboot-1.2.0.3` with the review | 121 472 | 5 504 |
+| `naboot-1.2.0.3-tel` with the review | 122 484 | 4 492 |
+| `naboot-1.2.0.3-oscrypto` (+ opt_size_crypto, measurement) | 116 832 (-4 640) | 10 144 |
+| `naboot-1.2.0.3-chacha` (+ tls_chacha_only, measurement) | 120 536 (-936) | 6 440 |
+
+What the review's steps add and take: C for the bounds and the overflow
+alert (`ie_walk_bounds`, `vm_strcmp_bound`, `vm_seed_hidden`,
+`tls_in_overflow`, S-3), C back from the probation (`ccmp_no_probation`),
+bytecode for `config_presence` (`needhead`, a page 35 bytes longer gzipped)
+and bytecode back from `boot_strip_wav` and `boot_strip_login`: the
+bootloader compiles to 21,760 bytes against 22,105 (`../tools/mtl_comp.py` on
+the staged `boot.0.0.0.13.mtl`, `../tools/mods-matrix.py --keep`).
+
+**Two levers measured, shipped in no release mode.** `opt_size_crypto`
+compiles the pure-computation files (`CRYPTO_OBJS` in apply-mods.py: P-256,
+SAE, SHA-256, CMAC, AES, the key exchange, TLS, the PKI, SHA-384,
+ChaCha20-Poly1305, TweetNaCl, nab_sig, hash.c) at `-Os` and leaves the
+driver, the VM and the radio at `-O1`; `-Os` for the whole image never
+reached the network on the test rabbit three times, each time in code these
+files do not touch, and the crypto's cost at `-Os` is within 4 % (above).
+`tls_chacha_only` offers TLS_CHACHA20_POLY1305_SHA256 alone in both
+ClientHellos and compiles AES-GCM and its bit-serial GHASH out
+(`NAB_TLS_CHACHA_ONLY`): about six times cheaper per record on this
+processor, proven against OpenSSL for the PSK session (`make
+tls-interop-chacha`). Either is one Nabazprout flash away, `tools/cost`
+first; neither goes into a release without it.
+
+The CRLF sweep (C-1) is byte-neutral: the `Nab.bin` of `naboot-1.2.0.3`
+built before and after it, same marks, is identical.

@@ -15,7 +15,8 @@
 #include <stdint.h>
 
 #define SIM_MAX_APS      8
-#define SIM_MAX_EVENTS   64
+/* 512: the CCMP probation scenario needs 294 events (review C-9, 2026-11-18). */
+#define SIM_MAX_EVENTS   512
 #define SIM_SSID_MAXLEN  32
 
 enum {
@@ -111,6 +112,9 @@ enum {
   SIM_EV_AP_REPLAY,     /* a protected data frame already received, again */
   SIM_EV_EXPECT_REPLAY, /* assert the firmware's CCMP replay counters     */
   SIM_EV_EXPECT_DATA_UP,/* assert how many data frames the driver handed up */
+  SIM_EV_INJECT_BEACON, /* a beacon whose element runs past the frame (arg: which) */
+  SIM_EV_INJECT_PROBE_SHORT, /* a probe request whose SSID element runs past the frame */
+  SIM_EV_EXPECT_MODE,   /* assert ieee80211_mode: master (arg 1) or managed (0) */
 };
 
 struct sim_event {
@@ -129,7 +133,7 @@ struct sim_event {
   /* `rfid <16 hex>`: the tag's eight bytes; arg says whether one is there. */
   uint8_t  tag[8];
   /* `get <path>`: the page the phone asks for. */
-  char     path[64];
+  char     path[128];   /* a setup save with its server is 66 characters (2026-11-18) */
 };
 
 /* The scenario, parsed once from a file. */
@@ -145,6 +149,10 @@ struct sim_scenario {
   int              realtime;     /* pace the loop to the wall clock */
   int              run_entries;  /* how many times ieee80211_state reached RUN */
   int              config_mode;  /* the head button is held at power-on */
+  /* forged-beacons: a stranger's beacon with each of these elements, next
+     to every beacon round, on the first AP's channel (review S-1) */
+  int              forged[8];
+  int              nb_forged;
   uint32_t         decoder_kbps; /* the bit rate the decoder plays at, 0 = bottomless */
   uint32_t         segment;      /* the phone's TCP segment size, 0 = default */
   int              resets;       /* how often the firmware asked for a reset */

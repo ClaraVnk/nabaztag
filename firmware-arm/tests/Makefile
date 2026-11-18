@@ -22,7 +22,7 @@ CRYPTO_H := net/aes128.h net/p256.h net/sha256.h net/cmac.h net/sae.h net/nab_kx
 ARM_CC  ?= arm-none-eabi-gcc
 ARM_FLAGS ?= -O2 -mcpu=arm7tdmi -std=c99 -Wall -Wextra -Werror
 
-.PHONY: all vectors clean arm sign_open kx tls tls-interop wdt_order rng pki chachapoly tls-cert
+.PHONY: all vectors clean arm sign_open kx tls tls-interop tls-interop-chacha vm_strcmp wdt_order rng pki chachapoly tls-cert
 # `all` must stay the default goal. The rules below used to come first,
 # which made the staging file the default target: `make` then built that
 # one file, ran not a single suite, and exited 0. The ARM step noticed
@@ -114,6 +114,20 @@ tls: $(CRYPTO_H)
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls test_tls.c \
 		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c && /tmp/t_tls
 
+# The same client built ChaCha20-Poly1305-only (tls_chacha_only, a
+# measurement step): openssl s_server offering that suite alone.
+tls-interop-chacha: $(CRYPTO_H)
+	@echo "== TLS 1.3 PSK, ChaCha20-Poly1305 only, live against OpenSSL and Python"
+	@$(CC) $(CFLAGS) $(SAN) $(INC) -DNAB_TLS_CHACHA_ONLY -o /tmp/t_tls_client_cc tls_client.c \
+		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c ../crypto/chachapoly.c
+	@python3 tls_interop.py --client /tmp/t_tls_client_cc --suite TLS_CHACHA20_POLY1305_SHA256
+
+# OPstrcmp's memcmp length (review S-4): the shipped expression reads past
+# the shorter string; vm_strcmp_bound's does not. Both under ASan.
+vm_strcmp: 
+	@echo "== OPstrcmp: the shorter string, then the lengths (vm_strcmp_bound)"
+	@$(CC) $(CFLAGS) $(SAN) $(if $(BEFORE),-DBEFORE) -o /tmp/t_vm_strcmp test_vm_strcmp.c && /tmp/t_vm_strcmp
+
 tls-interop: $(CRYPTO_H)
 	@echo "== TLS 1.3 PSK: live, against OpenSSL and Python"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_tls_client tls_client.c \
@@ -165,7 +179,7 @@ tls-cert: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
 		../crypto/nab_sha384.c /tmp/tn_tlsc.o
 	@python3 tls_cert_interop.py --client /tmp/t_tls_cert_client
 
-all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng pki chachapoly
+all: $(CRYPTO_H) sign_open uart_fmt sbox kx tls wdt_order rng pki chachapoly vm_strcmp
 	@echo "== AES-128 and RFC 3394, against FIPS-197 and the RFC"
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_aes test_aes.c ../crypto/aes128.c && /tmp/t_aes
 	@echo

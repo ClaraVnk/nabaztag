@@ -69,9 +69,9 @@ static uint32_t segment_size = 800;
 static int      upload_wanted;      /* a scenario asked for it */
 
 #define GET_MAX 8
-static char     get_queue[GET_MAX][64];
+static char     get_queue[GET_MAX][128];
 static int      get_queued, get_next;
-static char     current_get[64];    /* "" while the connection is the upload */
+static char     current_get[128];   /* "" while the connection is the upload */
 static char     save_dir[256];
 
 void phone_set_upload(const char *path)

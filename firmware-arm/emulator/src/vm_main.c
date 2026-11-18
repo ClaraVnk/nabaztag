@@ -167,6 +167,20 @@ void sim_run_events(void)
         break;
       case SIM_EV_INJECT_PLAIN: vap_inject_plain(e->ap, e->arg); break;
       case SIM_EV_INJECT_PROBE: vap_inject_probe((uint32_t)e->arg); break;
+      case SIM_EV_INJECT_PROBE_SHORT: vap_inject_probe_short(); break;
+      case SIM_EV_EXPECT_MODE: {
+        int master = ieee80211_mode == IEEE80211_M_MASTER;
+        if(master == e->arg)
+          sim_log("ok   the rabbit is %s, as expected", master ? "its own access point" : "a station");
+        else {
+          char why[120];
+          snprintf(why, sizeof(why), "the rabbit should be %s, it is %s",
+                   e->arg ? "its own access point" : "a station", master ? "its own access point" : "a station");
+          sim_note_failure(why);
+        }
+        break;
+      }
+      case SIM_EV_INJECT_BEACON: vap_inject_beacon(e->arg); break;
       case SIM_EV_DHCP_ROGUE: gw_dhcp_rogue(0x0a090909u); break;  /* 10.9.9.9 */
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:

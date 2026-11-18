@@ -280,6 +280,10 @@ void sim_note_fetch(void)
  *                                  bit rate, as a VS1003 does, instead of
  *                                  swallowing all it is offered: what a
  *                                  stream needs for its buffering to be seen
+ *   forged-beacons <a,b,...>       a stranger's beacon beside every beacon
+ *                                  round, one per element the frame does
+ *                                  not hold: rates, ssid, ds, vendor, rsnxe
+ *                                  (review S-1; shows under make asan)
  *   config-mode                    the head button is held at power-on: the
  *                                  rabbit becomes an access point and serves
  *                                  its configuration pages (phone.c joins it)
@@ -307,6 +311,15 @@ void sim_note_fetch(void)
  *   at <ms> expect-replay <u> <g> <r>  exactly u unicast and g group frames
  *                                  counted as replays, r as retransmissions
  *                                  (ccmp_replay_count's counters)
+ *   at <ms> inject-beacon <which>  a stranger's beacon with one element the
+ *                                  frame does not hold: rates, ssid, ds,
+ *                                  vendor or rsnxe (review S-1; the
+ *                                  over-read shows under make asan)
+ *   at <ms> expect-mode master|managed  assert the rabbit is its own access
+ *                                  point (config mode) or a station: RUN is
+ *                                  the state of both
+ *   at <ms> inject-probe-short     a probe request whose SSID element says
+ *                                  32 bytes in a 4-byte body (config mode)
  *   at <ms> expect-data-up <n>     exactly n data frames handed up by the
  *                                  driver so far (./rabbit: EAPOL is not
  *                                  counted, and nothing else sends data)
@@ -350,6 +363,20 @@ int sim_load(const char *path)
       sim.realtime = 1;
     } else if(!strcmp(tok[0], "config-mode")) {
       sim.config_mode = 1;
+    } else if(!strcmp(tok[0], "forged-beacons") && n >= 2) {
+      /* Beside every beacon round, on the first AP's channel: the scan
+         runs before the first timed event is looked at, so a forged
+         beacon the scan parser is to see cannot be an `at` event. */
+      char *list = tok[1], *name;
+      sim.nb_forged = 0;
+      while((name = strsep(&list, ",")) != NULL) {
+        int k = vap_forged_kind(name);
+        if(!k || sim.nb_forged >= 8) {
+          fprintf(stderr, "%s:%d: forged-beacons takes up to 8 of rates, ssid, ds, vendor, rsnxe, not \"%s\"\n", path, lineno, name);
+          fclose(f); return -1;
+        }
+        sim.forged[sim.nb_forged++] = k;
+      }
     } else if(!strcmp(tok[0], "decoder") && n >= 2) {
       sim.decoder_kbps = (uint32_t)strtoul(tok[1], NULL, 10);
     } else if(!strcmp(tok[0], "segment") && n >= 2) {
@@ -498,6 +525,26 @@ int sim_load(const char *path)
       } else if(!strcmp(tok[2], "inject-probe-ssid") && n >= 4) {
         e->kind = SIM_EV_INJECT_PROBE;
         e->arg = (int)strtol(tok[3], NULL, 10);
+      } else if(!strcmp(tok[2], "expect-mode") && n >= 4) {
+        /* RUN is both the station's and the access point's state (config
+           mode is master mode, radio 5): `expect RUN` alone cannot say
+           whether a save left config mode. This can. */
+        e->kind = SIM_EV_EXPECT_MODE;
+        if(!strcmp(tok[3], "master")) e->arg = 1;
+        else if(!strcmp(tok[3], "managed")) e->arg = 0;
+        else {
+          fprintf(stderr, "%s:%d: expect-mode takes master or managed, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
+      } else if(!strcmp(tok[2], "inject-probe-short")) {
+        e->kind = SIM_EV_INJECT_PROBE_SHORT;
+      } else if(!strcmp(tok[2], "inject-beacon") && n >= 4) {
+        e->kind = SIM_EV_INJECT_BEACON;
+        e->arg = vap_forged_kind(tok[3]);
+        if(!e->arg) {
+          fprintf(stderr, "%s:%d: inject-beacon takes rates, ssid, ds, vendor or rsnxe, not \"%s\"\n", path, lineno, tok[3]);
+          fclose(f); return -1;
+        }
       } else if(!strcmp(tok[2], "expect-plain-dropped") && n >= 4) {
         e->kind = SIM_EV_EXPECT_PLAIN_DROPPED;
         e->arg = (int)strtol(tok[3], NULL, 10);

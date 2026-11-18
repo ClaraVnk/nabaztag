@@ -66,6 +66,7 @@ static int feed(const uint8_t *p, uint32_t n, uint32_t seg,
    (line index, a copy of its bytes) before they are fed. Returns the final
    state; `replayed` says how many client lines matched. */
 static int alert_out;   /* the last thing the client wrote was a fatal alert */
+static const uint8_t alone_byte[1] = { 23 };
 
 static int replay(void (*tamper)(int, uint8_t *, uint32_t), uint32_t seg,
                   int *matched, int *mismatched, uint8_t *plain, uint32_t *plainlen)
@@ -184,6 +185,39 @@ int main(void)
   check("a bit flipped in an application record", st == NAB_TLS_FAILED && plainlen == 0 && alert_sent());
   st = replay(huge_record, 1460, &matched, &mismatched, plain, &plainlen);
   check("a record longer than the buffer", st == NAB_TLS_FAILED && plainlen == 0 && alert_sent());
+
+  printf("== alerts in the clear, with bytes behind them (review S-3)\n");
+  {
+    /* A close_notify alone, then the same alert with a handshake record
+       already buffered behind it: drop() memmoves rx[] before the
+       description was read, and the second case ended FAILED with a
+       fatal alert queued (2026-11-18). */
+    static const uint8_t alone[] = { 21, 3, 3, 0, 2, 1, 0 };
+    static const uint8_t trailed[] = { 21, 3, 3, 0, 2, 1, 0, 22, 3, 3, 0, 5, 9, 9, 9, 9, 9 };
+    static const uint8_t fatal_trailed[] = { 21, 3, 3, 0, 2, 2, 40, 22, 3, 3, 0, 5, 9, 9, 9, 9, 9 };
+    uint8_t pend[64];
+    client_random(rnd);
+    nab_tls_start(PSK, (const uint8_t *)IDENTITY, 12, rnd, out, sizeof out);
+    nab_tls_in(alone, sizeof alone); nab_tls_next();
+    check("close_notify alone: CLOSED, nothing to send", nab_tls_state() == NAB_TLS_CLOSED && nab_tls_pending(pend, sizeof pend) == 0);
+    nab_tls_start(PSK, (const uint8_t *)IDENTITY, 12, rnd, out, sizeof out);
+    nab_tls_in(trailed, sizeof trailed); nab_tls_next();
+    check("close_notify with a record behind it: CLOSED too, nothing to send", nab_tls_state() == NAB_TLS_CLOSED && nab_tls_pending(pend, sizeof pend) == 0);
+    nab_tls_start(PSK, (const uint8_t *)IDENTITY, 12, rnd, out, sizeof out);
+    nab_tls_in(fatal_trailed, sizeof fatal_trailed); nab_tls_next();
+    check("a fatal alert with a record behind it: FAILED", nab_tls_state() == NAB_TLS_FAILED);
+  }
+  printf("== a segment the buffer did not take (review S-7)\n");
+  {
+    uint8_t pend[64];
+    check("nab_tls_overflow outside a connection: -2, nothing changes", nab_tls_overflow() == -2);
+    client_random(rnd);
+    nab_tls_start(PSK, (const uint8_t *)IDENTITY, 12, rnd, out, sizeof out);
+    nab_tls_overflow();
+    check("in a connection: FAILED with a record_overflow alert queued",
+          nab_tls_state() == NAB_TLS_FAILED && nab_tls_pending(pend, sizeof pend) == 7 && pend[6] == 22);
+    check("nothing is taken after that", nab_tls_in(alone_byte, 1) == -1);
+  }
 
   printf("== refusals\n");
   client_random(rnd);
