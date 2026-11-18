@@ -6945,6 +6945,230 @@ def patch_gzip_pages(root: Path) -> None:
           f"-> {total_gz} gzipped")
 
 
+_SETUP_JS = (
+    "<script>function v(a,s){var d=document,e=d.forms[0].elements,n=\"kaghijdefc\",i;"
+    "d.getElementById(\"x\").textContent=a[0];d.getElementById(\"y\").textContent=a[1];"
+    "for(i=0;i<10;i++)e[n[i]].value=a[i+2];"
+    "for(i=0;i<3;i++)e.m[i].checked=e.m[i].value==a[12];"
+    "for(i=0;i<s.length;i++)e.w.add(new Option(s[i][0]+\" - \"+s[i][1]+\" - Channel \"+s[i][2]"
+    "+\" - Power \"+s[i][3],s[i][0],0,!!s[i][4]))}</script><script src=v.js></script>"
+)
+
+
+def patch_gzip_setup(root: Path) -> None:
+    """The setup page gzipped too, its values in /v.js.
+
+    gzip_pages left page_a plain because the rabbit fills fifteen fields
+    into it at run time (2026-11-18). Here the page is stored empty and
+    gzipped like the others; a script at its end loads /v.js, which
+    httpindex now writes: one call v([mac, firmware, ssid, server, ip,
+    mask, gateway, dns, proxy ip, proxy port, dhcp, proxy, crypt], [scan])
+    whose strings escape \\ and ". pagefill, the <option> builders and
+    filterweb go with the template. Without JavaScript the fields come up
+    empty and can still be typed. Run after gzip_pages.
+    """
+    import gzip as _gzip
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "fun jscan" in s:
+        print(f"[skip] gzip_setup: already done in {boot}")
+        return
+    if "http_gzip" not in s:
+        sys.exit("FAIL gzip_setup: run gzip_pages first")
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+
+    consts = {k: re.search(rf"\nconst IEEE80211_CRYPT_{k}=(\d+);;", t)
+              for k in ("NONE", "WPA", "WPA2")}
+    if not all(consts.values()):
+        sys.exit("FAIL gzip_setup: IEEE80211_CRYPT_* constants not found")
+    yesno = "<option value=1>Yes</option><option value=0>No</option>"
+    fill = {
+        "<STYLE>": "<link rel=stylesheet href=s.css>",
+        "<MAC>": "<span id=x></span>", "<FIRMWARE>": "<span id=y></span>",
+        "<DHCP>": yesno, "<PROXY>": yesno,
+        "<ENC-VNONE>": consts["NONE"].group(1), "<ENC-VWPA>": consts["WPA"].group(1),
+        "<ENC-VWPA2>": consts["WPA2"].group(1),
+    }
+    empty = ("<SCAN>", "<SSID>", "<KEY>", "<SERVER>", "<NETIP>", "<NETMSK>",
+             "<NETGW>", "<NETDNS>", "<PROXYIP>", "<PROXYPORT>",
+             "<ENC-NONE>", "<ENC-WPA>", "<ENC-WPA2>")
+
+    m = re.search(r'\nvar page_a=(".*?)::nil;;\n', t, re.S)
+    if not m:
+        sys.exit("FAIL gzip_setup: var page_a not found")
+    out = []
+    for k, v in _metal_tokens(m.group(1)):
+        if k != "s":
+            sys.exit(f"FAIL gzip_setup: page_a uses {v}, not a literal")
+        if re.fullmatch(r"<[A-Z0-9-]+>", v):
+            if v in fill:
+                v = fill[v]
+            elif v in empty:
+                v = ""
+            else:
+                sys.exit(f"FAIL gzip_setup: page_a marker {v} has no rule")
+        out.append(v)
+    page = "".join(out)
+    if page.count("</body>") != 1:
+        sys.exit("FAIL gzip_setup: page_a has no single </body>")
+    page = page.replace("</body>", _SETUP_JS + "</body>")
+    data = _gzip.compress(page.encode("latin-1"), 9, mtime=0)
+    lit = _metal_bytes_literal(b"html\r\n\r\n" + data)
+    t = t[:m.start()] + f"\nfun page_a=strcat http_gzip {lit};;\n" + t[m.end():]
+
+    m = re.search(r"\nfun httpindex=\n.*?\n\t\tpage_a\n\t;;\n", t, re.S)
+    if not m:
+        sys.exit("FAIL gzip_setup: httpindex not found")
+    t = (t[:m.start()] + "\n"
+         + 'const http_js="HTTP/1.0 200 OK\\13\\10Content-Type: text/javascript\\13\\10\\13\\10";;\n\n'
+         + 'fun jq s=strcatlist "\\""::(strreplace (strreplace s "\\\\" "\\\\\\\\") "\\"" "\\\\\\"")::"\\","::nil;;\n\n'
+         + "fun jscan s l=\n"
+         + "\tif l!=nil then let hd l->[ssid mac bssid rssi channel rateset encryption] in\n"
+         + '\t"["::(jq ssid)::(jq webcrypt encryption & 0xf0)::(jq itoa channel)::(jq itoa rssi)::'
+           '(if !strcmp ssid s then "1")::"],"::jscan s tl l;;\n\n'
+         + "fun httpindex=\n"
+         + "\tlet confGetWifissid -> ssid in\n"
+         + '\tstrcatlist http_js::"v(["::(jq webmac netMac)::(jq webip FIRMWARE)::\n'
+         + '\t\t(jq if !isinscan ssid wifiscans then ssid else "")::(jq confGetServerUrl)::\n'
+         + "\t\t(jq webip confGetNetip)::(jq webip confGetNetmask)::(jq webip confGetNetgateway)::\n"
+         + "\t\t(jq webip confGetNetdns)::(jq webip confGetProxyip)::(jq itoa confGetProxyport)::\n"
+         + '\t\t(jq if confGetDhcp then "1" else "0")::(jq if confGetProxy then "1" else "0")::\n'
+         + '\t\t(jq itoa confGetWificrypt)::"],["::(strcatlist jscan ssid wifiscans)::"])"::nil;;\n'
+         + t[m.end():])
+
+    for old, new, what in (
+        ("\telse if x=='s' then 6\n", "\telse if x=='s' then 6\n\telse if x=='v' then 7\n",
+         "extractpage"),
+        ("\t\telse if page==6 then page_style\n\t\telse httpindex\n",
+         "\t\telse if page==6 then page_style\n\t\telse if page==7 then httpindex\n\t\telse page_a\n",
+         "cbhttp"),
+    ):
+        if t.count(old) != 1:
+            sys.exit(f"FAIL gzip_setup: {what} anchor not matched once")
+        t = t.replace(old, new)
+
+    # The template's helpers, each deleted only once nothing names it.
+    for name in ("pagefill", "webSelectList", "_webSelectList", "webSelect",
+                 "selectscan", "filterweb", "listreplacestr"):
+        d = re.search(rf"\nfun {name} [^\n]*?=.*?;;\n", t, re.S)
+        if not d:
+            sys.exit(f"FAIL gzip_setup: fun {name} not found")
+        rest = t[:d.start()] + "\n" + t[d.end():]
+        if re.search(rf"\b{name}\b", rest):
+            sys.exit(f"FAIL gzip_setup: {name} is still used")
+        t = rest
+    d = re.search(r'\nvar page_css="[^"]*";;\n', t)
+    if d:
+        rest = t[:d.start()] + "\n" + t[d.end():]
+        if re.search(r"\bpage_css\b", rest):
+            sys.exit("FAIL gzip_setup: page_css is still used")
+        t = rest
+
+    boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print(f"[ok]   gzip_setup: setup page {len(page)} bytes -> {len(data)} gzipped, "
+          f"values from /v.js")
+
+
+def patch_rf2528_only(root: Path) -> None:
+    """Keep the radio code for the RF2528 alone.
+
+    rt2501usb.c carries channel tables and antenna settings for four RF
+    chips. Violet's own comment marks the RF2528 case "notre carte", and
+    every rabbit that has reported its chip (rfic_report, 30 of 40 on
+    2026-11-18) says RfIcType 2, the RF2528. The RF5226 and RF5225/RF2527
+    tables and cases go. A rabbit with another chip would still boot but
+    tune no channel: no Wi-Fi, so no OTA back. The warren must send this
+    only to a rabbit that has reported RfIcType 2. The emulator stops
+    above rt2501_tx() and does not run this code; the test rabbit does.
+    """
+    q = root / "src/usb/rt2501usb.c"
+    t, nl = read_flat(q)
+    if "RF5226RegTable" not in t:
+        print(f"[skip] {q}: radio code already RF2528 only")
+        return
+    for pattern, what in (
+        (r"static const RT2501_RF_REGS RF5226RegTable\[\] = \{.*?"
+         r"#define RT2501_NUM_OF_5225_CHNL [^\n]*\n", "RF5226/RF5225 tables"),
+        (r"  /\*\n     For RFIC RT2501_RFIC_5225 & RT2501_RFIC_2527\n.*?\n  \}\n",
+         "RPI mode for RF5225/RF2527"),
+        (r"  case RT2501_RFIC_5226:\n    if\(rt2501_Antenna.*?(?=[ \t]*// notre carte :\n)",
+         "RF5226 antenna case"),
+        (r"  case RT2501_RFIC_5225:\n    if\(rt2501_Antenna.*?(?=  default:\n)",
+         "RF5225/RF2527 antenna cases"),
+        (r"  case RT2501_RFIC_5226:\n    for\(index=0;index<RT2501_NUM_OF_5226_CHNL.*?(?=  default:\n)",
+         "RF5226/RF5225/RF2527 channel cases"),
+    ):
+        found = list(re.finditer(pattern, t, re.S))
+        if len(found) != 1:
+            sys.exit(f"FAIL rf2528_only: {what} matched {len(found)} times in {q}")
+        t = t[:found[0].start()] + t[found[0].end():]
+    left = re.findall(r"RT2501_RFIC_(?:5226|5225|2527)|RF52\d\dRegTable", t)
+    if left:
+        sys.exit(f"FAIL rf2528_only: still in {q}: {sorted(set(left))}")
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: radio code for the RF2528 only")
+
+
+def patch_prune_unreachable(root: Path) -> None:
+    """Delete every bootloader function main and loop cannot reach.
+
+    prune_dead_funs deleted a fixed list of five (2026-11-08); the steps
+    since have left more behind, and gzip_setup orphans its own
+    (confGetWifiauth). This one walks the source each time: a name is
+    reached when main, loop, a var, a const or a reached function mentions
+    it outside strings and comments, `#callback` included. Name-based, so a
+    function shadowed by a later one of the same name is kept, as it should
+    be when either is used. Each deletion runs from `fun name` to the first
+    line that ends in `;;`; a span holding a lone brace or another
+    definition fails the step. Run last among the steps that edit boot.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+
+    def code_of(src: str) -> str:
+        src = re.sub(r'"(?:\\.|[^"\\])*"', '""', src, flags=re.S)
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        return re.sub(r"//[^\n]*", "", src)
+
+    removed = []
+    while True:
+        code = code_of(t)
+        bodies, kinds = {}, {}
+        for part in re.split(r"(?m)^(?=(?:fun|var|const|type|proto)\s)", code):
+            m = re.match(r"(fun|var|const|type|proto)\s+([A-Za-z_]\w*)", part)
+            if not m or m.group(1) == "proto":
+                continue
+            bodies[m.group(2)] = bodies.get(m.group(2), "") + part[m.end():]
+            kinds[m.group(2)] = m.group(1)
+        refs = {n: set(re.findall(r"[A-Za-z_]\w*", b)) & bodies.keys() for n, b in bodies.items()}
+        todo = ["main", "loop"] + [n for n, k in kinds.items() if k != "fun"]
+        seen = set()
+        while todo:
+            n = todo.pop()
+            if n not in seen and n in refs:
+                seen.add(n)
+                todo += refs[n]
+        dead = sorted(n for n, k in kinds.items() if k == "fun" and n not in seen)
+        if not dead:
+            break
+        for name in dead:
+            while True:
+                m = re.search(rf"(?m)^fun {name}\b[^\n]*?=", t)
+                if not m:
+                    break
+                end = re.compile(r";;[ \t]*(//[^\n]*)?$", re.M).search(t, m.end())
+                span = t[m.start():end.end()]
+                if re.search(r"(?m)^\s*[{}]\s*$|^(fun|var|const|type|proto)\s", span[1:]):
+                    sys.exit(f"FAIL prune_unreachable: {name} spans a block or a definition")
+                t = t[:m.start()] + t[end.end():].lstrip("\n")
+                removed.append(name)
+    boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print(f"[ok]   prune_unreachable: {len(removed)} functions: {', '.join(removed) or 'none'}")
+
+
 def patch_pages_to_rom(root: Path) -> None:
     """The configuration pages out of the bytecode, into flash as C data.
 
@@ -9538,7 +9762,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -9678,8 +9902,10 @@ def main() -> int:
         # 1.2.0.1 with its configuration pages in C (rom_pages) instead of
         # bytecode globals: a measurement of the first step to C, 2026-11-17.
         "naboot-1.2.0.1-rom": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,pages_to_rom,linker_keep,gc_sections",
-        "naboot-1.2.0.1-gz": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,linker_keep,gc_sections",
-        "naboot-1.2.0.1-gz-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gz": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gzrf": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,rf2528_only,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gz-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
+        "naboot-1.2.0.1-gzrf-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,rf2528_only,linker_keep,gc_sections",
         # 1.2.0.1 at -Os: 12 728 bytes back, the crypto within 4 %, and on the test
         # rabbit it never reached the network (2026-11-16, docs/FLASH-MAP.md). Do not ship.
         "naboot-1.2.0.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,linker_keep,gc_sections,opt_size",
@@ -10016,6 +10242,9 @@ def main() -> int:
         "opt_size_usb_o1": patch_opt_size_usb_o1,
         "pages_to_rom": patch_pages_to_rom,
         "gzip_pages": patch_gzip_pages,
+        "gzip_setup": patch_gzip_setup,
+        "prune_unreachable": patch_prune_unreachable,
+        "rf2528_only": patch_rf2528_only,
     }
     for step in steps:
         step = step.strip()

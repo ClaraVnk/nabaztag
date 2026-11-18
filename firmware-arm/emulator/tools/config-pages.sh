@@ -6,10 +6,10 @@
 # Builds the VM against the bootloader bytecode of the image (lifted from
 # Nab.elf with bootbc.py), runs scenarios/vm/config-pages.txt, keeps every
 # answer and checks them: the setup page plain, its stylesheet linked and
-# not inlined; s.css, u.htm, b.htm and the error page gzipped behind the
-# right Content-Type, and each one inflating to a whole page (gzip_pages,
-# 2026-11-18). Same environment as config-upload.sh: RUNTIME, STEPS, TAG,
-# NO_BUILD.
+# not inlined; a.htm, s.css, u.htm, b.htm and the error page gzipped behind
+# the right Content-Type, each one inflating to a whole page, and /v.js
+# giving the setup page its values (gzip_pages, gzip_setup, 2026-11-18).
+# Same environment as config-upload.sh: RUNTIME, STEPS, TAG, NO_BUILD.
 set -euo pipefail
 
 RUNTIME=${RUNTIME:-podman}
@@ -17,7 +17,7 @@ TAG=${TAG:-nabaztag-emulator}
 DEFAULT_STEPS=$(sed -n 's/^STEPS=//p' "$(dirname "$0")/../run.sh")
 STEPS=${STEPS:-$DEFAULT_STEPS}
 
-if [ $# -lt 1 ]; then sed -n '2,13p' "$0"; exit 2; fi
+if [ $# -lt 1 ]; then sed -n '2,14p' "$0"; exit 2; fi
 IMAGE=$1; shift
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +46,7 @@ echo "== $(basename "$IMAGE") in config mode, a phone asking for every page"
   | grep -E "phone: (GET|answer|a gzipped|the page)|FAIL|PASS|resets"
 
 python3 - "$WORK/out" <<'EOF'
-import gzip, sys
+import gzip, json, re, sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
@@ -64,7 +64,8 @@ def check(name, ok, why):
     print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {why}")
     bad += not ok
 
-for name, ctype, must in (("s.css", "text/css", b":root{"),
+for name, ctype, must in (("a.htm", "text/html", b"Connect rabbit"),
+                          ("s.css", "text/css", b":root{"),
                           ("u.htm", "text/html", b"Firmware upgrade"),
                           ("b.htm", "text/html", b"Settings saved"),
                           ("c", "text/html", b"Something went wrong")):
@@ -85,8 +86,23 @@ for name, ctype, must in (("s.css", "text/css", b":root{"),
               "links the stylesheet")
 
 head, body = answer("a.htm")
-check("a.htm", head is not None and "Content-Encoding" not in head
-      and b"href=s.css" in body and b"<style>" not in body
-      and b"<MAC>" not in body, "plain, fields filled, stylesheet linked")
+page = (gzip.decompress(body) if head and "Content-Encoding: gzip" in head
+        else body or b"")
+check("a.htm", b"src=v.js" in page and b"<MAC>" not in page,
+      "loads v.js, no marker left")
+
+head, body = answer("v.js")
+try:
+    text = body.decode("latin-1")
+    assert text.startswith("v([") and text.endswith("])")
+    a, scan = json.loads(re.sub(r",\s*\]", "]", "[" + text[2:-1] + "]"))
+    ok = (len(a) == 13 and re.fullmatch(r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", a[0])
+          and a[10] in ("0", "1") and a[11] in ("0", "1")
+          and all(len(n) in (4, 5) for n in scan))
+    why = f"13 values, MAC {a[0][-5:]}, {len(scan)} network(s) scanned"
+except Exception as e:
+    ok, why = False, f"not the v([...],[...]) call: {e}"
+check("v.js", head is not None and "Content-Type: text/javascript" in head
+      and "Content-Encoding" not in head and ok, why)
 sys.exit(1 if bad else 0)
 EOF

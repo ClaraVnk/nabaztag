@@ -51,15 +51,16 @@ about 18.6 s.
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
 2. **The configuration pages**: 7 039 bytes of text. Moving them to C
    frees nothing (see below). Served gzipped, the stylesheet and the three
-   fixed pages give back 2 232 bytes (`gzip_pages`, measured below); the
-   setup page keeps its fifteen fields filled at run time and stays plain.
-3. **Radio tables for chips the rabbit does not have** (`RF5225RegTable`,
-   `RF5226RegTable`, `RF2528RegTable`, 280 bytes each): ~560 bytes, once
-   `rfic_report` says which RF chip every rabbit seen so far carries.
-4. **TLS certificate checking** (X.509, RSA-PSS, ECDSA): several KB. A pinned
+   fixed pages give back 2 232 bytes (`gzip_pages`), the setup page 2 696
+   more with its values in /v.js (`gzip_setup`); both measured below.
+3. **Radio code for chips the rabbit does not have** (`rf2528_only`):
+   1 192 bytes. Every rabbit that has reported says RF2528 (30 of 40, 2026-11-18). The
+   warren must send it only to a rabbit that has reported RfIcType 2.
+4. **Unreachable bootloader functions** (`prune_unreachable`): 472 bytes.
+5. **TLS certificate checking** (X.509, RSA-PSS, ECDSA): several KB. A pinned
    server key would do the same job for one server; a design decision, not a
    size tweak.
-5. **One signature scheme** (ECDSA P-256 is already there for TLS and SAE):
+6. **One signature scheme** (ECDSA P-256 is already there for TLS and SAE):
    would drop Ed25519 and SHA-512, ~3 KB, but changes the release key every
    rabbit trusts. Last resort.
 
@@ -184,3 +185,36 @@ What the emulator does not show: a real browser fetching the page and its
 stylesheet on two connections at once. Nabazprout confirmed it on
 2026-11-18 (`-gz-tel`, installed by OTA): setup, upgrade and saved pages
 styled in a phone's browser, and loading faster than before.
+
+## The setup page gzipped, dead code, one radio chip (2026-11-18)
+
+`gzip_setup`: the setup page is stored empty and gzipped like the others
+(2 674 bytes -> 1 087); a script at its end loads `/v.js`, which the
+rabbit writes: `v([mac, firmware, ssid, server, ip, mask, gateway, dns,
+proxy ip, proxy port, dhcp, proxy, crypt], [scan])`, strings escaping `\`
+and `"`. The template, `pagefill` and the `<option>` builders go with it.
+Without JavaScript the fields come up empty and can still be typed.
+
+`prune_unreachable`: walks the bootloader from `main` and `loop` and deletes
+every function nothing reaches (10 today, three of them orphaned by
+gzip_setup); a second pass finds none.
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `-gz` (gzip_pages) | 124 720 | 2 256 |
+| + gzip_setup | 122 024 | 4 952 |
+| + prune_unreachable | 121 552 | 5 424 |
+| `-gz-tel` with both | 122 564 | 4 412 |
+| `-gzrf` (+ rf2528_only) | 120 360 | 6 616 |
+
+In the emulator (`config-pages.sh`) every page comes gzipped and `/v.js`
+gives the 13 values and the scanned network; yesterday's `-gz-tel`, as the
+control, fails both v.js checks. The page script, run in node against a
+sample `v.js` (quotes and backslashes in an SSID, trailing commas), fills
+every field, the radio and the scan list.
+
+`rf2528_only` (`--mode naboot-1.2.0.1-gzrf`): the RF5226 and RF5225/RF2527
+tables, antenna and channel cases go. Violet's own comment marks the RF2528
+case "notre carte". A rabbit with another chip would boot and tune no
+channel: no Wi-Fi, no OTA back. The emulator stops above `rt2501_tx()` and
+does not run this code; only the test rabbit can.
