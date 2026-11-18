@@ -6,6 +6,8 @@ with no compiler: does each step list still apply, and what does it leave?
     firmware-arm/tools/mods-matrix.py --all           # every mode
     firmware-arm/tools/mods-matrix.py naboot-1.2.0.3  # one or more modes
     firmware-arm/tools/mods-matrix.py --out before.txt
+    git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
+    firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt
 
 For each mode: stage the tree as the Dockerfile does (vendor/nabgcc, the
 crypto beside it in sae-crypto/, keys/, pages/, boot-mods/, TweetNaCl and
@@ -32,6 +34,8 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
+# --apply names another copy of apply-mods.py (a `git show REV:... > file`):
+# the before of a before/after.
 APPLY = HERE / "apply-mods.py"
 
 # What the Dockerfile COPYs in before apply-mods runs, in its words.
@@ -107,7 +111,18 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="every mode, not only naboot-*")
     ap.add_argument("--out", help="also write the lines to this file")
     ap.add_argument("--keep", help="keep each patched tree and log under this directory")
+    ap.add_argument("--apply", help="another apply-mods.py to run (default: the repo's)")
     a = ap.parse_args()
+    global APPLY
+    home = None
+    if a.apply:
+        # Some steps read pages/, boot-mods/ and crypto/ beside the script, so
+        # the other copy runs from a home where those are links to ours.
+        home = tempfile.TemporaryDirectory(prefix="mods-apply-")
+        for d in ("crypto", "pages", "boot-mods", "keys", "upstream"):
+            os.symlink(HERE / d, Path(home.name) / d)
+        shutil.copy(a.apply, Path(home.name) / "apply-mods.py")
+        APPLY = Path(home.name) / "apply-mods.py"
     todo = a.modes or [m for m in modes() if a.all or m.startswith("naboot-")]
     keep = Path(a.keep) if a.keep else None
     if keep:

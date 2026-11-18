@@ -65,7 +65,7 @@ def patch_vbc_h(root: Path) -> None:
         root / "mtl/mtl_linux/inc/vm/vbc.h",
     ]
     for p in targets:
-        s = p.read_text()
+        s, p_nl = read_flat(p)
         if "OPverifySig" in s:
             print(f"[skip] {p}: OPverifySig already present")
             continue
@@ -77,14 +77,14 @@ def patch_vbc_h(root: Path) -> None:
         )
         if new == s:
             sys.exit(f"FAIL {p}: could not find #define OPi2cWrite 151 anchor")
-        p.write_text(new)
+        write_flat(p, new, p_nl)
         print(f"[ok]   {p}: added OPverifySig 152")
 
 
 def patch_vinterp_c(root: Path) -> None:
     """Add the OPverifySig case to the VM dispatch loop."""
     p = root / "src/vm/vinterp.c"
-    s = p.read_text()
+    s, p_nl = read_flat(p)
     if "OPverifySig" in s:
         print(f"[skip] {p}: case already present")
         return
@@ -214,7 +214,7 @@ def patch_vinterp_c(root: Path) -> None:
         sys.exit(f"FAIL {p}: OPflashFirmware's guard is not the shape this patch expects ({s.count(guard_old)})")
     s = s.replace(guard_old, guard_new, 1)
 
-    p.write_text(s)
+    write_flat(p, s, p_nl)
     print(f"[ok]   {p}: OPverifySig + nab_sig.h; flashFirmware bound to a verified image")
 
 
@@ -474,26 +474,26 @@ def add_core_opcode(root: Path, name: str, sig: str, nargs: int, case: str) -> N
     op = "OP" + name
     nums = []
     for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
-        t = q.read_text()
+        t, q_nl = read_flat(q)
         if f"#define {op} " in t:
             nums.append(int(re.search(rf"#define {op} (\d+)", t).group(1)))
             continue
         n = max(int(m) for m in re.findall(r"#define OP\w+ (\d+)", t)) + 1
         last = list(re.finditer(r"#define OP\w+ \d+\n", t))[-1]
         t = t[:last.end()] + f"#define {op} {n}\n" + t[last.end():]
-        q.write_text(t)
+        write_flat(q, t, q_nl)
         nums.append(n)
     if nums[0] != nums[1]:
         sys.exit(f"FAIL vbc.h: the two copies disagree on {op} ({nums})")
 
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if f"case {op}:" not in t:
         needle = "      case OPverifySig:\n"
         if needle not in t:
             sys.exit(f"FAIL {q}: OPverifySig case missing -- run the vinterp step first")
         t = t.replace(needle, case + needle, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
 
     q = root / "mtl/mtl_linux/src/vcomp/stdlib_core.cpp"
     t = q.read_text()
@@ -559,12 +559,12 @@ def patch_adoption_kx(root: Path) -> None:
             "int nab_kx_vm_check(const uint8_t *data, uint32_t len, const uint8_t *mac);\n"
             "extern uint8_t nab_kx_latched;\n")
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "nab_kx_vm_begin" not in t:
         if "#include <string.h>\n" not in t:
             sys.exit(f"FAIL {q}: no <string.h> include to hang the declarations on")
         t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
 
     add_core_opcode(root, "kxBegin", "fun[]S", 0,
         "      case OPkxBegin:\n"
@@ -616,7 +616,7 @@ def patch_adoption_kx(root: Path) -> None:
         "        break;\n")
 
     # The latch, at the hand-over, and the hiding in `load`.
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     a = '        DBG_VM(EOL"#################### OPbytecode"EOL);\n'
     if "nab_kx_latched=1" not in t:
         if t.count(a) != 1:
@@ -649,7 +649,7 @@ def patch_adoption_kx(root: Path) -> None:
             "              len=0;\n"
             "            else\n"
             "              len=sysSave(VSTARTBIN(p),index,VSIZEBIN(p),VSTARTBIN(q),start,len);\n"), 1)
-    q.write_text(t)
+    write_flat(q, t, q_nl)
     print(f"[ok]   adoption_kx: kxBegin/kxFinish/kxUse, latched at OPbytecode, key hidden from load and save")
 
 
@@ -699,12 +699,12 @@ def patch_tls_psk(root: Path) -> None:
             "int nab_tls_out(const uint8_t *in, uint32_t len, uint8_t *out, uint32_t cap);\n"
             "int nab_tls_close(uint8_t *out, uint32_t cap);\n")
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "nab_tls_vm_start" not in t:
         if "#include <string.h>\n" not in t:
             sys.exit(f"FAIL {q}: no <string.h> include to hang the declarations on")
         t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
 
     add_core_opcode(root, "tlsStart", "fun[S]S", 1,
         "      case OPtlsStart:\n"
@@ -816,7 +816,7 @@ def patch_tls_certs(root: Path) -> None:
 
     # The VM heap moves up by 32 KB; its end, and the stack there, stay.
     q = root / "inc/vm/vmem.h"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "0xD0018000" not in t:
         for old, new in (("#define VMEM_LENGTH\t            (1024*200)",
                           "#define VMEM_LENGTH\t            (1024*192)   /* tls_certs: 32 KB to .extbss2 */"),
@@ -825,12 +825,12 @@ def patch_tls_certs(root: Path) -> None:
             if t.count(old) != 1:
                 sys.exit(f"FAIL {q}: {old!r} not found once")
             t = t.replace(old, new, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
     q = root / "inc/utils/mem.h"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     old = "#define SRAM_BASE   (0xD0010000)"
     if old in t:
-        q.write_text(t.replace(old, "#define SRAM_BASE   (0xD0018000)   /* tls_certs */", 1))
+        write_flat(q, t.replace(old, "#define SRAM_BASE   (0xD0018000)   /* tls_certs */", 1), q_nl)
 
     ld = root / "sys/ml67q4051.ld"
     s = ld.read_text()
@@ -856,10 +856,10 @@ def patch_tls_certs(root: Path) -> None:
             "int nab_https_vm_state(void);\n"
             "int nab_https_vm_close(uint8_t *out, uint32_t cap);\n")
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "nab_https_vm_start" not in t:
         t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
     add_core_opcode(root, "httpsStart", "fun[S S S]S", 3,
         "      case OPhttpsStart:\n"
         "        {\n"
@@ -986,7 +986,7 @@ def patch_crash_report(root: Path) -> None:
     appends it. Requires persist_counters and reset_reason.
     """
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "nab_crash_report" not in t:
         decl = ("extern int32_t nab_reset_reason, nab_reset_count, nab_verify_calls,\n"
                 "  nab_verify_ok, nab_flash_calls, nab_flash_error;\n"
@@ -1005,7 +1005,7 @@ def patch_crash_report(root: Path) -> None:
         if "#include <string.h>\n" not in t:
             sys.exit(f"FAIL {q}: no <string.h> include to hang the report on")
         t = t.replace("#include <string.h>\n", "#include <string.h>\n" + decl, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
     add_core_opcode(root, "resetInfo", "fun[]S", 0,
         "      case OPresetInfo:\n"
         "        {\n"
@@ -1050,7 +1050,7 @@ def patch_rfic_report(root: Path) -> None:
                          "uint8_t rt2501_rfic(void) { return rt2501_Antenna.field.RfIcType; }\n", 1)
         write_flat(q, t, nl)
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "rt2501_rfic" in t:
         print(f"[skip] {q}: the boot URL already says the RF chip")
         return
@@ -1069,7 +1069,7 @@ def patch_rfic_report(root: Path) -> None:
     if t.count("char out[6 * 11];") != 1:
         sys.exit(f"FAIL {q}: resetInfo's buffer is not where rfic_report expects it")
     t = t.replace("char out[6 * 11];", "char out[6 * 11 + 8];   /* + &f=255 */", 1)
-    q.write_text(t)
+    write_flat(q, t, q_nl)
     print("[ok]   rfic_report: &f=<RF chip> after the reset report in the boot URL")
 
 
@@ -1151,7 +1151,7 @@ def modernize_pages(root: Path) -> None:
     """
     pages_dir = Path(__file__).resolve().parent / "pages"
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
-    s = boot.read_text()
+    s, boot_nl = read_flat(boot)
     if "/* pages-modernized */" in s:
         print(f"[skip] {boot}: pages already modernized")
         return
@@ -1223,7 +1223,7 @@ def modernize_pages(root: Path) -> None:
         s = new_s
 
     s = "/* pages-modernized */\n" + s
-    boot.write_text(s)
+    write_flat(boot, s, boot_nl)
 
     # Report size delta — useful when iterating.
     total_after = sum(
@@ -1917,19 +1917,19 @@ def patch_wpa3_boot_password(root: Path) -> None:
     """
     # 1. The opcode number, in both copies of vbc.h.
     for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
-        t = q.read_text()
+        t, q_nl = read_flat(q)
         if "OPnetSaePw" in t:
             print(f"[skip] {q}: OPnetSaePw already present")
             continue
         a = "#define OPverifySig 152\n"
         if a not in t:
             sys.exit(f"FAIL {q}: OPverifySig anchor missing — run the vbc step first")
-        q.write_text(t.replace(a, a + "#define OPnetSaePw 153\n", 1))
+        write_flat(q, t.replace(a, a + "#define OPnetSaePw 153\n", 1), q_nl)
         print(f"[ok]   {q}: added OPnetSaePw 153")
 
     # 2. The dispatch case. One argument, a bin; returns 1 if it took it.
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "OPnetSaePw" not in t:
         needle = "      case OPverifySig:\n"
         if needle not in t:
@@ -1953,7 +1953,7 @@ def patch_wpa3_boot_password(root: Path) -> None:
         t = t.replace(needle, case + needle, 1)
         if '#include "net/ieee80211.h"' not in t:
             t = t.replace('#include "vbc.h"', '#include "vbc.h"\n#include "net/ieee80211.h"', 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
         print(f"[ok]   {q}: added OPnetSaePw case")
     else:
         print(f"[skip] {q}: case already present")
@@ -2040,14 +2040,14 @@ def patch_wpa3_timing(root: Path) -> None:
     """
     # 1. The opcode number.
     for q in (root / "inc/vm/vbc.h", root / "mtl/mtl_linux/inc/vm/vbc.h"):
-        t = q.read_text()
+        t, q_nl = read_flat(q)
         if "OPnetSaeMs" in t:
             print(f"[skip] {q}: OPnetSaeMs already present")
             continue
         a = "#define OPnetSaePw 153\n"
         if a not in t:
             sys.exit(f"FAIL {q}: OPnetSaePw anchor missing — wpa3_boot_pw must run first")
-        q.write_text(t.replace(a, a + "#define OPnetSaeMs 154\n", 1))
+        write_flat(q, t.replace(a, a + "#define OPnetSaeMs 154\n", 1), q_nl)
         print(f"[ok]   {q}: added OPnetSaeMs 154")
 
     # 2. The timed commit itself, beside the rest of the SAE code.
@@ -2125,7 +2125,7 @@ def patch_wpa3_timing(root: Path) -> None:
 
     # 4. The dispatch case.
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "OPnetSaeMs" not in t:
         needle = "      case OPnetSaePw:\n"
         if needle not in t:
@@ -2143,7 +2143,7 @@ def patch_wpa3_timing(root: Path) -> None:
             "        break;\n"
         )
         t = t.replace(needle, case + needle, 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
         print(f"[ok]   {q}: added OPnetSaeMs case")
 
     # 5. The compiler tables.
@@ -4152,7 +4152,7 @@ def patch_flash_precheck(root: Path) -> None:
     failure, and the page now says so.
     """
     q = root / "src/vm/vinterp.c"
-    t = q.read_text()
+    t, q_nl = read_flat(q)
     if "nab_fw_plausible" in t:
         print(f"[skip] {q}: flashFirmware already looks at the image first")
     else:
@@ -4182,7 +4182,7 @@ def patch_flash_precheck(root: Path) -> None:
             "              &&nab_fw_verified((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
             "              &&(nab_fw_plausible((const unsigned char*)VSTARTBIN(firmware),VSIZEBIN(firmware))\n"
             "                 ||((VSTACKSET(0,INTTOVAL(0xE1))),0)))\n"), 1)
-        q.write_text(t)
+        write_flat(q, t, q_nl)
         print(f"[ok]   {q}: flashFirmware checks length and reset vector before the first erase")
 
     q = root / "mtl/boot/boot.0.0.0.13.mtl"
@@ -5779,7 +5779,7 @@ def patch_audio_fifo_data(root: Path) -> None:
     the bytecode loader needs. Found 2026-06-21 via JTAG on the real rabbit.
     """
     p = root / "src/vm/vaudio.c"
-    s = p.read_text()
+    s, p_nl = read_flat(p)
     old = "int32_t play_w;\nint32_t play_r;"
     new = ('int32_t play_w __attribute__((section(".data")))=0;\n'
            'int32_t play_r __attribute__((section(".data")))=0;')
@@ -5788,7 +5788,7 @@ def patch_audio_fifo_data(root: Path) -> None:
         return
     if old not in s:
         sys.exit(f"FAIL {p}: play_w/play_r declarations not found (upstream changed?)")
-    p.write_text(s.replace(old, new, 1))
+    write_flat(p, s.replace(old, new, 1), p_nl)
     print(f"[ok]   {p}: play_w/play_r forced into .data (audio FIFO safe without .bss zero)")
 
 
@@ -5959,13 +5959,13 @@ def patch_cold_state(root: Path) -> None:
     done, skipped = 0, 0
     for rel, old, new in edits:
         p = root / rel
-        s = p.read_text()
+        s, p_nl = read_flat(p)
         if new in s:
             skipped += 1
             continue
         if old not in s:
             sys.exit(f"FAIL {p}: declaration not found (upstream changed?)\n  {old!r}")
-        p.write_text(s.replace(old, new, 1))
+        write_flat(p, s.replace(old, new, 1), p_nl)
         done += 1
     # Six edits for seven guards: play_state and rec_state share one
     # declaration upstream and the same replacement splits them in two.
@@ -6030,7 +6030,7 @@ def patch_bootloader(root: Path) -> None:
     signature before calling flashFirmware. Unsigned or tampered .sim are
     refused with a red LED + the error page."""
     p = root / "mtl/boot/boot.0.0.0.13.mtl"
-    s = p.read_text()
+    s, p_nl = read_flat(p)
     if "verifySig" in s:
         print(f"[skip] {p}: verifySig already wired in")
         return
@@ -6113,7 +6113,7 @@ def patch_bootloader(root: Path) -> None:
     if old_httpflash not in s:
         sys.exit(f"FAIL {p}: original httpflash body not matched. Did upstream change?")
     s = s.replace(old_httpflash, new_httpflash, 1)
-    p.write_text(s)
+    write_flat(p, s, p_nl)
     print(f"[ok]   {p}: httpflash now requires a valid Ed25519 signature")
 
 
@@ -6570,7 +6570,7 @@ def patch_mdns(root: Path) -> None:
     meaningful.
     """
     p = root / "mtl/boot/boot.0.0.0.13.mtl"
-    s = p.read_text()
+    s, p_nl = read_flat(p)
     if "mdns_boot_tick" in s:
         print(f"[skip] {p}: mdns already wired in")
         return
@@ -6620,7 +6620,7 @@ def patch_mdns(root: Path) -> None:
         sys.exit(f"FAIL {p}: `fun loop` !master branch not matched. Did upstream change?")
     s = s.replace(old_branch, new_branch, 1)
 
-    p.write_text(s)
+    write_flat(p, s, p_nl)
     print(f"[ok]   {p}: mdns announcer wired + tick added to boot loop")
 
 
