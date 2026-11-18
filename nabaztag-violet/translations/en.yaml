@@ -7,7 +7,10 @@ configuration:
     description: "How much detail to write to the add-on log. Increase to Debug to investigate issues."
   api_token:
     name: "API token (advanced)"
-    description: "If set, the control API requires this token (X-API-Token header or token query param). Leave empty on a trusted LAN behind Home Assistant."
+    description: "The control API's token (X-API-Token header). Empty = one generated on first start, kept in /data and shown in the add-on log. Not needed for the Web UI."
+  xmpp_idle_s:
+    name: "Silent session timeout (advanced)"
+    description: "Seconds without anything from a connected rabbit before its session is dropped (it reconnects). 0 = never."
   voice_pipeline:
     name: "Voice pipeline"
     description: "Hold the head button and speak, then transcribe (whisper.cpp), ask the conversation agent, and speak the reply."
@@ -19,7 +22,7 @@ configuration:
     description: "Language code used for transcription (e.g. fr, en)."
   stt_model:
     name: "Speech-to-text model"
-    description: "Whisper model size. small is the most accurate (bundled); base and tiny are much faster on CPU (lower reply latency) at some accuracy cost. base/tiny are downloaded once on first use."
+    description: "Whisper model size. small is the most accurate; base and tiny are much faster on CPU (lower reply latency) at some accuracy cost. The chosen model is downloaded once (tiny 78 MB, base 148 MB, small 488 MB) when voice or listening is on, and kept in /data."
   tts_engine:
     name: "Text-to-speech engine"
     description: "espeak (bundled, robotic, fully local) or piper/ha (speak through the Home Assistant TTS entity chosen below — a neural voice). Use piper/ha for a natural voice."

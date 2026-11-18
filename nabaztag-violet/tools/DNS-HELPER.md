@@ -53,12 +53,10 @@ VLAN caveat: mDNS doesn't cross VLANs. If HA and the rabbit are on different
 VLANs, enable an mDNS reflector for the group on the switch/router (UniFi:
 per-network "Multicast DNS").
 
-> Mic streaming caveat: the add-on's `_server_ip()` does `gethostbyname(
-> server_address)` for the optional `RS` mic command. With a `.local` name it
-> can't resolve that itself (bridge network, no mDNS), so if you enable
-> `auto_listen`/`personality`, give the add-on container a hosts entry
-> (`nabaztag.local <HA_IP>`) or set the server IP another way. The default
-> (mic off) is unaffected.
+> Mic streaming: the `RS` mic command needs the host's IP. With a `.local`
+> `server_address` the add-on cannot resolve it itself (bridge network, no
+> mDNS), so it asks the Supervisor for the host's primary interface instead
+> (`_host_lan_ip`); nothing to set by hand.
 
 ## The clean fix (network side)
 

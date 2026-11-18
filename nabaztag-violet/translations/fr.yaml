@@ -7,7 +7,10 @@ configuration:
     description: "Niveau de détail écrit dans le journal de l'add-on. Passe à Debug pour investiguer un souci."
   api_token:
     name: "Jeton d'API (avancé)"
-    description: "Si renseigné, l'API de contrôle exige ce jeton (en-tête X-API-Token ou paramètre token). À laisser vide sur un LAN de confiance derrière Home Assistant."
+    description: "Le jeton de l'API de contrôle (en-tête X-API-Token). Vide = un jeton généré au premier démarrage, gardé dans /data et affiché dans le journal de l'add-on. Inutile pour l'interface web."
+  xmpp_idle_s:
+    name: "Délai de session muette (avancé)"
+    description: "Secondes sans rien recevoir d'un lapin connecté avant de couper sa session (il se reconnecte). 0 = jamais."
   voice_pipeline:
     name: "Pipeline vocal"
     description: "Maintiens la tête et parle, puis transcription (whisper.cpp), agent conversationnel, puis réponse parlée."
@@ -19,7 +22,7 @@ configuration:
     description: "Code langue pour la transcription (ex. fr, en)."
   stt_model:
     name: "Modèle de reconnaissance vocale"
-    description: "Taille du modèle Whisper. small est le plus précis (embarqué) ; base et tiny sont bien plus rapides sur CPU (réponse moins longue) au prix d'un peu de précision. base/tiny sont téléchargés une fois à la première utilisation."
+    description: "Taille du modèle Whisper. small est le plus précis ; base et tiny sont bien plus rapides sur CPU (réponse moins longue) au prix d'un peu de précision. Le modèle choisi est téléchargé une fois (tiny 78 Mo, base 148 Mo, small 488 Mo) quand la voix ou l'écoute est activée, et gardé dans /data."
   tts_engine:
     name: "Moteur de synthèse vocale"
     description: "espeak (embarqué, robotique, 100% local) ou piper/ha (parle via le moteur TTS de Home Assistant choisi ci-dessous — voix neuronale). Mets piper/ha pour une voix naturelle."
