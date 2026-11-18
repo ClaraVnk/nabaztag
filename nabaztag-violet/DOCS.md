@@ -201,8 +201,10 @@ in logs and browser history). Anything else gets `401`.
 
 - **Where the token comes from.** Leave `api_token` empty and the add-on
   generates one on its first start, keeps it in `/data/api_token` (so it
-  survives restarts, updates and backups) and writes it in its **log** at
-  every start: `control API token: <32 hex digits>`. Or set your own in the
+  survives restarts, updates and backups) and shows it on its **Web UI**
+  (Settings → Add-ons → Nabaztag Terrier → *Open Web UI*), with a copy
+  button. The log only says `control API token: …<last 4 characters>`, so a
+  log pasted into an issue gives nothing away. Or set your own in the
   `api_token` option.
 - **Home Assistant `rest_command`s**: add the header, e.g.
   ```yaml
@@ -220,7 +222,7 @@ in logs and browser history). Anything else gets `401`.
 
 **Upgrading from 0.18.x with an empty `api_token`:** until you add the token,
 your `rest_command`s get `401` (the add-on log and a Home Assistant
-notification say so). Copy the token from the log into `secrets.yaml`, add the
+notification say so). Copy the token from the Web UI into `secrets.yaml`, add the
 `headers:` block above, and reload. Before 0.19.0 an empty token meant an open
 API, and any device on the LAN could confirm its own adoption key for a
 rabbit, forget a confirmed one, or switch the microphone on and download what

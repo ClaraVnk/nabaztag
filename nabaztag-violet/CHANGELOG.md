@@ -9,11 +9,12 @@ The fixes of the add-on review of 2026-11-18. Each finding has its test in
   device on the LAN could confirm its own adoption key for a rabbit and hold
   its TLS key, forget a confirmed key, switch the microphone on and download
   what it heard. Now an empty `api_token` means a token generated on the
-  first start, kept in `/data/api_token` and written in the log at every
-  start; a Home Assistant notification says so once.
+  first start, kept in `/data/api_token` and shown on the add-on's Web UI
+  with a copy button; a Home Assistant notification says so once. The log
+  shows only its last four characters: logs get pasted into issues.
   **Upgrade:** your `rest_command`s get `401` until you add
   `headers: {X-API-Token: !secret nab_token}` (the packages in
-  `home-assistant/` do) with the token from the log in `secrets.yaml`, or set
+  `home-assistant/` do) with the token from the Web UI in `secrets.yaml`, or set
   your own in `api_token`. A request a browser marks cross-site is refused
   even with the token (the `<img src=…/api/mic?on=1>` case).
 - **The adoption page is in the add-on's Web UI** (ingress): Home Assistant

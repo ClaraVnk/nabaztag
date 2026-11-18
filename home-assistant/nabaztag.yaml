@@ -9,7 +9,7 @@
 # Add to secrets.yaml:
 #   nab_api: "<HAOS_IP>:8099"   # the nabaztag-violet add-on control API (host port 8099)
 #   nab_mac: "<rabbit-mac>"     # rabbit MAC, lowercase, no colons (e.g. 0123456789ab)
-#   nab_token: "<api token>"    # the add-on's API token, written in its log at every start
+#   nab_token: "<api token>"    # the add-on's API token, shown on its Web UI (Settings > Add-ons > Nabaztag Terrier)
 #
 # Speech uses the add-on's built-in local TTS (/api/say, espeak-ng) — no cloud,
 # nothing to install, reachable on the same port the rabbit already uses.

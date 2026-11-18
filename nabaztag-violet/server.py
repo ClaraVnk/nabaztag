@@ -3023,17 +3023,17 @@ button{font:inherit;padding:10px 16px;border-radius:8px;border:0;margin:4px 8px 
 .yes{background:var(--ok)}.no{background:var(--no)}.forget{background:#555}
 p.mute{color:var(--mute);font-size:14px}
 </style></head><body><main>
-<h1 id=t></h1><p class=mute id=lead></p><div id=list></div><p class=mute id=err></p>
+<h1 id=t></h1><p class=mute id=lead></p><div id=tok></div><div id=list></div><p class=mute id=err></p>
 </main><script>
 const fr=(navigator.language||'').startsWith('fr');
 const T=fr?{t:'Adoption des lapins',lead:"Un lapin sous Naboot affiche cinq couleurs sur son ventre après l'échange de clé. Compare-les avec celles-ci. Si elles sont identiques, confirme : le lapin passera en TLS à son prochain démarrage (débranche-le puis rebranche-le). Si elles diffèrent, refuse.",
 none:"Aucun lapin n'a fait d'échange de clé. Il faut un firmware Naboot 1.0.0.0 ou plus récent.",ask:'Le ventre montre-t-il ces couleurs ?',yes:'Oui, identiques',no:'Non, elles diffèrent',forget:'Oublier cette clé',
 forgetq:"Oublier la clé ? Si elle était confirmée, le lapin refusera tout bytecode jusqu'à la réinitialisation de sa configuration (bouton de la tête maintenu au branchement, puis /reset).",
-st:{pending:'en attente de ta réponse',confirmed:'confirmée : TLS',rejected:'refusée'},leds:['bas','gauche','milieu','droite','haut'],notls:"Cette version de Python ne sait pas faire de TLS à clé prépartagée : pas de TLS.",noruntime:"Aucun runtime TLS fourni : le lapin restera en clair.",auth:"Ouvre cette page depuis Home Assistant (Paramètres, Modules complémentaires, Nabaztag Terrier, Ouvrir l'interface web), ou ajoute ?token=<le jeton du journal du module>."}
+st:{pending:'en attente de ta réponse',confirmed:'confirmée : TLS',rejected:'refusée'},leds:['bas','gauche','milieu','droite','haut'],notls:"Cette version de Python ne sait pas faire de TLS à clé prépartagée : pas de TLS.",noruntime:"Aucun runtime TLS fourni : le lapin restera en clair.",auth:"Ouvre cette page depuis Home Assistant (Paramètres, Modules complémentaires, Nabaztag Terrier, Ouvrir l'interface web), ou ajoute ?token=<le jeton de l'API>.",tok:"Jeton de l'API de contrôle (en-tête X-API-Token de tes rest_command) :",copy:'Copier',copied:'Copié'}
 :{t:'Rabbit adoption',lead:'A rabbit on Naboot shows five colours on its belly after the key exchange. Compare them with these. If they are the same, confirm: the rabbit moves to TLS at its next boot (unplug it and plug it back in). If they differ, reject.',
 none:'No rabbit has run the key exchange. It takes Naboot 1.0.0.0 or later.',ask:'Does the belly show these colours?',yes:'Yes, the same',no:'No, they differ',forget:'Forget this key',
 forgetq:'Forget the key? If it was confirmed, the rabbit refuses every bytecode until its configuration is reset (head button held while plugging it in, then /reset).',
-st:{pending:'waiting for your answer',confirmed:'confirmed: TLS',rejected:'rejected'},leds:['bottom','left','middle','right','top'],notls:'This Python cannot do pre-shared-key TLS: no TLS.',noruntime:'No TLS runtime bundled: the rabbit stays in the clear.',auth:'Open this page from Home Assistant (Settings, Add-ons, Nabaztag Terrier, Open Web UI), or add ?token=<the token from the add-on log>.'};
+st:{pending:'waiting for your answer',confirmed:'confirmed: TLS',rejected:'rejected'},leds:['bottom','left','middle','right','top'],notls:'This Python cannot do pre-shared-key TLS: no TLS.',noruntime:'No TLS runtime bundled: the rabbit stays in the clear.',auth:'Open this page from Home Assistant (Settings, Add-ons, Nabaztag Terrier, Open Web UI), or add ?token=<the API token>.',tok:'Control API token (the X-API-Token header of your rest_commands):',copy:'Copy',copied:'Copied'};
 document.getElementById('t').textContent=T.t;document.getElementById('lead').textContent=T.lead;document.title=T.t;
 const tok=new URLSearchParams(location.search).get('token')||'';
 const H=tok?{'X-API-Token':tok}:{};
@@ -3049,7 +3049,10 @@ async function load(){const r=await fetch('api/adoption',{headers:H});if(!r.ok){
   const b=el('div','belly');k.rgb.forEach((rgb,i)=>{const l=el('div','led');l.style.background=rgb;l.style.gridRow=POS[i][0];l.style.gridColumn=POS[i][1];l.title=T.leds[i];b.append(l)});c.append(b);
   if(k.state==='pending'){c.append(el('p',null,T.ask));const y=el('button','yes',T.yes);y.onclick=()=>act('confirm',k);const n=el('button','no',T.no);n.onclick=()=>act('reject',k);c.append(y,n)}
   const f=el('button','forget',T.forget);f.onclick=()=>act('forget',k);c.append(f);L.append(c)}}
-load();
+async function token(){const r=await fetch('api/token',{headers:H});if(!r.ok)return;const t=(await r.json()).token;const D=document.getElementById('tok');const c=el('div','card');
+ const v=el('code','mac',t);const b=el('button','forget',T.copy);b.onclick=async()=>{try{await navigator.clipboard.writeText(t);b.textContent=T.copied}catch(e){const g=document.createRange();g.selectNodeContents(v);getSelection().removeAllRanges();getSelection().addRange(g)}};
+ c.append(el('p','mute',T.tok),v,el('br'),b);D.replaceChildren(c)}
+load();token();
 </script></body></html>
 """
 
@@ -3126,8 +3129,15 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not self._authorized(q):
             self.close_connection = True
             return self._json(401, {"error": "unauthorized: send the add-on's API token as "
-                                             "the X-API-Token header (it is in the add-on's "
-                                             "log), or use its Web UI"})
+                                             "the X-API-Token header; it is shown on the "
+                                             "add-on's Web UI"})
+        if path == "/api/token":
+            # The whole token, for the Web UI only: Home Assistant has checked
+            # who is asking. Knowing the token already is not enough to read
+            # it again here, and it is never written in the log.
+            if not self._from_ingress():
+                return self._json(403, {"error": "the Web UI only"})
+            return self._json(200, {"token": API_TOKEN})
         # A page on another site can make the browser send a GET -- an <img>
         # at /api/mic?on=1 -- but not read the token; a browser that says the
         # request is cross-site is refused even so.
@@ -3915,11 +3925,15 @@ def _on_sigterm(signum, frame):
 
 
 def _announce_api_token():
+    """Where the token is, never the token itself: owners paste add-on logs
+    into GitHub issues when they ask for help. The whole token is on the Web
+    UI (ingress: Home Assistant authenticated the user)."""
     if API_TOKEN_SOURCE == "option":
         log.info("control API: token from the api_token option")
         return
-    log.warning("control API token: %s -- send it as the X-API-Token header (Home "
-                "Assistant rest_command: headers). %s", API_TOKEN,
+    log.warning("control API token: …%s (the whole token is on the add-on's Web UI) "
+                "-- send it as the X-API-Token header (Home Assistant rest_command: "
+                "headers). %s", API_TOKEN[-4:],
                 {"file": f"Kept in {API_TOKEN_FILE}.",
                  "new": f"Generated now, kept in {API_TOKEN_FILE}.",
                  "memory": f"{API_TOKEN_FILE} is not writable: a new one at each start."
@@ -3927,8 +3941,9 @@ def _announce_api_token():
     if API_TOKEN_SOURCE == "new":
         notify_ha("Nabaztag: the control API now needs a token",
                   "Since 0.19.0 the add-on's control API (port 8099) answers only "
-                  "requests that carry its token. One was generated: it is in the "
-                  "add-on's log (Settings, Add-ons, Nabaztag Terrier, Log). Add it to "
+                  "requests that carry its token. One was generated: it is on the "
+                  "add-on's Web UI (Settings, Add-ons, Nabaztag Terrier, Open Web UI). "
+                  "Add it to "
                   "your rest_commands as the X-API-Token header, or set your own in the "
                   "api_token option. The adoption page is in the add-on's Web UI.",
                   "nabaztag_api_token")

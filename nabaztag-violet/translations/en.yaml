@@ -7,7 +7,7 @@ configuration:
     description: "How much detail to write to the add-on log. Increase to Debug to investigate issues."
   api_token:
     name: "API token (advanced)"
-    description: "The control API's token (X-API-Token header). Empty = one generated on first start, kept in /data and shown in the add-on log. Not needed for the Web UI."
+    description: "The control API's token (X-API-Token header). Empty = one generated on first start, kept in /data and shown on the add-on's Web UI (the log shows its last 4 characters only). Not needed for the Web UI."
   xmpp_idle_s:
     name: "Silent session timeout (advanced)"
     description: "Seconds without anything from a connected rabbit before its session is dropped (it reconnects). 0 = never."

@@ -7,7 +7,7 @@ configuration:
     description: "Niveau de détail écrit dans le journal de l'add-on. Passe à Debug pour investiguer un souci."
   api_token:
     name: "Jeton d'API (avancé)"
-    description: "Le jeton de l'API de contrôle (en-tête X-API-Token). Vide = un jeton généré au premier démarrage, gardé dans /data et affiché dans le journal de l'add-on. Inutile pour l'interface web."
+    description: "Le jeton de l'API de contrôle (en-tête X-API-Token). Vide = un jeton généré au premier démarrage, gardé dans /data et affiché dans l'interface web de l'add-on (le journal n'en montre que les 4 derniers caractères). Inutile pour l'interface web."
   xmpp_idle_s:
     name: "Délai de session muette (avancé)"
     description: "Secondes sans rien recevoir d'un lapin connecté avant de couper sa session (il se reconnecte). 0 = jamais."

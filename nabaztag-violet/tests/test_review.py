@@ -470,6 +470,34 @@ class OpenApi(Base):
         self.assertRegex(first[0], r"^[0-9a-f]{32}$")
         self.assertEqual(mode, 0o600)
 
+    def test_the_generated_token_never_reaches_the_log(self):
+        """Owners paste add-on logs into issues: the start-up line says where
+        the token is and its last four characters, never the token."""
+        saved = server.API_TOKEN_SOURCE, server.notify_ha
+        server.notify_ha = lambda *a: None
+        try:
+            for source in ("new", "file", "memory"):
+                server.API_TOKEN_SOURCE = source
+                with self.assertLogs("nabaztag", "DEBUG") as cm:
+                    server._announce_api_token()
+                out = "\n".join(cm.output)
+                self.assertNotIn(server.API_TOKEN, out)
+                self.assertIn(server.API_TOKEN[-4:], out)
+                self.assertIn("Web UI", out)
+        finally:
+            server.API_TOKEN_SOURCE, server.notify_ha = saved
+
+    def test_the_token_is_shown_on_the_web_ui_only(self):
+        code, _ = http(API_URL + "/api/token", headers=TOKEN)
+        self.assertEqual(code, 403)
+        saved = server.INGRESS_PEER
+        server.INGRESS_PEER = "127.0.0.1"
+        try:
+            code, body = http(API_URL + "/api/token")
+        finally:
+            server.INGRESS_PEER = saved
+        self.assertEqual((code, json.loads(body)["token"]), (200, server.API_TOKEN))
+
     def test_the_token_is_not_logged(self):
         """S9: the request line, ?token= included, was logged at Debug."""
         h = server.ApiHandler.__new__(server.ApiHandler)
