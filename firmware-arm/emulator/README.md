@@ -462,7 +462,14 @@ host with `--realtime` (its header says how): three boots of the
 plain XMPP while the key is pending, TLS 1.3 PSK once the owner confirmed,
 plain again for a reflashed rabbit with no key. See `../docs/ADOPTION-KEY.md`.
 `tools/xmpp-tls-proof.sh` runs the first two boots against a Terrier
-container, and `--strip` puts `tools/locate_strip.py` on the path: an
+container. Its verdict counts the DIGEST-MD5 challenges of boot 2 and the
+rabbit's answers, and its Terrier's domain (`--domain`, default
+`terrier.warren.test`) is 19 characters long on purpose: the challenge is
+then padded in base64 and Violet's `B64toS` leaves a NUL behind its last
+token, as the production's 22-character realm does. With `warren.test`
+(84 bytes, no padding) Naboot 1.2.1.0's first cut of `vm_strcmp_bound`
+bound here and never on a rabbit (2026-11-18). `--strip` puts
+`tools/locate_strip.py` on the path: an
 attacker who edits `locate.jsp`, dropping the `xmpp_tls` line
 (`--strip-port N` rewrites the port instead). That is how the TLS policy
 under the HMAC was measured, control and fix, before anything was deployed:

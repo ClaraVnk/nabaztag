@@ -123,10 +123,12 @@ tls-interop-chacha: $(CRYPTO_H)
 	@python3 tls_interop.py --client /tmp/t_tls_client_cc --suite TLS_CHACHA20_POLY1305_SHA256
 
 # OPstrcmp's memcmp length (review S-4): the shipped expression reads past
-# the shorter string; vm_strcmp_bound's does not. Both under ASan.
-vm_strcmp: 
-	@echo "== OPstrcmp: the shorter string, then the lengths (vm_strcmp_bound)"
-	@$(CC) $(CFLAGS) $(SAN) $(if $(BEFORE),-DBEFORE) -o /tmp/t_vm_strcmp test_vm_strcmp.c && /tmp/t_vm_strcmp
+# the shorter string; vm_strcmp_bound's does not. FIRSTCUT=1 is 1.2.1.0's
+# cut, bounded but blind to the trailing NULs B64toS leaves (2026-11-18:
+# no rabbit answered its DIGEST-MD5 challenge). All under ASan.
+vm_strcmp:
+	@echo "== OPstrcmp: the shorter string, then the longer one's tail (vm_strcmp_bound)"
+	@$(CC) $(CFLAGS) $(SAN) $(if $(BEFORE),-DBEFORE) $(if $(FIRSTCUT),-DFIRSTCUT) -o /tmp/t_vm_strcmp test_vm_strcmp.c && /tmp/t_vm_strcmp
 
 tls-interop: $(CRYPTO_H)
 	@echo "== TLS 1.3 PSK: live, against OpenSSL and Python"
