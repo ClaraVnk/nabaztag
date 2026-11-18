@@ -218,3 +218,11 @@ tables, antenna and channel cases go. Violet's own comment marks the RF2528
 case "notre carte". A rabbit with another chip would boot and tune no
 channel: no Wi-Fi, no OTA back. The emulator stops above `rt2501_tx()` and
 does not run this code; only the test rabbit can.
+
+On Nabazprout (2026-11-18, `-gzrf-tel`, all three steps, sent in session):
+the first warm boot after the flash stayed scanning (W1, SAE cache at 8)
+until the rabbit was unplugged; then it joined in one SAE exchange and the
+warren confirmed the image at 13:42. Wi-Fi works on the RF2528-only driver,
+and the setup page shows every field, the radio and the scan list filled
+from /v.js in a phone's browser. The stuck first boot is not explained
+yet: the next OTA from this branch is to be watched over DCC.
