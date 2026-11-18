@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.19.0
+
+The fixes of the add-on review of 2026-11-18. Each finding has its test in
+`tests/test_review.py`.
+
+- **The control API needs its token** (was open with `api_token: ""`). Any
+  device on the LAN could confirm its own adoption key for a rabbit and hold
+  its TLS key, forget a confirmed key, switch the microphone on and download
+  what it heard. Now an empty `api_token` means a token generated on the
+  first start, kept in `/data/api_token` and shown on the add-on's Web UI
+  with a copy button; a Home Assistant notification says so once. The log
+  shows only its last four characters: logs get pasted into issues.
+  **Upgrade:** your `rest_command`s get `401` until you add
+  `headers: {X-API-Token: !secret nab_token}` (the packages in
+  `home-assistant/` do) with the token from the Web UI in `secrets.yaml`, or set
+  your own in `api_token`. A request a browser marks cross-site is refused
+  even with the token (the `<img src=…/api/mic?on=1>` case).
+- **The adoption page is in the add-on's Web UI** (ingress): Home Assistant
+  authenticates you, no token needed there. Port 8099 stays, with the token.
+- **A rabbit in the BOSH fallback is sent back to XMPP** (`/http-bind` gets
+  Le Terrier's terminate, not an empty 200). After every add-on restart a
+  rabbit could stay there, deaf, until unplugged.
+- **`record.jsp` only from a connected rabbit's address**, at most 512 KB,
+  and the reply plays on that rabbit. Anyone could POST audio to the
+  conversation agent.
+- **The UDP microphone only from the rabbit that was sent `RS`**, first
+  sender kept; its buffer is capped at 1 MiB.
+- **A bytecode fetch closes the zombie session** of that rabbit (Le
+  Terrier's `_drop_stale_session`), but only from the session's own address
+  or over TLS, so one GET cannot cut a rabbit off.
+- **A confirmed rabbit's HTTP is believed only over TLS or from its TLS
+  session's address**: a plain `bc.jsp` no longer rewrites what its session
+  carries, and a plain `rfid.jsp` in its name no longer fires events (Le
+  Terrier's `vouch` and `_serve_rfid`). Every `nabaztag_event` now carries
+  `verified`.
+- **Key exchanges are limited**: four new keys an hour per address, sixteen
+  waiting at most.
+- **XMPP limits from Le Terrier**: 32 KB per unfinished stanza, 120 s to
+  authenticate, 16 connections per address and 64 in all; HTTP handlers time
+  out after 30 s; request bodies are capped.
+- **The `<presence/>` nudge** (Le Terrier, 2026-10-30): a bind with no
+  presence after it gets one, up to three times, so a lost presence no longer
+  leaves the rabbit deaf to choreographies and LEDs.
+- **Several rabbits**: the microphone belongs to one rabbit at a time, the
+  volume is kept per rabbit, `?mac=` accepts colons.
+- **Smaller image, about 500 MB less**: the Whisper model (~466 MB) is no
+  longer in the image, nor Alpine's unused second Python (37 MB) and curl.
+  When `voice_pipeline` or listening is on, the chosen model is downloaded
+  once at start into `/data/models`, from a fixed revision and checked
+  against its SHA-256 (it was fetched from `main`, unchecked, without a
+  timeout). Voice users: the first start after the update downloads it
+  (488 MB for `small`); presses before it is ready are transcribed as
+  nothing.
+- Smaller things: stanzas split inside a UTF-8 character, iq ids and
+  resources echoed unchecked, `/api/ota?path=` reading any file (now `/share`
+  or `/data/ota` only, and a checked `name`), the token in Debug logs,
+  `state.json` written in place on every mic re-arm, `last_record.wav`
+  written on every press, no SIGTERM handler (every stop waited for SIGKILL),
+  jingles synthesised on every play, a missing translation (`xmpp_idle_s`),
+  `tools/nabdns.py` dying on a malformed query.
+- Not done: an AppArmor profile (a wrong one stops the add-on, and it cannot
+  be tried here on a Home Assistant host); pending keys over TLS to keep a
+  proven MAC off the plain port (needs the firmware's behaviour measured in
+  the emulator first).
+
 ## 0.18.0
 
 - **Renamed Nabaztag Terrier.** Same slug (`nabaztag_violet`): an installed

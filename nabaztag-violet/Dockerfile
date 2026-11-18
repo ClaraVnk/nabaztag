@@ -1,10 +1,9 @@
 ARG BUILD_FROM=python:3.15-alpine
 
-# --- Stage 1: build whisper.cpp (bundled, local STT) + fetch a model -------- #
+# --- Stage 1: build whisper.cpp (bundled, local STT) ------------------------ #
 # Built on the SAME base as the runtime image so the musl ABI matches. OpenMP is
 # off and libstdc++/libgcc are linked statically, so the resulting binary needs
-# only musl libc at runtime. The model download is a separate layer so swapping
-# the model doesn't force a whisper recompile.
+# only musl libc at runtime.
 FROM ${BUILD_FROM} AS whisper
 RUN apk add --no-cache build-base cmake curl
 # Pinned: a release tag, as a source archive from this project's own mirror
@@ -25,23 +24,20 @@ RUN curl -fsSL -o /whisper.tar.gz "${MIRROR}/whisper.cpp-${WHISPER_VERSION}.tar.
       -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" && \
     cmake --build /b -j"$(nproc)" --target whisper-cli && \
     install -D "$(find /b -name whisper-cli -type f | head -1)" /out/whisper-cli
-# The model from a fixed revision (huggingface.co/ggerganov/whisper.cpp at
-# WHISPER_MODEL_REVISION), copied to the mirror release and checked against its
-# published SHA-256. Changing the model means changing all three together and
-# uploading the new file to the mirror.
-ARG WHISPER_MODEL=ggml-small.bin
-ARG WHISPER_MODEL_REVISION=5359861c739e955e79d9a303bcbc70fb988958b1
-ARG WHISPER_MODEL_SHA256=1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b
-RUN mkdir -p /out/models && \
-    curl -fsSL -o "/out/models/${WHISPER_MODEL}" \
-      "${MIRROR}/${WHISPER_MODEL}" && \
-    echo "${WHISPER_MODEL_SHA256}  /out/models/${WHISPER_MODEL}" | sha256sum -c -
+# No model in the image since 0.19.0: the small one was ~466 MB, two thirds of
+# the image, sent to every install while voice is off by default. server.py
+# downloads the chosen one into /data/models on first use, from a fixed
+# revision and checked against its SHA-256 (WHISPER_MODELS there).
 
 # --- Stage 2: the add-on --------------------------------------------------- #
 FROM ${BUILD_FROM}
 WORKDIR /app
 
-# python3 = the server; espeak-ng = local TTS; libstdc++ = whisper.cpp runtime.
+# The server runs on the base image's own Python (/usr/local/bin/python3);
+# Alpine's python3 package was a second, unused interpreter (+37 MB) and curl
+# was never called at runtime. espeak-ng = local TTS; libstdc++ = whisper.cpp
+# runtime; ffmpeg = audio conversion; ca-certificates = the model download
+# and https:// sounds.
 # The stock Violet and OpenJabNab bytecodes, kept for protocol work and
 # comparison; what the server actually serves is the hybrid build copied below.
 # They are in vendor/openjabnab/ (fetched from GitHub at build time until
@@ -51,18 +47,17 @@ ARG OJN_COMMIT=640257f3cef63fb428d80b8c171f3b15d17ab0ed
 ARG BOOTCODE_VIOLET_SHA256=59e91c6a432056ee94b7c8fe8a1eb7da23a9f4539b9c60e031290322bce4de53
 ARG BOOTCODE_OJN_SHA256=4b051f42a647e55deacea95d30bdf14c31283cfc2048e3bbe78991e4df7e6724
 COPY vendor/openjabnab/bootcode.violet vendor/openjabnab/bootcode.ojn /app/
-RUN apk add --no-cache python3 curl ca-certificates espeak-ng libstdc++ ffmpeg && \
+RUN apk add --no-cache ca-certificates espeak-ng libstdc++ ffmpeg && \
     echo "${BOOTCODE_VIOLET_SHA256}  /app/bootcode.violet" | sha256sum -c - && \
     echo "${BOOTCODE_OJN_SHA256}  /app/bootcode.ojn" | sha256sum -c -
 
-# Bundled local STT (whisper.cpp + small model) for Phase-2 voice input.
+# Bundled local STT (whisper.cpp; its model is fetched on first use).
 COPY --from=whisper /out/whisper-cli /usr/local/bin/whisper-cli
-COPY --from=whisper /out/models /app/models
 
 # The runtime bytecode the rabbit downloads at /vl/bc.jsp — the hybrid build,
 # versioned HERE (bytecode/build-bytecode.sh writes a new one locally; copy it
 # to bootcode.hybrid and update the checksum below in the same commit — the one
-# on the bootcode line, not the Whisper model's a few lines up). The
+# on the bootcode line, not the whisper.cpp source's above). The
 # checksum is verified at build so the file can never drift unnoticed. Without
 # it a fresh install has no bytecode at all and every boot 500s (issue #2).
 COPY bootcode.hybrid /app/bootcode.hybrid

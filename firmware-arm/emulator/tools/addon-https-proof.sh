@@ -136,7 +136,7 @@ fi
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --network host --add-host "$HOSTNAME:127.0.0.1" \
   -e SERVER_ADDRESS=127.0.0.1 -e HTTP_PORT=$HTTP -e XMPP_PORT=$XMPP -e XMPP_TLS_PORT=$XMPPS \
-  -e API_PORT=$API -e ADOPTION_KEYS_FILE=/data/adoption-keys.json -e LOG_LEVEL=INFO \
+  -e API_PORT=$API -e API_TOKEN=proof -e ADOPTION_KEYS_FILE=/data/adoption-keys.json -e LOG_LEVEL=INFO \
   "${CERT_ENV[@]}" \
   -v "$ADDON:/app:ro,z" -v "$OUT/data:/data:z" docker.io/library/python:3.13-alpine \
   python3 -u /app/server.py >/dev/null
@@ -147,7 +147,7 @@ api() { podman exec "$NAME" python3 -c "
 import json, sys, urllib.request
 d = sys.argv[2]
 r = urllib.request.Request('http://127.0.0.1:$API' + sys.argv[1], method='POST' if d else 'GET',
-    data=d.encode() if d else None, headers={'Content-Type': 'application/json'})
+    data=d.encode() if d else None, headers={'Content-Type': 'application/json', 'X-API-Token': 'proof'})
 print(urllib.request.urlopen(r, timeout=60).read().decode())" "$1" "${2:-}"; }
 
 boot() {  # boot <label> [scenario]

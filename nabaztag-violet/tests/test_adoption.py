@@ -41,6 +41,10 @@ os.environ.update({
     "BOOTCODE_TLS_FILE": os.path.join(TMP, "bootcode.tls"),
     "BOOTCODE_HTTPS_FILE": os.path.join(TMP, "bootcode.https"),
     "SERVER_ADDRESS": "127.0.0.1",
+    # Whichever test module imports the server first decides these.
+    "API_TOKEN_FILE": os.path.join(TMP, "api_token"),
+    "STATE_FILE": os.path.join(TMP, "state.json"),
+    "MODELS_DIR": os.path.join(TMP, "models"),
 })
 
 import adoption  # noqa: E402
@@ -200,6 +204,8 @@ class EndToEnd(unittest.TestCase):
     def setUp(self):
         for row in server.KEYS.listing():
             server.KEYS.forget(row["mac"])
+        # Every exchange here comes from 127.0.0.1: not the limit under test.
+        server._KX_SEEN.clear()
 
     def _get(self, path):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http.server_port}{path}") as r:
@@ -208,7 +214,8 @@ class EndToEnd(unittest.TestCase):
     def _api(self, path, body=None, ctype="application/json"):
         req = urllib.request.Request(f"http://127.0.0.1:{self.api.server_port}{path}",
                                      data=None if body is None else json.dumps(body).encode(),
-                                     headers={"Content-Type": ctype}, method="POST" if body is not None else "GET")
+                                     headers={"Content-Type": ctype, "X-API-Token": server.API_TOKEN},
+                                     method="POST" if body is not None else "GET")
         try:
             with urllib.request.urlopen(req) as r:
                 return r.status, json.loads(r.read())
@@ -546,7 +553,7 @@ class InSession(unittest.TestCase):
             plain._handle_stanza("<message><rfid xmlns='violet:nabaztag:rfid'><tag>d0021a0352</tag></rfid></message>")
         finally:
             server.fire_ha_event = orig
-        self.assertEqual(fired, [{"mac": MAC, "type": "rfid", "tag": "d0021a0352"}])
+        self.assertEqual(fired, [{"mac": MAC, "type": "rfid", "tag": "d0021a0352", "verified": True}])
 
 
 if __name__ == "__main__":
