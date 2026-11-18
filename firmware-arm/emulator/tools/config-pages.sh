@@ -8,7 +8,8 @@
 # answer and checks them: the setup page plain, its stylesheet linked and
 # not inlined; a.htm, s.css, u.htm, b.htm and the error page gzipped behind
 # the right Content-Type, each one inflating to a whole page, and /v.js
-# giving the setup page its values (gzip_pages, gzip_setup, 2026-11-18).
+# giving the setup page its values (gzip_pages, gzip_setup, 2026-11-18);
+# then the form sent with z=1, after which the rabbit must join the network.
 # Same environment as config-upload.sh: RUNTIME, STEPS, TAG, NO_BUILD.
 set -euo pipefail
 
@@ -17,7 +18,7 @@ TAG=${TAG:-nabaztag-emulator}
 DEFAULT_STEPS=$(sed -n 's/^STEPS=//p' "$(dirname "$0")/../run.sh")
 STEPS=${STEPS:-$DEFAULT_STEPS}
 
-if [ $# -lt 1 ]; then sed -n '2,14p' "$0"; exit 2; fi
+if [ $# -lt 1 ]; then sed -n '2,15p' "$0"; exit 2; fi
 IMAGE=$1; shift
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -43,7 +44,8 @@ echo "== $(basename "$IMAGE") in config mode, a phone asking for every page"
 "$RUNTIME" run --rm -v "$WORK:/work:Z" "$TAG" sh -c \
   "make -s NABGCC=/build/nabgcc BYTECODE=/work/boot.bc vm >/dev/null \
    && ./rabbit-vm /work/scenario.txt --no-eeprom --save-dir /work/out $*" \
-  | grep -E "phone: (GET|answer|a gzipped|the page)|FAIL|PASS|resets"
+  > "$WORK/run.log" 2>&1 || true
+grep -E "phone: (GET|answer|a gzipped|the page)|FAIL|PASS|ok  |resets" "$WORK/run.log"
 
 python3 - "$WORK/out" <<'EOF'
 import gzip, json, re, sys
@@ -75,6 +77,9 @@ for name, ctype, must in (("a.htm", "text/html", b"Connect rabbit"),
         continue
     gz = "Content-Encoding: gzip" in head
     check(name, gz and f"Content-Type: {ctype}" in head, f"gzip, {ctype}")
+    cached = "max-age" in head
+    check(name, cached == (name == "s.css"),
+          "cached an hour" if cached else "not cached")
     try:
         page = gzip.decompress(body) if gz else body
     except Exception as e:
@@ -106,3 +111,4 @@ check("v.js", head is not None and "Content-Type: text/javascript" in head
       and "Content-Encoding" not in head and ok, why)
 sys.exit(1 if bad else 0)
 EOF
+! grep -q FAIL "$WORK/run.log"

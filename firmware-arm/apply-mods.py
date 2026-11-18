@@ -6905,12 +6905,17 @@ def patch_gzip_pages(root: Path) -> None:
     if "\\" in css_m.group(1):
         sys.exit("FAIL gzip_pages: an escape in page_css")
     css_gz = gz(css_m.group(1))
+    # Only the stylesheet is cached. "Settings saved" was kept an hour too,
+    # and a phone that had sent the same settings before showed it from its
+    # cache: the rabbit never saw the save and stayed in config mode
+    # (Nabazprout, 2026-11-18).
+    css_cache = b"\r\nCache-Control: max-age=3600"
     total_plain, total_gz = len(css_m.group(1)), len(css_gz)
     t = (t[:css_m.start()]
          + '\nconst http_gzip="HTTP/1.0 200 OK\\13\\10Content-Encoding: gzip\\13\\10'
-           'Cache-Control: max-age=3600\\13\\10Content-Type: text/";;\n'
+           'Content-Type: text/";;\n'
          + f'var page_css="{link}";;\n'
-         + f'fun page_style=strcat http_gzip {_metal_bytes_literal(b"css" + crlf + css_gz)};;\n'
+         + f'fun page_style=strcat http_gzip {_metal_bytes_literal(b"css" + css_cache + crlf + css_gz)};;\n'
          + t[css_m.end():])
 
     for name in ("page_done", "page_u", "page_error"):
