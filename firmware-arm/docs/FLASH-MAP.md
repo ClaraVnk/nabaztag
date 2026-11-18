@@ -254,8 +254,8 @@ alert (`ie_walk_bounds`, `vm_strcmp_bound`, `vm_seed_hidden`,
 `tls_in_overflow`, S-3), C back from the probation (`ccmp_no_probation`),
 bytecode for `config_presence` (`needhead`, a page 35 bytes longer gzipped)
 and bytecode back from `boot_strip_wav` and `boot_strip_login`: the
-bootloader compiles to 21,760 bytes against 22,105 (`tools/mtl_comp.py` on
-the staged `boot.0.0.0.13.mtl`, `tools/mods-matrix.py --keep`).
+bootloader compiles to 21,760 bytes against 22,105 (`../tools/mtl_comp.py` on
+the staged `boot.0.0.0.13.mtl`, `../tools/mods-matrix.py --keep`).
 
 **Two levers measured, shipped in no release mode.** `opt_size_crypto`
 compiles the pure-computation files (`CRYPTO_OBJS` in apply-mods.py: P-256,

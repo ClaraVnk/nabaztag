@@ -119,6 +119,13 @@ firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.
 firmware-arm/tools/mode-diff.py naboot-1.2.0.3 naboot-1.2.0.3-tel
 ```
 
+What `-Os` would save on the pure crypto files alone (`opt_size_crypto`),
+object by object, inside a build image left on the dev VM:
+
+```sh
+ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.0.3 sh -s' < firmware-arm/tools/os-crypto-size.sh
+```
+
 A missing `libasan` (some distributions) means: run them in a Rocky container,
 
 ```sh
