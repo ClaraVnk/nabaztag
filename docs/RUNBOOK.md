@@ -231,6 +231,18 @@ for the whole scenario, about 2 MB in two minutes.
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
 
+Where a reset sends the rabbit (`factory_server`, Naboot 1.2.0.3): each
+image's bootloader on an empty config page, and the server it writes there,
+which is what the config page's reset writes too. 1.2.0.1 first, as the
+control:
+
+```sh
+cd firmware-arm/emulator
+NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.0.3/Nab.elf
+# ../bin/naboot-1.2.0.1/Nab.elf   r.nabaztag.com/vl
+# ../bin/naboot-1.2.0.3/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
