@@ -58,13 +58,13 @@ mkdir -p "$OUT/data" "$OUT/host"
 OUT="$(cd "$OUT" && pwd)"
 rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log
 cp "$ELF" "$OUT/host/Nab.elf"
-[ -n "$OTA" ] && cp "$OTA" "$OUT/data/proof.signed.sim"
+[ -n "$OTA" ] && mkdir -p "$OUT/data/ota" && cp "$OTA" "$OUT/data/ota/proof.signed.sim"
 [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --network host \
   -e SERVER_ADDRESS=127.0.0.1 -e HTTP_PORT=$HTTP -e XMPP_PORT=$XMPP -e XMPP_TLS_PORT=$XMPPS \
-  -e API_PORT=$API -e ADOPTION_KEYS_FILE=/data/adoption-keys.json -e OTA_DIR=/data/ota \
+  -e API_PORT=$API -e API_TOKEN=proof -e ADOPTION_KEYS_FILE=/data/adoption-keys.json -e OTA_DIR=/data/ota \
   -e TTS_ENGINE=espeak -e LOG_LEVEL=INFO -e KEEPALIVE_S=$KA \
   -v "$ADDON:/app:ro,z" -v "$OUT/data:/data:z" docker.io/library/python:3.13-alpine \
   sh -c "apk add --no-cache espeak-ng ffmpeg >/dev/null 2>&1; exec python3 -u /app/server.py" >/dev/null
@@ -75,7 +75,7 @@ api() { podman exec "$NAME" python3 -c "
 import json, sys, urllib.request
 d = sys.argv[2]
 r = urllib.request.Request('http://127.0.0.1:$API' + sys.argv[1], method='POST' if d else 'GET',
-    data=d.encode() if d else None, headers={'Content-Type': 'application/json'})
+    data=d.encode() if d else None, headers={'Content-Type': 'application/json', 'X-API-Token': 'proof'})
 print(urllib.request.urlopen(r, timeout=60).read().decode())" "$1" "${2:-}"; }
 
 boot() {  # boot <label> [scenario]
@@ -113,7 +113,7 @@ LONG="Il%20etait%20une%20fois%20un%20lapin%20qui%20parlait%20au%20terrier%20par%
     api "/api/mic?on=0" "{}" >/dev/null
   fi
   if [ -n "$OTA" ]; then
-    sleep 5; echo "   [ota]"; api "/api/ota?path=/data/proof.signed.sim&trigger=1" "{}" | cut -c1-160 | sed 's/^/   ota: /'
+    sleep 5; echo "   [ota]"; api "/api/ota?path=/data/ota/proof.signed.sim&trigger=1" "{}" | cut -c1-160 | sed 's/^/   ota: /'
   fi ) &
 boot 2-confirmed ${MIC:+scenarios/vm/addon-session.txt}
 wait
