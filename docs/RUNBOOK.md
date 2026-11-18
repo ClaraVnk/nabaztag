@@ -243,6 +243,17 @@ NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/na
 # ../bin/naboot-1.2.0.3/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
 ```
 
+The setup page of a rabbit that kept Violet's server offers the Terrier
+instead (1.2.0.3 = the gzipped pages + factory_server: v.js says it). Keep
+the config page the 1.2.0.1 run wrote, then:
+
+```sh
+EEPROM=violet-conf.eeprom EXPECT_SERVER=terrier.cyberloutre.fr/vl NO_BUILD=1 \
+  tools/config-pages.sh ../bin/naboot-1.2.0.3-tel/Nab.elf
+# ok  v.js: offers the server 'terrier.cyberloutre.fr/vl'          (2026-11-18)
+# naboot-1.2.0.1-gz-tel, the control: FAIL, it offers r.nabaztag.com/vl
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in

@@ -11,6 +11,9 @@
 # giving the setup page its values (gzip_pages, gzip_setup, 2026-11-18);
 # then the form sent with z=1, after which the rabbit must join the network.
 # Same environment as config-upload.sh: RUNTIME, STEPS, TAG, NO_BUILD.
+# EEPROM=<file> boots on that config page instead of an empty one (a copy:
+# the file is not changed); EXPECT_SERVER=<url> checks the server v.js
+# offers (factory_server: the Terrier in place of Violet's, 2026-11-18).
 set -euo pipefail
 
 RUNTIME=${RUNTIME:-podman}
@@ -18,7 +21,7 @@ TAG=${TAG:-nabaztag-emulator}
 DEFAULT_STEPS=$(sed -n 's/^STEPS=//p' "$(dirname "$0")/../run.sh")
 STEPS=${STEPS:-$DEFAULT_STEPS}
 
-if [ $# -lt 1 ]; then sed -n '2,15p' "$0"; exit 2; fi
+if [ $# -lt 1 ]; then sed -n '2,18p' "$0"; exit 2; fi
 IMAGE=$1; shift
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,14 +44,16 @@ if [ -z "${NO_BUILD:-}" ]; then
 fi
 
 echo "== $(basename "$IMAGE") in config mode, a phone asking for every page"
+CONF="--no-eeprom"
+if [ -n "${EEPROM:-}" ]; then cp "$EEPROM" "$WORK/conf.eeprom"; CONF="--eeprom /work/conf.eeprom"; fi
 "$RUNTIME" run --rm -v "$WORK:/work:Z" "$TAG" sh -c \
   "make -s NABGCC=/build/nabgcc BYTECODE=/work/boot.bc vm >/dev/null \
-   && ./rabbit-vm /work/scenario.txt --no-eeprom --save-dir /work/out $*" \
+   && ./rabbit-vm /work/scenario.txt $CONF --save-dir /work/out $*" \
   > "$WORK/run.log" 2>&1 || true
 grep -E "phone: (GET|answer|a gzipped|the page)|FAIL|PASS|ok  |resets" "$WORK/run.log"
 
-python3 - "$WORK/out" <<'EOF'
-import gzip, json, re, sys
+EXPECT_SERVER="${EXPECT_SERVER:-}" python3 - "$WORK/out" <<'EOF'
+import gzip, json, os, re, sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
@@ -109,6 +114,10 @@ except Exception as e:
     ok, why = False, f"not the v([...],[...]) call: {e}"
 check("v.js", head is not None and "Content-Type: text/javascript" in head
       and "Content-Encoding" not in head and ok, why)
+want = os.environ.get("EXPECT_SERVER")
+if want:
+    got = a[3] if ok else None
+    check("v.js", got == want, f"offers the server {got!r} (want {want!r})")
 sys.exit(1 if bad else 0)
 EOF
 ! grep -q FAIL "$WORK/run.log"
