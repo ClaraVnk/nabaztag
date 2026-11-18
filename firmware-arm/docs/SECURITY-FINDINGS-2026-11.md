@@ -183,12 +183,12 @@ A systematic audit of the original Violet code ran separately (the `VIOLET-*`
 files beside this one) and drove items 8, 9 and 11. The flash-space study
 that followed is `VIOLET-CODEMORT.txt`.
 
-## The 2026-11-18 review (Naboot 1.2.0.3)
+## The 2026-11-18 review (Naboot 1.2.1.0)
 
 A second review, of the patched tree of `naboot-1.2.0.1-gzrf-tel` (121,372
 bytes), read with the 2026-11 fixes above as the baseline: where one of
 them had left a sibling of the fixed code unfixed, it is here. Each fix is
-an apply-mods step of its own, in `naboot-1.2.0.3` and `-tel` and in no
+an apply-mods step of its own, in `naboot-1.2.1.0` and `-tel` and in no
 released mode; each has its scenario or host test, run before the step (the
 control) and after. Measured means a tool reproduced it; read means it was
 read only.
@@ -275,7 +275,7 @@ read only.
   station and of the access point alike -- and the page keeps its
   server), `config-server-head` (the owner, head held: taken, a station in
   RUN), `config-wifi-nohead` (the ordinary save: taken, a station in RUN);
-  the control is the base 1.2.0.3 image, whose nohead run takes the server
+  the control is the base 1.2.1.0 image, whose nohead run takes the server
   and joins. One lesson on the way: Metal's `if` jumps on 0 only, nil is
   true (`OPelse`), so `needhead` answers an int both ways.
   `../emulator/tools/config-pages.sh` and `../emulator/tools/default-server-proof.sh` still pass.
@@ -295,7 +295,7 @@ read only.
   a side effect, which later anchors depended on. They use
   `read_flat`/`write_flat` now. Proof: `../tools/mods-matrix.py` over all 43
   modes, every tree identical with CRLF read as LF; `Nab.bin` of
-  `naboot-1.2.0.3` byte-identical before and after.
+  `naboot-1.2.1.0` byte-identical before and after.
 
 - **C-2, the mode table drifts invisibly.** `../tools/mode-diff.py` prints each
   mode against a base as added/missing steps; `../tests/apply_mods/test_review_fixes.py` pins
@@ -321,11 +321,11 @@ read only.
   never start. Documented in `../crypto/nab_rng.h`.
 
 - **O-1, `-Os` on the pure crypto files** (`opt_size_crypto`, mode
-  `naboot-1.2.0.3-oscrypto`) and **O-2, ChaCha20-Poly1305 as the only AEAD**
-  (`tls_chacha_only`, mode `naboot-1.2.0.3-chacha`; `nab_tls.c` under
+  `naboot-1.2.1.0-oscrypto`) and **O-2, ChaCha20-Poly1305 as the only AEAD**
+  (`tls_chacha_only`, mode `naboot-1.2.1.0-chacha`; `nab_tls.c` under
   `NAB_TLS_CHACHA_ONLY`, `make tls-interop-chacha`): measurement modes for a
   hardware test, in no release. `-Os` for the whole image failed on
   hardware three times (FLASH-MAP.md). Sizes in FLASH-MAP.md.
 
 - **O-3, byte-loop `strchr`/`memmove`/`memcmp`**: not done; nothing proves
-  them equal to newlib's on this hardware yet, and 1.2.0.3 has room.
+  them equal to newlib's on this hardware yet, and 1.2.1.0 has room.

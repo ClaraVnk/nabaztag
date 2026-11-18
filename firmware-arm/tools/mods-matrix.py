@@ -4,7 +4,7 @@ with no compiler: does each step list still apply, and what does it leave?
 
     firmware-arm/tools/mods-matrix.py                 # every naboot-* mode
     firmware-arm/tools/mods-matrix.py --all           # every mode
-    firmware-arm/tools/mods-matrix.py naboot-1.2.0.3  # one or more modes
+    firmware-arm/tools/mods-matrix.py naboot-1.2.1.0  # one or more modes
     firmware-arm/tools/mods-matrix.py --out before.txt
     git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
     firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt

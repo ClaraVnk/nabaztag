@@ -3,7 +3,7 @@
     python3 -m unittest discover -s firmware-arm/tests/apply_mods
 
 - vm_seed_hidden hides the bytes nab_rng.h says the seed occupies;
-- naboot-1.2.0.3 and -tel differ by dcc_telemetry alone, the measurement
+- naboot-1.2.1.0 and -tel differ by dcc_telemetry alone, the measurement
   modes by their one step, and every 1.2.0.1 variant is 1.2.0.1 plus known
   extras -- except kxprobe's missing owner_unlock, which its comment
   explains (review C-2: drift in 40 copied step lists is invisible);
@@ -47,12 +47,12 @@ class ModeTable(unittest.TestCase):
         self.assertTrue(ordered, f"{name} reorders {base}'s steps")
 
     def test_1_2_0_3_variants(self):
-        self.assertVariant("naboot-1.2.0.3", "naboot-1.2.0.3-tel", ["dcc_telemetry"])
-        self.assertVariant("naboot-1.2.0.3", "naboot-1.2.0.3-oscrypto", ["opt_size_crypto"])
-        self.assertVariant("naboot-1.2.0.3", "naboot-1.2.0.3-chacha", ["tls_chacha_only"])
+        self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-tel", ["dcc_telemetry"])
+        self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-oscrypto", ["opt_size_crypto"])
+        self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-chacha", ["tls_chacha_only"])
 
     def test_1_2_0_3_is_1_2_0_1_plus_the_review(self):
-        self.assertVariant("naboot-1.2.0.1", "naboot-1.2.0.3", [
+        self.assertVariant("naboot-1.2.0.1", "naboot-1.2.1.0", [
             "factory_server", "ie_walk_bounds", "ccmp_no_probation", "vm_strcmp_bound",
             "vm_seed_hidden", "tls_in_overflow", "gzip_pages", "gzip_setup", "config_presence",
             "boot_strip_wav", "boot_strip_login", "prune_unreachable"])
@@ -65,7 +65,7 @@ class ModeTable(unittest.TestCase):
         self.assertVariant("naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", ["kx_probe"], missing=["owner_unlock"])
 
     def test_the_review_steps_are_in_both_release_modes(self):
-        for mode in ("naboot-1.2.0.3", "naboot-1.2.0.3-tel"):
+        for mode in ("naboot-1.2.1.0", "naboot-1.2.1.0-tel"):
             for step in ("ie_walk_bounds", "ccmp_no_probation", "vm_strcmp_bound", "vm_seed_hidden",
                          "tls_in_overflow", "config_presence", "boot_strip_wav", "boot_strip_login"):
                 self.assertIn(step, self.modes[mode])

@@ -9,7 +9,7 @@
 # too. Give 1.2.0.1's Nab.elf first: it must say r.nabaztag.com/vl, or the
 # proof proves nothing.
 #
-#   tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.0.3/Nab.elf
+#   tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.1.0/Nab.elf
 #
 # Environment: RUNTIME (podman), TAG (nabaztag-emulator), NO_BUILD to reuse
 # the image.

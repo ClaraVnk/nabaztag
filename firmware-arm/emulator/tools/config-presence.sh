@@ -13,7 +13,7 @@
 #                         head: saved, the rabbit joins the network;
 #   config-wifi-nohead    the ordinary save, the server the page offered,
 #                         no button: saved, the rabbit joins the network.
-# The server field of each page is printed afterwards. Give 1.2.0.3's base
+# The server field of each page is printed afterwards. Give 1.2.1.0's base
 # image (before config_presence) first as the control: its nohead run takes
 # the server and fails `expect-not RUN`. Same environment as config-pages.sh:
 # RUNTIME, STEPS, TAG, NO_BUILD; EXPECT_SERVER is the server the page offers

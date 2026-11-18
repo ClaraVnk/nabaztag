@@ -3,7 +3,7 @@
 # alone (host-tested with vectors, no driver or VM code), measured inside the
 # firmware build image, which holds the patched tree and the release gcc.
 #
-#   ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.0.3 sh -s' < firmware-arm/tools/os-crypto-size.sh
+#   ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.1.0 sh -s' < firmware-arm/tools/os-crypto-size.sh
 set -e
 cd /build/nabgcc
 FL="--specs=nosys.specs -mthumb -mthumb-interwork -fdata-sections -ffunction-sections -fno-exceptions -fno-delete-null-pointer-checks -mcpu=arm7tdmi -Iinc/ -Isys/inc -DHIDE_VM_OUTPUT -w"

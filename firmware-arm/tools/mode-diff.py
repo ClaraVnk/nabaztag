@@ -2,8 +2,8 @@
 """How apply-mods.py's modes differ: each one against a base, as steps.
 
     firmware-arm/tools/mode-diff.py                       # every naboot-1.2.* mode against naboot-1.2.0.1
-    firmware-arm/tools/mode-diff.py naboot-1.2.0.3        # every mode against that one
-    firmware-arm/tools/mode-diff.py naboot-1.2.0.3 naboot-1.2.0.3-tel
+    firmware-arm/tools/mode-diff.py naboot-1.2.1.0        # every mode against that one
+    firmware-arm/tools/mode-diff.py naboot-1.2.1.0 naboot-1.2.1.0-tel
 
 Every naboot-* mode is a full copy of an 80-odd step list, so a step left
 out of one variant is invisible in a diff of the file (review C-2,

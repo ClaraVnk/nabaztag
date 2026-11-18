@@ -235,19 +235,19 @@ that image (sent in session at 14:01) the rabbit came back on its own in
 72 s, no stuck boot. At 17:49 a save from setup mode left setup mode on
 its own (DCC: A0 B0 → A2 B1) and the rabbit was back in the warren.
 
-## Naboot 1.2.0.3 with the review's fixes (2026-11-18)
+## Naboot 1.2.1.0 with the review's fixes (2026-11-18)
 
 The 2026-11-18 review's steps (`SECURITY-FINDINGS-2026-11.md`, last
-section) in `naboot-1.2.0.3` and `-tel`, built unsigned on the dev VM with
+section) in `naboot-1.2.1.0` and `-tel`, built unsigned on the dev VM with
 `BUILD_MARK=2611182200 BOOT_FLOOR=202611182200`:
 
 | Image | Bytes | Spare |
 |---|---|---|
-| `naboot-1.2.0.3`, the base branch (gzip, factory_server) | 121 656 | 5 320 |
-| `naboot-1.2.0.3` with the review | 121 472 | 5 504 |
-| `naboot-1.2.0.3-tel` with the review | 122 484 | 4 492 |
-| `naboot-1.2.0.3-oscrypto` (+ opt_size_crypto, measurement) | 116 832 (-4 640) | 10 144 |
-| `naboot-1.2.0.3-chacha` (+ tls_chacha_only, measurement) | 120 536 (-936) | 6 440 |
+| `naboot-1.2.1.0`, the base branch (gzip, factory_server) | 121 656 | 5 320 |
+| `naboot-1.2.1.0` with the review | 121 472 | 5 504 |
+| `naboot-1.2.1.0-tel` with the review | 122 484 | 4 492 |
+| `naboot-1.2.1.0-oscrypto` (+ opt_size_crypto, measurement) | 116 832 (-4 640) | 10 144 |
+| `naboot-1.2.1.0-chacha` (+ tls_chacha_only, measurement) | 120 536 (-936) | 6 440 |
 
 What the review's steps add and take: C for the bounds and the overflow
 alert (`ie_walk_bounds`, `vm_strcmp_bound`, `vm_seed_hidden`,
@@ -271,5 +271,5 @@ processor, proven against OpenSSL for the PSK session (`make
 tls-interop-chacha`). Either is one Nabazprout flash away, `tools/cost`
 first; neither goes into a release without it.
 
-The CRLF sweep (C-1) is byte-neutral: the `Nab.bin` of `naboot-1.2.0.3`
+The CRLF sweep (C-1) is byte-neutral: the `Nab.bin` of `naboot-1.2.1.0`
 built before and after it, same marks, is identical.

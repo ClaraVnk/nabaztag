@@ -8,7 +8,7 @@
 #                  refusal shipped in 1.2.0.0..1.2.0.2: ccmp-replay.txt
 #                  passes, ccmp-probation.txt FAILS (200 replays in the first
 #                  seconds turn the refusal off: 65 frames handed up);
-#   2. fixed    -- the same plus ccmp_no_probation (Naboot 1.2.0.3): both pass.
+#   2. fixed    -- the same plus ccmp_no_probation (Naboot 1.2.1.0): both pass.
 # Exit status 0 when that is what happened. Environment: RUNTIME (podman),
 # TAG (nabaztag-emulator-enforce), NO_BUILD to reuse the two images.
 set -euo pipefail

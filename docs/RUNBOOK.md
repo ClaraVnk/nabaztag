@@ -101,7 +101,7 @@ firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/N
 make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
 make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
 make -C firmware-arm/tests tls-interop-chacha   # the same, ChaCha20-Poly1305 only (tls_chacha_only)
-BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.0.3: an ASan READ (review S-4)
+BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.1.0: an ASan READ (review S-4)
 make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
 firmware-arm/tools/run-tests.sh       # the Metal toolchain against the reference compiler
 python3 -m unittest discover -s firmware-arm/tests/apply_mods   # apply-mods' own steps and its mode table
@@ -116,14 +116,14 @@ other copy of the script (`--apply`). How the modes differ, as steps:
 firmware-arm/tools/mods-matrix.py --all --out after.txt
 git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
 firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt
-firmware-arm/tools/mode-diff.py naboot-1.2.0.3 naboot-1.2.0.3-tel
+firmware-arm/tools/mode-diff.py naboot-1.2.1.0 naboot-1.2.1.0-tel
 ```
 
 What `-Os` would save on the pure crypto files alone (`opt_size_crypto`),
 object by object, inside a build image left on the dev VM:
 
 ```sh
-ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.0.3 sh -s' < firmware-arm/tools/os-crypto-size.sh
+ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.1.0 sh -s' < firmware-arm/tools/os-crypto-size.sh
 ```
 
 A missing `libasan` (some distributions) means: run them in a Rocky container,
@@ -253,25 +253,25 @@ for the whole scenario, about 2 MB in two minutes.
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
 
-Where a reset sends the rabbit (`factory_server`, Naboot 1.2.0.3): each
+Where a reset sends the rabbit (`factory_server`, Naboot 1.2.1.0): each
 image's bootloader on an empty config page, and the server it writes there,
 which is what the config page's reset writes too. 1.2.0.1 first, as the
 control:
 
 ```sh
 cd firmware-arm/emulator
-NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.0.3/Nab.elf
+NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.1.0/Nab.elf
 # ../bin/naboot-1.2.0.1/Nab.elf   r.nabaztag.com/vl
-# ../bin/naboot-1.2.0.3/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
+# ../bin/naboot-1.2.1.0/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
 ```
 
 The setup page of a rabbit that kept Violet's server offers the Terrier
-instead (1.2.0.3 = the gzipped pages + factory_server: v.js says it). Keep
+instead (1.2.1.0 = the gzipped pages + factory_server: v.js says it). Keep
 the config page the 1.2.0.1 run wrote, then:
 
 ```sh
 EEPROM=violet-conf.eeprom EXPECT_SERVER=terrier.cyberloutre.fr/vl NO_BUILD=1 \
-  tools/config-pages.sh ../bin/naboot-1.2.0.3-tel/Nab.elf
+  tools/config-pages.sh ../bin/naboot-1.2.1.0-tel/Nab.elf
 # ok  v.js: offers the server 'terrier.cyberloutre.fr/vl'          (2026-11-18)
 # naboot-1.2.0.1-gz-tel, the control: FAIL, it offers r.nabaztag.com/vl
 ```
@@ -281,9 +281,9 @@ its last section), each with its control, on the dev VM:
 
 ```sh
 cd firmware-arm/emulator
-tools/ie-walk-proof.sh ../bin/naboot-1.2.0.3-tel/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
+tools/ie-walk-proof.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
 tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and without ccmp_no_probation
-NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.0.3-tel/Nab.elf   # S-6: who may change the server
+NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-6: who may change the server
 # the control: the base image's Nab.elf (before config_presence) takes the stranger's server
 ```
 
