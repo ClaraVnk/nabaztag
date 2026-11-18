@@ -61,6 +61,14 @@ python3 firmware-arm/tools/flash-map.py firmware-arm/bin/<mode>/Nab.elf firmware
 OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short p256 aes_block gcm_1k
 ```
 
+How two builds touch memory, file by file (calls to memcpy/memset, stores
+by width), from the images build.sh left on the dev VM; run it there:
+
+```sh
+firmware-arm/tools/os-diff.sh localhost/nab-firmware-build:naboot-1.2.0.1 \
+    localhost/nab-firmware-build:naboot-1.2.0.2-safe src/net src/usb
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).
@@ -251,6 +259,17 @@ podman build -t fros -f Containerfile .
 SECONDS_UP=240 podman run --rm -e SECONDS_UP -v <dump dir>:/dump:ro,Z fros
 # 2026-11-17, FR's Karotz: FROS banner, karotz_init.sh, startup.sh, its
 # binaries and libraries load; stops at the hardware (wlan0, LED, /dev/rabbit_*)
+```
+
+### WPA3 on the Karotz's kernel
+
+Two patches for LapinLibre's Linux 2.6.32.71 (SAE through nl80211 and
+mac80211, 802.11w on the RT73 in software), proven in QEMU against a
+control kernel without them: `firmware-arm/emulator/karotz/wpa3/README.md`.
+
+```sh
+podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
+podman run --rm karotz-wpa3     # control: not connected; patched: connected
 ```
 
 ### The three rabbits at once

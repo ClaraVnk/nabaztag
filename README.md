@@ -9,9 +9,9 @@
 > [!IMPORTANT]
 > **The Karotz (v3, 2011) works on [Le Terrier](https://terrier.cyberloutre.fr/karotz)**:
 > since 16 November 2026, real ones are adopted with their own key.
-> **Do you own a Nabaztag v1 (2005)? Help bring it back!** It is in beta, built from
-> its protocol without the hardware in hand. A tester, or better a capture of its
-> traffic with its server, would make all the difference:
+> **The first real Nabaztag v1 (2005) was adopted on 17 November 2026**, through a
+> phone's hotspot. It is still in beta. **Do you own one? Help bring it back!** A
+> tester, or better a capture of its traffic with its server, makes all the difference:
 > [**get in touch**](https://github.com/ClaraVnk/nabaztag/issues/new?title=I%20have%20a%20Nabaztag%20v1%20%2F%20Karotz&body=Which%20rabbit%20and%20what%20firmware%3A%0A%0AWhat%20I%20can%20do%20(test%2C%20dump)%3A).
 
 <p align="center">
@@ -249,17 +249,22 @@ was built on and is tested on, every day, on real hardware.
 - **Nabaztag v1 (2005)** — beta, on Le Terrier. It cannot be flashed: point it
   at the Terrier in its setup page, ask for its code by e-mail on the
   adoption page and hold its head down. It speaks, moves its ears and lights
-  up; it has no microphone and no RFID reader.
+  up; it has no microphone and no RFID reader. Its Wi-Fi knows only WEP or
+  open networks: the first real one, adopted on 17 November 2026, joined
+  through a phone's hotspot.
 - **Karotz (v3, 2011)** — works, on Le Terrier. A small client installed on a
   Karotz running FreeRabbits OS and OpenKarotz makes it adopt like a v2 (its
-  own key, TLS 1.3) and take the same commands. It stays on WPA2: its Wi-Fi
-  chip cannot do WPA3. Since 16 November 2026, real Karotz are adopted with
+  own key, TLS 1.3) and take the same commands. Its stock system stays on
+  WPA2. On [LapinLibre](https://github.com/sweetlilmre/LapinLibre)'s kernel,
+  WPA3 works in emulation, with 802.11w done in software
+  ([the proof](firmware-arm/emulator/karotz/wpa3); proposed upstream, not yet
+  tried on a real Karotz). Since 16 November 2026, real Karotz are adopted with
   their own key ([issue #167](https://github.com/ClaraVnk/nabaztag/issues/167)).
 
 Both are supported **only through Le Terrier, and so through the HACS
 integration** — not in the Home Assistant add-on. Nobody here owns a v1 or a
 Karotz: they were built from the protocols and the code of the projects that
-ran them, and proven in emulation; the Karotz was then proven by its first
+ran them, and proven in emulation; both were then proven by their first
 owners. Neither can be tested on real hardware at home, which is what the
 local add-on would need. If you have a v1, the Terrier is the way in, and your
 feedback is what takes it out of beta.

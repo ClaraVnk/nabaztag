@@ -37,6 +37,30 @@ ARMv4T instruction set (`qemu-arm -cpu arm926`: qemu's own vdso faults on
 `ti925t`). The client's build checks those two by other means
 (`llvm-readelf -A`, `strings`).
 
+## On LapinLibre instead of OpenKarotz
+
+[LapinLibre](https://github.com/sweetlilmre/LapinLibre) (MIT) is a free Karotz
+firmware with an OpenKarotz-compatible web API. `Containerfile.lapinlibre`
+is the same simulated Karotz on LapinLibre's own `cgi-bin` and web library
+(pinned by commit), the daemons behind D-Bus answered by
+`stubs/dbus-send-lapinlibre` as LapinLibre's own tests answer them, sounds
+played by the same recorder under LapinLibre's player's name
+(`karotz-player`).
+
+```sh
+KAROTZ_OS=lapinlibre NABAZTAG_KAROTZ=$PWD/karotz sh <terrier checkout>/karotz/proof/run.sh
+```
+
+Measured 2026-11-17: the Terrier's whole scenario passes on both. Two
+differences it found:
+
+- the ears: for "left 3, right 12" OpenKarotz asks the ears daemon for
+  `move 12 … 3 …`, LapinLibre for `move 3 … 12 …`. One of them has a real
+  Karotz's ears the wrong way round; only a real Karotz can tell;
+- LapinLibre answers a request made while another holds the rabbit with
+  `"the rabbit is busy with another request: try again"` where OpenKarotz
+  waits.
+
 ## Next: the whole Karotz
 
 The rabbit's own kernel and root filesystem on an emulated S3C24xx board.

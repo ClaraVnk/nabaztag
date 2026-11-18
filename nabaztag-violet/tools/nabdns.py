@@ -50,14 +50,24 @@ def cks(d):
 
 
 def parse_qname(data, off):
-    labels = []
+    """The question's name and the offset after it, or (None, off) for a
+    malformed one: a compression pointer, a label past the end, a name past
+    255 bytes. A bad query used to raise IndexError and kill the daemon."""
+    labels, total = [], 0
     while True:
-        l = data[off]
-        if l == 0:
+        if off >= len(data):
+            return None, off
+        n = data[off]
+        if n == 0:
             off += 1
             break
-        labels.append(data[off + 1:off + 1 + l])
-        off += 1 + l
+        if n & 0xC0 or off + 1 + n > len(data):
+            return None, off
+        total += n + 1
+        if total > 255:
+            return None, off
+        labels.append(data[off + 1:off + 1 + n])
+        off += 1 + n
     return b".".join(labels), off
 
 
@@ -96,6 +106,8 @@ while time.time() < deadline:
         continue
     txid = dns[0:2]
     qname, off = parse_qname(dns, 12)
+    if qname is None or len(dns) < off + 4:
+        continue
     qtype = struct.unpack("!H", dns[off:off + 2])[0]
     if qname.lower() != QNAME.lower() or qtype != 1:  # only NAME / A
         continue
