@@ -1,0 +1,18 @@
+# Builds LapinLibre (Karotz firmware, sweetlilmre/LapinLibre) from our fork's
+# wpa3 branch: WPA3 = SAE + 802.11w on the RT73 (nabaztag #178, upstream
+# LapinLibre#1). On Ubuntu 24.04, the host upstream builds and tests on: an
+# exception to our Alpine-or-Rocky rule, asked by Clara (2026-11-19, "fais
+# ubuntu on sera sûr que ça marche"). Only the build host: nothing of Ubuntu
+# reaches the rabbit, which runs LapinLibre's own Buildroot system.
+FROM docker.io/library/ubuntu:24.04
+ARG LL_REPO=https://github.com/ClaraVnk/LapinLibre.git
+ARG LL_COMMIT=3da1370
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \
+ && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
+ && cd /ll && bash scripts/host-prereqs.sh --install && rm -rf /var/lib/apt/lists/*
+WORKDIR /ll
+# The work tree (downloads, Buildroot output) on the volume: a rebuild redoes
+# only what changed.
+ENV FORCE_UNSAFE_CONFIGURE=1 LAPINLIBRE_WORK=/work/ll
+# Every stage, the tests included; the key is copied to the /work volume.
+CMD ["sh", "-c", "./build.sh && rm -rf /work/usbkey && cp -r /work/ll/out/usbkey /work/usbkey && echo BUILD-OK"]
