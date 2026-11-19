@@ -222,6 +222,24 @@ for the whole scenario, about 2 MB in two minutes.
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
 
+### A long press that listens, and the Wi-Fi line
+
+`--long-press echo` maps the owner's long press to "Écoute-toi"; with the
+long-press scenario the head is held at 120 s and the verdict shows what the
+microphone recorded after a real press, chime included (2026-11-19: 0 bytes
+on two real rabbits, where `--api listen` took 12 KB). With a runtime built
+from this repo (bytecode/patch_wifi_in_session.py) and a Terrier that flips
+`xmpp-wifi`, the Terrier's log also has `wifi` once per connection.
+
+```sh
+cd firmware-arm/emulator
+tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
+    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/lp \
+    --scenario scenarios/vm/xmpp-longpress.txt --long-press echo
+#   control (Terrier before the fix): microphone: stopped after 0 blocks
+#   fix: mic: <mac> captured N bytes of audio
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
