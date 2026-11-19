@@ -116,6 +116,7 @@ PY
   # `|| true`: under pipefail a grep with nothing to show ended the script
   # after the first scenario (2026-11-19).
   grep -E '^\[.*FAIL' "$WORK/$s/run.log" | head -3 | sed 's/^/       /' || true
+  [ "$status" = PASS ] || tail -3 "$WORK/$s/run.log" | sed 's/^/       /'
   [ "$status" = PASS ] && [ "${verdict#ok}" != "$verdict" ] || ok=0
 done
 [ "$ok" = 1 ]
