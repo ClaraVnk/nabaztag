@@ -10,7 +10,7 @@ ARG LL_COMMIT=3da1370
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \
  && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
  && cd /ll && bash scripts/host-prereqs.sh --install \
- && apt-get install -y --no-install-recommends iproute2 shellcheck busybox \
+ && apt-get install -y --no-install-recommends iproute2 shellcheck busybox qemu-user-static \
  && ln -s /bin/busybox /usr/local/bin/usleep && rm -rf /var/lib/apt/lists/*
 # iproute2, shellcheck and usleep: the tests call them (tests/, shutil.which
 # and ["ip", ...]) but host-prereqs.sh does not install them; without usleep
