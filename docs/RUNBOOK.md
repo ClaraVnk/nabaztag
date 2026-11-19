@@ -103,6 +103,7 @@ firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/N
 make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
 make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
 make -C firmware-arm/tests tls-interop-chacha   # the same, ChaCha20-Poly1305 only (tls_chacha_only)
+make -C firmware-arm/tests CFLAGS="-Os -g -std=c99 -Wall -Wextra -Werror -pedantic" TNFLAGS="-Os -g -std=c99 -w"   # the same at -Os, as opt_size_crypto compiles the crypto (2026-11-19)
 BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.1.0: an ASan READ (review S-4)
 FIRSTCUT=1 make -C firmware-arm/tests vm_strcmp # S-4's first cut: bounded, and "md5-sess\0" no longer equals "md5-sess" (the 2026-11-18 bind loop)
 make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
@@ -288,6 +289,43 @@ tools/ie-walk-proof.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-1: the element wa
 tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and without ccmp_no_probation
 NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-6: who may change the server
 # the control: the base image's Nab.elf (before config_presence) takes the stranger's server
+# 2026-11-19: a press of the head arms a minute (config-server-head: the save 30 s
+# after the press is taken; config-server-head-late: 70 s after, refused)
+NO_BUILD=1 tools/noserver-proof.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # boot_noserver: the belly with the Wi-Fi up and no warren
+# the control: the image before the step shows amber and green only (its refused run FAILs)
+```
+
+**The two flash levers** (`naboot-1.2.1.0-lean-tel` = `-tel` with
+`opt_size_crypto` and `tls_chacha_only`, 2026-11-19; the numbers in
+`firmware-arm/docs/FLASH-MAP.md` and `SECURITY-FINDINGS-2026-11.md`, O-1 and O-2).
+The emulator takes both steps (`emu-steps.py` passes them, its Makefile
+reads them off the patched tree: AES-GCM compiled out, the crypto objects
+at -Os), so the lean emulator binds its session on the one suite the lean
+image offers. The control is `-tel`, every proof run on both:
+
+```sh
+cd firmware-arm/emulator
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-tel) -t emu-1210-ctl ../..
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-lean-tel) -t emu-1210-lean ../..
+# the XMPP session bound, a sound inside it (res:), on each
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210-lean --elf ../bin/naboot-1.2.1.0-lean-tel/Nab.elf --out /tmp/lean-bind \
+    --speak-at 110 --speak "Bonjour"
+# the HTTPS boot through Caddy (ChaCha20-Poly1305 alone offered, Go's TLS 1.3 takes it):
+# one bootloader for both, compiled by hand with the proof's host, since the levers change no bytecode
+tools/boot-https-proof.sh chain /tmp/https
+podman build -f Containerfile --build-arg BOOT_ANCHOR_FILE=proof_boot_anchor.der \
+    --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-lean-tel),tls_certs,boot_https -t emu-1210-lean-https ../..
+NAB_BOOT_HTTPS_HOST=warren.test ../tools/mods-matrix.py naboot-1.2.1.0-tel --keep /tmp/stage
+python3 ../tools/mtl_comp.py /tmp/stage/naboot-1.2.1.0-tel/mtl/boot/boot.0.0.0.13.mtl -o /tmp/boot-proof.bc
+tools/boot-https-proof.sh run /tmp/https --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210-lean-https --elf /tmp/boot-proof.bc
+# config pages, the reset's server, presence, no-warren: NO_BUILD=1 TAG=emu-1210-lean, as above
+# constant time at -Os (tools/cost/ct-levers.sh, qemu-arm): X25519 on three scalars, Ed25519
+# verification on three messages, the three tag compares on three tags; equal counts per group
+podman run --rm -v $PWD/../..:/m:Z -w /m/firmware-arm/tools/cost localhost/nab-qemu bash ct-levers.sh
+# the vectors under qemu-arm at -Os (bench.c checks each result): run.sh's header for the inputs
+OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short ed_long p256 aes_block_cmac cp_1k ecdsa_p256 rsa2048_pss
 ```
 
 **The XMPP session, bound, on every release** (2026-11-18: 1.2.1.0's first

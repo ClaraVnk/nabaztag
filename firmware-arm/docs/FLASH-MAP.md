@@ -284,3 +284,33 @@ first; neither goes into a release without it.
 
 The CRLF sweep (C-1) is byte-neutral: the `Nab.bin` of `naboot-1.2.1.0`
 built before and after it, same marks, is identical.
+
+## Naboot 1.2.1.0-lean-tel: the two levers in one test image (2026-11-19)
+
+`naboot-1.2.1.0-lean-tel` is `-tel` plus `opt_size_crypto` and
+`tls_chacha_only`, for Nabazprout after the emulator. Built unsigned on the
+dev VM with `BUILD_MARK=2611191200 BOOT_FLOOR=202611191200`; `-tel` is the
+control of every proof. All three carry the day's two bootloader changes
+(`config_presence` as a press within a minute, `boot_noserver`: +256 bytes
+of bytecode, 21,760 → 22,016).
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `naboot-1.2.1.0` (release) | 121 808 (+256) | 5 168 |
+| `naboot-1.2.1.0-tel` (the control) | 122 820 (+256) | 4 156 |
+| `naboot-1.2.1.0-lean-tel` (-tel + both levers) | 117 384 (-5 436) | 9 592 |
+
+Where the 5,436 bytes come from (`tools/flash-map.py`, -tel → -lean-tel):
+TLS, X.509, RSA, ECDSA, P-256 20,493 → 17,455 (-3,038: `-Os` on the files,
+AES-GCM and its GHASH out); WPA2/WPA3 9,896 → 9,052 (-844: SAE, SHA-256,
+CMAC, AES at `-Os`); TweetNaCl 5,561 → 4,795 (-766); other 12,595 → 11,951
+(-644: nab_rng, nab_sig, hash.c). The radio, the USB host, the VM and the
+audio are byte-identical: those are the files `-Os` broke on hardware
+three times (above), and they stay at `-O1`.
+
+What the test image proves before a rabbit sees it is in
+`SECURITY-FINDINGS-2026-11.md` (the section of 2026-11-19): the vectors
+under qemu-arm at `-Os`, equal instruction counts on every secret
+(`tools/cost/ct-levers.sh`), the host suites at `-Os`, and the emulator
+proofs against the production Terrier image and a Caddy, each with `-tel`
+as the control.

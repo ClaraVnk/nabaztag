@@ -12,7 +12,7 @@ tick 50
 stop 130000
 
 at 5000 button down
-at 5500 button up
-at 75500 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
+at 7000 button up
+at 77000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
 at 125000 expect-mode master
 at 129000 expect-no-reset

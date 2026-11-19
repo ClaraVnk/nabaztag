@@ -280,19 +280,27 @@ read only.
   keeps the phone flow: arguments count on the save (`/b.htm`) only, and a
   save that *changes* the server URL -- compared to the one the page
   offered, so Violet's or an empty one reading as the factory server is not
-  a change -- is taken only while the head button is held, the proof of
-  presence `owner_unlock` already asks of an unsigned upload; otherwise
-  nothing is saved and the error page answers. The Wi-Fi fields need no
-  button. The setup page says so under the field (+35 bytes gzipped).
+  a change -- is taken only within a minute of a press of the head button
+  in config mode (a latch, `headarm`, armed by the config-mode loop on
+  every pass that sees the button down, cleared by the server-changing
+  save; HEAD_ARM = 60 s), the proof of presence `owner_unlock` already
+  asks of an unsigned upload; otherwise nothing is saved and the error
+  page answers. The first cut (2026-11-18) wanted the head *held* while
+  the save arrived, which one person with a phone cannot do comfortably;
+  Clara asked for the press on 2026-11-19. The Wi-Fi fields need no
+  button. The setup page says so under the field.
   Proof: `../emulator/tools/config-presence.sh` on the built bootloader --
   `config-server-nohead` (a stranger: the error page, the rabbit stays its
   own access point -- `expect-mode master`, since RUN is the state of a
   station and of the access point alike -- and the page keeps its
-  server), `config-server-head` (the owner, head held: taken, a station in
-  RUN), `config-wifi-nohead` (the ordinary save: taken, a station in RUN);
-  the control is the base 1.2.1.0 image, whose nohead run takes the server
-  and joins. One lesson on the way: Metal's `if` jumps on 0 only, nil is
-  true (`OPelse`), so `needhead` answers an int both ways.
+  server), `config-server-head` (the owner: a press, the save 30 s later,
+  taken, a station in RUN), `config-server-head-late` (the same press, the
+  save 70 s later: refused, config mode), `config-wifi-nohead` (the
+  ordinary save: taken, a station in RUN); the control is the base
+  1.2.1.0 image, whose nohead run takes the server and joins, and the
+  hold-during-save cut, which fails `config-server-head` (the head is up
+  when the save arrives). One lesson on the way: Metal's `if` jumps on 0
+  only, nil is true (`OPelse`), so `needhead` answers an int both ways.
   `../emulator/tools/config-pages.sh` and `../emulator/tools/default-server-proof.sh` still pass.
 
 - **S-7, `tlsIn` dropped silently what the buffer did not take (Low,
@@ -340,7 +348,113 @@ read only.
   (`tls_chacha_only`, mode `naboot-1.2.1.0-chacha`; `nab_tls.c` under
   `NAB_TLS_CHACHA_ONLY`, `make tls-interop-chacha`): measurement modes for a
   hardware test, in no release. `-Os` for the whole image failed on
-  hardware three times (FLASH-MAP.md). Sizes in FLASH-MAP.md.
+  hardware three times (FLASH-MAP.md). Sizes in FLASH-MAP.md. Both are in
+  the test image `naboot-1.2.1.0-lean-tel` since 2026-11-19: the next
+  section.
 
 - **O-3, byte-loop `strchr`/`memmove`/`memcmp`**: not done; nothing proves
   them equal to newlib's on this hardware yet, and 1.2.1.0 has room.
+
+## The two levers in one test image, `naboot-1.2.1.0-lean-tel` (2026-11-19)
+
+`-tel` plus `opt_size_crypto` (O-1) and `tls_chacha_only` (O-2), 117,384
+bytes against 122,820 (FLASH-MAP.md), built for Nabazprout and proven
+first in the emulator and under qemu-arm, each proof with `-tel` as the
+control. The rule was no compromise on security: what follows is what was
+measured, with the firmware's own compiler (gcc-arm-none-eabi 12.2.1 of the
+build image, `tools/cost/Containerfile.release`) unless said otherwise.
+
+**Does `-Os` change a secret-dependent path?** `tools/cost/ct-levers.sh`
+builds the firmware's X25519 (TweetNaCl `crypto_scalarmult`, the adoption
+key exchange), its Ed25519 verification (`nab_verify_sig`, the update
+gate) and the three tag compares of the warren session (`ct_eq` of
+nab_tls.c, `chachapoly`'s, `crypto_verify_32`) with the firmware's flags at
+`-O1` and `-Os`, runs each under qemu-arm on three inputs of equal length
+and counts the instructions executed:
+
+| case | -O1 | -Os |
+|---|---|---|
+| X25519, scalar a / b / c | 63 635 085 / 63 642 565 / 63 638 144 | 66 446 255 / 66 453 735 / 66 449 313 |
+| Ed25519 verify, message a / b / c | 214 439 355 / 214 446 007 / 214 437 123 | 223 883 602 / 223 890 254 / 223 881 370 |
+| `ct_eq`, tag wrong in byte 0 / byte 15 | 245 / 245 | 257 / 257 |
+| `chachapoly` decrypt, tag wrong in byte 0 / 15 | 19 989 / 19 989 | 20 100 / 20 100 |
+| `crypto_verify_32`, wrong in byte 0 / 31 | 429 / 429 | 461 / 461 |
+
+The three compares cost the same wherever the difference sits, at both
+levels; their disassembly (printed by the script) has one conditional
+branch each, the loop's, and the result is built with `negs/adcs` or a
+shift, never a branch on a byte. The `eq` case of each differs from the
+two others by the harness's own xor that makes the wrong tag and, for
+`chachapoly`, by the decryption that only a right tag reaches (26,540
+against 19,989): a branch on the *result*, which is public.
+
+X25519 and Ed25519 differ by a few thousand instructions between inputs,
+and `blkdiff.py` puts every one of them in libgcc's `__muldi3` (the
+64-bit multiply TweetNaCl's `i64` field arithmetic calls on an ARM7TDMI
+in Thumb): +7,480 between scalars a and b at `-O1` and the same +7,480 at
+`-Os`; +6,652 between messages a and b at both levels. `-Os` adds nothing:
+the dependence is libgcc's and is in every image since the first, at
+`-O1`. It is noted here as a finding of its own (the ARM7TDMI's multiplier
+is data-dependent in cycles too, as `tools/cost/ct.sh` says); the remote
+measurement it would take, over Wi-Fi, against a 2-8 s exchange, is not a
+threat this device faces, and TweetNaCl is what the flash affords.
+
+**The compiler is part of the verdict.** The same `ct-levers.sh` in the
+Alpine image of `tools/cost/Containerfile` (gcc 15.1.0) showed `sel25519`,
+TweetNaCl's constant-time swap, compiled at `-Os` into a `cmp; beq` on the
+swap bit -- the scalar's bit in X25519 -- while gcc 12.2's `-Os` keeps it
+branch-free (`ands/eors`, read in the lean image's `Nab.elf` too). A
+constant-time result holds for the compiler that built the image and no
+other, which is one more reason `firmware-arm/Dockerfile` pins bookworm by
+digest; a toolchain change reruns this.
+
+**The vectors at `-Os`, on ARM.** `tools/cost/run.sh` at `OPT=-Os` in the
+release image: X25519 (RFC 7748), Ed25519 verification on a 64-byte
+message and on the 105 KB runtime, SHA-512, P-256, AES-128 (as CMAC and
+the Wi-Fi use it), SHA-256, ChaCha20-Poly1305 on 1 KB and 16 KB records,
+ECDSA P-256, RSA-2048-PSS, each checked against its published answer,
+all right (`rc=0`), at `-O1` too.
+
+**The host suites at `-Os`.** `make -C firmware-arm/tests` with
+`CFLAGS=-Os ...` and `TNFLAGS="-Os ..."` (TweetNaCl at the level
+`opt_size_crypto` compiles it), under ASan and UBSan, in a Rocky 10
+container with Python 3.13: every suite, then `tls-interop`,
+`tls-interop-chacha` and `tls-cert` live against OpenSSL 3.5 and Python's
+ssl; the same at `-O1` first, as the control. All pass.
+
+**ChaCha20-Poly1305 alone, against what the servers offer.** The
+Terrier's PSK context sets no cipher list (`xmpp.py tls_context`:
+OpenSSL's TLS 1.3 default, which has TLS_CHACHA20_POLY1305_SHA256), and
+Go's TLS 1.3 in Caddy always offers it. Not assumed: the emulator of the
+lean image is built ChaCha-only too (`emulator/Makefile` reads
+`-DNAB_TLS_CHACHA_ONLY` off the patched tree, `nm rabbit-vm` finds no
+`gcm`/`ghash_*`; the first lean emulator still had them because the define
+was appended before `CFLAGS =` ran, and only the symbol count caught it),
+and against `ghcr.io/claravnk/terrier:latest`, realm
+`terrier.warren.test`, it adopts, exchanges its key, binds its XMPP
+session over TLS 1.3 PSK -- `1 challenge(s), 1 answer(s), 1 success`,
+as the control -- and plays the sound sent into the session (6,080 bytes
+to the player; the control 5,360). The Wi-Fi's CCMP is untouched:
+`aes128.c` and `cmac.c` stay, at `-Os`, and `make check`'s WPA2/WPA3
+scenarios run on them.
+
+**The HTTPS boot** (`boot-https-proof.sh`: kx.jsp and bc.jsp through a
+Caddy with a chain of the proof's own, then a rogue chain, then the same
+rabbit again), one hand-compiled bootloader pinned to the proof's host for
+both emulators since the levers change no bytecode: control and lean alike
+take 1 kx.jsp and 1 bc.jsp over TLS (`kx: agreed`, `&k=5&kt=19`), refuse
+the rogue chain with not one kx.jsp in the clear, and boot 3 skips the
+exchange (`&k=0`). The ChaCha-only ClientHello is what Caddy's Go TLS
+took. `config-pages.sh` (24 checks), `default-server-proof.sh`
+(`terrier.cyberloutre.fr/vl` from the release, `-tel` and `-lean-tel`),
+`config-presence.sh` and `noserver-proof.sh` pass on both images.
+
+Not run: `make -C firmware-arm/tests arm` in the build image stopped on
+its missing `net/` staging (the target has no prerequisite for it), and
+the ARM compile of the crypto at `-Os` is the lean image itself.
+
+**Verdict.** O-1 and O-2 hold in the emulator and under qemu-arm with the
+release compiler, without a weaker path: the test image goes to
+Nabazprout, signed by Clara, and neither lever enters a release before it
+has run there.
+

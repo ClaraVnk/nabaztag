@@ -10137,7 +10137,13 @@ def patch_boot_noserver(root: Path) -> None:
     mode is steady blue, the colours of adoption are steady, the runtime's
     opening states are one blue or amber or green belly LED
     (leds.mtl), its start a blue nose. While the Wi-Fi is down the old
-    pattern shows, so a Wi-Fi problem still looks like one.
+    pattern shows, so a Wi-Fi problem still looks like one -- and the boot
+    loop's own 20 s retry of the radio ("essayer un autre reseau") is left
+    as it is, so with a warren down the belly alternates: purple while
+    associated, the Wi-Fi steps during each retry (a third of the time in
+    the emulator, tools/noserver-proof.sh). Stopping that retry once the
+    network has answered is a change to Violet's recovery, for a day with a
+    rabbit on the bench.
 
     After kx_report, adoption_boot and boot_tls (the text it edits), before
     prune_unreachable. Idempotent.

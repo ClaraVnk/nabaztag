@@ -321,9 +321,15 @@ every beacon round, since the scan runs before the first timed event;
 parser elements the frame does not hold; the over-read is a few bytes past the frame, which only `make asan`
 sees, so `tools/ie-walk-proof.sh` builds the sanitised emulator with and
 without `ie_walk_bounds`. `tools/config-presence.sh` boots a built
-bootloader in config mode three ways (`scenarios/vm/config-server-*.txt`,
+bootloader in config mode four ways (`scenarios/vm/config-server-*.txt`,
 `config-wifi-nohead.txt`): a stranger's new server is refused, the owner's
-with the head held is taken, the ordinary save is unchanged.
+within a minute of a press of the head is taken, 70 s after the press it
+is refused, the ordinary save is unchanged. `tools/noserver-proof.sh`
+(2026-11-19) boots it three ways against the gateway -- no warren behind
+it, `tools/plain_warren.py`, no access point -- and reads the `led` lines:
+with the Wi-Fi up and the warren refusing, the nose is steady green and
+the belly breathes purple (`boot_noserver`); with a warren or without an
+access point, the amber and green steps as before.
 
 **Why a rabbit stays "connected" to an access point that has forgotten it,
 2026-11-08.** Two of the four needs-the-mains failures measured over JTAG

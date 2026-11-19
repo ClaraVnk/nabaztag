@@ -2,7 +2,9 @@
 #
 # Review S-6 (2026-11-18), the owner's side, as of 2026-11-19: a press of
 # the head in config mode, then the save with a new server within a minute
-# (30 s here), as the setup page says to do. The first cut wanted the head
+# (30 s here), as the setup page says to do. The press lasts 2 s: the
+# emulator's events land on whole seconds, and a 500 ms press was down and
+# up in the same instant, seen by no pass of the loop (2026-11-19). The first cut wanted the head
 # HELD while the save arrived. The save is taken, the rabbit leaves config
 # mode and joins the network, and the page written back to --eeprom names
 # the new server (tools/config-presence.sh checks it).
@@ -12,8 +14,8 @@ tick 50
 stop 120000
 
 at 5000 button down
-at 5500 button up
-at 35500 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
+at 7000 button up
+at 37000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
 at 115000 expect RUN
 at 115000 expect-mode managed
 at 119000 expect-no-reset

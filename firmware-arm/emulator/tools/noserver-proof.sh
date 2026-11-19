@@ -9,7 +9,9 @@
 #   noserver-refused  no warren behind the gateway: every connection is
 #                     refused. After kx.jsp and bc.jsp fail, the nose must be
 #                     steady green and the four belly LEDs breathe purple
-#                     (#vv00vv, many shades) for most of the time from 40 s on;
+#                     (#vv00vv, many shades) whenever it is associated from
+#                     40 s on (a third of the time: the boot loop still
+#                     re-tries the radio every 20 s, amber meanwhile);
 #   noserver-warren   tools/plain_warren.py answers: bc.jsp is served, the
 #                     bootloader hands over, no purple shade ever shows;
 #   noserver-noap     no access point: the Wi-Fi steps as before (amber),
@@ -94,7 +96,12 @@ try:
 except OSError:
     pass
 if name == "noserver-refused":
-    good = all(pct[l] >= 50 and nsh[l] >= 8 for l in belly) and 100 * green_nose_ms // span >= 50
+    # Violet's boot loop still re-initialises the radio 20 s after each
+    # association while the bytecode is not in ("essayer un autre reseau"),
+    # so the belly alternates: purple while associated, the Wi-Fi steps
+    # during the retry. Measured 2026-11-19: 37 % purple from 40 s on, 162
+    # shades; the control 0 %.
+    good = all(pct[l] >= 30 and nsh[l] >= 8 for l in belly) and 100 * green_nose_ms // span >= 30
     why = f"purple {pct} % of the time from {T0 // 1000} s, {nsh} shades, nose green {100 * green_nose_ms // span} %"
 elif name == "noserver-warren":
     good = served >= 1 and not any(shades.values()) and green_nose_ms == 0
@@ -106,7 +113,9 @@ print(("ok   " if good else "FAIL ") + why)
 PY
 )
   printf '%-6s %-18s %s\n' "$status" "$s" "$verdict"
-  grep -E '^\[.*FAIL' "$WORK/$s/run.log" | head -3 | sed 's/^/       /'
+  # `|| true`: under pipefail a grep with nothing to show ended the script
+  # after the first scenario (2026-11-19).
+  grep -E '^\[.*FAIL' "$WORK/$s/run.log" | head -3 | sed 's/^/       /' || true
   [ "$status" = PASS ] && [ "${verdict#ok}" != "$verdict" ] || ok=0
 done
 [ "$ok" = 1 ]
