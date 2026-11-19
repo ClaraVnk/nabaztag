@@ -272,6 +272,19 @@ podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
 podman run --rm karotz-wpa3     # control: not connected; patched: connected
 ```
 
+### LapinLibre, built here, and its key as an image
+
+`karotz/lapinlibre/build.sh` builds LapinLibre (our fork, `LL_COMMIT` in its
+Containerfile) in an Ubuntu container and runs its tests; `LL_STAGES=test`
+runs the tests alone on the built tree. `karotz/lapinlibre/binfmt-arm.sh`
+registers qemu-arm first. A commit that leaves the kernel alone reuses it
+(`LL_REUSE_UNCHANGED=1`).
+
+`karotz/lapinlibre/make-img.sh` turns the built key into
+`lapinlibre-<version>.img.xz` (one FAT32 partition, label LAPINLIBRE) for
+Raspberry Pi Imager or balenaEtcher: write it, edit `lapinlibre.txt` on the
+key, plug it into the Karotz.
+
 ### The three rabbits at once
 
 Every new rabbit feature is proven on the v1, the v2 and the v3:
