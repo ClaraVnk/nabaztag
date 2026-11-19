@@ -19,6 +19,13 @@ here = Path(__file__).resolve().parent
 mods = (here / "../../apply-mods.py").read_text()
 run = (here / "../run.sh").read_text()
 emu = re.search(r"^STEPS=(\S+)", run, re.M).group(1).split(",")
+# The two flash levers (2026-11-19): not in run.sh's default list, but the
+# emulator's Makefile reads them off the patched tree (tls_chacha_only
+# compiles AES-GCM out, opt_size_crypto puts the crypto objects at -Os), so a
+# mode that carries them is emulated with them. Without this the emulator of
+# naboot-1.2.1.0-lean-tel bound its session on a suite the image no longer
+# offers.
+emu += ["opt_size_crypto", "tls_chacha_only"]
 mode = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 m = re.search(r'"%s":\s*"([^"]+)"' % re.escape(mode), mods)
 if not m:

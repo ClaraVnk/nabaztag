@@ -50,6 +50,8 @@ class ModeTable(unittest.TestCase):
         self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-tel", ["dcc_telemetry"])
         self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-oscrypto", ["opt_size_crypto"])
         self.assertVariant("naboot-1.2.1.0", "naboot-1.2.1.0-chacha", ["tls_chacha_only"])
+        # The test image of 2026-11-19: -tel plus both levers, nothing else.
+        self.assertVariant("naboot-1.2.1.0-tel", "naboot-1.2.1.0-lean-tel", ["opt_size_crypto", "tls_chacha_only"])
 
     def test_1_2_0_3_is_1_2_0_1_plus_the_review(self):
         self.assertVariant("naboot-1.2.0.1", "naboot-1.2.1.0", [

@@ -16,6 +16,7 @@
 #          -t emu-boothttps -f firmware-arm/emulator/Containerfile .
 #   3. tools/boot-https-proof.sh run <dir> --terrier <image> --bytecode <runtime.hybrid> \
 #        --emulator <image> --elf ../bin/naboot-1.2.0.0/Nab.elf
+#      (--elf <boot.bc> takes a bootloader compiled by hand instead, see below)
 #
 # run boots a rabbit out of the box twice, then the first one again: against
 # the right chain (the key
@@ -97,8 +98,15 @@ rm -rf "$OUT/data"/* "$OUT/host"/*.eeprom "$OUT"/vm-*.log "$OUT"/caddy-*.log
 mkdir -p "$OUT/data/bytecode"
 cp "$BYTECODE" "$OUT/data/baseline.hybrid"
 cp "$BYTECODE" "$OUT/data/bytecode/baseline-tls.hybrid"
-cp "$ELF" "$OUT/host/Nab.elf"
-[ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin"
+# --elf takes a boot.bc too (tools/mtl_comp.py on the staged bootloader with
+# NAB_BOOT_HTTPS_HOST=warren.test): the levers of 2026-11-19 change the C
+# and not the bootloader, so one bootloader serves the control and the lean
+# emulator, and no proof build of the firmware is needed.
+case "$ELF" in
+  *.bc) cp "$ELF" "$OUT/host/boot.bc" ;;
+  *) cp "$ELF" "$OUT/host/Nab.elf"
+     [ -f "${ELF%.elf}.bin" ] && cp "${ELF%.elf}.bin" "$OUT/host/Nab.bin" ;;
+esac
 
 podman pull -q "$TERRIER" >/dev/null 2>&1 || true
 podman rm -f "$NAME" >/dev/null 2>&1 || true
@@ -149,7 +157,7 @@ boot() {  # boot <label> <eeprom-name>
     cd /build/emulator
     cp /r/scenarios/vm/*.txt scenarios/vm/
     cp /r/src/gw.c /r/src/gw.h /r/src/vm_main.c src/ && cp /r/Makefile Makefile
-    test -f /out/rabbit-vm.boot || { python3 tools/bootbc.py /host/Nab.elf -o obj/boot.bc > /out/bootbc.log 2>&1 && make -s NABGCC=/build/nabgcc BYTECODE=obj/boot.bc vm >/out/make-boot.log 2>&1 && cp rabbit-vm /out/rabbit-vm.boot; }
+    test -f /out/rabbit-vm.boot || { { test -f /host/boot.bc && mkdir -p obj && cp /host/boot.bc obj/boot.bc || python3 tools/bootbc.py /host/Nab.elf -o obj/boot.bc > /out/bootbc.log 2>&1; } && make -s NABGCC=/build/nabgcc BYTECODE=obj/boot.bc vm >/out/make-boot.log 2>&1 && cp rabbit-vm /out/rabbit-vm.boot; }
     test -f /host/$2.eeprom || python3 mkconf.py --ssid Terrier --security open --server $HOST/vl --ip 10.0.0.42 --gateway 10.0.0.1 --dns 10.0.0.1 -o /host/$2.eeprom >/dev/null
     /out/rabbit-vm.boot scenarios/vm/xmpp-tls.txt --eeprom /host/$2.eeprom --warren 127.0.0.1 --port80 $HTTP --port443 $TLS --realtime $CRYPTO" > "$OUT/vm-$1.log" 2>&1
   echo "== boot $1: vm exit $?  $(grep -a 'final state' "$OUT/vm-$1.log" | head -1)"

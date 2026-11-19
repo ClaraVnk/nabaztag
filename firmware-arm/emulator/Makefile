@@ -86,6 +86,30 @@ VM += ../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab
 VM += ../crypto/nab_sha384.c ../crypto/chachapoly.c $(NABGCC)/src/net/nab_https_vm.c
 HAS_ECDSA = 1
 endif
+# The two flash levers of Naboot 1.2.1.0-lean-tel, read off the tree's
+# Makefile as apply-mods.py leaves it, so the emulator runs the TLS the image
+# runs: tls_chacha_only compiles AES-GCM out of nab_tls.c (an emulator built
+# without the define would bind its XMPP session on a suite the rabbit no
+# longer offers -- a proxy that lies), and opt_size_crypto puts the pure
+# crypto objects at -Os. Neither is in run.sh's default STEPS; emu-steps.py
+# passes them through for the modes that carry them (2026-11-19).
+ifneq ($(shell grep -c -- -DNAB_TLS_CHACHA_ONLY $(NABGCC)/Makefile 2>/dev/null),0)
+# The define itself joins CFLAGS below, after `CFLAGS =` has run: appended
+# here it was overwritten, and the first lean emulator still had GCM in it
+# (nm rabbit-vm | grep gcm: 3, 2026-11-19 -- checked by content, not by rc).
+CHACHA_ONLY = 1
+# tls_certs copies net/chachapoly.h into the tree; a step list without it
+# (this one) gets the header the way the others come, from ../crypto.
+CRYPTO_H += obj/include/net/chachapoly.h
+ifeq ($(filter ../crypto/chachapoly.c,$(VM)),)
+VM += ../crypto/chachapoly.c
+endif
+endif
+ifneq ($(shell grep -c '^# opt_size_crypto' $(NABGCC)/Makefile 2>/dev/null),0)
+CRYPTO_OS = p256 sae sha256 cmac aes128 nab_kx nab_kx_vm nab_tls nab_tls_vm nab_https_vm \
+            nab_rng nab_bn nab_rsa nab_ecdsa nab_x509 nab_sha384 chachapoly tweetnacl nab_sig hash
+$(addsuffix .o,$(addprefix obj/,$(CRYPTO_OS))): CFLAGS += -Os
+endif
 # The tree's own copy when the container staged one (and sign_open_alias
 # patched it), the vendored one otherwise.
 TWEETNACL ?= $(firstword $(wildcard $(NABGCC)/src/crypto/tweetnacl.c) ../upstream/tweetnacl/tweetnacl.c)
@@ -111,6 +135,9 @@ CFLAGS += -Wno-unused-but-set-variable -Wno-return-type -Wno-pointer-sign
 CFLAGS += -Wno-missing-field-initializers -Wno-unused-function
 ifdef HAS_ECDSA
 CFLAGS += -DNAB_HAS_ECDSA
+endif
+ifdef CHACHA_ONLY
+CFLAGS += -DNAB_TLS_CHACHA_ONLY
 endif
 
 SAN ?=

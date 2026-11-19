@@ -1,0 +1,19 @@
+# The cost and constant-time harness with the RELEASE compiler: the firmware
+# build image (Debian bookworm, gcc-arm-none-eabi 12.2, pinned by digest in
+# firmware-arm/Dockerfile) plus qemu-arm. Containerfile beside this one is
+# Alpine with gcc 15: on 2026-11-19 its -Os turned TweetNaCl's sel25519 into
+# a branch on the swap bit (cmp/beq), while gcc 12.2's -Os kept it
+# branch-free -- the compiler is part of the image, and a constant-time
+# verdict holds for the compiler that built the image, no other.
+#
+#   podman build -t localhost/nab-qemu-release --build-arg BASE=localhost/nab-firmware-build:naboot-1.2.1.0-lean-tel \
+#       -f firmware-arm/tools/cost/Containerfile.release .
+#   podman run --rm -v $PWD:/m:Z -w /m/firmware-arm/tools/cost localhost/nab-qemu-release bash ct-levers.sh
+ARG BASE=localhost/nab-firmware-build:naboot-1.2.1.0
+FROM ${BASE}
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      qemu-user \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /m
+ENTRYPOINT []
+CMD ["bash"]

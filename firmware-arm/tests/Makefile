@@ -12,6 +12,10 @@
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g -std=c99 -Wall -Wextra -Werror -pedantic
+# Third-party TweetNaCl's own flags (it does not survive our warning policy):
+# -O1 as the firmware's, TNFLAGS="-Os -g -std=c99 -w" for a run at the level
+# opt_size_crypto compiles it at (2026-11-19).
+TNFLAGS ?= -O1 -g -std=c99 -w
 SAN     ?= -fsanitize=address,undefined -fno-omit-frame-pointer
 INC     := -I. -I../crypto -Inet
 SRC     := ../crypto/aes128.c
@@ -47,7 +51,7 @@ $(TN_DIR)/tweetnacl.c: ../upstream/tweetnacl/tweetnacl.c ../apply-mods.py
 # that way either. The sanitizers still apply: those are what matter here.
 sign_open: $(TN_DIR)/tweetnacl.c
 	@echo "== crypto_sign_open called with one buffer, as nab_sig.c calls it"
-	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TN_DIR) -c -o /tmp/tn.o $(TN_DIR)/tweetnacl.c
+	@$(CC) $(TNFLAGS) $(SAN) -I$(TN_DIR) -c -o /tmp/tn.o $(TN_DIR)/tweetnacl.c
 	@$(CC) $(CFLAGS) $(SAN) -I$(TN_DIR) -o /tmp/t_sign_open \
 		test_sign_open.c /tmp/tn.o && /tmp/t_sign_open
 
@@ -101,7 +105,7 @@ $(TNKX_DIR)/tweetnacl.c: ../upstream/tweetnacl/tweetnacl.c ../apply-mods.py
 
 kx: $(TNKX_DIR)/tweetnacl.c $(CRYPTO_H)
 	@echo "== the adoption key exchange, against OpenSSL"
-	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TNKX_DIR) -c -o /tmp/tn_kx.o $(TNKX_DIR)/tweetnacl.c
+	@$(CC) $(TNFLAGS) $(SAN) -I$(TNKX_DIR) -c -o /tmp/tn_kx.o $(TNKX_DIR)/tweetnacl.c
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -I$(TNKX_DIR) -o /tmp/t_kx test_kx.c \
 		../crypto/nab_kx.c ../crypto/sha256.c /tmp/tn_kx.o && /tmp/t_kx
 
@@ -159,7 +163,7 @@ rng: $(CRYPTO_H)
 # vectors_pki.py had OpenSSL make, every tampered variant refused.
 pki: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
 	@echo "== certificates: SHA-384, RSA, ECDSA P-256/P-384, X.509 chains"
-	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TN_DIR) -c -o /tmp/tn_pki.o $(TN_DIR)/tweetnacl.c
+	@$(CC) $(TNFLAGS) $(SAN) -I$(TN_DIR) -c -o /tmp/tn_pki.o $(TN_DIR)/tweetnacl.c
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -o /tmp/t_pki test_pki.c ../crypto/nab_bn.c \
 		../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c ../crypto/nab_sha384.c \
 		../crypto/sha256.c /tmp/tn_pki.o && /tmp/t_pki
@@ -174,7 +178,7 @@ chachapoly: $(CRYPTO_H)
 # must be refused. Needs openssl and python3 with cryptography.
 tls-cert: $(TN_DIR)/tweetnacl.c $(CRYPTO_H)
 	@echo "== TLS 1.3 with a certificate, against openssl s_server"
-	@$(CC) -O1 -g -std=c99 -w $(SAN) -I$(TN_DIR) -c -o /tmp/tn_tlsc.o $(TN_DIR)/tweetnacl.c
+	@$(CC) $(TNFLAGS) $(SAN) -I$(TN_DIR) -c -o /tmp/tn_tlsc.o $(TN_DIR)/tweetnacl.c
 	@$(CC) $(CFLAGS) $(SAN) $(INC) -DNAB_TLS_CERTS -o /tmp/t_tls_cert_client tls_cert_client.c \
 		../crypto/nab_tls.c ../crypto/sha256.c ../crypto/cmac.c ../crypto/chachapoly.c \
 		../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c \
