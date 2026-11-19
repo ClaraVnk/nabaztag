@@ -13,8 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /ll
 # The work tree (downloads, Buildroot output) on the volume: a rebuild redoes
 # only what changed.
-# TAR_OPTIONS: rootless podman maps only a range of uids; a source archive
-# owned by uid 819312 (liblockfile, 2026-11-19) made tar fail to chown.
-ENV FORCE_UNSAFE_CONFIGURE=1 LAPINLIBRE_WORK=/work/ll TAR_OPTIONS=--no-same-owner
+# As an ordinary user, the way upstream builds: as root, tar restores each
+# archive's owner, and rootless podman cannot map uid 819312 (liblockfile,
+# 2026-11-19). build.sh runs it with --userns=keep-id, so /work is ours.
+RUN useradd -m -u 1000 builder 2>/dev/null || true; chown -R 1000:1000 /ll
+USER 1000
+ENV LAPINLIBRE_WORK=/work/ll
 # Every stage, the tests included; the key is copied to the /work volume.
 CMD ["sh", "-c", "./build.sh && rm -rf /work/usbkey && cp -r /work/ll/out/usbkey /work/usbkey && echo BUILD-OK"]
