@@ -106,14 +106,21 @@ try:
     text = body.decode("latin-1")
     assert text.startswith("v([") and text.endswith("])")
     a, scan = json.loads(re.sub(r",\s*\]", "]", "[" + text[2:-1] + "]"))
-    ok = (len(a) == 13 and re.fullmatch(r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", a[0])
+    ok = (len(a) in (13, 14) and re.fullmatch(r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", a[0])
           and a[10] in ("0", "1") and a[11] in ("0", "1")
           and all(len(n) in (4, 5) for n in scan))
-    why = f"13 values, MAC {a[0][-5:]}, {len(scan)} network(s) scanned"
+    why = f"{len(a)} values, MAC {a[0][-5:]}, {len(scan)} network(s) scanned"
 except Exception as e:
     ok, why = False, f"not the v([...],[...]) call: {e}"
 check("v.js", head is not None and "Content-Type: text/javascript" in head
       and "Content-Encoding" not in head and ok, why)
+# boot_diag (2026-11-19): the flash's diagnostic line is v.js's 14th value
+# and a.htm has the block it fills.
+diag = os.environ.get("EXPECT_DIAG")
+if diag:
+    got = a[13] if ok and len(a) > 13 else None
+    check("v.js", got == diag, f"carries the diagnostic line {(got or '')[:40]!r}...")
+    check("a.htm", b"id=g" in page, "has the Diagnostic block")
 want = os.environ.get("EXPECT_SERVER")
 if want:
     got = a[3] if ok else None

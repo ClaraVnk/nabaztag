@@ -9,6 +9,8 @@
 #   1 noserver-refused: nothing answers at 10.0.0.1:8080. Byte 1024 of the
 #     flash must then hold a line "<1|2> t<s> W... g.. b.. u.. D<sent>/<offers>/
 #     <acks> I10.0.0.42 G10.0.0.1 N10.0.0.1".
+#   then config-pages.sh on that flash: v.js's 14th value is the line, and
+#     a.htm has the Diagnostic block;
 #   2 noserver-warren, on the flash the first boot left: plain_warren serves
 #     the bytecode; its log must show &dg= on bc.jsp, and byte 1024 must be
 #     empty afterwards.
@@ -60,6 +62,11 @@ echo "       last lines: $(tail -3 "$WORK/noserver-refused.log" | tr '\n' '|' | 
 if [[ "$l" =~ ^[12]\ t[0-9]+\ W.*\ g[0-9a-f]+.*\ b[0-9a-f]+\ u[0-9a-f]+\ D[0-9]+/[0-9]+/[0-9]+\ I10\.0\.0\.42\ G10\.0\.0\.1\ N10\.0\.0\.1$ ]]; then
   echo "PASS   the failure left its line in flash"
 else echo "FAIL   no diagnostic line, or not its shape"; ok=0; fi
+# The setup page shows it (gzip_setup with boot_diag: v.js's 14th value).
+cp "$WORK/conf.eeprom" "$WORK/failed.eeprom"
+if NO_BUILD=1 TAG="$TAG" EEPROM="$WORK/failed.eeprom" EXPECT_DIAG="$l" "$HERE/tools/config-pages.sh" "$IN" > "$WORK/pages.out" 2>&1; then
+  echo "PASS   the setup page shows it"
+else echo "FAIL   the setup page: $(grep -E 'FAIL' "$WORK/pages.out" | head -3 | tr '\n' '|')"; ok=0; fi
 run noserver-warren warren
 if grep "bc.jsp" "$WORK/warren.log" 2>/dev/null | grep -qE '&dg=[12]_t'; then
   echo "PASS   the next boot request carried it: $(grep -o '&dg=[^ &"]*' "$WORK/warren.log" | head -1 | cut -c1-90)"
