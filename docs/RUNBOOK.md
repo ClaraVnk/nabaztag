@@ -352,3 +352,10 @@ that is in the rabbit.
 
 [`firmware-arm/docs/RECOVERY.md`](../firmware-arm/docs/RECOVERY.md): the
 setup page and the release first, the JTAG station last.
+
+## Karotz: measure before installing
+
+A factory Karotz (no network, no SSH) is read with a USB key before anything
+is installed on it: `karotz/measure-key/README.md`
+(`sh karotz/measure-key/make-key.sh /Volumes/KAROTZ`). Read-only on the
+rabbit; the flash copy and the readings land on the key under `measure/`.
