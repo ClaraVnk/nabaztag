@@ -11,7 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
  && cd /ll && bash scripts/host-prereqs.sh --install \
  && apt-get install -y --no-install-recommends iproute2 shellcheck busybox qemu-user-static python3-gi \
- && ln -s /bin/busybox /usr/local/bin/usleep && rm -rf /var/lib/apt/lists/*
+    net-tools \
+ && ln -s /bin/busybox /usr/local/bin/usleep && rm -rf /var/lib/apt/lists/* \
+ && for c in reboot halt poweroff shutdown; do [ -e /usr/sbin/$c ] || \
+      printf '#!/bin/sh\necho "%s: not in a build container" >&2\nexit 1\n' $c > /usr/sbin/$c; \
+      chmod 755 /usr/sbin/$c; done
+# The harness binds its no-op stubs over /sbin/reboot, halt, poweroff,
+# shutdown, ifconfig and route, but only where they exist (harness.py
+# sbin_stub_mounts); a container has none of them, so the controller's
+# "System rebooting" ran a /sbin/reboot that wasn't there and failed
+# (2026-11-20). net-tools brings ifconfig and route; the four others are
+# placeholders that refuse, never run: the stubs cover them in the tests.
 # iproute2, shellcheck, usleep and python3-gi (the controller tests' fake
 # D-Bus daemons): the tests call them (tests/, shutil.which
 # and ["ip", ...]) but host-prereqs.sh does not install them; without usleep
