@@ -68,7 +68,7 @@ if NO_BUILD=1 TAG="$TAG" EEPROM="$WORK/failed.eeprom" EXPECT_DIAG="$l" "$HERE/to
   echo "PASS   the setup page shows it"
 else echo "FAIL   the setup page: $(grep -E 'FAIL' "$WORK/pages.out" | head -3 | tr '\n' '|')"; ok=0; fi
 run noserver-warren warren
-if grep "bc.jsp" "$WORK/warren.log" 2>/dev/null | grep -qE '&dg=[12]_t'; then
+if grep "query /vl/bc.jsp" "$WORK/warren.log" 2>/dev/null | grep -qE '&dg=[12]_t'; then
   echo "PASS   the next boot request carried it: $(grep -o '&dg=[^ &"]*' "$WORK/warren.log" | head -1 | cut -c1-90)"
 else echo "FAIL   no &dg= on bc.jsp; the warren saw: $(grep -E 'jsp' "$WORK/warren.log" | cut -c1-160 | tr '\n' '|')"; ok=0; fi
 l=$(line)
