@@ -41,7 +41,9 @@ def main():
                 code, body = 200, runtime
             elif path.endswith("/locate.jsp"):
                 code, body = 200, locate
-            print(f"{path}: {code}, {len(body)} bytes of body", flush=True)
+            # The query too: diag-proof.sh reads the &dg= the bootloader sends.
+            q = urlparse(self.path).query
+            print(f"{path}{'?' + q if q else ''}: {code}, {len(body)} bytes of body", flush=True)
             self.send_response(code)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

@@ -78,6 +78,10 @@ VM += stubs/counters.c
 VM += ../crypto/nab_tls.c ../crypto/nab_tls_vm.c
 # The certificate session and the https opcodes (tls_certs, Naboot 1.2.0.0),
 # when the step list has it: the step leaves nab_https_vm.c in the tree.
+# wifi_diag's line (2026-11-19): the opcode wifiDiag calls nab_wdiag.
+ifneq ($(wildcard $(NABGCC)/src/utils/wdiag.c),)
+FW += $(NABGCC)/src/utils/wdiag.c
+endif
 ifneq ($(wildcard $(NABGCC)/src/net/nab_https_vm.c),)
 VM += ../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c
 # The tree's copy of nab_https_vm.c, not ../crypto's: boot_https puts its

@@ -26,6 +26,15 @@ emu = re.search(r"^STEPS=(\S+)", run, re.M).group(1).split(",")
 # naboot-1.2.1.0-lean-tel bound its session on a suite the image no longer
 # offers.
 emu += ["opt_size_crypto", "tls_chacha_only"]
+# wifi_diag (2026-11-19): its opcode must exist in the emulator's VM, or the
+# image's bootloader, which calls wifiDiag, stops where it writes its line.
+emu += ["wifi_diag"]
+# Every step that adds a core opcode, in the mode's own order: opcodes are
+# numbered as they come (add_core_opcode), so one missing before wifi_diag
+# gave wifiDiag another number in the emulator than in the image -- the
+# image's bootloader then called the wrong opcode (2026-11-19). tls_certs
+# adds them; boot_https goes with it (RUNBOOK §4 already added both by hand).
+emu += ["tls_certs", "boot_https"]
 mode = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 m = re.search(r'"%s":\s*"([^"]+)"' % re.escape(mode), mods)
 if not m:

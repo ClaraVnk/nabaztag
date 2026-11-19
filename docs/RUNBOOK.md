@@ -120,7 +120,7 @@ other copy of the script (`--apply`). How the modes differ, as steps:
 firmware-arm/tools/mods-matrix.py --all --out after.txt
 git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
 firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt
-firmware-arm/tools/mode-diff.py naboot-1.2.1.0 naboot-1.2.1.0-tel
+firmware-arm/tools/mode-diff.py naboot-1.2.0.2 naboot-1.2.1.0
 ```
 
 What `-Os` would save on the pure crypto files alone (`opt_size_crypto`),
@@ -275,7 +275,7 @@ the config page the 1.2.0.1 run wrote, then:
 
 ```sh
 EEPROM=violet-conf.eeprom EXPECT_SERVER=terrier.cyberloutre.fr/vl NO_BUILD=1 \
-  tools/config-pages.sh ../bin/naboot-1.2.1.0-tel/Nab.elf
+  tools/config-pages.sh ../bin/naboot-1.2.1.0/Nab.elf
 # ok  v.js: offers the server 'terrier.cyberloutre.fr/vl'          (2026-11-18)
 # naboot-1.2.0.1-gz-tel, the control: FAIL, it offers r.nabaztag.com/vl
 ```
@@ -285,17 +285,18 @@ its last section), each with its control, on the dev VM:
 
 ```sh
 cd firmware-arm/emulator
-tools/ie-walk-proof.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
+tools/ie-walk-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
 tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and without ccmp_no_probation
-NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # S-6: who may change the server
+NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0/Nab.elf   # S-6: who may change the server
 # the control: the base image's Nab.elf (before config_presence) takes the stranger's server
 # 2026-11-19: a press of the head arms a minute (config-server-head: the save 30 s
 # after the press is taken; config-server-head-late: 70 s after, refused)
-NO_BUILD=1 tools/noserver-proof.sh ../bin/naboot-1.2.1.0-tel/Nab.elf   # boot_noserver: the belly with the Wi-Fi up and no warren
+NO_BUILD=1 tools/noserver-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # boot_noserver: the belly with the Wi-Fi up and no warren
+STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) tools/diag-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # wifi_diag + boot_diag: the line in flash at 1024, &dg= on the next boot, cleared after
 # the control: the image before the step shows amber and green only (its refused run FAILs)
 ```
 
-**The two flash levers** (`naboot-1.2.1.0-lean-tel` = `-tel` with
+**The two flash levers** (`naboot-1.2.1.0` = `-tel` with
 `opt_size_crypto` and `tls_chacha_only`, 2026-11-19; the numbers in
 `firmware-arm/docs/FLASH-MAP.md` and `SECURITY-FINDINGS-2026-11.md`, O-1 and O-2).
 The emulator takes both steps (`emu-steps.py` passes them, its Makefile
@@ -305,19 +306,19 @@ image offers. The control is `-tel`, every proof run on both:
 
 ```sh
 cd firmware-arm/emulator
-podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-tel) -t emu-1210-ctl ../..
-podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-lean-tel) -t emu-1210-lean ../..
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210-ctl ../..
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210-lean ../..
 # the XMPP session bound, a sound inside it (res:), on each
 tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
-    --emulator emu-1210-lean --elf ../bin/naboot-1.2.1.0-lean-tel/Nab.elf --out /tmp/lean-bind \
+    --emulator emu-1210-lean --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/lean-bind \
     --speak-at 110 --speak "Bonjour"
 # the HTTPS boot through Caddy (ChaCha20-Poly1305 alone offered, Go's TLS 1.3 takes it):
 # one bootloader for both, compiled by hand with the proof's host, since the levers change no bytecode
 tools/boot-https-proof.sh chain /tmp/https
 podman build -f Containerfile --build-arg BOOT_ANCHOR_FILE=proof_boot_anchor.der \
-    --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-lean-tel),tls_certs,boot_https -t emu-1210-lean-https ../..
-NAB_BOOT_HTTPS_HOST=warren.test ../tools/mods-matrix.py naboot-1.2.1.0-tel --keep /tmp/stage
-python3 ../tools/mtl_comp.py /tmp/stage/naboot-1.2.1.0-tel/mtl/boot/boot.0.0.0.13.mtl -o /tmp/boot-proof.bc
+    --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0),tls_certs,boot_https -t emu-1210-lean-https ../..
+NAB_BOOT_HTTPS_HOST=warren.test ../tools/mods-matrix.py naboot-1.2.1.0 --keep /tmp/stage
+python3 ../tools/mtl_comp.py /tmp/stage/naboot-1.2.1.0/mtl/boot/boot.0.0.0.13.mtl -o /tmp/boot-proof.bc
 tools/boot-https-proof.sh run /tmp/https --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
     --emulator emu-1210-lean-https --elf /tmp/boot-proof.bc
 # config pages, the reset's server, presence, no-warren: NO_BUILD=1 TAG=emu-1210-lean, as above
@@ -338,11 +339,11 @@ the shorter `warren.test` hid it. The control first:
 
 ```sh
 cd firmware-arm/emulator
-podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0-tel) -t emu-1210 ../..
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210 ../..
 tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
     --emulator <the previous release's image> --elf ../bin/<previous release>/Nab.elf --out /tmp/bind-control
 tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
-    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0-tel/Nab.elf --out /tmp/bind
+    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/bind
 #   sasl (boot 2, realm terrier.warren.test): 1 challenge(s) of 188 bytes, 1 answer(s) from the rabbit, 1 success
 # the regression: "2 challenge(s) of 188 bytes, 0 answer(s) from the rabbit, 0 success" (a reconnect at 134 s)
 ```

@@ -5036,7 +5036,9 @@ def patch_dcc_telemetry(root: Path) -> None:
         "extern uint8_t ieee80211_authmode;\n"
         "extern uint8_t eapol_state;\n"
         "extern uint8_t ieee80211_pmf_dropped, ieee80211_pmf_protbit;\n"
-        "extern int32_t nab_reset_reason, nab_reset_count;\n"
+        "/* Weak where they live outside net/: the emulator links this without\n"
+        "   the USB driver (rt2501usb.c), and a missing one reads as 0. */\n"
+
         "extern volatile uint32_t counter_timer;\n"
         "extern uint32_t ieee80211_link_last_ucast;\n"
         "extern uint8_t ieee80211_link_probes, ieee80211_link_deaths;\n"
@@ -6996,6 +6998,11 @@ def patch_gzip_pages(root: Path) -> None:
           f"-> {total_gz} gzipped")
 
 
+_BOOT_DIAG = False   # set by main when the mode has boot_diag
+_SETUP_DIAG_HTML = ('<details hidden><summary>Diagnostic</summary>'
+                    '<pre id=g style="white-space:pre-wrap;font-size:11px"></pre></details>')
+_SETUP_DIAG_JS = 'if(a[13]){var g=d.getElementById("g");g.textContent=a[13];g.parentNode.hidden=0}'
+
 _SETUP_JS = (
     "<script>function v(a,s){var d=document,e=d.forms[0].elements,n=\"kaghijdefc\",i;"
     "d.getElementById(\"x\").textContent=a[0];d.getElementById(\"y\").textContent=a[1];"
@@ -7063,7 +7070,10 @@ def patch_gzip_setup(root: Path) -> None:
     page = "".join(out)
     if page.count("</body>") != 1:
         sys.exit("FAIL gzip_setup: page_a has no single </body>")
-    page = page.replace("</body>", _SETUP_JS + "</body>")
+    js = _SETUP_JS
+    if _BOOT_DIAG:   # boot_diag: its line under the form, a[13] of /v.js
+        js = _SETUP_DIAG_HTML + js.replace("for(i=0;i<s.length;i++)", _SETUP_DIAG_JS + ";for(i=0;i<s.length;i++)", 1)
+    page = page.replace("</body>", js + "</body>")
     data = _gzip.compress(page.encode("latin-1"), 9, mtime=0)
     lit = _metal_bytes_literal(b"html\r\n\r\n" + data)
     t = t[:m.start()] + f"\nfun page_a=strcat http_gzip {lit};;\n" + t[m.end():]
@@ -7095,7 +7105,8 @@ def patch_gzip_setup(root: Path) -> None:
          + "\t\t(jq webip confGetNetip)::(jq webip confGetNetmask)::(jq webip confGetNetgateway)::\n"
          + "\t\t(jq webip confGetNetdns)::(jq webip confGetProxyip)::(jq itoa confGetProxyport)::\n"
          + '\t\t(jq if confGetDhcp then "1" else "0")::(jq if confGetProxy then "1" else "0")::\n'
-         + '\t\t(jq itoa confGetWificrypt)::"],["::(strcatlist jscan ssid wifiscans)::"])"::nil;;\n'
+         + '\t\t(jq itoa confGetWificrypt)::' + ('(jq diag_text)::' if _BOOT_DIAG else '')
+         + '"],["::(strcatlist jscan ssid wifiscans)::"])"::nil;;\n'
          + t[m.end():])
 
     for old, new, what in (
@@ -10197,6 +10208,201 @@ def patch_boot_noserver(root: Path) -> None:
           "boot_leds breathes purple with the Wi-Fi up")
 
 
+
+def patch_wifi_diag(root: Path) -> None:
+    """The Wi-Fi's own story, readable by the bytecode: opcode wifiDiag.
+
+    Why (2026-11-19, issue #163): rabbits that never reach the warren behind
+    some routers (Livebox) told us nothing -- JTAG is not something an owner
+    has. This gives the bootloader one line on the radio, which boot_diag
+    keeps in flash and shows on the setup page, and sends with the next boot
+    request the warren receives. The line, in hex, is dcc_telemetry's (same
+    letters) with what that never needed:
+      W state  A authmode  E eapol_state
+      a/r/h/q/L/U/B link_liveness's counters (the reset reason already
+      goes to the warren with each boot: reset_reason)
+      g group cipher (2 TKIP, 4 CCMP)  e encryption byte  c channel
+      s RSSI average  k group keys received in message 3
+      b broadcast/multicast data frames delivered  u unicast ones
+    b at 0 with u rising is a radio that cannot read the AP's group key:
+    every DHCP offer broadcast is lost (the Livebox suspicion).
+    Requires link_liveness, wpa3_sae (the GTK line) and group_cipher.
+    Patches ieee80211.c, eapol.c; adds src/utils/wdiag.c; one core opcode.
+    """
+    ie = root / "src/net/ieee80211.c"
+    t, nl = read_flat(ie)
+    if "nab_rx_bcast" not in t:
+        a = ("\t\tif(memcmp(fr->header.i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) == 0)\n"
+             "\t\t\tieee80211_link_last_ucast = counter_timer;\n")
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {ie}: link_liveness's unicast line not found once (link_liveness first)")
+        # Declared on the spot: a definition at the top of the file moved the
+        # context patches/wpa2-scanned-ciphers.patch applies to (2026-11-19).
+        t = t.replace(a,
+            "\t\t{ extern uint16_t nab_rx_ucast, nab_rx_bcast;   /* wifi_diag */\n"
+            "\t\tif(memcmp(fr->header.i_addr1, rt2501_mac, IEEE80211_ADDR_LEN) == 0)\n"
+            "\t\t\t{ ieee80211_link_last_ucast = counter_timer; nab_rx_ucast++; }\n"
+            "\t\telse nab_rx_bcast++; }\n", 1)
+        write_flat(ie, t, nl)
+    ep = root / "src/net/eapol.c"
+    t, nl = read_flat(ep)
+    if "nab_gtk_rx" not in t:
+        a = '  DBG_WIFI("GTK installed"EOL);'
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {ep}: the GTK-installed line not found once (wpa3_sae first)")
+        t = t.replace(a, "  { extern uint8_t nab_gtk_rx; nab_gtk_rx++; }   /* wifi_diag */\n" + a, 1)
+        write_flat(ep, t, nl)
+    src = root / "src/utils/wdiag.c"
+    src.write_text(
+        "/* wifi_diag (apply-mods.py): one line on the radio, for the bytecode. */\n"
+        "#include <stdint.h>\n\n"
+        "extern uint32_t ieee80211_state;\n"
+        "extern uint8_t ieee80211_authmode, ieee80211_encryption, ieee80211_assoc_channel;\n"
+        "extern uint8_t ieee80211_group_cipher;\n"
+        "extern uint8_t eapol_state;\n"
+        "extern int32_t nab_reset_reason, nab_reset_count;\n"
+        "extern volatile uint32_t counter_timer;\n"
+        "extern uint32_t ieee80211_link_last_ucast;\n"
+        "extern uint8_t ieee80211_link_probes, ieee80211_link_deaths;\n"
+        "extern uint8_t ieee80211_auth_tx, ieee80211_auth_rx, ieee80211_bss_heard;\n"
+        "extern uint16_t ieee80211_auth_status;\n"
+        "extern uint8_t nab_bc_loads __attribute__((weak));\n"
+        "uint16_t nab_rx_ucast, nab_rx_bcast;   /* counted in ieee80211.c */\n"
+        "uint8_t nab_gtk_rx;                    /* counted in eapol.c */\n"
+        "int32_t rt2501_rssi_average(void) __attribute__((weak));\n"
+        "#define WD_W(v) (&(v) ? (uint32_t)(v) : 0u)\n\n"
+        "static char *wd_hex(char *p, uint32_t v)\n{\n"
+        "  char d[8]; int n = 0;\n"
+        "  do { d[n++] = \"0123456789abcdef\"[v & 15]; v >>= 4; } while(v && n < 8);\n"
+        "  while(n) *p++ = d[--n];\n"
+        "  return p;\n}\n\n"
+        "static char *wd_kv(char *p, char k, uint32_t v)\n{\n"
+        "  *p++ = ' '; *p++ = k; return wd_hex(p, v);\n}\n\n"
+        "/* At most 120 characters; returns the length. */\n"
+        "int32_t nab_wdiag(char *out)\n{\n"
+        "  char *p = out;\n"
+        "  *p++ = 'W'; p = wd_hex(p, ieee80211_state);\n"
+        "  p = wd_kv(p, 'A', ieee80211_authmode);\n"
+        "  p = wd_kv(p, 'E', eapol_state);\n"
+
+        "  p = wd_kv(p, 'a', ieee80211_auth_tx);\n"
+        "  p = wd_kv(p, 'r', ieee80211_auth_rx); *p++ = '/'; p = wd_hex(p, ieee80211_auth_status);\n"
+        "  p = wd_kv(p, 'h', ieee80211_bss_heard);\n"
+        "  p = wd_kv(p, 'q', ieee80211_link_probes);\n"
+        "  p = wd_kv(p, 'L', ieee80211_link_deaths);\n"
+        "  p = wd_kv(p, 'U', (counter_timer - ieee80211_link_last_ucast) / 1000);\n"
+        "  p = wd_kv(p, 'B', WD_W(nab_bc_loads));\n"
+        "  p = wd_kv(p, 'g', ieee80211_group_cipher);\n"
+        "  p = wd_kv(p, 'e', ieee80211_encryption);\n"
+        "  p = wd_kv(p, 'c', ieee80211_assoc_channel);\n"
+        "  p = wd_kv(p, 's', rt2501_rssi_average ? (uint32_t)(uint8_t)rt2501_rssi_average() : 0u);\n"
+        "  p = wd_kv(p, 'k', nab_gtk_rx);\n"
+        "  p = wd_kv(p, 'b', nab_rx_bcast);\n"
+        "  p = wd_kv(p, 'u', nab_rx_ucast);\n"
+        "  return (int32_t)(p - out);\n}\n")
+    vq = root / "src/vm/vinterp.c"
+    t, nl = read_flat(vq)
+    if "nab_wdiag" not in t:
+        if "#include <string.h>\n" not in t:
+            sys.exit(f"FAIL {vq}: no <string.h> include to hang the declaration on")
+        t = t.replace("#include <string.h>\n",
+                      "#include <string.h>\nint32_t nab_wdiag(char *out);   /* wifi_diag */\n", 1)
+        write_flat(vq, t, nl)
+    add_core_opcode(root, "wifiDiag", "fun[]S", 0,
+        "      case OPwifiDiag:\n"
+        "        {\n"
+        "          char line[128];\n"
+        "          int32_t n = nab_wdiag(line);\n"
+        "          VPUSH(PNTTOVAL(VMALLOCSTR(line, n)));\n"
+        "        }\n"
+        "        break;\n")
+    print("[ok]   wifi_diag: wifiDiag opcode, broadcast/unicast and group-key counters")
+
+
+
+def patch_boot_diag(root: Path) -> None:
+    """The boot's story in flash, on the setup page and to the warren.
+
+    Why (2026-11-19, issue #163): a rabbit that never reaches the warren
+    said nothing about where it stopped. Now each failed step leaves one
+    line at byte 1024 of the configuration's flash page (the configuration
+    itself is 262 bytes at 0, and nothing else ever writes this page):
+      <why> t<seconds> <wifi_diag's line> D<sent>/<offers>/<acks>
+      I<ip> G<gateway> N<dns>
+    why: 1 the warren did not answer (where boot_noserver sets bootfail),
+    2 the Wi-Fi was given up (boot_loop's retry). At most four writes a
+    power-up: a flash page, not a log. The line shows in a "Diagnostic"
+    block of the setup page (gzip_setup, /v.js) -- so an owner whose rabbit
+    never reaches the warren can read it on a phone -- and goes with the
+    next boot request as &dg=, which the warren logs; a bytecode accepted
+    clears it. DHCP: discovers and requests sent, offers and acks for this
+    rabbit. Also: extractdhcp skips the pad option (0,
+    RFC 2132 3.1), which it read as an option with a length.
+    Needs wifi_diag; after boot_noserver, before gzip_pages? No: gzip_setup
+    reads _BOOT_DIAG for the page; this runs after boot_noserver and before
+    prune_unreachable. Idempotent.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "fun diag_save" in s:
+        print(f"[skip] {boot}: the boot already keeps its diagnostic")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+    vars_ = ("// boot_diag (apply-mods.py): DHCP as this rabbit saw it.\n"
+             "var dgTx=0;;\nvar dgOff=0;;\nvar dgAck=0;;\nvar dgSaves=0;;\n\n")
+    funs = ("// boot_diag: one line kept in flash at DIAG_AT, see apply-mods.py.\n"
+            "const DIAG_AT=1024;;\nconst DIAG_LEN=160;;\n"
+            "fun diag_trim b i=\n"
+            "\tif i>=DIAG_LEN then b else\n"
+            "\tlet strget b i -> c in\n"
+            "\tif c==0 || c==255 then strsub b 0 i else diag_trim b i+1;;\n"
+            "fun diag_text= let strnew DIAG_LEN -> b in (load b 0 \"diag\" DIAG_AT DIAG_LEN; diag_trim b 0);;\n"
+            "fun diag_line n=\n"
+            "\tstrcatlist (itoa n)::\" t\"::(itoa time)::\" \"::wifiDiag::\" D\"::(itoa dgTx)::\"/\"::(itoa dgOff)::\n"
+            "\t\"/\"::(itoa dgAck)::\" I\"::(webip netip)::\" G\"::(webip netgateway)::\n"
+            "\t\" N\"::(webip netdns)::nil;;\n"
+            "fun diag_put s=\n"
+            "\tlet strnew DIAG_LEN -> b in\n"
+            "\tlet strlen s -> l in\n"
+            "\t(\n"
+            "\t\tstrcpy b 0 s 0 (if l>DIAG_LEN-1 then DIAG_LEN-1 else l);\n"
+            "\t\tsave b 0 \"diag\" DIAG_AT DIAG_LEN;\n"
+            "\t\t0\n"
+            "\t);;\n"
+            "fun diag_save n= if dgSaves<4 then (set dgSaves=dgSaves+1; diag_put diag_line n); 0;;\n"
+            "fun diag_clear= if strlen diag_text then diag_put \"\"; 0;;\n"
+            "fun diag_param= let diag_text -> d in if strlen d then strcatlist \"&dg=\"::(strreplace d \" \" \"_\")::nil else \"\";;\n\n")
+    edits = (
+        ("fun cbnetdhcp src macfrom hostip=\n", vars_ + "fun cbnetdhcp src macfrom hostip=\n", "cbnetdhcp"),
+        # strip_secho has taken the Secholn lines by now: the branch heads.
+        ("\t\tif type==DHCP_OFFER then\n\t\t(\n",
+         "\t\tif type==DHCP_OFFER then\n\t\t(\n\t\t\tset dgOff=dgOff+1;\n\t\t\tset dgTx=dgTx+1;\n", "the OFFER branch"),
+        ("\t\telse if type==DHCP_ACK then\n\t\t(\n",
+         "\t\telse if type==DHCP_ACK then\n\t\t(\n\t\t\tset dgAck=dgAck+1;\n", "the ACK branch"),
+        ("fun startdhcp=\n\tudpsend", "fun startdhcp=\n\tset dgTx=dgTx+1;\n\tudpsend", "startdhcp"),
+        ("\tif c==255 then [type lease submask dns gateway mac]\n\telse let strget src i+1 -> len in",
+         "\tif c==255 then [type lease submask dns gateway mac]\n"
+         "\telse if c==0 then extractdhcp src i+1 type lease submask dns gateway mac\t// pad (boot_diag)\n"
+         "\telse let strget src i+1 -> len in", "extractdhcp's end option"),
+        ("fun httpindex=\n", funs + "fun httpindex=\n", "httpindex"),
+        ("\t(\n\t\twifiInit 0;\n\t\tresetudp;\n", "\t(\n\t\tdiag_save 2;\n\t\twifiInit 0;\n\t\tresetudp;\n",
+         "boot_loop's Wi-Fi retry"),
+        ("\t\tenvset envmake;\n", "\t\tdiag_clear;\n\t\tenvset envmake;\n", "the accepted bytecode"),
+        ('::"&kt="::(itoa kxt)', '::"&kt="::(itoa kxt)::diag_param', "boot_url's &kt= (kx_report)"),
+    )
+    for old, new, what in edits:
+        if t.count(old) != 1:
+            sys.exit(f"FAIL boot_diag: {what} is not the shape this step expects ({t.count(old)})")
+        t = t.replace(old, new, 1)
+    n = t.count("set bootfail=1;")
+    if n != 3:
+        sys.exit(f"FAIL boot_diag: boot_noserver's three bootfail settings not found ({n})")
+    t = t.replace("set bootfail=1;", "set bootfail=1; diag_save 1;")
+    boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print("[ok]   boot_diag: the boot's line in flash at 1024, on the setup page and in &dg=")
+
+
 def patch_boot_strip_wav(root: Path) -> None:
     """The bootloader's WAV player goes: it never ran (flash lever O-4).
 
@@ -10341,7 +10547,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.0-tel", "naboot-1.2.1.0-oscrypto", "naboot-1.2.1.0-chacha", "naboot-1.2.1.0-lean-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -10484,19 +10690,9 @@ def main() -> int:
         # 1.2.0.1 with the pages gzipped and dead code pruned (gz), and /reset
         # leaves the Terrier as its server, not Violet's r.nabaztag.com, a
         # stranger's server today (2026-11-14, …5503).
-        "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
-        # The same with the DCC telemetry, for the test rabbit.
-        "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
-        # 1.2.1.0 with the pure crypto files at -Os (opt_size_crypto): a MEASUREMENT
-        # mode for one hardware test, never a release (review O-1, 2026-11-18).
-        "naboot-1.2.1.0-oscrypto": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,linker_keep,gc_sections",
-        # 1.2.1.0 with ChaCha20-Poly1305 as the only AEAD, AES-GCM compiled out
-        # (tls_chacha_only): a MEASUREMENT mode until a rabbit has run its warren
-        # session with it (review O-2, 2026-11-18).
-        "naboot-1.2.1.0-chacha": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,boot_strip_wav,boot_strip_login,prune_unreachable,tls_chacha_only,linker_keep,gc_sections",
-        # The test image of 2026-11-19: -tel with both levers, for Nabazprout
-        # after the emulator (RUNBOOK 4, "The two flash levers").
-        "naboot-1.2.1.0-lean-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
+        # One build since 2026-11-19 (Clara: "plus de variantes, 1 seul build"):
+        # the two flash levers and the Wi-Fi telemetry (wifi_diag, boot_diag) in it.
+        "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
         "naboot-1.2.0.1-gz": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
         "naboot-1.2.0.1-gzrf": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,rf2528_only,linker_keep,gc_sections",
         "naboot-1.2.0.1-gz-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
@@ -10751,13 +10947,15 @@ def main() -> int:
             ("tls_in_overflow", ("tls_psk",)),
             ("tls_chacha_only", ("tls_psk",)),
             ("config_presence", ("gzip_setup", "strip_factory_test")),
-            ("boot_noserver", ("kx_report", "adoption_boot", "boot_tls"))):
+            ("boot_noserver", ("kx_report", "adoption_boot", "boot_tls")),
+            ("wifi_diag", ("link_liveness", "wpa3_sae", "group_cipher", "stdlib")),
+            ("boot_diag", ("wifi_diag", "boot_noserver", "kx_report", "gzip_setup"))):
         if step_name in steps:
             for dep in deps:
                 if dep not in steps or steps.index(dep) > steps.index(step_name):
                     sys.exit(f"FAIL step list: {step_name} must come after {dep}, "
                              "whose text it edits or relies on.")
-    for step_name in ("boot_strip_wav", "boot_strip_login", "config_presence", "boot_noserver"):
+    for step_name in ("boot_strip_wav", "boot_strip_login", "config_presence", "boot_noserver", "boot_diag"):
         if (step_name in steps and "prune_unreachable" in steps
                 and steps.index(step_name) > steps.index("prune_unreachable")):
             sys.exit(f"FAIL step list: {step_name} must come before prune_unreachable, "
@@ -10872,11 +11070,15 @@ def main() -> int:
         "tls_in_overflow": patch_tls_in_overflow,
         "config_presence": patch_config_presence,
         "boot_noserver": patch_boot_noserver,
+        "wifi_diag": patch_wifi_diag,
+        "boot_diag": patch_boot_diag,
         "boot_strip_wav": patch_boot_strip_wav,
         "boot_strip_login": patch_boot_strip_login,
         "opt_size_crypto": patch_opt_size_crypto,
         "tls_chacha_only": patch_tls_chacha_only,
     }
+    global _BOOT_DIAG
+    _BOOT_DIAG = "boot_diag" in [x.strip() for x in steps]
     for step in steps:
         step = step.strip()
         if not step:
