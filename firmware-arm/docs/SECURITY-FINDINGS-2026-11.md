@@ -362,9 +362,9 @@ bytes against 122,820 (FLASH-MAP.md), built for Nabazprout and proven
 first in the emulator and under qemu-arm, each proof with `-tel` as the
 control. The rule was no compromise on security: what follows is what was
 measured, with the firmware's own compiler (gcc-arm-none-eabi 12.2.1 of the
-build image, `tools/cost/Containerfile.release`) unless said otherwise.
+build image, `firmware-arm/tools/cost/Containerfile.release`) unless said otherwise.
 
-**Does `-Os` change a secret-dependent path?** `tools/cost/ct-levers.sh`
+**Does `-Os` change a secret-dependent path?** `firmware-arm/tools/cost/ct-levers.sh`
 builds the firmware's X25519 (TweetNaCl `crypto_scalarmult`, the adoption
 key exchange), its Ed25519 verification (`nab_verify_sig`, the update
 gate) and the three tag compares of the warren session (`ct_eq` of
@@ -395,12 +395,12 @@ in Thumb): +7,480 between scalars a and b at `-O1` and the same +7,480 at
 `-Os`; +6,652 between messages a and b at both levels. `-Os` adds nothing:
 the dependence is libgcc's and is in every image since the first, at
 `-O1`. It is noted here as a finding of its own (the ARM7TDMI's multiplier
-is data-dependent in cycles too, as `tools/cost/ct.sh` says); the remote
+is data-dependent in cycles too, as `firmware-arm/tools/cost/ct.sh` says); the remote
 measurement it would take, over Wi-Fi, against a 2-8 s exchange, is not a
 threat this device faces, and TweetNaCl is what the flash affords.
 
 **The compiler is part of the verdict.** The same `ct-levers.sh` in the
-Alpine image of `tools/cost/Containerfile` (gcc 15.1.0) showed `sel25519`,
+Alpine image of `firmware-arm/tools/cost/Containerfile` (gcc 15.1.0) showed `sel25519`,
 TweetNaCl's constant-time swap, compiled at `-Os` into a `cmp; beq` on the
 swap bit -- the scalar's bit in X25519 -- while gcc 12.2's `-Os` keeps it
 branch-free (`ands/eors`, read in the lean image's `Nab.elf` too). A
@@ -408,7 +408,7 @@ constant-time result holds for the compiler that built the image and no
 other, which is one more reason `firmware-arm/Dockerfile` pins bookworm by
 digest; a toolchain change reruns this.
 
-**The vectors at `-Os`, on ARM.** `tools/cost/run.sh` at `OPT=-Os` in the
+**The vectors at `-Os`, on ARM.** `firmware-arm/tools/cost/run.sh` at `OPT=-Os` in the
 release image: X25519 (RFC 7748), Ed25519 verification on a 64-byte
 message and on the 105 KB runtime, SHA-512, P-256, AES-128 (as CMAC and
 the Wi-Fi use it), SHA-256, ChaCha20-Poly1305 on 1 KB and 16 KB records,
