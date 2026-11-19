@@ -10038,14 +10038,24 @@ def patch_config_presence(root: Path) -> None:
     - arguments are applied on the save (`/b.htm`, page 1) only;
     - a save that CHANGES the server URL (field `a`, compared to the one the
       page offered: Violet's or an empty one reads as the factory server)
-      is accepted only while the head button is held -- the proof of
-      presence owner_unlock already asks of an unsigned upload. Nothing is
-      saved and the error page answers otherwise. The Wi-Fi fields need no
-      button: a wrong one is a reset away, a wrong server is somebody
-      else's rabbit. The setup page says so under the field.
+      is accepted only within HEAD_ARM seconds (60) of a press of the head
+      button in config mode -- the proof of presence owner_unlock already
+      asks of an unsigned upload. Nothing is saved and the error page
+      answers otherwise. The Wi-Fi fields need no button: a wrong one is a
+      reset away, a wrong server is somebody else's rabbit. The setup page
+      says so under the field.
 
-    After gzip_setup (the page is a gzipped literal, rewritten here) and
-    factory_server when the mode has it. Idempotent.
+    The first cut wanted the head HELD while the save arrived, which a
+    person alone with a phone and a rabbit cannot do comfortably
+    (2026-11-19, Clara). A press now arms a latch: `headarm` takes the
+    seconds counter on every pass of the config-mode loop that sees the
+    button down, a server-changing save is accepted while it is less than
+    HEAD_ARM seconds old, and that save clears it. A Wi-Fi-only save leaves
+    it as it is: it never needed the button.
+
+    After gzip_setup (the page is a gzipped literal, rewritten here),
+    factory_server when the mode has it, and strip_factory_test (the
+    config-mode branch of `loop` it edits). Idempotent.
     """
     import gzip as _gzip
     boot = root / "mtl/boot/boot.0.0.0.13.mtl"
@@ -10060,7 +10070,7 @@ def patch_config_presence(root: Path) -> None:
     offered = "(webserver confGetServerUrl)" if "\nfun webserver s=" in t else "confGetServerUrl"
     old = "\t\tnil; page;\n\t\tupdateconf args;\n\t\tif page==1 then httpdone\n"
     new = ("\t\tnil; page;\n"
-           "\t\tif page==1 then (if needhead args then page_error else (updateconf args; httpdone))\n")
+           "\t\tif page==1 then (if needhead args then page_error else (if newserver args then set headarm=nil; updateconf args; httpdone))\n")
     if t.count(old) != 1:
         sys.exit("FAIL config_presence: cbhttp is not the shape this step expects")
     t = t.replace(old, new, 1)
@@ -10068,14 +10078,26 @@ def patch_config_presence(root: Path) -> None:
     if t.count(at) != 1:
         sys.exit("FAIL config_presence: fun cbhttp not found once")
     t = t.replace(at, (
-        "\n// config_presence (apply-mods.py): a save that changes the server needs the\n"
-        "// head button held; the Wi-Fi fields do not. Arguments count on the save only.\n"
+        "\n// config_presence (apply-mods.py): a save that changes the server needs a\n"
+        "// press of the head within HEAD_ARM seconds; the Wi-Fi fields do not.\n"
+        "// Arguments count on the save only. `loop` arms headarm on every pass that\n"
+        "// sees the button down; the server-changing save clears it.\n"
         "// An int both ways: Metal's `if` jumps on 0 only, nil is true (OPelse).\n"
-        "fun needhead args=\n"
+        "const HEAD_ARM=60;;\n"
+        "var headarm;;\n"
+        "fun headarmed= headarm!=nil && time-headarm<=HEAD_ARM;;\n"
+        "fun newserver args=\n"
         "\tif args==nil then 0\n"
         "\telse let hd args->[n v] in\n"
-        f"\tif n=='a' && (strcmp v {offered}) && !button2 then 1 else needhead tl args;;\n"
+        f"\tif n=='a' && (strcmp v {offered}) then 1 else newserver tl args;;\n"
+        "fun needhead args= if newserver args then (if headarmed then 0 else 1) else 0;;\n"
         + at), 1)
+    # The config-mode branch of `loop`, as strip_factory_test leaves it: the
+    # only place the button is read while the setup page is served.
+    old = "\telse wifiRun;\n\t0;;\n"
+    if t.count(old) != 1:
+        sys.exit("FAIL config_presence: loop's config-mode branch is not the shape this step expects (strip_factory_test first)")
+    t = t.replace(old, "\telse (wifiRun; if button2 then set headarm=time; 0);\n\t0;;\n", 1)
 
     m = re.search(r'\nfun page_a=strcat http_gzip (".*?");;\n', t)
     if not m:
@@ -10086,12 +10108,12 @@ def patch_config_presence(root: Path) -> None:
     hint_at = b"<b>nabaztag.lan/vl</b></small>"
     if page.count(hint_at) != 1:
         sys.exit("FAIL config_presence: the server field's hint is not where this step expects it")
-    page = page.replace(hint_at, b"<b>nabaztag.lan/vl</b>. To change it, hold the rabbit's head while you press Connect.</small>", 1)
+    page = page.replace(hint_at, b"<b>nabaztag.lan/vl</b>. To change it, press the rabbit's head, then press Connect within a minute.</small>", 1)
     data = _gzip.compress(page, 9, mtime=0)
     t = t[:m.start()] + f"\nfun page_a=strcat http_gzip {_metal_bytes_literal(head + sep + data)};;\n" + t[m.end():]
     boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
-    print(f"[ok]   config_presence: arguments on the save only; a new server needs the head held "
-          f"(setup page {len(page)} bytes -> {len(data)} gzipped)")
+    print(f"[ok]   config_presence: arguments on the save only; a new server needs a head press "
+          f"within {60} s (setup page {len(page)} bytes -> {len(data)} gzipped)")
 
 
 def patch_boot_strip_wav(root: Path) -> None:
@@ -10647,7 +10669,7 @@ def main() -> int:
             ("vm_seed_hidden", ("adoption_kx",)),
             ("tls_in_overflow", ("tls_psk",)),
             ("tls_chacha_only", ("tls_psk",)),
-            ("config_presence", ("gzip_setup",))):
+            ("config_presence", ("gzip_setup", "strip_factory_test"))):
         if step_name in steps:
             for dep in deps:
                 if dep not in steps or steps.index(dep) > steps.index(step_name):

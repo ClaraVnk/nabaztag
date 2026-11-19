@@ -4,18 +4,24 @@
 #   tools/config-presence.sh <Nab.elf | boot.bc>
 #
 # Lifts the bootloader out of the image (bootbc.py) and boots it in config
-# mode three times, each on a copy of a config page that names the factory
+# mode four times, each on a copy of a config page that names the factory
 # server, a phone joined:
-#   config-server-nohead  a stranger sends a new server on /s.css, then on
-#                         the save: no button -> error page, nothing saved,
-#                         the rabbit stays in config mode;
-#   config-server-head    the owner sends a new server while holding the
-#                         head: saved, the rabbit joins the network;
-#   config-wifi-nohead    the ordinary save, the server the page offered,
-#                         no button: saved, the rabbit joins the network.
+#   config-server-nohead     a stranger sends a new server on /s.css, then on
+#                            the save: no press -> error page, nothing saved,
+#                            the rabbit stays in config mode;
+#   config-server-head       the owner presses the head, then sends a new
+#                            server 30 s later: saved, the rabbit joins the
+#                            network (2026-11-19: a press within a minute,
+#                            no longer a hold during the save);
+#   config-server-head-late  the same press, the save 70 s later: too late,
+#                            error page, nothing saved, config mode;
+#   config-wifi-nohead       the ordinary save, the server the page offered,
+#                            no press: saved, the rabbit joins the network.
 # The server field of each page is printed afterwards. Give 1.2.1.0's base
 # image (before config_presence) first as the control: its nohead run takes
-# the server and fails `expect-not RUN`. Same environment as config-pages.sh:
+# the server and fails `expect-not RUN`; the hold-during-save cut of
+# 2026-11-18 fails config-server-head (the head is up when the save comes).
+# Same environment as config-pages.sh:
 # RUNTIME, STEPS, TAG, NO_BUILD; EXPECT_SERVER is the server the page offers
 # (terrier.cyberloutre.fr/vl unless the build says otherwise).
 set -euo pipefail
@@ -26,7 +32,7 @@ DEFAULT_STEPS=$(sed -n 's/^STEPS=//p' "$(dirname "$0")/../run.sh")
 STEPS=${STEPS:-$DEFAULT_STEPS}
 OFFERED=${EXPECT_SERVER:-terrier.cyberloutre.fr/vl}
 
-if [ $# -lt 1 ]; then sed -n '2,22p' "$0"; exit 2; fi
+if [ $# -lt 1 ]; then sed -n '2,28p' "$0"; exit 2; fi
 IMAGE=$1; shift
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +54,7 @@ python3 "$HERE/mkconf.py" --ssid Terrier --security open --server "$OFFERED" -o 
   || python3 "$HERE/mkconf.py" --ssid Terrier --security open -o "$WORK/base.eeprom"
 
 ok=1
-for s in config-server-nohead config-server-head config-wifi-nohead; do
+for s in config-server-nohead config-server-head config-server-head-late config-wifi-nohead; do
   mkdir -p "$WORK/$s"
   sed "s|<OFFERED>|$OFFERED|" "$HERE/scenarios/vm/$s.txt" > "$WORK/$s/scenario.txt"
   cp "$WORK/base.eeprom" "$WORK/$s/conf.eeprom"
@@ -71,7 +77,7 @@ for f in sys.argv[1:]:
     print(m.group(0).decode() if m else '?', end=' ')
 PY
 )
-  printf '%-6s %-22s server=%-28s save answered: %s\n' "$status" "$s" "${server:-(blank)}" "${answer:-(nothing)}"
+  printf '%-6s %-25s server=%-28s save answered: %s\n' "$status" "$s" "${server:-(blank)}" "${answer:-(nothing)}"
   grep -E 'FAIL|the head button|button 2' "$WORK/$s/run.log" | head -4 | sed 's/^/       /'
   [ "$status" = PASS ] || ok=0
 done

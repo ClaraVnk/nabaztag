@@ -8,7 +8,8 @@
   extras -- except kxprobe's missing owner_unlock, which its comment
   explains (review C-2: drift in 40 copied step lists is invisible);
 - config_presence's bootloader edit: the save alone applies arguments, a
-  new server asks for the head button, the page carries the hint.
+  new server asks for a head press within a minute, the page carries the
+  hint.
 """
 
 import importlib.util
@@ -98,7 +99,11 @@ class ConfigPresence(unittest.TestCase):
             "\t\tupdateconf args;\r\n"
             "\t\tif page==1 then httpdone\r\n"
             "\t\telse if page==2 then httpflash req\r\n"
-            "\t);;\r\n").encode("latin-1"))
+            "\t);;\r\n"
+            "fun loop=\r\n"
+            "\tif !master then wifiRun\r\n"
+            "\telse wifiRun;\r\n"
+            "\t0;;\r\n").encode("latin-1"))
 
     def tearDown(self):
         shutil.rmtree(self.root)
@@ -110,8 +115,16 @@ class ConfigPresence(unittest.TestCase):
         self.assertIn("\r\n", t, "the file keeps its CRLF")
         t = t.replace("\r\n", "\n")
         self.assertNotIn("\t\tupdateconf args;\n\t\tif page==1", t)
-        self.assertIn("if page==1 then (if needhead args then page_error else (updateconf args; httpdone))", t)
-        self.assertIn("if n=='a' && (strcmp v (webserver confGetServerUrl)) && !button2 then 1", t)
+        self.assertIn("if page==1 then (if needhead args then page_error else "
+                      "(if newserver args then set headarm=nil; updateconf args; httpdone))", t)
+        self.assertIn("if n=='a' && (strcmp v (webserver confGetServerUrl)) then 1 else newserver tl args", t)
+        # A press, not a hold (2026-11-19): the config-mode loop arms the
+        # latch, needhead reads it, a server-changing save clears it.
+        self.assertIn("\telse (wifiRun; if button2 then set headarm=time; 0);\n\t0;;\n", t)
+        self.assertIn("fun headarmed= headarm!=nil && time-headarm<=HEAD_ARM;;", t)
+        self.assertIn("const HEAD_ARM=60;;", t)
+        self.assertIn("fun needhead args= if newserver args then (if headarmed then 0 else 1) else 0;;", t)
+        self.assertNotIn("button2 then 1", t)
         # Metal's `if` jumps on 0 only (OPelse: `if (!VPULL())`), so nil is
         # true: needhead must answer an int both ways (2026-11-18, the plain
         # GET /b.htm answered the error page).
@@ -119,7 +132,7 @@ class ConfigPresence(unittest.TestCase):
         lit = re.search(r'fun page_a=strcat http_gzip (".*?");;', t).group(1)
         raw = am._metal_literal_bytes(lit)
         page = gzip.decompress(raw.split(b"\r\n\r\n", 1)[1])
-        self.assertIn(b"hold the rabbit's head while you press Connect", page)
+        self.assertIn(b"press the rabbit's head, then press Connect within a minute", page)
         # idempotent
         am.patch_config_presence(self.root)
         self.assertEqual(t, self.boot.read_bytes().decode("latin-1").replace("\r\n", "\n"))
