@@ -10,9 +10,10 @@ ARG LL_COMMIT=2f8ded9
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \
  && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
  && cd /ll && bash scripts/host-prereqs.sh --install \
- && apt-get install -y --no-install-recommends iproute2 shellcheck busybox qemu-user-static \
+ && apt-get install -y --no-install-recommends iproute2 shellcheck busybox qemu-user-static python3-gi \
  && ln -s /bin/busybox /usr/local/bin/usleep && rm -rf /var/lib/apt/lists/*
-# iproute2, shellcheck and usleep: the tests call them (tests/, shutil.which
+# iproute2, shellcheck, usleep and python3-gi (the controller tests' fake
+# D-Bus daemons): the tests call them (tests/, shutil.which
 # and ["ip", ...]) but host-prereqs.sh does not install them; without usleep
 # the rabbit's CGI scripts answered 1 and 276 web API tests failed (2026-11-19).
 WORKDIR /ll
