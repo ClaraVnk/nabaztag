@@ -9,7 +9,8 @@
   explains (review C-2: drift in 40 copied step lists is invisible);
 - config_presence's bootloader edit: the save alone applies arguments, a
   new server asks for a head press within a minute, the page carries the
-  hint.
+  hint; boot_noserver's: every failure past the network sets bootfail and
+  boot_leds breathes purple on it.
 """
 
 import importlib.util
@@ -58,7 +59,7 @@ class ModeTable(unittest.TestCase):
         self.assertVariant("naboot-1.2.0.1", "naboot-1.2.1.0", [
             "factory_server", "ie_walk_bounds", "ccmp_no_probation", "vm_strcmp_bound",
             "vm_seed_hidden", "tls_in_overflow", "gzip_pages", "gzip_setup", "config_presence",
-            "boot_strip_wav", "boot_strip_login", "prune_unreachable"])
+            "boot_noserver", "boot_strip_wav", "boot_strip_login", "prune_unreachable"])
 
     def test_1_2_0_1_variants(self):
         self.assertVariant("naboot-1.2.0.1", "naboot-1.2.0.1-gz", ["gzip_pages", "gzip_setup", "prune_unreachable"])
@@ -70,10 +71,72 @@ class ModeTable(unittest.TestCase):
     def test_the_review_steps_are_in_both_release_modes(self):
         for mode in ("naboot-1.2.1.0", "naboot-1.2.1.0-tel"):
             for step in ("ie_walk_bounds", "ccmp_no_probation", "vm_strcmp_bound", "vm_seed_hidden",
-                         "tls_in_overflow", "config_presence", "boot_strip_wav", "boot_strip_login"):
+                         "tls_in_overflow", "config_presence", "boot_noserver", "boot_strip_wav",
+                         "boot_strip_login"):
                 self.assertIn(step, self.modes[mode])
             for step in ("opt_size_crypto", "tls_chacha_only", "opt_size", "opt_size_safe", "opt_size_usb_o1"):
                 self.assertNotIn(step, self.modes[mode], f"{step} is a measurement step")
+
+
+class BootNoserver(unittest.TestCase):
+    """On a bootloader as kx_report, adoption_boot and boot_tls leave it: a
+    stand-in with the four anchors."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "mtl/boot").mkdir(parents=True)
+        self.boot = self.root / "mtl/boot/boot.0.0.0.13.mtl"
+        self.boot.write_bytes((
+            "fun kx_again=\r\n"
+            "\tset kxtries=kxtries+1;\r\n"
+            "\tset kxhttp=nil;\r\n"
+            "\t0;;\r\n"
+            "fun _bootcbhttp httpreq res=\r\n"
+            "\tlet getbytecode res -> bc in\r\n"
+            "\tif bc!=nil && kx_accept res bc then\r\n"
+            "\t(\r\n"
+            "\t\tbytecode bc;\r\n"
+            "\t\t0\r\n"
+            "\t)\r\n"
+            "\telse\r\n"
+            "\t(\r\n"
+            "\t\tnil;\r\n"
+            "\t\t0\r\n"
+            "\t);\r\n"
+            "\t0;;\r\n"
+            "fun boot_leds=\r\n"
+            "\tlet\r\n"
+            "\t\tif netState!=RT2501_S_CONNECTED then 0\r\n"
+            "\t\telse 1\r\n"
+            "\t-> step in step;;\r\n"
+            "fun boot_loop=\r\n"
+            "\tif time-t0>BOOT_HTTPTIMEOUT then\r\n"
+            "\t(\r\n"
+            "\t\thttpabort httpboot;\r\n"
+            "\t\tset httpboot=nil;\r\n"
+            "\t\t0\r\n"
+            "\t);;\r\n").encode("latin-1"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def test_every_failure_sets_bootfail_and_boot_leds_reads_it(self):
+        am.patch_boot_noserver(self.root)
+        t = self.boot.read_bytes().decode("latin-1")
+        self.assertIn("\r\n", t, "the file keeps its CRLF")
+        t = t.replace("\r\n", "\n")
+        self.assertEqual(t.count("set bootfail=1;"), 3, "kx_again, the abort, the failed bc.jsp")
+        self.assertIn("fun kx_again=\n\tset bootfail=1;\n\tset kxtries=kxtries+1;\n", t)
+        self.assertIn("\telse\n\t(\n\t\tset bootfail=1;\n\t\tnil;\n", t)
+        self.assertIn("\t\tset httpboot=nil;\n\t\tset bootfail=1;\n\t\t0\n", t)
+        self.assertIn("fun boot_leds=\n\tif bootfail!=nil && netState==RT2501_S_CONNECTED && netip!=netip_empty "
+                      "then noserver_leds else\n\tlet\n", t)
+        # the nose green, the belly purple: never amber, which reads as Wi-Fi
+        self.assertIn("\t\tled 4 GREEN;\n\t\tfor i=0;i<4 do led i (v<<16)|v\n", t)
+        self.assertNotIn("AMBER", t[t.index("fun noserver_leds"):t.index("fun boot_leds")])
+        # idempotent
+        am.patch_boot_noserver(self.root)
+        self.assertEqual(t, self.boot.read_bytes().decode("latin-1").replace("\r\n", "\n"))
 
 
 class ConfigPresence(unittest.TestCase):

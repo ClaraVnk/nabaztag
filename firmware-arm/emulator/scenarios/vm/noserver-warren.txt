@@ -1,0 +1,13 @@
+# bytecode: bootloader
+#
+# The control of noserver-refused: the same rabbit with a warren that
+# answers (tools/plain_warren.py, started by tools/noserver-proof.sh). The
+# bootloader fetches its bytecode and hands over to the runtime; the belly
+# runs the amber and green steps and never breathes purple.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 60000
+
+at 20000 expect RUN
+at 55000 expect RUN
+at 59000 expect-no-reset
