@@ -162,6 +162,10 @@ fi
 # warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
 echo "==> patch_btn_in_session.py  (a long press goes to the warren, not to record.jsp)"
 python3 "$HERE/patch_btn_in_session.py" "$BC/sources/main.mtl"
+# With "xmpp-btnrec:1" (a microphone action on the long press), the press
+# records while the head is held, nose red, inside the session.
+echo "==> patch_btn_record.py  (a long press records while held, as Violet's did)"
+python3 "$HERE/patch_btn_record.py" "$BC/sources/main.mtl"
 if [ "${OTA_REPORT:-}" = 1 ]; then
   echo "==> patch_ota_report.py  (TEST RUNTIME: each step of an update goes to the warren)"
   python3 "$HERE/patch_ota_report.py" "$BC/sources"
