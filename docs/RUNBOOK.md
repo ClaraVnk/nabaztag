@@ -309,7 +309,11 @@ karotzvm_reply_ends, which alone takes 17 minutes to fail (1 of 10 memory
 rounds in 900 s). LapinLibre's own CI does not run these; asked upstream.
 
 `karotz/lapinlibre/make-img.sh` turns the built key into **Terrier OS**, our
-LapinLibre (its MIT notice kept, our patches on top), in beta:
+LapinLibre (its MIT notice kept, our patches on top), in beta. Why a name of
+our own: "LapinLibre" is "FreeRabbits" in French. FreeRabbits, whose OS many
+Karotz run and who have already helped this project, are on good terms with
+us; we do not want to compete with them, to look like we borrow their name,
+or to leave owners unsure which system they are installing.
 `terrier-os-<version>.img.xz` (one FAT32 partition, label TERRIEROS) for
 Raspberry Pi Imager or balenaEtcher, and `terrier-os.rpi-imager.json`, an
 Imager repository with that one image. Publish both in a `terrier-os-<version>`
