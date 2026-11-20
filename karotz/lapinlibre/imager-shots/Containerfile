@@ -1,0 +1,20 @@
+# Raspberry Pi Imager on a virtual screen, to take the Karotz guide's
+# screenshots (karotz/lapinlibre/imager-shots/shots.sh). Ubuntu, by exception
+# to our Alpine/Rocky rule (Clara, 2026-11-20): Imager 2.0.12 needs glibc
+# 2.35+, Rocky 9's is 2.34, Rocky 10 has no virtual X server (no Xvfb, Xvnc
+# nor Weston) and Alpine is musl. The image is removed after the shots.
+FROM docker.io/library/ubuntu:24.04
+ARG IMAGER=2.0.12
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      xvfb xdotool imagemagick ca-certificates curl fonts-dejavu-core \
+      libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+      libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+      libfontconfig1 libdbus-1-3 libglib2.0-0t64 file \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL -o /tmp/imager.AppImage \
+      "https://github.com/raspberrypi/rpi-imager/releases/download/v${IMAGER}/Raspberry_Pi_Imager-v${IMAGER}-desktop-x86_64.AppImage" \
+ && chmod 755 /tmp/imager.AppImage && cd /opt && /tmp/imager.AppImage --appimage-extract >/dev/null \
+ && mv /opt/squashfs-root /opt/imager && rm /tmp/imager.AppImage
+ENV QT_QPA_PLATFORM=xcb DISPLAY=:99 LANG=C.UTF-8 LANGUAGE=fr
+COPY shots.sh /shots.sh
+CMD ["sh", "/shots.sh"]

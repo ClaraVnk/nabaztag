@@ -572,3 +572,13 @@ channel 1 until the mains.
 `naboot-1.2.1.0-tel` is the release plus `dcc_telemetry`, for the JTAG
 station only (listen.sh): the first warm boot after an OTA left the radio
 deaf twice on Nabazprout (2026-11-18, 2026-11-20).
+
+### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
+
+Imager 2.x asks for the device before the system: `terrier-os.rpi-imager.json`
+carries `imager.devices` (one, Karotz, tag `karotz`) and each system its
+`devices`, or the list stays empty and Next greyed (found 2026-11-20 with the
+tool below; `make-img.sh` writes both). The Karotz guide's screenshots come
+from `karotz/lapinlibre/imager-shots/` (Imager 2.0.12 on Xvfb, steps in
+`shots.sh`): repository URL, device, system, Wi-Fi; Ubuntu by exception,
+removed after use.

@@ -14,6 +14,8 @@
 # a Raspberry Pi Imager repository listing that one image, so the key shows
 # up by name in Imager (App options > Content repository, or
 # `rpi-imager --repo <url of the json>`), downloaded and checked there.
+# imager.devices: Imager 2.x asks for the device first, and a repository with
+# none left its list empty and Next greyed (2026-11-20): one device, Karotz.
 # init_format cloudinit: Imager's OS customisation writes network-config and
 # user-data on the key, and our LapinLibre's applysettings.sh takes the Wi-Fi
 # network (in clear: WPA3 too), the name and the SSH key from them when
@@ -51,9 +53,21 @@ xz -T0 -9 "$img"
 cd /out && sha256sum "terrier-os-$V.img.xz" > "terrier-os-$V.img.xz.sha256"
 cat > terrier-os.rpi-imager.json <<JSON
 {
+  "imager": {
+    "devices": [
+      {
+        "name": "Karotz",
+        "description": "Nabaztag v3 (2011), installed from a USB key",
+        "tags": ["karotz"],
+        "matching_type": "exclusive",
+        "default": true
+      }
+    ]
+  },
   "os_list": [
     {
       "name": "Terrier OS $V (Karotz, beta)",
+      "devices": ["karotz"],
       "description": "For a Karotz (Nabaztag v3), not a Raspberry Pi: LapinLibre with WPA3, built for Le Terrier. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
       "url": "$URL/terrier-os-$V.img.xz",
       "init_format": "cloudinit",
