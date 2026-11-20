@@ -176,6 +176,14 @@ version, for the reason given under its heading.
 - **TLS nits, no exploit with a PSK:** a bad server Finished answers alert 50
   where 51 is specified; EncryptedExtensions is accepted zero or many times.
 
+- **The EAPOL-Key MIC is compared with `memcmp`** (`eapol.c`), not in
+  constant time — low: the timing of one compare would have to be measured
+  over the radio, and every failed MIC drops the frame.
+
+- **Message 3's RSN element is not compared with the beacon's** — low: a
+  downgrade needs a forged beacon and the passphrase; the rabbit only offers
+  the suites its own configuration allows.
+
 - **RFID tag lost during a TLS reconnect** — a tag presented in the exact
   window of a session reconnect is dropped, no retry. Minor UX.
 
