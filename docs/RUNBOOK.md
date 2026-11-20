@@ -575,7 +575,7 @@ deaf twice on Nabazprout (2026-11-18, 2026-11-20).
 
 ### A stricter access point: the EAPOL replies' length (Livebox 4)
 
-`emulator/tools/livebox-check.sh` (usage in its header) runs every
+`firmware-arm/emulator/tools/livebox-check.sh` (usage in its header) runs every
 `scenarios/vm/livebox-*.txt` under the runtime VM. `livebox-wpa2-strict-eapol.txt`
 puts `strict-eapol` on the virtual AP: it drops an EAPOL-Key frame whose
 declared body is longer than its fields and key data. Before the
