@@ -1,7 +1,23 @@
 {
+  "imager": {
+    "devices": [
+      {
+        "name": "Karotz",
+        "description": "Nabaztag v3 (2011), installed from a USB key",
+        "tags": [
+          "karotz"
+        ],
+        "matching_type": "exclusive",
+        "default": true
+      }
+    ]
+  },
   "os_list": [
     {
       "name": "Terrier OS v0.2.0-50-ga60c9e8f14c5 (Karotz, beta)",
+      "devices": [
+        "karotz"
+      ],
       "description": "For a Karotz (Nabaztag v3), not a Raspberry Pi: LapinLibre with WPA3, built for Le Terrier. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
       "url": "https://github.com/ClaraVnk/nabaztag/releases/download/terrier-os-v0.2.0-50-ga60c9e8f14c5/terrier-os-v0.2.0-50-ga60c9e8f14c5.img.xz",
       "init_format": "cloudinit",
