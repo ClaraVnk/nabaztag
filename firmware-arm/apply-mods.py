@@ -10323,6 +10323,13 @@ def patch_wifi_diag(root: Path) -> None:
 def patch_boot_diag(root: Path) -> None:
     """The boot's story in flash, on the setup page and to the warren.
 
+    The line is padded with zeros before it is saved, and read back up to
+    its first unprintable byte: strnew does not clear, so the bytes after the
+    line went to flash with it, and on to &dg= -- a tab among them, which
+    the warren's HTTP server refused (400), and the rabbit got no bytecode
+    (Nabazprout, 2026-11-20). The read stops early for a flash written
+    before this.
+
     Why (2026-11-19, issue #163): a rabbit that never reaches the warren
     said nothing about where it stopped. Now each failed step leaves one
     line at byte 1024 of the configuration's flash page (the configuration
@@ -10356,7 +10363,7 @@ def patch_boot_diag(root: Path) -> None:
             "fun diag_trim b i=\n"
             "\tif i>=DIAG_LEN then b else\n"
             "\tlet strget b i -> c in\n"
-            "\tif c==0 || c==255 then strsub b 0 i else diag_trim b i+1;;\n"
+            "\tif c<32 || c>126 then strsub b 0 i else diag_trim b i+1;;\n"
             "fun diag_text= let strnew DIAG_LEN -> b in (load b 0 \"diag\" DIAG_AT DIAG_LEN; diag_trim b 0);;\n"
             "fun diag_line n=\n"
             "\tstrcatlist (itoa n)::\" t\"::(itoa time)::\" \"::wifiDiag::\" D\"::(itoa dgTx)::\"/\"::(itoa dgOff)::\n"
@@ -10366,7 +10373,8 @@ def patch_boot_diag(root: Path) -> None:
             "\tlet strnew DIAG_LEN -> b in\n"
             "\tlet strlen s -> l in\n"
             "\t(\n"
-            "\t\tstrcpy b 0 s 0 (if l>DIAG_LEN-1 then DIAG_LEN-1 else l);\n"
+            "\t\tlet if l>DIAG_LEN-1 then DIAG_LEN-1 else l -> n in\n"
+            "\t\t(strcpy b 0 s 0 n; for i=n;i<DIAG_LEN do strset b i 0);\n"
             "\t\tsave b 0 \"diag\" DIAG_AT DIAG_LEN;\n"
             "\t\t0\n"
             "\t);;\n"
