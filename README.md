@@ -61,7 +61,13 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
-- 🔒 **Naboot 1.2.0.1 — HTTPS on the rabbit itself**: it boots for the very
+- 🐰 **Naboot 1.2.1.0 — a rabbit that says what went wrong**: a reset
+  sends it back to the Terrier, a head press lets you change the server
+  without unplugging, a phone opens the setup page by itself (captive
+  portal), no server shows as a purple blink, a stopped USB host restarts
+  it instead of leaving it amber, and a failed boot keeps a diagnostic line
+  the config page and the Terrier can read.
+- 🔒 **Since 1.2.0.1 — HTTPS on the rabbit itself**: it boots for the very
   first time over HTTPS (ISRG Root X2 built in), its key exchange included
   (1.2.0.1 gives it the 18 s a real ARM7 needs, and the boot URL says how it
   went), and its owner can always flash something else, unsigned: start it
@@ -163,12 +169,12 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot 1.2.0.0** — the illustrated 5-minute flashing guide is
+1. **Download Naboot 1.2.1.0** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
-   is mode `naboot-1.2.0.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   126 704 of 126 976 bytes of flash. The signed file is also in
+   is mode `naboot-1.2.1.0` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   118 288 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.2.0.1.signed.sim`, with its sha256 and which way in from each
+   (`naboot-1.2.1.0.signed.sim`, with its sha256 and which way in from each
    starting firmware); every earlier release is in `firmware-arm/releases/archive/`.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join

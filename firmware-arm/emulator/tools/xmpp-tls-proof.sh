@@ -333,7 +333,8 @@ tok=lambda p: re.search(r'name=_csrf value=\"([^\"]+)', op.open(base+p).read().d
 post=lambda p, d: op.open(base+p, urllib.parse.urlencode(d).encode())
 post('/login', {'_csrf': tok('/login'), 'email': 'proof@warren.test', 'password': 'proof-password'})
 r=post('/rabbit/$MAC/ota', {'_csrf': tok('/rabbit/$MAC')})
-print('   ota:', r.status, r.geturl())"
+body=r.read().decode(); m=re.findall(r'class=\"?flash[^>]*>(.*?)<', body, re.S)
+print('   ota:', r.status, r.geturl(), '|', ' / '.join(x.strip() for x in m)[:200])"
     fi ) &
   TIMERS+=($!)
 fi
