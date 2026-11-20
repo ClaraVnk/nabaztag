@@ -18,8 +18,11 @@ press inside the TLS session:
   inside the session at once (XmppMicStart, patch_mic_in_session.py), with
   no chime: the chip cannot play and record at once;
 - lights the nose red while it records;
-- stops when the head is released, or after XMPP_MIC_MAX_SECONDS, and says
-  so with an empty announce, <mic xmlns='violet:nabaztag:mic' len='0'/>.
+- stops when the head is released, on the warren's `RT`, or after
+  XMPP_MIC_MAX_SECONDS, and says so with an empty announce,
+  <mic xmlns='violet:nabaztag:mic' len='0'/>.
+
+Only the long press records; a double long press is reported as before.
 
 Off ("xmpp-btnrec:0", as compiled) a long press is reported as
 patch_btn_in_session.py does, and nothing records. Applied after
@@ -38,7 +41,7 @@ NEEDS = ("/* btn-in-session */", "/* mic-in-session */")
 PRESS_OLD = ('\t\tSecholn "button: long press sent inside the session";\n'
              '\t\tcontrolsound midi_ack;\n'
              '\t\tXmppSessionSendButtonMsg ev 0 nil\n')
-PRESS_NEW = ('\t\tif XmppBtnRec then XmppBtnRecordStart ev\t// btn-record\n'
+PRESS_NEW = ('\t\tif XmppBtnRec && ev==BUTTON_LCLIC then XmppBtnRecordStart ev\t// btn-record\n'
              '\t\telse (\n'
              '\t\tSecholn "button: long press sent inside the session";\n'
              '\t\tcontrolsound midi_ack;\n'
@@ -79,6 +82,8 @@ CHUNK_NEW = ("fun XmppMicChunk s=\n"
 STOP_OLD = '(Secholn "mic: max duration reached, stopping"; stopmicstream; 0)'
 STOP_NEW = '(Secholn "mic: max duration reached, stopping"; stopmicstream; if g_btn_rec then XmppBtnRecordEnd; 0)'
 GONE_OLD = '(Secholn "mic: session gone, stopping"; stopmicstream; 0)'
+RT_OLD = '\t\telse if !strcmp key "RT" then (stopmicstream;0)'
+RT_NEW = '\t\telse if !strcmp key "RT" then (stopmicstream; if g_btn_rec then XmppBtnRecordEnd; 0)'
 GONE_NEW = '(Secholn "mic: session gone, stopping"; stopmicstream; if g_btn_rec then XmppBtnRecordEnd; 0)'
 
 
@@ -96,7 +101,7 @@ def patch(path: Path) -> bool:
             sys.exit(f"FAIL {path}: {m} missing (patch_btn_in_session.py and patch_mic_in_session.py first)")
     for what, needle in (("the long press report", PRESS_OLD), ("XmppLongPress", FUNS_ANCHOR),
                          ("the recorder callback", CHUNK_OLD), ("the max-duration stop", STOP_OLD),
-                         ("the lost-session stop", GONE_OLD)):
+                         ("the lost-session stop", GONE_OLD), ("the RT command", RT_OLD)):
         if text.count(needle) != 1:
             sys.exit(f"FAIL {path}: expected one {what}, found {text.count(needle)}")
     # XmppMicChunk is defined before XmppLongPress, and calls XmppBtnRecordEnd:
@@ -105,9 +110,10 @@ def patch(path: Path) -> bool:
                         + CHUNK_NEW, 1)
     text = text.replace(STOP_OLD, STOP_NEW, 1)
     text = text.replace(GONE_OLD, GONE_NEW, 1)
+    text = text.replace(RT_OLD, RT_NEW, 1)
     text = text.replace(FUNS_ANCHOR, FUNS + FUNS_ANCHOR, 1)
     text = text.replace(PRESS_OLD, PRESS_NEW, 1)
-    for s in (FUNS, PRESS_NEW, CHUNK_NEW, STOP_NEW, GONE_NEW):
+    for s in (FUNS, PRESS_NEW, CHUNK_NEW, STOP_NEW, GONE_NEW, RT_NEW):
         assert s.isascii(), "what we insert must be ASCII: main.mtl is latin-1"
     path.write_bytes(text.encode(encoding))
     print(f"[ok]   {path}: a long press records while held, inside the TLS session")
