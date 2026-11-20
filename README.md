@@ -793,6 +793,11 @@ or `POST` the audio bytes directly and the add-on serves them.
 - [RedoXyde](https://github.com/RedoXyde) (`mtl_linux`, `nabgcc`) and
   [Pixel166](https://github.com/Pixel166) (`nabAsm`/`nabDasm`) — the open Metal
   firmware toolchain that makes Phase 2 possible.
+- [LapinLibre](https://github.com/sweetlilmre/LapinLibre) by sweetlilmre — a
+  free Karotz firmware built from source, and a replacement for Mindscape's
+  platform server; [dirk-thomas/karotz](https://github.com/dirk-thomas/karotz)
+  — the Karotz's `Voos-message.proto`. The reference for
+  `firmware-arm/emulator/karotz/fros/`.
 
 Images: Home Assistant logo © the Home Assistant project. Nabaztag photo by
 Catalarem, via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Nabaztag1.jpg),

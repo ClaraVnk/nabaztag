@@ -146,9 +146,12 @@ the exchange, and the key becomes the rabbit's:
 1. Plug the rabbit in. The add-on's log says
    `kx: <mac> agreed a key; its belly shows top …, left …` and Home
    Assistant shows a notification.
-2. Open **`http://<HAOS_IP>:8099/adoption`** (add `?token=<api_token>` if
-   you set one). Compare the five colours, laid out as on the belly, and
-   answer **Yes, the same** or **No, they differ**.
+2. Open the add-on's **Web UI** (Settings → Add-ons → Nabaztag Terrier →
+   *Open Web UI*; since 0.19.0), or `http://<HAOS_IP>:8099/adoption?token=<the
+   API token>`. Compare the five colours, laid out as on the belly, and
+   answer **Yes, the same** or **No, they differ**. One address may start
+   four key exchanges an hour, and at most sixteen keys wait for an answer:
+   past that, `kx.jsp` answers `429` until you confirm, reject or forget some.
 3. Unplug the rabbit and plug it back in. From then on:
    - its runtime bytecode is **signed** with its key — the rabbit refuses any
      other, so nobody on your network can hand it a bytecode of their own;
@@ -192,12 +195,38 @@ while plugging it in, `http://192.168.0.1/reset`, set it up again — then
 Reached on host port **8099** (container `:8080`). If a single rabbit is connected
 `mac` is optional; otherwise pass `?mac=<lowercase-no-colons>`.
 
-The API is **open by default** (fine on a trusted LAN behind Home Assistant). Set
-the `api_token` option to require a shared secret on every `/api/` request — pass
-it as the `X-API-Token` header or a `?token=` query param (anything else → `401`).
-This is the minimal guard to enable before exposing the server beyond the LAN. If
-you turn it on, add the token to the `rest_command`s, e.g. a `headers:` block with
-`X-API-Token: !secret nab_token` (or append `&token=…` to the URLs).
+**Every `/api/` request needs the API token** (since 0.19.0), as the
+`X-API-Token` header (a `?token=` query parameter still works, but it ends up
+in logs and browser history). Anything else gets `401`.
+
+- **Where the token comes from.** Leave `api_token` empty and the add-on
+  generates one on its first start, keeps it in `/data/api_token` (so it
+  survives restarts, updates and backups) and shows it on its **Web UI**
+  (Settings → Add-ons → Nabaztag Terrier → *Open Web UI*), with a copy
+  button. The log only says `control API token: …<last 4 characters>`, so a
+  log pasted into an issue gives nothing away. Or set your own in the
+  `api_token` option.
+- **Home Assistant `rest_command`s**: add the header, e.g.
+  ```yaml
+  headers:
+    X-API-Token: !secret nab_token
+  ```
+  with `nab_token: "<the token>"` in `secrets.yaml`. The packages in
+  `home-assistant/` already do.
+- **The Web UI** (Settings → Add-ons → Nabaztag Terrier → *Open Web UI*, or
+  the sidebar) goes through Home Assistant's ingress: Home Assistant has
+  already checked who you are, and no token is needed there.
+- A request a browser marks as cross-site (`Sec-Fetch-Site: cross-site`) is
+  refused even with the token: a web page cannot switch the microphone on
+  with an `<img src=…/api/mic?on=1>`.
+
+**Upgrading from 0.18.x with an empty `api_token`:** until you add the token,
+your `rest_command`s get `401` (the add-on log and a Home Assistant
+notification say so). Copy the token from the Web UI into `secrets.yaml`, add the
+`headers:` block above, and reload. Before 0.19.0 an empty token meant an open
+API, and any device on the LAN could confirm its own adoption key for a
+rabbit, forget a confirmed one, or switch the microphone on and download what
+it heard.
 
 The rabbit has **two command channels** (reverse-engineered from the bytecode):
 
@@ -233,7 +262,7 @@ Endpoints:
   have Nabi play it automatically when it comes online (empty = off).
 - `GET /api/volume?level=70` — **set the speaker volume** (`0`–`100`, 100 = loudest).
   Needs the hybrid bytecode (the `SV`/`sndVol` command). Persists across reboots
-  (re-applied on reconnect). Exposed in HA as `nabaztag_volume` + a slider.
+  (re-applied on reconnect), per rabbit. Exposed in HA as `nabaztag_volume` + a slider.
 - `GET /api/ears?left=8&right=2` — **move the ears** to positions (~0..16) via a
   choreography; `&dir=0|1` sets rotation direction.
 - `GET /api/led?led=top&r=0&g=238&b=0` — **full RGB** on one LED
@@ -272,9 +301,17 @@ Enable it in the add-on **Configuration**:
     controls your home, tells the time, etc.), or
   - *empty* → just echo the transcription back.
 - `stt_language`: `fr`
-- `stt_model`: `tiny | base | small` (default **`small`**) — the bundled
-  whisper.cpp model. Bigger = more accurate but slower; even `base` does decent
-  French on the rabbit's 8 kHz mic.
+- `stt_model`: `tiny | base | small` (default **`small`**) — the whisper.cpp
+  model. Bigger = more accurate but slower; even `base` does decent French on
+  the rabbit's 8 kHz mic. **Since 0.19.0 no model is in the image** (it was
+  two thirds of it, for a voice that is off by default): when
+  `voice_pipeline` or listening is on, the add-on downloads the chosen one
+  once, at start, into its `/data/models` (tiny 78 MB, base 148 MB, small
+  488 MB), from a fixed revision and checked against its SHA-256, and keeps
+  it there (Home Assistant backups included). The log says
+  `STT: model … ready`; until then a press is transcribed as nothing. A
+  failed download (no Internet access, for one) is logged and tried again
+  10 minutes later.
 - `tts_engine`: `espeak` (bundled, robotic, fully local) or **`piper` / `ha`**
   (speak through **any** Home Assistant TTS entity — fetched via the Supervisor
   proxy). Use `piper`/`ha` for a natural voice.
@@ -319,6 +356,14 @@ not stream its microphone at all**; nothing is captured or sent. Controls:
 
 The bundled bytecode is already a *hybrid* build, so passive listening works out
 of the box; push-to-talk is always available regardless of this setting.
+
+**One rabbit listens at a time** (since 0.19.0): the last one sent the mic
+(`/api/mic?on=1&mac=…` moves it; a rabbit that comes online does not take it
+from another one that is connected). Audio is accepted only from that rabbit's
+address, and over UDP only from the first sender after each start, so nothing
+else on the network can speak a command into it. A push-to-talk recording is
+accepted only from the address of a connected rabbit, at most 512 KB, and the
+reply plays on the rabbit that recorded it. The volume is kept per rabbit.
 
 ## Home Assistant integration (REST)
 
@@ -375,7 +420,16 @@ config needed). Trigger automations on it:
   ready-made **`home-assistant/rfid.yaml`** package remembers the last tag (to
   discover ids) and dispatches known tags to actions. Test it without a physical
   tag by replaying the request: `curl "http://<HAOS_IP>/vl/rfid.jsp?sn=<mac>&t=deadbeef01"`.
+  For a rabbit whose adoption key you confirmed, that replay is ignored: its
+  tags count only inside its TLS session, or (older runtimes) from the
+  address that session connects from.
 - **Ears** — `type: ears`, `left` / `right` (~0..16) when you turn the ears by hand.
+
+Every event carries **`verified`** (since 0.19.0): `true` when it came from a
+rabbit that proved itself with its adoption key (TLS), `false` otherwise. A
+rabbit without a confirmed key speaks the plain Violet protocol, which has no
+credential: anything on your network can claim to be it. Gate an automation
+that opens or unlocks something on `verified: true`.
 
 ```yaml
 automation:

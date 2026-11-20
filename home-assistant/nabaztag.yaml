@@ -9,6 +9,7 @@
 # Add to secrets.yaml:
 #   nab_api: "<HAOS_IP>:8099"   # the nabaztag-violet add-on control API (host port 8099)
 #   nab_mac: "<rabbit-mac>"     # rabbit MAC, lowercase, no colons (e.g. 0123456789ab)
+#   nab_token: "<api token>"    # the add-on's API token, shown on its Web UI (Settings > Add-ons > Nabaztag Terrier)
 #
 # Speech uses the add-on's built-in local TTS (/api/say, espeak-ng) — no cloud,
 # nothing to install, reachable on the same port the rabbit already uses.
@@ -19,42 +20,56 @@ rest_command:
   nabaztag_say:
     url: "http://{{ api }}/api/say?mac={{ mac }}&text={{ text | urlencode }}{% if voice is defined %}&voice={{ voice }}{% endif %}{% if speed is defined %}&speed={{ speed }}{% endif %}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 20
 
   # Stream + play an audio URL the rabbit can reach (MP3 or 22kHz/16-bit mono WAV).
   nabaztag_play:
     url: "http://{{ api }}/api/play?mac={{ mac }}&url={{ media | urlencode }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 20
 
   # Move the ears to positions (~0..16), independent left / right.
   nabaztag_ears:
     url: "http://{{ api }}/api/ears?mac={{ mac }}&left={{ left }}&right={{ right }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Full RGB on one LED: led = bottom|left|middle|right|top.
   nabaztag_led:
     url: "http://{{ api }}/api/led?mac={{ mac }}&led={{ led }}&r={{ r }}&g={{ g }}&b={{ b }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Belly weather icon: v = sun|cloudy|smog|rain|snow|storm.
   nabaztag_weather_icon:
     url: "http://{{ api }}/api/weather?mac={{ mac }}&v={{ v }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Nose: v = 0 none / 1 blink / 2 double-blink.
   nabaztag_nose:
     url: "http://{{ api }}/api/nose?mac={{ mac }}&v={{ v }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Wake (on=0) / sleep (on=1).
   nabaztag_sleep:
     url: "http://{{ api }}/api/sleep?mac={{ mac }}&on={{ on }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Passive listening ("hey Nabi"): on=1 starts it, on=0 stops it. PRIVACY: this
@@ -64,6 +79,8 @@ rest_command:
   nabaztag_listen:
     url: "http://{{ api }}/api/mic?mac={{ mac }}&on={{ on }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
   # Play an original Nabaztag jingle (extracted from the firmware). name =
@@ -73,12 +90,16 @@ rest_command:
   nabaztag_jingle:
     url: "http://{{ api }}/api/jingle?mac={{ mac }}&name={{ name }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 15
 
   # Volume 0-100 (100 = loudest). Persists across reboots (re-applied on connect).
   nabaztag_volume:
     url: "http://{{ api }}/api/volume?mac={{ mac }}&level={{ level }}"
     method: GET
+    headers:
+      X-API-Token: !secret nab_token
     timeout: 10
 
 input_select:
