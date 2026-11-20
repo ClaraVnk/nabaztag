@@ -2281,11 +2281,14 @@ def patch_eapol_exact_body(root: Path) -> None:
     rep("rt2501_send((uint8_t *)&fr_out, sizeof(struct eapol_frame),",
         "rt2501_send((uint8_t *)&fr_out, sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH,",
         "the group reply's send", exactly=1)
-    a = "eapol_state_t eapol_state;\n"
-    if t.count(a) != 1:
-        sys.exit(f"FAIL {p}: eapol_state's definition not found once")
-    t = t.replace(a, "/* eapol_exact_body: an EAPOL-Key frame's fields, before its key data. */\n"
-                     "#define EAPOL_KEY_FIELDS (sizeof(struct eapol_key_frame) - EAPOL_RSN_LENGTH)\n\n" + a, 1)
+    # After the last #include: the other steps rewrite the file's
+    # definitions (eapol_state's among them), never its includes.
+    inc = list(re.finditer(r"(?m)^#include [^\n]*\n", t))
+    if not inc:
+        sys.exit(f"FAIL {p}: no #include to put EAPOL_KEY_FIELDS after")
+    at = inc[-1].end()
+    t = (t[:at] + "\n/* eapol_exact_body: an EAPOL-Key frame's fields, before its key data. */\n"
+         "#define EAPOL_KEY_FIELDS (sizeof(struct eapol_key_frame) - EAPOL_RSN_LENGTH)\n" + t[at:])
     write_flat(p, t, nl)
     print(f"[ok]   {p}: eapol_exact_body ({'; '.join(edits)})")
 
@@ -10488,6 +10491,42 @@ def patch_wifi_diag(root: Path) -> None:
 
 
 
+def patch_eapol_diag(root: Path) -> None:
+    """Two counters on wifi_diag's line: m, messages 1 of the four-way
+    handshake received; n, messages 3 received.
+
+    Why (issue #163, 2026-11-20): Lapinou's line behind a Livebox 4 said E1
+    and k0 -- waiting for a message 3, no group key -- which is either an AP
+    that never sent one (it refused message 2) or a rabbit that refused the
+    one it got. n tells the two apart: 0 is the first. Counted where
+    eapol_input() hands the frame on, before any check of the handler's.
+    Needs wifi_diag.
+    """
+    ep = root / "src/net/eapol.c"
+    t, nl = read_flat(ep)
+    if "nab_m3_rx" not in t:
+        for call, var in (("eapol_input_msg1(frame, length);", "nab_m1_rx"),
+                          ("eapol_input_msg3(frame, length);", "nab_m3_rx")):
+            a = "    " + call + "\n"
+            if t.count(a) != 1:
+                sys.exit(f"FAIL {ep}: the dispatch's {call} not found once")
+            t = t.replace(a, f"    {{ extern uint8_t {var}; {var}++; {call} }}   /* eapol_diag */\n", 1)
+        write_flat(ep, t, nl)
+    wd = root / "src/utils/wdiag.c"
+    t, nl = read_flat(wd)
+    if "nab_m3_rx" in t:
+        print(f"[skip] {wd}: the handshake's counters are already on the line")
+        return
+    a = "uint8_t nab_gtk_rx;                    /* counted in eapol.c */\n"
+    b = "  p = wd_kv(p, 'k', nab_gtk_rx);\n"
+    if t.count(a) != 1 or t.count(b) != 1:
+        sys.exit(f"FAIL {wd}: wifi_diag's line is not the expected shape (wifi_diag first)")
+    t = t.replace(a, a + "uint8_t nab_m1_rx, nab_m3_rx;           /* eapol_diag: counted in eapol.c */\n", 1)
+    t = t.replace(b, b + "  p = wd_kv(p, 'm', nab_m1_rx);\n  p = wd_kv(p, 'n', nab_m3_rx);\n", 1)
+    write_flat(wd, t, nl)
+    print("[ok]   eapol_diag: m (messages 1) and n (messages 3) on the Wi-Fi line")
+
+
 def patch_boot_diag(root: Path) -> None:
     """The boot's story in flash, on the setup page and to the warren.
 
@@ -10870,8 +10909,9 @@ def main() -> int:
         # the two flash levers and the Wi-Fi telemetry (wifi_diag, boot_diag) in it.
         "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
         # 1.2.1.0 and eapol_exact_body: the EAPOL replies declare the body they
-        # carry (issue #163, a Livebox 4; Lapinou's test build, 2026-11-20).
-        "naboot-1.2.1.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,linker_keep,gc_sections",
+        # carry; eapol_diag: m and n on the Wi-Fi line, messages 1 and 3 received
+        # (issue #163, a Livebox 4; Lapinou's test build, 2026-11-20).
+        "naboot-1.2.1.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,linker_keep,gc_sections",
         # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
         # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
         "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
@@ -11258,6 +11298,7 @@ def main() -> int:
         "boot_noserver": patch_boot_noserver,
         "wifi_diag": patch_wifi_diag,
         "boot_diag": patch_boot_diag,
+        "eapol_diag": patch_eapol_diag,
         "boot_strip_wav": patch_boot_strip_wav,
         "boot_strip_login": patch_boot_strip_login,
         "opt_size_crypto": patch_opt_size_crypto,
