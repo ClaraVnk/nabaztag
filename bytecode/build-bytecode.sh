@@ -117,6 +117,10 @@ if [ "${RUNTIME:-https}" != tls ]; then
   echo "==> patch_live_in_session.py  (radio and podcasts inside the session)"
   python3 "$HERE/patch_live_in_session.py" "$BC/sources/main.mtl"
 fi
+# The Wi-Fi line (wifiDiag) inside the session once per connection, when the
+# warren flipped "xmpp-wifi:0" for a firmware that has the opcode (1.2.1.0).
+echo "==> patch_wifi_in_session.py  (the Wi-Fi line inside the session)"
+python3 "$HERE/patch_wifi_in_session.py" "$BC/sources/main.mtl"
 # Blanks ahead of a stanza (a whitespace keepalive) no longer swallow it
 # and every stanza after it.
 echo "==> patch_xml_leading_blank.py  (blanks ahead of a stanza)"
@@ -158,6 +162,10 @@ fi
 # warren flipped "xmpp-btn:0", instead of recording the room to record.jsp.
 echo "==> patch_btn_in_session.py  (a long press goes to the warren, not to record.jsp)"
 python3 "$HERE/patch_btn_in_session.py" "$BC/sources/main.mtl"
+# With "xmpp-btnrec:1" (a microphone action on the long press), the press
+# records while the head is held, nose red, inside the session.
+echo "==> patch_btn_record.py  (a long press records while held, as Violet's did)"
+python3 "$HERE/patch_btn_record.py" "$BC/sources/main.mtl"
 if [ "${OTA_REPORT:-}" = 1 ]; then
   echo "==> patch_ota_report.py  (TEST RUNTIME: each step of an update goes to the warren)"
   python3 "$HERE/patch_ota_report.py" "$BC/sources"

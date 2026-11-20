@@ -352,6 +352,24 @@ tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <ba
 list, which the review's VM steps joined that day). A verdict with fewer
 answers than challenges is a release that does not bind.
 
+### A long press that listens, and the Wi-Fi line
+
+`--long-press echo` maps the owner's long press to "Écoute-toi"; with the
+long-press scenario the head is held at 120 s and the verdict shows what the
+microphone recorded after a real press, chime included (2026-11-19: 0 bytes
+on two real rabbits, where `--api listen` took 12 KB). With a runtime built
+from this repo (bytecode/patch_wifi_in_session.py) and a Terrier that flips
+`xmpp-wifi`, the Terrier's log also has `wifi` once per connection.
+
+```sh
+cd firmware-arm/emulator
+tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
+    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/lp \
+    --scenario scenarios/vm/xmpp-longpress.txt --long-press echo
+#   control (Terrier before the fix): microphone: stopped after 0 blocks
+#   fix: mic: <mac> captured N bytes of audio
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
@@ -401,6 +419,26 @@ control kernel without them: `firmware-arm/emulator/karotz/wpa3/README.md`.
 podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
 podman run --rm karotz-wpa3     # control: not connected; patched: connected
 ```
+
+### LapinLibre, built here, and its key as an image
+
+`karotz/lapinlibre/build.sh` builds LapinLibre (our fork, `LL_COMMIT` in its
+Containerfile) in an Ubuntu container and runs its tests; `LL_STAGES=test`
+runs the tests alone on the built tree. `karotz/lapinlibre/binfmt-arm.sh`
+registers qemu-arm first. A commit that leaves the kernel alone reuses it
+(`LL_REUSE_UNCHANGED=1`).
+
+On the dev VM (4 cores, 2026-11-20): 293 of 297 tests pass in about 39
+minutes (the kernel reused, the tests in balanced shards, one per core). The
+four left all time karotzVM under qemu-user: its record's order,
+karotzvm_handles' memory growth, a tag listener's tone, and
+karotzvm_reply_ends, which alone takes 17 minutes to fail (1 of 10 memory
+rounds in 900 s). LapinLibre's own CI does not run these; asked upstream.
+
+`karotz/lapinlibre/make-img.sh` turns the built key into
+`lapinlibre-<version>.img.xz` (one FAT32 partition, label LAPINLIBRE) for
+Raspberry Pi Imager or balenaEtcher: write it, edit `lapinlibre.txt` on the
+key, plug it into the Karotz.
 
 ### The three rabbits at once
 
@@ -482,3 +520,10 @@ that is in the rabbit.
 
 [`firmware-arm/docs/RECOVERY.md`](../firmware-arm/docs/RECOVERY.md): the
 setup page and the release first, the JTAG station last.
+
+## Karotz: measure before installing
+
+A factory Karotz (no network, no SSH) is read with a USB key before anything
+is installed on it: `karotz/measure-key/README.md`
+(`sh karotz/measure-key/make-key.sh /Volumes/KAROTZ`). Read-only on the
+rabbit; the flash copy and the readings land on the key under `measure/`.

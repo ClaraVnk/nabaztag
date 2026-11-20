@@ -1,0 +1,47 @@
+#!/bin/sh
+# Measure a Karotz before anything is installed on it (Clara, 2026-11-19:
+# "on mesure d'abord, on installe ensuite"). Read-only on the rabbit: it
+# only reads, and writes every result to the key itself.
+#
+# The factory boot (linuxrc) runs a key's `autorun` as root when
+# `gpg --verify autorun.sig` passes. autorun.sig is Violet's clearsigned
+# rootfs notice and covers nothing of this script (read in
+# rofra/karotz-openkarotz-firmware linuxrc and sweetlilmre/LapinLibre), so
+# any script beside it runs. make-key.sh puts both on a FAT32 key.
+#
+# The rabbit goes on booting only when this returns: its usual light
+# (cyan on a factory rabbit with no network) means the measure is done.
+
+K=/mnt/usbkey
+O=$K/measure
+mkdir -p $O
+exec > $O/log.txt 2>&1
+set -x
+date
+uname -a
+for f in /proc/cpuinfo /proc/version /proc/mtd /proc/meminfo /proc/partitions \
+         /proc/cmdline /proc/bus/usb/devices /karotz/etc/rootfs_version \
+         /etc/conf/sys_version /usr/etc/conf/sys_version; do
+    echo "=== $f"; cat $f
+done
+dmesg > $O/dmesg.txt
+mount > $O/mount.txt; df >> $O/mount.txt
+lsmod > $O/lsmod.txt
+ls -la /karotz/bin /usr/karotz/bin /usr/bin /bin /sbin > $O/bins.txt
+ls -laR /usr > $O/usr-tree.txt
+ls -laR /karotz/etc /usr/etc > $O/etc-tree.txt
+
+# Every flash partition, data only (no OOB), in the order of /proc/mtd.
+for n in $(sed -n 's/^mtd\([0-9]*\):.*/\1/p' /proc/mtd); do
+    [ -c /dev/mtd$n ] || mknod /dev/mtd$n c 90 $((n * 2))
+    if [ -x /sbin/nanddump ]; then
+        /sbin/nanddump -o -f $O/mtd$n.bin /dev/mtd$n
+    else
+        dd if=/dev/mtd$n of=$O/mtd$n.bin bs=128k
+    fi
+    ls -l $O/mtd$n.bin
+done
+md5sum $O/*.bin > $O/md5.txt
+date
+echo done > $O/DONE
+sync

@@ -210,10 +210,11 @@ Put your rabbit on the public warren —
    Answer *No* only for a real difference — a refused key needs a reset of
    the rabbit to get new colours; when unsure, choose *Not sure* and replug
    it to see them again. Until you confirm, the colours come back for a minute at
-   every boot — unplug and replug to see them again. *Missed the code? It is
-   spoken again on the next connect, but at most once every ~10 minutes per
-   rabbit — so wait that long before power-cycling, or you'll get a silent
-   boot.*
+   every boot — unplug and replug to see them again. *Missed the code?
+   **Press the rabbit's head**: while it is not adopted, it repeats the code
+   slowly, one letter at a time. Or, on the `/pair` page, “Can't catch the
+   code?” e-mails it to you, then press its head within ten minutes to prove
+   the rabbit is in your hands.*
 
 A rabbit on **Naboot 1.0.0.0** or later whose owner has confirmed its adoption
 key runs its XMPP stream inside **TLS 1.3 (PSK)** on port **5223**, keyed from
