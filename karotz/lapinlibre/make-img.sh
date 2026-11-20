@@ -1,6 +1,7 @@
 #!/bin/sh
-# The built LapinLibre key as a disk image, for Raspberry Pi Imager or
-# balenaEtcher: one MBR partition, FAT32, label LAPINLIBRE, the key's files
+# Terrier OS: our build of LapinLibre (MIT, sweetlilmre/LapinLibre, with our
+# patches), as a disk image for Raspberry Pi Imager or balenaEtcher: one MBR
+# partition, FAT32, label TERRIEROS (nothing reads the label), the key's files
 # at its root (LapinLibre's docs/install.md: "Copy the files, not the
 # folder"). After writing it, the key shows up on the computer: edit
 # lapinlibre.txt there (Wi-Fi, SSH key...), eject, plug it into the Karotz.
@@ -9,7 +10,7 @@
 #   (defaults: ~/lapinlibre-work/usbkey, the build's output, and the current dir)
 #
 # Built in an Alpine container with mtools: no root, no loop device. Writes
-# lapinlibre-<version>.img.xz, its .sha256, and lapinlibre.rpi-imager.json:
+# terrier-os-<version>.img.xz, its .sha256, and terrier-os.rpi-imager.json:
 # a Raspberry Pi Imager repository listing that one image, so the key shows
 # up by name in Imager (App options > Content repository, or
 # `rpi-imager --repo <url of the json>`), downloaded and checked there.
@@ -17,7 +18,7 @@
 # user-data on the key, and our LapinLibre's applysettings.sh takes the Wi-Fi
 # network (in clear: WPA3 too), the name and the SSH key from them when
 # lapinlibre.txt leaves those empty. The image is expected at LL_URL
-# (default: the nabaztag release lapinlibre-<version>).
+# (default: the nabaztag release terrier-os-<version>).
 set -eu
 KEY=${1:-$HOME/lapinlibre-work/usbkey}
 # A build whose tests failed leaves the key in the work tree only.
@@ -31,38 +32,38 @@ VERSION=${VERSION:-$(date -u +%Y%m%d)}
 MB=$(( $(du -sm "$KEY" | cut -f1) + 32 ))
 [ "$MB" -ge 64 ] || MB=64
 mkdir -p "$OUT"
-URL=${LL_URL:-https://github.com/ClaraVnk/nabaztag/releases/download/lapinlibre-$VERSION}
+URL=${LL_URL:-https://github.com/ClaraVnk/nabaztag/releases/download/terrier-os-$VERSION}
 podman run --rm -v "$KEY:/key:ro,Z" -v "$OUT:/out:Z" -e MB="$MB" -e V="$VERSION" -e URL="$URL" \
     docker.io/library/alpine:3.22 sh -euc '
 apk add -q mtools dosfstools sfdisk xz >/dev/null
-img=/out/lapinlibre-$V.img
+img=/out/terrier-os-$V.img
 rm -f "$img" "$img.xz"
 truncate -s "${MB}M" "$img"
 # One partition from 1 MiB, type c (FAT32 LBA): what a stick formatted on a
 # computer has, and what the Karotz mounts.
 echo "2048,,c" | sfdisk -q "$img"
-mkfs.vfat -F 32 -n LAPINLIBRE --offset 2048 "$img" $(( (MB - 1) * 1024 )) >/dev/null
+mkfs.vfat -F 32 -n TERRIEROS --offset 2048 "$img" $(( (MB - 1) * 1024 )) >/dev/null
 # CRLF would break the rabbit shell: the files go as built.
 mcopy -s -i "$img@@1M" /key/* ::/
 mdir -i "$img@@1M" ::/ | tail -n +4
 ext_size=$(stat -c %s "$img"); ext_sha=$(sha256sum "$img" | cut -d" " -f1)
 xz -T0 -9 "$img"
-cd /out && sha256sum "lapinlibre-$V.img.xz" > "lapinlibre-$V.img.xz.sha256"
-cat > lapinlibre.rpi-imager.json <<JSON
+cd /out && sha256sum "terrier-os-$V.img.xz" > "terrier-os-$V.img.xz.sha256"
+cat > terrier-os.rpi-imager.json <<JSON
 {
   "os_list": [
     {
-      "name": "LapinLibre $V (Karotz, beta)",
-      "description": "USB key for a Karotz (Nabaztag v3), not for a Raspberry Pi. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
-      "url": "$URL/lapinlibre-$V.img.xz",
+      "name": "Terrier OS $V (Karotz, beta)",
+      "description": "For a Karotz (Nabaztag v3), not a Raspberry Pi: LapinLibre with WPA3, built for Le Terrier. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
+      "url": "$URL/terrier-os-$V.img.xz",
       "init_format": "cloudinit",
       "release_date": "$(date -u +%Y-%m-%d)",
       "extract_size": $ext_size,
       "extract_sha256": "$ext_sha",
-      "image_download_size": $(stat -c %s "lapinlibre-$V.img.xz"),
-      "image_download_sha256": "$(cut -d" " -f1 "lapinlibre-$V.img.xz.sha256")"
+      "image_download_size": $(stat -c %s "terrier-os-$V.img.xz"),
+      "image_download_sha256": "$(cut -d" " -f1 "terrier-os-$V.img.xz.sha256")"
     }
   ]
 }
 JSON
-ls -l "lapinlibre-$V.img.xz" lapinlibre.rpi-imager.json'
+ls -l "terrier-os-$V.img.xz" terrier-os.rpi-imager.json'

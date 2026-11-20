@@ -308,18 +308,18 @@ karotzvm_handles' memory growth, a tag listener's tone, and
 karotzvm_reply_ends, which alone takes 17 minutes to fail (1 of 10 memory
 rounds in 900 s). LapinLibre's own CI does not run these; asked upstream.
 
-`karotz/lapinlibre/make-img.sh` turns the built key into
-`lapinlibre-<version>.img.xz` (one FAT32 partition, label LAPINLIBRE) for
-Raspberry Pi Imager or balenaEtcher: write it, edit `lapinlibre.txt` on the
-key, plug it into the Karotz. It also writes `lapinlibre.rpi-imager.json`, a
-Raspberry Pi Imager repository with that one image: publish both in a
-`lapinlibre-<version>` release (or set `LL_URL` to where the image will be),
-then in Imager, App options > Content repository > the json's URL (or
-`rpi-imager --repo <url>`): LapinLibre appears by name, downloaded and
-checked by its sha256. Pick any device. Imager's OS customisation fills
-the Wi-Fi network, the name and the SSH key (our LapinLibre reads its
-`network-config` and `user-data`; `lapinlibre.txt` wins); the user account
-and the locale it asks for are ignored.
+`karotz/lapinlibre/make-img.sh` turns the built key into **Terrier OS**, our
+LapinLibre (its MIT notice kept, our patches on top), in beta:
+`terrier-os-<version>.img.xz` (one FAT32 partition, label TERRIEROS) for
+Raspberry Pi Imager or balenaEtcher, and `terrier-os.rpi-imager.json`, an
+Imager repository with that one image. Publish both in a `terrier-os-<version>`
+release (or set `LL_URL` to where the image will be), then in Imager, App
+options > Content repository > the json's URL (or `rpi-imager --repo <url>`):
+Terrier OS appears by name, downloaded and checked by its sha256. Pick any
+device. Imager's OS customisation fills the Wi-Fi network, the name and the
+SSH key (our LapinLibre reads its `network-config` and `user-data`;
+`lapinlibre.txt`, still its name on the key, wins); the user account and the
+locale it asks for are ignored.
 
 ### The three rabbits at once
 
