@@ -13,9 +13,11 @@
 # a Raspberry Pi Imager repository listing that one image, so the key shows
 # up by name in Imager (App options > Content repository, or
 # `rpi-imager --repo <url of the json>`), downloaded and checked there.
-# No init_format in it: Imager's OS customisation writes Raspberry Pi files,
-# which mean nothing to a Karotz, so it stays off. The image is expected at
-# LL_URL (default: the nabaztag release lapinlibre-<version>).
+# init_format cloudinit: Imager's OS customisation writes network-config and
+# user-data on the key, and our LapinLibre's applysettings.sh takes the Wi-Fi
+# network (in clear: WPA3 too), the name and the SSH key from them when
+# lapinlibre.txt leaves those empty. The image is expected at LL_URL
+# (default: the nabaztag release lapinlibre-<version>).
 set -eu
 KEY=${1:-$HOME/lapinlibre-work/usbkey}
 # A build whose tests failed leaves the key in the work tree only.
@@ -51,8 +53,9 @@ cat > lapinlibre.rpi-imager.json <<JSON
   "os_list": [
     {
       "name": "LapinLibre $V (Karotz)",
-      "description": "USB key for a Karotz (Nabaztag v3), not for a Raspberry Pi. After writing: edit lapinlibre.txt on the key, plug it into the Karotz.",
+      "description": "USB key for a Karotz (Nabaztag v3), not for a Raspberry Pi. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
       "url": "$URL/lapinlibre-$V.img.xz",
+      "init_format": "cloudinit",
       "release_date": "$(date -u +%Y-%m-%d)",
       "extract_size": $ext_size,
       "extract_sha256": "$ext_sha",
