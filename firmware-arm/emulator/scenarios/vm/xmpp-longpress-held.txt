@@ -1,6 +1,6 @@
+# bytecode: bootloader
 # The head held 6 s (bytecode/patch_btn_record.py): the press is noticed at
 # 1.5 s and the rabbit records until the release, nose red, inside the session.
-# bytecode: bootloader
 #
 # A long press of the head of a rabbit whose owner confirmed its adoption
 # key, against a real Terrier on the host (--realtime). Run as boot 2 of
