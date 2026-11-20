@@ -280,6 +280,13 @@ runs the tests alone on the built tree. `karotz/lapinlibre/binfmt-arm.sh`
 registers qemu-arm first. A commit that leaves the kernel alone reuses it
 (`LL_REUSE_UNCHANGED=1`).
 
+On the dev VM (4 cores, 2026-11-20): 293 of 297 tests pass in about 39
+minutes (the kernel reused, the tests in balanced shards, one per core). The
+four left all time karotzVM under qemu-user: its record's order,
+karotzvm_handles' memory growth, a tag listener's tone, and
+karotzvm_reply_ends, which alone takes 17 minutes to fail (1 of 10 memory
+rounds in 900 s). LapinLibre's own CI does not run these; asked upstream.
+
 `karotz/lapinlibre/make-img.sh` turns the built key into
 `lapinlibre-<version>.img.xz` (one FAT32 partition, label LAPINLIBRE) for
 Raspberry Pi Imager or balenaEtcher: write it, edit `lapinlibre.txt` on the
