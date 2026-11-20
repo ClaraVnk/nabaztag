@@ -307,6 +307,30 @@ refusal, in no default step list: what the emulator cannot say is whether
 those two words hold a packet number on a real rabbit, and the count mode
 exists to find out (`../jtag/ccmp-pn.py`).
 
+Two rabbits answered (2026-11-12 and 2026-11-18), the refusal ships, and the
+2026-11-18 review then showed its probation could be gamed:
+`scenarios/enforce/ccmp-probation.txt` sends 60 genuine frames and 200
+replays of the last one in the first seconds; with the probation the 256th
+frame decided "count only" for the boot and the replays went through
+(65, 67, 68 handed up); `ccmp_no_probation` refuses them all (60, 61).
+`tools/ccmp-enforce-proof.sh` runs both scenarios with and without it. The
+same review's `scenarios/forged-beacon-elements.txt` and
+`scenarios/vm/probe-ssid-short.txt` (`forged-beacons rates,ssid,...` beside
+every beacon round, since the scan runs before the first timed event;
+`inject-beacon <which>` and `inject-probe-short` as events) feed the scan
+parser elements the frame does not hold; the over-read is a few bytes past the frame, which only `make asan`
+sees, so `tools/ie-walk-proof.sh` builds the sanitised emulator with and
+without `ie_walk_bounds`. `tools/config-presence.sh` boots a built
+bootloader in config mode four ways (`scenarios/vm/config-server-*.txt`,
+`config-wifi-nohead.txt`): a stranger's new server is refused, the owner's
+within a minute of a press of the head is taken, 70 s after the press it
+is refused, the ordinary save is unchanged. `tools/noserver-proof.sh`
+(2026-11-19) boots it three ways against the gateway -- no warren behind
+it, `tools/plain_warren.py`, no access point -- and reads the `led` lines:
+with the Wi-Fi up and the warren refusing, the nose is steady green and
+the belly breathes purple (`boot_noserver`); with a warren or without an
+access point, the amber and green steps as before.
+
 **Why a rabbit stays "connected" to an access point that has forgotten it,
 2026-11-08.** Two of the four needs-the-mains failures measured over JTAG
 the day before were reproduced here on the first try, because both are one
@@ -444,7 +468,14 @@ host with `--realtime` (its header says how): three boots of the
 plain XMPP while the key is pending, TLS 1.3 PSK once the owner confirmed,
 plain again for a reflashed rabbit with no key. See `../docs/ADOPTION-KEY.md`.
 `tools/xmpp-tls-proof.sh` runs the first two boots against a Terrier
-container, and `--strip` puts `tools/locate_strip.py` on the path: an
+container. Its verdict counts the DIGEST-MD5 challenges of boot 2 and the
+rabbit's answers, and its Terrier's domain (`--domain`, default
+`terrier.warren.test`) is 19 characters long on purpose: the challenge is
+then padded in base64 and Violet's `B64toS` leaves a NUL behind its last
+token, as the production's 22-character realm does. With `warren.test`
+(84 bytes, no padding) Naboot 1.2.1.0's first cut of `vm_strcmp_bound`
+bound here and never on a rabbit (2026-11-18). `--strip` puts
+`tools/locate_strip.py` on the path: an
 attacker who edits `locate.jsp`, dropping the `xmpp_tls` line
 (`--strip-port N` rewrites the port instead). That is how the TLS policy
 under the HMAC was measured, control and fix, before anything was deployed:
@@ -732,6 +763,13 @@ gate: ... hp=...`), the verdict, and whether `flashFirmware` was reached;
 `resets asked` in the summary says whether the VM ran out of memory on the
 way, as the runtime OTA's hex path does for images of 117 KB and up. The
 config page does not: see the scenario's header for the figures.
+
+The phone also reads pages: `at <ms> get <path>` queues a GET (sent with
+`Accept-Encoding: gzip`, one connection after the other), and `--save-dir`
+keeps each answer whole. `tools/config-pages.sh <Nab.elf>` runs
+`scenarios/vm/config-pages.txt` that way and checks every answer: the setup
+page plain with its fields filled, the stylesheet and the fixed pages
+gzipped behind the right Content-Type.
 
 ## Naboot 1.2.0.0's first boot over HTTPS
 

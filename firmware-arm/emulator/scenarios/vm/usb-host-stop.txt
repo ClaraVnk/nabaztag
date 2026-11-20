@@ -1,0 +1,15 @@
+# The USB host controller stops under a running rabbit (usb_watch, 2026-11-20).
+#
+# On Nabazprout the JTAG wires knocked the USB chip into reset while the ARM
+# ran on: the frame number froze, the radio went silent, and the rabbit
+# scanned on channel 1 until the mains. The controller runs here for 12 s --
+# no reset may come from the watch while it does -- then stops; the firmware
+# must restart the rabbit with reason 5 about 5 s later.
+# tools/usb-watch-proof.sh checks the log.
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 25000
+
+at 12000 expect-no-reset
+at 12000 usb-host-stop

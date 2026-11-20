@@ -1,0 +1,17 @@
+# bytecode: bootloader
+#
+# The Wi-Fi is fine and the warren is not there (boot_noserver, 2026-11-19).
+# No --warren: the gateway answers DNS and refuses every TCP connection with
+# a RST, which is a warren that is down. The bootloader's kx.jsp fails
+# twice, its bc.jsp fails, and from then on, whenever the station is
+# associated with its address, the nose is steady green and the four belly
+# LEDs breathe purple together -- not the amber steps that read as a Wi-Fi
+# problem. tools/noserver-proof.sh reads the LED lines of the transcript:
+# a build without the step shows amber and green only (the control).
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 90000
+
+at 20000 expect RUN
+at 85000 expect RUN
+at 89000 expect-no-reset

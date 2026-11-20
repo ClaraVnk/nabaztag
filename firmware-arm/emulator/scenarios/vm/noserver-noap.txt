@@ -1,0 +1,12 @@
+# bytecode: bootloader
+#
+# The other control of noserver-refused: no access point of its own, only a
+# stranger's (another SSID). The rabbit scans and never associates; the
+# belly shows the Wi-Fi steps as before (boot_leds, step 0: the nose and
+# the first belly LED blinking amber) and nothing green or purple, because
+# nothing past the network was ever tried.
+ap 02:00:5e:10:00:02 Stranger 6 open -52
+tick 50
+stop 60000
+
+at 59000 expect-no-reset

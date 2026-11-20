@@ -1,0 +1,34 @@
+// captive.mtl -- config mode as a captive portal (Clara, 2026-11-20).
+//
+// In config mode the rabbit is the access point "Nabaztag-XXXX" at
+// 192.168.0.1 and its DHCP already names itself as the DNS server, but
+// nothing answered on port 53: a phone saw a network with no Internet,
+// Chrome on iOS refused to open http://192.168.0.1 ("Internet
+// déconnecté", measured on the Karotz hotspot the same day), and the owner
+// had to know the address. Now every name resolves to the rabbit: the
+// phone's own check (captive.apple.com, connectivitycheck.gstatic.com...)
+// lands on the setup page, which is not the answer it expects, so the
+// phone opens that page by itself, as it does for a smart plug.
+//
+// The answer is the question sent back: header with QR/RA set, one
+// question, and for type A one answer (a pointer to the name, TTL 60 s,
+// the rabbit's address); any other type gets no answer, which is "no such
+// record" rather than a wrong one. Additional records (EDNS) are dropped.
+// Only in master mode: on the owner's network port 53 stays closed.
+
+fun captive_qend q i=
+	if i>=strlen q then nil
+	else let strget q i -> c in
+	if c==0 then i+1
+	else captive_qend q i+1+c;;
+
+fun captive_dns src mac=
+	let strsub src 8+20+8 nil -> q in
+	let captive_qend q 12 -> e in
+	if e!=nil && (e+4<=(strlen q)) && (((strget q 2)&0x80)==0) then
+	let ((strgetword q e)==1) -> a in
+	udpsend netip 53 (strsub src 8+12 4) (strgetword src 8+20)
+		(strcatlist (strsub q 0 2)::"\$81\$80\0\1\0"::(if a then "\1" else "\0")::"\0\0\0\0"::
+			(strsub q 12 e+4-12)::(if a then "\$c0\$0c\0\1\0\1\0\0\0\60\0\4" else "")::(if a then netip else "")::nil)
+		mac;;
+

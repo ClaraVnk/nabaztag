@@ -21,6 +21,7 @@ struct phone_stats {
   int      response_status;     /* the status code of the last answer, 0 if none */
   uint32_t upload_started_ms;
   uint32_t upload_finished_ms;
+  uint32_t dns_answers;         /* addresses the rabbit's DNS gave */
 };
 
 extern struct phone_stats phone_stats;
@@ -44,5 +45,14 @@ void phone_poll(void);
  * be started, -1 when there is no file or no network to send it on yet; the
  * phone then starts it by itself as soon as it has associated. */
 int phone_start_upload(void);
+
+/* Queue a GET of `path` (a scenario's `get` event): the phone sends them one
+ * after the other, as Accept-Encoding: gzip like any browser, and logs each
+ * answer. With a save directory set, each answer is kept whole, headers
+ * included, under the path's name, so the host can check what was served. */
+void phone_get(const char *path);
+/* Ask the rabbit's DNS for a name's address, once on its network. */
+void phone_dns(const char *name);
+void phone_set_save_dir(const char *dir);
 
 #endif /* _PHONE_H_ */

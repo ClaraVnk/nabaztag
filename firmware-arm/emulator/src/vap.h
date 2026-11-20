@@ -74,6 +74,14 @@ void vap_inject(const uint8_t *frame, uint32_t length);
 /* A probe request from a station in radio range, with an SSID element of
  * `ssid_len` bytes, to a rabbit that is its own AP (config mode). */
 void vap_inject_probe(uint32_t ssid_len);
+/* A probe request whose SSID element declares 32 bytes in a 4-byte body:
+ * the walk reads the missing 28 past the frame (review S-1). */
+void vap_inject_probe_short(void);
+/* A beacon from a stranger whose element does not fit the frame: the
+ * element the scan parser then reads past the end (review S-1). */
+enum { VAP_FORGED_RATES = 1, VAP_FORGED_SSID, VAP_FORGED_DS, VAP_FORGED_VENDOR, VAP_FORGED_RSNXE };
+void vap_inject_beacon(int kind);
+int vap_forged_kind(const char *name);
 /* An attacker's plaintext data frame from the AP's address; `eapol` makes
  * it an EAPOL-Key message 1. */
 void vap_inject_plain(int ap, int eapol);

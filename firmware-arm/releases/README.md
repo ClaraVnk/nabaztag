@@ -15,11 +15,48 @@
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware we ship: the hardware-verified release the
-community downloads (1.2.0.1). Every earlier release, and the old `minimal`
+community downloads (1.2.1.0). Every earlier release, and the old `minimal`
 rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.2.0.1.signed.sim` — the release
+## `naboot-1.2.1.0.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.2.1.0` (`firmware-arm/apply-mods.py`) |
+| **Firmware version** | `1.2.1.0` |
+| **Build mark** | `z=2611201305` |
+| **Size** | 118 288 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `961117d4a237e5107502ba6cdc376535f9d7a7e05b17cf74957acb1eb9f88157` (the `.sim`); the plain image is `3e8751a18153…` |
+
+**What changed since 1.2.0.1:**
+
+- A reset sends the rabbit back to the Terrier, not to Violet's old server;
+  the config page offers the Terrier or an empty field.
+- A press of the head, then a minute, to change the server from the config
+  page without unplugging.
+- No server: the belly and nose blink purple instead of the Wi-Fi amber.
+- Config mode is a captive portal: a phone opens the setup page by itself.
+- A stopped USB host restarts the rabbit after 5 s (reset reason 5) instead
+  of leaving it amber until the mains.
+- Wi-Fi telemetry with each session, and a failed boot keeps one diagnostic
+  line in flash, shown on the config page and sent with the next boot.
+- The fixes of the 2026-11-18 review (`../docs/SECURITY-FINDINGS-2026-11.md`),
+  and the XMPP bind bug they first caused, caught by its proof.
+- Room: gzipped pages, unreachable code pruned, the crypto at `-Os`,
+  ChaCha20-only TLS.
+
+**On a rabbit (2026-11-20, Nabazprout):** four updates inside the session,
+three installed at the first try and came back alone in 72 to 81 s; one,
+sent from the JTAG test image, was dropped before the signature check and
+installed when sent again. After each update the first Wi-Fi attempt fails
+at 29 s and the next one succeeds: under study for 1.2.1.1.
+
+`naboot-1.2.0.1` is archived below.
+
+## `archive/naboot-1.2.0.1.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|

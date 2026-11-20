@@ -1,0 +1,295 @@
+# Review S-2 (2026-11-18): the CCMP replay refusal's probation could be
+# talked out of refusing for the whole boot. ieee80211_ccmp_enforcing()
+# decided once, at the 256th protected frame, from counters that count the
+# frames an attacker replays: 60 genuine frames, then 200 replays of the
+# last one, and at replay 196 (the 256th frame, 2*196 > 256) the verdict was
+# "count only" until the next boot -- replays 196..200 were handed up
+# (data-up 65), a genuine frame made 66, and the same replay again went
+# through twice more (67, 68). ccmp_no_probation removes the probation:
+# data-up stays 60 through the replays and the last replays stay refused.
+#
+# Needs ccmp_replay_enforce and ccmp_no_probation; tools/ccmp-enforce-proof.sh
+# runs it with and without the second as the control (which fails here at
+# 17300 with "65 data frame(s) handed up"). 294 events: SIM_MAX_EVENTS is 512.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 10
+stop 80000
+
+at 10000 expect RUN
+# 60 genuine frames, then 200 replays of the last one: seen = 260, flagged 200
+at 12000 data
+at 12020 data
+at 12040 data
+at 12060 data
+at 12080 data
+at 12100 data
+at 12120 data
+at 12140 data
+at 12160 data
+at 12180 data
+at 12200 data
+at 12220 data
+at 12240 data
+at 12260 data
+at 12280 data
+at 12300 data
+at 12320 data
+at 12340 data
+at 12360 data
+at 12380 data
+at 12400 data
+at 12420 data
+at 12440 data
+at 12460 data
+at 12480 data
+at 12500 data
+at 12520 data
+at 12540 data
+at 12560 data
+at 12580 data
+at 12600 data
+at 12620 data
+at 12640 data
+at 12660 data
+at 12680 data
+at 12700 data
+at 12720 data
+at 12740 data
+at 12760 data
+at 12780 data
+at 12800 data
+at 12820 data
+at 12840 data
+at 12860 data
+at 12880 data
+at 12900 data
+at 12920 data
+at 12940 data
+at 12960 data
+at 12980 data
+at 13000 data
+at 13020 data
+at 13040 data
+at 13060 data
+at 13080 data
+at 13100 data
+at 13120 data
+at 13140 data
+at 13160 data
+at 13180 data
+at 13200 expect-data-up 60
+at 13300 replay
+at 13320 replay
+at 13340 replay
+at 13360 replay
+at 13380 replay
+at 13400 replay
+at 13420 replay
+at 13440 replay
+at 13460 replay
+at 13480 replay
+at 13500 replay
+at 13520 replay
+at 13540 replay
+at 13560 replay
+at 13580 replay
+at 13600 replay
+at 13620 replay
+at 13640 replay
+at 13660 replay
+at 13680 replay
+at 13700 replay
+at 13720 replay
+at 13740 replay
+at 13760 replay
+at 13780 replay
+at 13800 replay
+at 13820 replay
+at 13840 replay
+at 13860 replay
+at 13880 replay
+at 13900 replay
+at 13920 replay
+at 13940 replay
+at 13960 replay
+at 13980 replay
+at 14000 replay
+at 14020 replay
+at 14040 replay
+at 14060 replay
+at 14080 replay
+at 14100 replay
+at 14120 replay
+at 14140 replay
+at 14160 replay
+at 14180 replay
+at 14200 replay
+at 14220 replay
+at 14240 replay
+at 14260 replay
+at 14280 replay
+at 14300 replay
+at 14320 replay
+at 14340 replay
+at 14360 replay
+at 14380 replay
+at 14400 replay
+at 14420 replay
+at 14440 replay
+at 14460 replay
+at 14480 replay
+at 14500 replay
+at 14520 replay
+at 14540 replay
+at 14560 replay
+at 14580 replay
+at 14600 replay
+at 14620 replay
+at 14640 replay
+at 14660 replay
+at 14680 replay
+at 14700 replay
+at 14720 replay
+at 14740 replay
+at 14760 replay
+at 14780 replay
+at 14800 replay
+at 14820 replay
+at 14840 replay
+at 14860 replay
+at 14880 replay
+at 14900 replay
+at 14920 replay
+at 14940 replay
+at 14960 replay
+at 14980 replay
+at 15000 replay
+at 15020 replay
+at 15040 replay
+at 15060 replay
+at 15080 replay
+at 15100 replay
+at 15120 replay
+at 15140 replay
+at 15160 replay
+at 15180 replay
+at 15200 replay
+at 15220 replay
+at 15240 replay
+at 15260 replay
+at 15280 replay
+at 15300 replay
+at 15320 replay
+at 15340 replay
+at 15360 replay
+at 15380 replay
+at 15400 replay
+at 15420 replay
+at 15440 replay
+at 15460 replay
+at 15480 replay
+at 15500 replay
+at 15520 replay
+at 15540 replay
+at 15560 replay
+at 15580 replay
+at 15600 replay
+at 15620 replay
+at 15640 replay
+at 15660 replay
+at 15680 replay
+at 15700 replay
+at 15720 replay
+at 15740 replay
+at 15760 replay
+at 15780 replay
+at 15800 replay
+at 15820 replay
+at 15840 replay
+at 15860 replay
+at 15880 replay
+at 15900 replay
+at 15920 replay
+at 15940 replay
+at 15960 replay
+at 15980 replay
+at 16000 replay
+at 16020 replay
+at 16040 replay
+at 16060 replay
+at 16080 replay
+at 16100 replay
+at 16120 replay
+at 16140 replay
+at 16160 replay
+at 16180 replay
+at 16200 replay
+at 16220 replay
+at 16240 replay
+at 16260 replay
+at 16280 replay
+at 16300 replay
+at 16320 replay
+at 16340 replay
+at 16360 replay
+at 16380 replay
+at 16400 replay
+at 16420 replay
+at 16440 replay
+at 16460 replay
+at 16480 replay
+at 16500 replay
+at 16520 replay
+at 16540 replay
+at 16560 replay
+at 16580 replay
+at 16600 replay
+at 16620 replay
+at 16640 replay
+at 16660 replay
+at 16680 replay
+at 16700 replay
+at 16720 replay
+at 16740 replay
+at 16760 replay
+at 16780 replay
+at 16800 replay
+at 16820 replay
+at 16840 replay
+at 16860 replay
+at 16880 replay
+at 16900 replay
+at 16920 replay
+at 16940 replay
+at 16960 replay
+at 16980 replay
+at 17000 replay
+at 17020 replay
+at 17040 replay
+at 17060 replay
+at 17080 replay
+at 17100 replay
+at 17120 replay
+at 17140 replay
+at 17160 replay
+at 17180 replay
+at 17200 replay
+at 17220 replay
+at 17240 replay
+at 17260 replay
+at 17280 replay
+at 17300 expect-replay 200 0 0
+at 17300 expect-data-up 60
+# no probation to decide: still refusing
+at 17500 data
+at 17600 expect-data-up 61
+# the same replay again: refused, as every one before it
+at 17700 replay
+at 17800 expect-replay 201 0 0
+at 17800 expect-data-up 61
+at 17900 replay
+at 18000 expect-replay 202 0 0
+at 18000 expect-data-up 61
+at 70000 expect RUN

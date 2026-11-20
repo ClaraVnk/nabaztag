@@ -68,9 +68,20 @@ static char     upload_path[512];
 static uint32_t segment_size = 800;
 static int      upload_wanted;      /* a scenario asked for it */
 
+#define GET_MAX 8
+static char     get_queue[GET_MAX][128];
+static int      get_queued, get_next;
+static char     current_get[128];   /* "" while the connection is the upload */
+static char     save_dir[256];
+
 void phone_set_upload(const char *path)
 {
   snprintf(upload_path, sizeof(upload_path), "%s", path ? path : "");
+}
+
+void phone_set_save_dir(const char *dir)
+{
+  snprintf(save_dir, sizeof(save_dir), "%s", dir ? dir : "");
 }
 
 void phone_set_segment(uint32_t bytes)
@@ -201,7 +212,7 @@ static void send_ip(uint8_t protocol, uint8_t *payload, uint32_t length)
   seed = (phone_ip >> 16) + (phone_ip & 0xffff) + (rabbit_ip >> 16)
        + (rabbit_ip & 0xffff) + protocol + length;
   sum = checksum(packet + 20, length, seed);
-  wr16(packet + 20 + 16, sum == 0 ? 0xffff : sum);   /* TCP only, here */
+  wr16(packet + 20 + (protocol == 17 ? 6 : 16), sum == 0 ? 0xffff : sum);
   wr16(packet + 10, checksum(packet, 20, 0));
   send_data(bssid, ETHERTYPE_IP, packet, 20 + length);
 }
@@ -394,10 +405,24 @@ static void response_report(void)
   if(sscanf(line, "HTTP/%*d.%*d %d", &phone_stats.response_status) != 1)
     phone_stats.response_status = 0;
   sim_log("phone: answer \"%s\", %u bytes", line, tcp.response_length);
+  if(save_dir[0]) {
+    char name[400];
+    FILE *f;
+    const char *p = current_get[0] ? current_get + 1 : "upload";
+    snprintf(name, sizeof(name), "%s/%s", save_dir, *p ? p : "index");
+    f = fopen(name, "wb");
+    if(f) { fwrite(tcp.response, 1, tcp.response_length, f); fclose(f); }
+  }
 
   body = strstr((const char *)tcp.response, "\r\n\r\n");
   if(body == NULL) return;
   body += 4;
+  if((uint8_t)body[0] == 0x1f && (uint8_t)body[1] == 0x8b) {
+    /* A page the firmware keeps gzipped: the browser inflates it. */
+    sim_log("phone: a gzipped body, %u bytes",
+            tcp.response_length - (uint32_t)(body - (const char *)tcp.response));
+    return;
+  }
   if(*body == 0) {
     /* httpflash returns nil when it hands the image to flashFirmware: the
      * header goes out and nothing follows. A browser shows a blank page. */
@@ -426,6 +451,13 @@ static void tcp_finish(void)
   phone_stats.uploads_finished++;
   phone_stats.upload_finished_ms = sim_now();
   response_report();
+  if(current_get[0]) {
+    sim_log("phone: GET %s done in %u ms", current_get,
+            phone_stats.upload_finished_ms - phone_stats.upload_started_ms);
+    free(tcp.request);
+    tcp.request = NULL;
+    return;
+  }
   sim_log("phone: upload done in %u ms: %u segments (%u resent), %u bytes up, %u down",
           phone_stats.upload_finished_ms - phone_stats.upload_started_ms,
           phone_stats.segments_sent, phone_stats.segments_resent,
@@ -503,6 +535,8 @@ static void handle_tcp(const uint8_t *seg, uint32_t length, uint32_t ip_total)
   }
 }
 
+static void handle_dns(const uint8_t *ip, const uint8_t *udp, uint32_t length);
+
 static void handle_ip(const uint8_t *packet, uint32_t length)
 {
   uint32_t hlen, total;
@@ -515,6 +549,80 @@ static void handle_ip(const uint8_t *packet, uint32_t length)
   if(rd32(packet + 16) != phone_ip) return;
   if(packet[9] == 6)
     handle_tcp(packet + hlen, length - hlen, total - hlen);
+  else if(packet[9] == 17)
+    handle_dns(packet, packet + hlen, total - hlen);
+}
+
+/* --- DNS: what a phone asks first on a new network ---------------------
+ * The rabbit's DHCP names it as the DNS server; a phone resolves its own
+ * connectivity check (captive.apple.com, connectivitycheck.gstatic.com)
+ * there. In config mode the rabbit answers every name with itself, so the
+ * phone opens the setup page by itself (captive portal, 2026-11-20). */
+
+#define DNS_PORT_PHONE 40053
+static char dns_queue[GET_MAX][128];
+static int dns_queued, dns_next;
+static uint16_t dns_id = 0x1200;
+
+void phone_dns(const char *name)
+{
+  if(dns_queued < GET_MAX)
+    snprintf(dns_queue[dns_queued++], sizeof(dns_queue[0]), "%s", name);
+}
+
+static void send_dns(const char *name)
+{
+  uint8_t udp[8 + 12 + 130 + 4 + 11];
+  uint8_t *q = udp + 8, *p = q + 12;
+  const char *label = name;
+  uint32_t length;
+
+  memset(udp, 0, sizeof(udp));
+  wr16(q, ++dns_id); wr16(q + 2, 0x0100); wr16(q + 4, 1); wr16(q + 10, 1);
+  while(*label) {                       /* the name, as labels */
+    const char *dot = strchr(label, '.');
+    size_t n = dot ? (size_t)(dot - label) : strlen(label);
+    if(n == 0 || n > 63 || p + 1 + n >= q + 12 + 128) return;
+    *p++ = (uint8_t)n; memcpy(p, label, n); p += n;
+    label += n + (dot ? 1 : 0);
+  }
+  *p++ = 0;
+  wr16(p, 1); wr16(p + 2, 1); p += 4;   /* type A, class IN */
+  /* An EDNS OPT record, as iOS sends one: the answer must not echo it. */
+  *p++ = 0; wr16(p, 41); wr16(p + 2, 1232); p += 4; wr32(p, 0); p += 4; wr16(p, 0); p += 2;
+  length = (uint32_t)(p - udp);
+  wr16(udp, DNS_PORT_PHONE); wr16(udp + 2, 53); wr16(udp + 4, (uint16_t)length);
+  sim_log("phone: DNS %s ?", name);
+  send_ip(17, udp, length);
+}
+
+static void handle_dns(const uint8_t *ip, const uint8_t *udp, uint32_t length)
+{
+  const uint8_t *m = udp + 8, *p, *end = udp + length;
+  uint16_t an;
+
+  (void)ip;
+  if(length < 8 + 12 || rd16(udp) != 53 || rd16(udp + 2) != DNS_PORT_PHONE) return;
+  /* Two questions can be out at once, like a phone's: any id it sent. */
+  if(rd16(m) <= 0x1200 || rd16(m) > dns_id || !(m[2] & 0x80)) {
+    sim_log("phone: DNS answer refused (id %04x, flags %04x)", rd16(m), rd16(m + 2));
+    return;
+  }
+  an = rd16(m + 6);
+  p = m + 12;
+  while(p < end && *p) p += 1 + *p;     /* the question's name */
+  p += 1 + 4;
+  if(an == 0 || p + 16 > end) {
+    sim_log("phone: DNS answer: no address (rcode %u, %u answer(s), additional %u)", m[3] & 15, an, rd16(m + 10));
+    return;
+  }
+  if(rd16(p + 2) != 1 || rd16(p + 10) != 4) {
+    sim_log("phone: DNS answer: not an address (type %u)", rd16(p + 2));
+    return;
+  }
+  phone_stats.dns_answers++;
+  sim_log("phone: DNS answer %u.%u.%u.%u (ttl %u, additional %u)", p[12], p[13], p[14], p[15],
+          (unsigned)rd32(p + 6), rd16(m + 10));
 }
 
 /* --- frames from the rabbit ------------------------------------------- */
@@ -616,6 +724,33 @@ int phone_start_upload(void)
   return tcp_open();
 }
 
+void phone_get(const char *path)
+{
+  if(get_queued < GET_MAX)
+    snprintf(get_queue[get_queued++], sizeof(get_queue[0]), "%s", path);
+}
+
+static int start_next_get(void)
+{
+  char head[256];
+
+  snprintf(current_get, sizeof(current_get), "%s", get_queue[get_next++]);
+  snprintf(head, sizeof(head),
+      "GET %s HTTP/1.1\r\n"
+      "Host: 192.168.0.1\r\n"
+      "User-Agent: Mozilla/5.0 (a phone, in the emulator)\r\n"
+      "Accept-Encoding: gzip, deflate\r\n"
+      "Connection: close\r\n\r\n", current_get);
+  tcp.request_length = (uint32_t)strlen(head);
+  tcp.request = malloc(tcp.request_length);
+  if(tcp.request == NULL) return -1;
+  memcpy(tcp.request, head, tcp.request_length);
+  sim_log("phone: GET %s", current_get);
+  phone_stats.uploads_started++;
+  phone_stats.upload_started_ms = sim_now();
+  return tcp_open();
+}
+
 void phone_poll(void)
 {
   if(ieee80211_mode != IEEE80211_M_MASTER) return;
@@ -633,7 +768,10 @@ void phone_poll(void)
       }
       break;
     case ST_JOINED:
+      if(dns_next < dns_queued) send_dns(dns_queue[dns_next++]);
       if(upload_wanted && tcp.state == TCP_CLOSED) phone_start_upload();
+      else if(get_next < get_queued && (tcp.state == TCP_CLOSED || tcp.state == TCP_DONE))
+        start_next_get();
       break;
   }
 

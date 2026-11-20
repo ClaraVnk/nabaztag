@@ -42,6 +42,12 @@ def main():
             elif path.endswith("/locate.jsp"):
                 code, body = 200, locate
             print(f"{path}: {code}, {len(body)} bytes of body", flush=True)
+            # The query on a line of its own, for diag-proof.sh (the &dg= the
+            # bootloader sends); the line above keeps the shape noserver-proof
+            # and the others read.
+            q = urlparse(self.path).query
+            if q:
+                print(f"  query {path}?{q}", flush=True)
             self.send_response(code)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

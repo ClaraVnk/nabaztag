@@ -49,15 +49,18 @@ about 18.6 s.
    was -O1, and a layout change has woken an old bug here before: it ships
    only after the emulator proofs, a crypto timing check (the key exchange
    needs 18 s of its 60 on a real ARM7) and Nabazprout.
-2. **The configuration pages**: about 6.9 KB of text in the bytecode; a
-   tighter stylesheet and shared fragments, perhaps 1 to 2 KB.
-3. **Radio tables for chips the rabbit does not have** (`RF5225RegTable`,
-   `RF5226RegTable`, `RF2528RegTable`, 280 bytes each): ~560 bytes, once
-   `rfic_report` says which RF chip every rabbit seen so far carries.
-4. **TLS certificate checking** (X.509, RSA-PSS, ECDSA): several KB. A pinned
+2. **The configuration pages**: 7 039 bytes of text. Moving them to C
+   frees nothing (see below). Served gzipped, the stylesheet and the three
+   fixed pages give back 2 232 bytes (`gzip_pages`), the setup page 2 696
+   more with its values in /v.js (`gzip_setup`); both measured below.
+3. **Radio code for chips the rabbit does not have** (`rf2528_only`):
+   1 192 bytes. Every rabbit that has reported says RF2528 (30 of 40, 2026-11-18). The
+   warren must send it only to a rabbit that has reported RfIcType 2.
+4. **Unreachable bootloader functions** (`prune_unreachable`): 472 bytes.
+5. **TLS certificate checking** (X.509, RSA-PSS, ECDSA): several KB. A pinned
    server key would do the same job for one server; a design decision, not a
    size tweak.
-5. **One signature scheme** (ECDSA P-256 is already there for TLS and SAE):
+6. **One signature scheme** (ECDSA P-256 is already there for TLS and SAE):
    would drop Ed25519 and SHA-512, ~3 KB, but changes the release key every
    rabbit trusts. Last resort.
 
@@ -140,3 +143,174 @@ Each -Os image passed flashsim and failed on the rabbit with a different
 symptom the emulators cannot see. **-Os is stopped.** The flash is to be
 won by moving stable pieces of the bytecode to C, one at a time, each tried
 on the rabbit (`phase8-rom` measures it).
+
+## The pages in C: no flash either (2026-11-17)
+
+`--mode naboot-1.2.0.1-rom` is 1.2.0.1 with `pages_to_rom`: the four
+configuration pages and their stylesheet (7 039 bytes) leave the bytecode
+for C constants, served by a new `pageRender` opcode that fills the fields.
+The image grew by 196 bytes (127 148, 172 over the flash). Text weighs the
+same in the bytecode and in C, both live in the flash, and the renderer is
+new code. What moves is RAM: the VM no longer copies the pages at boot.
+
+Rewriting bytecode logic in C will not win flash either: the Metal bytecode
+is denser than ARM code for the same work. **Moving to C is closed as a
+flash lever.** What is left is in the list above: gzipped pages, unused
+radio tables, a pinned TLS key, one signature scheme.
+
+Gzip sizes of the pages, measured on the 1.2.0.1 sources (`gzip -9n`):
+
+| Part | Plain | Gzipped |
+|---|---|---|
+| setup page (15 fields) | 2 254 | 922 |
+| saved | 664 | 430 |
+| update | 752 | 488 |
+| error | 592 | 402 |
+| stylesheet | 2 777 | 1 017 |
+
+## Gzipped pages: 2 232 bytes back (2026-11-18)
+
+`--mode naboot-1.2.0.1-gz` is 1.2.0.1 with `gzip_pages`: the stylesheet
+moves to `/s.css`, and it and the three fixed pages are stored as their gzip
+bytes behind a ready header (`Content-Encoding: gzip`), which the server
+sends as it is. The setup page keeps its fields and stays plain, the
+stylesheet linked instead of inlined. 4 844 bytes of text become 2 354.
+
+The image: 124 720 bytes, 2 256 spare, against 126 952 for 1.2.0.1
+(2 232 bytes back, net of the routing code). In the emulator
+(`firmware-arm/emulator/tools/config-pages.sh`), a phone asking for every page gets
+each one gzipped behind the right Content-Type, and each inflates to the
+page 1.2.0.1 serves; 1.2.0.1 itself, as the control, fails every gzip check.
+What the emulator does not show: a real browser fetching the page and its
+stylesheet on two connections at once. Nabazprout confirmed it on
+2026-11-18 (`-gz-tel`, installed by OTA): setup, upgrade and saved pages
+styled in a phone's browser, and loading faster than before.
+
+## The setup page gzipped, dead code, one radio chip (2026-11-18)
+
+`gzip_setup`: the setup page is stored empty and gzipped like the others
+(2 674 bytes -> 1 087); a script at its end loads `/v.js`, which the
+rabbit writes: `v([mac, firmware, ssid, server, ip, mask, gateway, dns,
+proxy ip, proxy port, dhcp, proxy, crypt], [scan])`, strings escaping `\`
+and `"`. The template, `pagefill` and the `<option>` builders go with it.
+Without JavaScript the fields come up empty and can still be typed.
+
+`prune_unreachable`: walks the bootloader from `main` and `loop` and deletes
+every function nothing reaches (10 today, three of them orphaned by
+gzip_setup); a second pass finds none.
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `-gz` (gzip_pages) | 124 720 | 2 256 |
+| + gzip_setup | 122 024 | 4 952 |
+| + prune_unreachable | 121 552 | 5 424 |
+| `-gz-tel` with both | 122 564 | 4 412 |
+| `-gzrf` (+ rf2528_only) | 120 360 | 6 616 |
+
+In the emulator (`config-pages.sh`) every page comes gzipped and `/v.js`
+gives the 13 values and the scanned network; yesterday's `-gz-tel`, as the
+control, fails both v.js checks. The page script, run in node against a
+sample `v.js` (quotes and backslashes in an SSID, trailing commas), fills
+every field, the radio and the scan list.
+
+`rf2528_only` (`--mode naboot-1.2.0.1-gzrf`): the RF5226 and RF5225/RF2527
+tables, antenna and channel cases go. Violet's own comment marks the RF2528
+case "notre carte". A rabbit with another chip would boot and tune no
+channel: no Wi-Fi, no OTA back. The emulator stops above `rt2501_tx()` and
+does not run this code; only the test rabbit can.
+
+On Nabazprout (2026-11-18, `-gzrf-tel`, all three steps, sent in session):
+the first warm boot after the flash stayed scanning (W1, SAE cache at 8)
+until the rabbit was unplugged; then it joined in one SAE exchange and the
+warren confirmed the image at 13:42. Wi-Fi works on the RF2528-only driver,
+and the setup page shows every field, the radio and the scan list filled
+from /v.js in a phone's browser. The stuck first boot is not explained
+yet: the next OTA from this branch is to be watched over DCC.
+
+The first fix image cached every page for an hour: a phone that had
+already seen "Settings saved" showed it again from its cache, the save
+never reached the rabbit and it stayed in setup mode, blue. Only `s.css`
+is cached now; `config-pages.sh` saves with `z=1` and expects RUN. With
+that image (sent in session at 14:01) the rabbit came back on its own in
+72 s, no stuck boot. At 17:49 a save from setup mode left setup mode on
+its own (DCC: A0 B0 → A2 B1) and the rabbit was back in the warren.
+
+## Naboot 1.2.1.0 with the review's fixes (2026-11-18)
+
+The 2026-11-18 review's steps (`SECURITY-FINDINGS-2026-11.md`, last
+section) in `naboot-1.2.1.0` and `-tel`, built unsigned on the dev VM with
+`BUILD_MARK=2611182200 BOOT_FLOOR=202611182200`:
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `naboot-1.2.1.0`, the base branch (gzip, factory_server) | 121 656 | 5 320 |
+| `naboot-1.2.1.0` with the review | 121 472 | 5 504 |
+| `naboot-1.2.1.0-tel` with the review | 122 484 | 4 492 |
+| `naboot-1.2.1.0-oscrypto` (+ opt_size_crypto, measurement) | 116 832 (-4 640) | 10 144 |
+| `naboot-1.2.1.0-chacha` (+ tls_chacha_only, measurement) | 120 536 (-936) | 6 440 |
+| `naboot-1.2.1.0`, `vm_strcmp_bound` reading the longer string's tail (22:28) | 121 552 (+80) | 5 424 |
+| `naboot-1.2.1.0-tel`, the same | 122 564 (+80) | 4 412 |
+
+The last two rows are the images after the bind loop of 2026-11-18 22:00:
+`naboot-1.2.1.0-tel` (122 484 bytes, signed, on the test rabbit by OTA)
+took the Terrier's DIGEST-MD5 challenge and never answered it, because the
+first cut of `vm_strcmp_bound` made `"md5-sess\0"` differ from
+`"md5-sess"` (`SECURITY-FINDINGS-2026-11.md`, S-4). Reproduced in the
+emulator with a realm of the production's shape (control binds, 1.2.1.0
+leaves two challenges unanswered in 160 s), fixed, proven bound; the tail
+walk costs 80 bytes.
+
+What the review's steps add and take: C for the bounds and the overflow
+alert (`ie_walk_bounds`, `vm_strcmp_bound`, `vm_seed_hidden`,
+`tls_in_overflow`, S-3), C back from the probation (`ccmp_no_probation`),
+bytecode for `config_presence` (`needhead`, a page 35 bytes longer gzipped)
+and bytecode back from `boot_strip_wav` and `boot_strip_login`: the
+bootloader compiles to 21,760 bytes against 22,105 (`../tools/mtl_comp.py` on
+the staged `boot.0.0.0.13.mtl`, `../tools/mods-matrix.py --keep`).
+
+**Two levers measured, shipped in no release mode.** `opt_size_crypto`
+compiles the pure-computation files (`CRYPTO_OBJS` in apply-mods.py: P-256,
+SAE, SHA-256, CMAC, AES, the key exchange, TLS, the PKI, SHA-384,
+ChaCha20-Poly1305, TweetNaCl, nab_sig, hash.c) at `-Os` and leaves the
+driver, the VM and the radio at `-O1`; `-Os` for the whole image never
+reached the network on the test rabbit three times, each time in code these
+files do not touch, and the crypto's cost at `-Os` is within 4 % (above).
+`tls_chacha_only` offers TLS_CHACHA20_POLY1305_SHA256 alone in both
+ClientHellos and compiles AES-GCM and its bit-serial GHASH out
+(`NAB_TLS_CHACHA_ONLY`): about six times cheaper per record on this
+processor, proven against OpenSSL for the PSK session (`make
+tls-interop-chacha`). Either is one Nabazprout flash away, `tools/cost`
+first; neither goes into a release without it.
+
+The CRLF sweep (C-1) is byte-neutral: the `Nab.bin` of `naboot-1.2.1.0`
+built before and after it, same marks, is identical.
+
+## Naboot 1.2.1.0-lean-tel: the two levers in one test image (2026-11-19)
+
+`naboot-1.2.1.0-lean-tel` is `-tel` plus `opt_size_crypto` and
+`tls_chacha_only`, for Nabazprout after the emulator. Built unsigned on the
+dev VM with `BUILD_MARK=2611191200 BOOT_FLOOR=202611191200`; `-tel` is the
+control of every proof. All three carry the day's two bootloader changes
+(`config_presence` as a press within a minute, `boot_noserver`: +256 bytes
+of bytecode, 21,760 → 22,016).
+
+| Image | Bytes | Spare |
+|---|---|---|
+| `naboot-1.2.1.0` (release) | 121 808 (+256) | 5 168 |
+| `naboot-1.2.1.0-tel` (the control) | 122 820 (+256) | 4 156 |
+| `naboot-1.2.1.0-lean-tel` (-tel + both levers) | 117 384 (-5 436) | 9 592 |
+
+Where the 5,436 bytes come from (`firmware-arm/tools/flash-map.py`, -tel → -lean-tel):
+TLS, X.509, RSA, ECDSA, P-256 20,493 → 17,455 (-3,038: `-Os` on the files,
+AES-GCM and its GHASH out); WPA2/WPA3 9,896 → 9,052 (-844: SAE, SHA-256,
+CMAC, AES at `-Os`); TweetNaCl 5,561 → 4,795 (-766); other 12,595 → 11,951
+(-644: nab_rng, nab_sig, hash.c). The radio, the USB host, the VM and the
+audio are byte-identical: those are the files `-Os` broke on hardware
+three times (above), and they stay at `-O1`.
+
+What the test image proves before a rabbit sees it is in
+`SECURITY-FINDINGS-2026-11.md` (the section of 2026-11-19): the vectors
+under qemu-arm at `-Os`, equal instruction counts on every secret
+(`firmware-arm/tools/cost/ct-levers.sh`), the host suites at `-Os`, and the emulator
+proofs against the production Terrier image and a Caddy, each with `-tel`
+as the control.

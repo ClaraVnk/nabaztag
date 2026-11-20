@@ -1,0 +1,18 @@
+# bytecode: bootloader
+#
+# The latch of 2026-11-19 has a minute: the head pressed, then the save with
+# a new server 70 s later. Too late: the error page answers, nothing is
+# saved, the rabbit stays in config mode and the page written back to
+# --eeprom still names the server it had (tools/config-presence.sh reads
+# it). A build whose latch never expires takes the server and joins the
+# network: expect-mode master fails.
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 130000
+
+at 5000 button down
+at 7000 button up
+at 77000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&a=my.example&z=1
+at 125000 expect-mode master
+at 129000 expect-no-reset

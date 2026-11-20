@@ -69,11 +69,22 @@ firmware-arm/tools/os-diff.sh localhost/nab-firmware-build:naboot-1.2.0.1 \
     localhost/nab-firmware-build:naboot-1.2.0.2-safe src/net src/usb
 ```
 
+What the configuration pages serve, as a phone's browser gets them
+(`gzip_pages`: stylesheet and fixed pages gzipped), checked answer by
+answer; run it on the dev VM with the build's `Nab.elf` and `Nab.bin` side
+by side:
+
+```sh
+firmware-arm/emulator/tools/config-pages.sh firmware-arm/bin/naboot-1.2.0.1-gz/Nab.elf
+```
+
 ## 2. Releasing
 
 1. Build with `--sign` (above).
 2. Prove it:
-   - in the emulator (section 4);
+   - in the emulator (section 4), the XMPP session bound included
+     (`xmpp-tls-proof.sh`, as many answers as challenges: 1.2.1.0 shipped
+     to the test rabbit without it and never answered one, 2026-11-18);
    - on the test rabbit, by OTA from the Terrier as one rabbit's own image
      (the Terrier's own RUNBOOK, "Sending a firmware");
    - from the previous release, as every other rabbit will take it.
@@ -91,8 +102,32 @@ firmware-arm/tools/os-diff.sh localhost/nab-firmware-build:naboot-1.2.0.1 \
 ```sh
 make -C firmware-arm/tests            # crypto + protocol, under ASan/UBSan
 make -C firmware-arm/tests tls-interop   # the TLS client against OpenSSL (python3 cryptography)
+make -C firmware-arm/tests tls-interop-chacha   # the same, ChaCha20-Poly1305 only (tls_chacha_only)
+make -C firmware-arm/tests CFLAGS="-Os -g -std=c99 -Wall -Wextra -Werror -pedantic" TNFLAGS="-Os -g -std=c99 -w"   # the same at -Os, as opt_size_crypto compiles the crypto (2026-11-19)
+BEFORE=1 make -C firmware-arm/tests vm_strcmp   # OPstrcmp as shipped before 1.2.1.0: an ASan READ (review S-4)
+FIRSTCUT=1 make -C firmware-arm/tests vm_strcmp # S-4's first cut: bounded, and "md5-sess\0" no longer equals "md5-sess" (the 2026-11-18 bind loop)
 make -C firmware-arm/tests arm        # the same code built for ARM (gcc-arm-none-eabi)
 firmware-arm/tools/run-tests.sh       # the Metal toolchain against the reference compiler
+python3 -m unittest discover -s firmware-arm/tests/apply_mods   # apply-mods' own steps and its mode table
+```
+
+apply-mods.py without a compiler: every mode applied to a staged copy of
+the vendored tree, a hash of each tree (and one with CRLF read as LF), a
+FAIL naming the anchor that broke. The before of a before/after is any
+other copy of the script (`--apply`). How the modes differ, as steps:
+
+```sh
+firmware-arm/tools/mods-matrix.py --all --out after.txt
+git show main:firmware-arm/apply-mods.py > /tmp/apply-main.py
+firmware-arm/tools/mods-matrix.py --all --apply /tmp/apply-main.py --out before.txt
+firmware-arm/tools/mode-diff.py naboot-1.2.0.2 naboot-1.2.1.0
+```
+
+What `-Os` would save on the pure crypto files alone (`opt_size_crypto`),
+object by object, inside a build image left on the dev VM:
+
+```sh
+ssh <dev-vm> 'flock ~/heavy.lock podman run --rm -i localhost/nab-firmware-build:naboot-1.2.1.0 sh -s' < firmware-arm/tools/os-crypto-size.sh
 ```
 
 A missing `libasan` (some distributions) means: run them in a Rocky container,
@@ -221,6 +256,101 @@ for the whole scenario, about 2 MB in two minutes.
 
 Read the add-on's `opens ... itself over HTTPS`, then the rabbit's `https:`
 lines and `audio: the rabbit started`.
+
+Where a reset sends the rabbit (`factory_server`, Naboot 1.2.1.0): each
+image's bootloader on an empty config page, and the server it writes there,
+which is what the config page's reset writes too. 1.2.0.1 first, as the
+control:
+
+```sh
+cd firmware-arm/emulator
+NO_BUILD=1 tools/default-server-proof.sh ../bin/naboot-1.2.0.1/Nab.elf ../bin/naboot-1.2.1.0/Nab.elf
+# ../bin/naboot-1.2.0.1/Nab.elf   r.nabaztag.com/vl
+# ../bin/naboot-1.2.1.0/Nab.elf   terrier.cyberloutre.fr/vl      (2026-11-17)
+```
+
+The setup page of a rabbit that kept Violet's server offers the Terrier
+instead (1.2.1.0 = the gzipped pages + factory_server: v.js says it). Keep
+the config page the 1.2.0.1 run wrote, then:
+
+```sh
+EEPROM=violet-conf.eeprom EXPECT_SERVER=terrier.cyberloutre.fr/vl NO_BUILD=1 \
+  tools/config-pages.sh ../bin/naboot-1.2.1.0/Nab.elf
+# ok  v.js: offers the server 'terrier.cyberloutre.fr/vl'          (2026-11-18)
+# naboot-1.2.0.1-gz-tel, the control: FAIL, it offers r.nabaztag.com/vl
+```
+
+**The 2026-11-18 review** (`firmware-arm/docs/SECURITY-FINDINGS-2026-11.md`,
+its last section), each with its control, on the dev VM:
+
+```sh
+cd firmware-arm/emulator
+tools/ie-walk-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # S-1: the element walks under ASan, with and without ie_walk_bounds
+tools/ccmp-enforce-proof.sh               # S-2: scenarios/enforce/* with and without ccmp_no_probation
+NO_BUILD=1 tools/config-presence.sh ../bin/naboot-1.2.1.0/Nab.elf   # S-6: who may change the server
+# the control: the base image's Nab.elf (before config_presence) takes the stranger's server
+# 2026-11-19: a press of the head arms a minute (config-server-head: the save 30 s
+# after the press is taken; config-server-head-late: 70 s after, refused)
+NO_BUILD=1 tools/noserver-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # boot_noserver: the belly with the Wi-Fi up and no warren
+STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) tools/diag-proof.sh ../bin/naboot-1.2.1.0/Nab.elf   # wifi_diag + boot_diag: the line in flash at 1024, &dg= on the next boot, cleared after
+# the control: the image before the step shows amber and green only (its refused run FAILs)
+```
+
+**The two flash levers** (`naboot-1.2.1.0` = `-tel` with
+`opt_size_crypto` and `tls_chacha_only`, 2026-11-19; the numbers in
+`firmware-arm/docs/FLASH-MAP.md` and `SECURITY-FINDINGS-2026-11.md`, O-1 and O-2).
+The emulator takes both steps (`emu-steps.py` passes them, its Makefile
+reads them off the patched tree: AES-GCM compiled out, the crypto objects
+at -Os), so the lean emulator binds its session on the one suite the lean
+image offers. The control is `-tel`, every proof run on both:
+
+```sh
+cd firmware-arm/emulator
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210-ctl ../..
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210-lean ../..
+# the XMPP session bound, a sound inside it (res:), on each
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210-lean --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/lean-bind \
+    --speak-at 110 --speak "Bonjour"
+# the HTTPS boot through Caddy (ChaCha20-Poly1305 alone offered, Go's TLS 1.3 takes it):
+# one bootloader for both, compiled by hand with the proof's host, since the levers change no bytecode
+tools/boot-https-proof.sh chain /tmp/https
+podman build -f Containerfile --build-arg BOOT_ANCHOR_FILE=proof_boot_anchor.der \
+    --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0),tls_certs,boot_https -t emu-1210-lean-https ../..
+NAB_BOOT_HTTPS_HOST=warren.test ../tools/mods-matrix.py naboot-1.2.1.0 --keep /tmp/stage
+python3 ../tools/mtl_comp.py /tmp/stage/naboot-1.2.1.0/mtl/boot/boot.0.0.0.13.mtl -o /tmp/boot-proof.bc
+tools/boot-https-proof.sh run /tmp/https --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210-lean-https --elf /tmp/boot-proof.bc
+# config pages, the reset's server, presence, no-warren: NO_BUILD=1 TAG=emu-1210-lean, as above
+# constant time at -Os (tools/cost/ct-levers.sh, qemu-arm): X25519 on three scalars, Ed25519
+# verification on three messages, the three tag compares on three tags; equal counts per group
+podman run --rm -v $PWD/../..:/m:Z -w /m/firmware-arm/tools/cost localhost/nab-qemu bash ct-levers.sh
+# the vectors under qemu-arm at -Os (bench.c checks each result): run.sh's header for the inputs
+OPT=-Os NOSIZES=1 bash run.sh x25519 ed_short ed_long p256 aes_block_cmac cp_1k ecdsa_p256 rsa2048_pss
+```
+
+**The XMPP session, bound, on every release** (2026-11-18: 1.2.1.0's first
+cut of S-4 took the Terrier's DIGEST-MD5 challenge and never answered it,
+a TLS bind loop every 30 s on the test rabbit, while the proof above had
+bound). The emulator with the release's VM steps, the production runtime,
+the production Terrier image; the realm of the proof's Terrier has the
+production's shape (19 characters, a padded challenge, `--domain`) because
+the shorter `warren.test` hid it. The control first:
+
+```sh
+cd firmware-arm/emulator
+podman build -f Containerfile --build-arg MOD_STEPS=$(python3 tools/emu-steps.py naboot-1.2.1.0) -t emu-1210 ../..
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator <the previous release's image> --elf ../bin/<previous release>/Nab.elf --out /tmp/bind-control
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <baseline-https.hybrid> \
+    --emulator emu-1210 --elf ../bin/naboot-1.2.1.0/Nab.elf --out /tmp/bind
+#   sasl (boot 2, realm terrier.warren.test): 1 challenge(s) of 188 bytes, 1 answer(s) from the rabbit, 1 success
+# the regression: "2 challenge(s) of 188 bytes, 0 answer(s) from the rabbit, 0 success" (a reconnect at 134 s)
+```
+
+`emu-steps.py` lists the release's network, crypto and VM steps (`run.sh`'s
+list, which the review's VM steps joined that day). A verdict with fewer
+answers than challenges is a release that does not bind.
 
 ### A long press that listens, and the Wi-Fi line
 
@@ -379,7 +509,7 @@ Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
 ./firmware-arm/jtag/station.sh check          # JTAG answers, the flash reads back
 ./firmware-arm/jtag/station.sh listen         # the live status line, no halt
 ./firmware-arm/jtag/station.sh dump out.bin   # what the rabbit really runs
-./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.0.1.signed.sim
+./firmware-arm/jtag/station.sh flash firmware-arm/releases/naboot-1.2.1.0.signed.sim
 ```
 
 Never halt a rabbit during its association (it can lose its Wi-Fi), never
@@ -397,3 +527,31 @@ A factory Karotz (no network, no SSH) is read with a USB key before anything
 is installed on it: `karotz/measure-key/README.md`
 (`sh karotz/measure-key/make-key.sh /Volumes/KAROTZ`). Read-only on the
 rabbit; the flash copy and the readings land on the key under `measure/`.
+
+### Config mode is a captive portal
+
+`emulator/tools/config-captive.sh firmware-arm/bin/naboot-1.2.1.0/Nab.elf`
+runs `scenarios/vm/config-captive.txt`: a phone on the rabbit's setup network
+asks the rabbit's DNS for `captive.apple.com` and
+`connectivitycheck.gstatic.com` (with an EDNS record, as iOS sends one), then
+fetches `/hotspot-detect.html`. Both names must resolve to 192.168.0.1 with no
+additional record echoed, and the probe page must get the setup page (200):
+that is what makes a phone open the setup page by itself. Before the
+`captive` mod (2026-11-20) nothing answered on port 53, and Chrome on iOS
+refused the network ("Internet déconnecté"). Cost: 392 bytes of flash.
+
+### A stopped USB host restarts the rabbit
+
+`emulator/tools/usb-watch-proof.sh firmware-arm/bin/naboot-1.2.1.0/Nab.elf`
+runs `scenarios/vm/usb-host-stop.txt` with the 1.2.1.0 steps
+(`firmware-arm/emulator/tools/emu-steps.py`): the emulated USB host runs 12 s with no reset, then
+stops; the firmware must restart with reason 5 (`usb_watch`, 25 radio-timer
+ticks: 5 s on the rabbit, 10 s in the emulator, whose tick is 400 ms).
+Measured cause, 2026-11-20 over JTAG on Nabazprout: HcControl 0 and
+HcFmNumber frozen after the JTAG wires were plugged into the running rabbit;
+the radio went silent, COMRAM filled with unsent frames, and the scan sat on
+channel 1 until the mains.
+
+`naboot-1.2.1.0-tel` is the release plus `dcc_telemetry`, for the JTAG
+station only (listen.sh): the first warm boot after an OTA left the radio
+deaf twice on Nabazprout (2026-11-18, 2026-11-20).

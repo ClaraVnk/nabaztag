@@ -152,10 +152,14 @@ version, for the reason given under its heading.
   The refusal is written and proven the same way (`ccmp_replay_enforce`,
   `../emulator/scenarios/enforce/ccmp-replay.txt`: the replayed frames and the
   duplicate are dropped, everything else arrives, the other 35 scenarios
-  pass with it on) and is in no mode. It goes into the next version if a
-  real rabbit shows N rising, `p0/0/0` and a rising packet number in V
-  over a day that includes a group rekey. If p rises with N instead, the
-  words are not what the Linux driver says and V shows what they are.
+  pass with it on). It waited for a real rabbit to show N rising,
+  `p0/0/0` and a rising packet number in V over a day that includes a
+  group rekey: Nabazprout did on 2026-11-12 (N 37,573, p0/0/41, V
+  rising), and **the refusal ships from Naboot 1.2.0.0 on**, with a
+  probation: if more than half of a boot's first 256 protected frames
+  are flagged, that boot only counts, so wrong words cannot make the
+  rabbit deaf. On 2026-11-18 Nabazprout's `-gzrf-tel` showed N 0x644c,
+  p0/0/2e: nothing refused but the AP's own retransmissions.
   Known limits when enforced: a TKIP group key (mixed mode) is not
   examined, and neither are protected management frames.
 
@@ -178,3 +182,279 @@ version, for the reason given under its heading.
 A systematic audit of the original Violet code ran separately (the `VIOLET-*`
 files beside this one) and drove items 8, 9 and 11. The flash-space study
 that followed is `VIOLET-CODEMORT.txt`.
+
+## The 2026-11-18 review (Naboot 1.2.1.0)
+
+A second review, of the patched tree of `naboot-1.2.0.1-gzrf-tel` (121,372
+bytes), read with the 2026-11 fixes above as the baseline: where one of
+them had left a sibling of the fixed code unfixed, it is here. Each fix is
+an apply-mods step of its own, in `naboot-1.2.1.0` and `-tel` and in no
+released mode; each has its scenario or host test, run before the step (the
+control) and after. Measured means a tool reproduced it; read means it was
+read only.
+
+### Fixed
+
+- **S-1, the element walks still read past the frame (Low, measured).**
+  Item 8 bounded the RSN and vendor-WPA suite loops and item 3 the
+  probe-request SSID *destination*; the walks themselves went on reading an
+  element's length byte and body past `frame_end` -- SSID, RATES/XRATES
+  (the Violet audit's A3), DSPARMS, the RSNXE, the vendor OUI, the loop
+  step, the probe request's SSID source, and the association response's
+  status word. Reads only, into the receive buffer's tail or `.bss`, from
+  any station in radio range while the rabbit scans or is its own access
+  point. `ie_walk_bounds`: one test at the top of each loop body, an
+  element whose header or declared body runs past the frame ends the walk.
+  Proof: `../emulator/tools/ie-walk-proof.sh <Nab.elf>` -- the emulator under ASan,
+  which delivers every frame in a heap block of exactly its length; the
+  build without the step reports `heap-buffer-overflow READ` in
+  `ieee80211_input_mgt` for `../emulator/scenarios/forged-beacon-elements.txt` (a
+  stranger's beacons beside every beacon round: the scan runs before the
+  first timed event) and for `../emulator/scenarios/vm/probe-ssid-short.txt` under the
+  built bootloader (config mode is the bootloader's); the build with it
+  reports none, lists "Forged" with what the frame held, answers the
+  short probe as one with no SSID, and reaches RUN. `make check` and `make asan` green with the step in the
+  default list.
+
+- **S-2, the CCMP replay probation could be turned off for a boot (Medium
+  as a bypass, measured).** `ieee80211_ccmp_enforcing()` decided once, at
+  the 256th protected frame, from counters that count the frames an
+  attacker replays: 200 replays of one captured frame in the first seconds
+  after association and the refusal was off until the next boot
+  (`../emulator/scenarios/enforce/ccmp-probation.txt`: replays 196..200 handed up, a
+  genuine frame, the same replay through twice more -- 65, 66, 67, 68). The
+  probation was there in case a board's RXD words were not the packet
+  number; Nabazprout answered on 2026-11-12 (N 37,573, p0/0/41, V rising)
+  and again on 2026-11-18 (N 0x644c, p0/0/2e). `ccmp_no_probation` drops it:
+  refused from the first frame, counters and telemetry kept. Proof:
+  `../emulator/tools/ccmp-enforce-proof.sh` -- the probation scenario fails on the
+  control and passes with the step (60, 61, 61, 61), `../emulator/scenarios/enforce/ccmp-replay.txt`
+  passes on both. `SIM_MAX_EVENTS` raised to 512 for it (C-9).
+
+- **S-3, the TLS alert description was read after `drop()` had moved the
+  buffer (Low, measured).** `nab_tls_next()` read `body[1]` after the
+  memmove, so a `close_notify` with another record buffered behind it was
+  classified as a fatal failure (state FAILED, a fatal alert queued back)
+  and the reverse misreading was possible. Both sites now read the
+  description first. Proof: `../tests/test_tls.c` -- an alert alone, the same
+  with a record behind it (FAILED before, CLOSED after), a fatal one with a
+  record behind it.
+
+- **S-4, `OPstrcmp` compared the longer length (Low, read; replica
+  measured).** Item 11 fixed the same mistake in `sysCmp` and left this
+  copy: `memcmp` over `max(pl, ql)` reads past the shorter string into the
+  next VM object, and "ab" equals "abc" when the byte after "ab" happens to
+  be 'c'. `vm_strcmp_bound`: the shorter length, then the longer string's
+  tail within its own length -- NULs there are the end of the string,
+  anything else sorts it last. Not "then the lengths", which was the first
+  cut and a regression: a VM string's block ends in a zero word
+  (`vmemAllocBin`), so the old read saw the terminator and strings that
+  differ only by trailing NULs compared equal, and Violet's runtime leans
+  on it -- `B64toS` sizes its result from the base64 length and leaves one
+  or two NULs behind the last token of a DIGEST-MD5 challenge, so
+  `strcmp sAlgo "md5-sess"` was 0 before and 1 after. On the test rabbit
+  the 1.2.1.0 image took the challenge and never answered, a TLS bind loop
+  every 30 s (2026-11-18 22:00); the emulator proof had bound because its
+  realm `warren.test` makes an 84-byte challenge, no padding, no NUL. Proof:
+  `../tests/test_vm_strcmp.c`, the three expressions as they stand in
+  `vinterp.c` over heap strings of exact length under ASan (`BEFORE=1 make
+  vm_strcmp` reports the READ; `FIRSTCUT=1 make vm_strcmp` fails the NUL
+  cases; `make vm_strcmp` is clean and ordered), and
+  `../emulator/tools/xmpp-tls-proof.sh`, whose realm now has the
+  production's shape (`--domain`, 19 characters: control binds, the first
+  cut leaves the challenge unanswered, the fix binds). A host replica of
+  one line, not the ARM binary, plus the whole-rabbit VM.
+
+- **S-5, the RNG seed was readable and writable by runtime bytecode (Low,
+  read).** Item 1 hid the key (conf 224..256) after the hand-over; the
+  entropy pool's stored seed, 32 bytes at 4064 in the same sector, was
+  still a `load` and a `save` away. `vm_seed_hidden`: the same latch, the
+  same shape, for 4064.. too. `../tests/apply_mods/test_review_fixes.py` keeps
+  the offset equal to `NAB_RNG_SEED_OFF`.
+
+- **S-6, the configuration access point took orders from anyone (Medium,
+  design).** Config mode is an open AP and `cbhttp` applied `?name=value`
+  arguments from every request, whatever the page: anyone who joined it
+  could `GET /s.css?a=<their warren>` and a rabbit whose key is pending then
+  takes that warren's bytecode. `config_presence`, the cheapest change that
+  keeps the phone flow: arguments count on the save (`/b.htm`) only, and a
+  save that *changes* the server URL -- compared to the one the page
+  offered, so Violet's or an empty one reading as the factory server is not
+  a change -- is taken only within a minute of a press of the head button
+  in config mode (a latch, `headarm`, armed by the config-mode loop on
+  every pass that sees the button down, cleared by the server-changing
+  save; HEAD_ARM = 60 s), the proof of presence `owner_unlock` already
+  asks of an unsigned upload; otherwise nothing is saved and the error
+  page answers. The first cut (2026-11-18) wanted the head *held* while
+  the save arrived, which one person with a phone cannot do comfortably;
+  Clara asked for the press on 2026-11-19. The Wi-Fi fields need no
+  button. The setup page says so under the field.
+  Proof: `../emulator/tools/config-presence.sh` on the built bootloader --
+  `config-server-nohead` (a stranger: the error page, the rabbit stays its
+  own access point -- `expect-mode master`, since RUN is the state of a
+  station and of the access point alike -- and the page keeps its
+  server), `config-server-head` (the owner: a press, the save 30 s later,
+  taken, a station in RUN), `config-server-head-late` (the same press, the
+  save 70 s later: refused, config mode), `config-wifi-nohead` (the
+  ordinary save: taken, a station in RUN); the control is the base
+  1.2.1.0 image, whose nohead run takes the server and joins, and the
+  hold-during-save cut, which fails `config-server-head` (the head is up
+  when the save arrives). One lesson on the way: Metal's `if` jumps on 0
+  only, nil is true (`OPelse`), so `needhead` answers an int both ways.
+  `../emulator/tools/config-pages.sh` and `../emulator/tools/default-server-proof.sh` still pass.
+
+- **S-7, `tlsIn` dropped silently what the buffer did not take (Low,
+  read).** `nab_tls_in` keeps what fits and returns how much; the opcode
+  ignored it, so a segment arriving over a partial record would be
+  truncated and the stream desynchronise into `bad_record_mac` with no
+  trace of why. `tls_in_overflow`: `nab_tls_overflow()` ends the session
+  with `record_overflow`. Proof: `../tests/test_tls.c` (the alert queued, no
+  effect outside a connection). It cannot happen with a server that honours
+  `max_fragment_length` and a 1460-byte MSS.
+
+- **C-1, apply-mods read CRLF vendor files with `read_text()`.** 22
+  read/write pairs on `vinterp.c`, `boot.0.0.0.13.mtl`, `vaudio.c`, `vbc.h`,
+  `vmem.h`, `mem.h` and the cold_state headers converted the file to LF as
+  a side effect, which later anchors depended on. They use
+  `read_flat`/`write_flat` now. Proof: `../tools/mods-matrix.py` over all 43
+  modes, every tree identical with CRLF read as LF; `Nab.bin` of
+  `naboot-1.2.1.0` byte-identical before and after.
+
+- **C-2, the mode table drifts invisibly.** `../tools/mode-diff.py` prints each
+  mode against a base as added/missing steps; `../tests/apply_mods/test_review_fixes.py` pins
+  the variants (`naboot-1.2.0.1-kxprobe` without `owner_unlock` is the one
+  documented exception). **C-9**, `SIM_MAX_EVENTS` 64 -> 512.
+
+- **O-4, dead bootloader bytecode.** `boot_strip_wav` (the WAV player that
+  never ran: `wavstarthttp` has been commented out in `main` since the file
+  exists) and `boot_strip_login` (Violet's `o`/`p` login fields, which the
+  page has not had since modernize_pages; the boot URL keeps `&l=&p=`, the
+  Terrier reads them as identity). `prune_unreachable` drops what they
+  orphan. 22,105 -> 21,760 bytes of bytecode, the page's hint and `needhead`
+  included.
+
+### Deferred, with the reason
+
+- **S-8, entropy credit per frame, whoever sent it (Low, inferred).** A
+  flooder's 64 frames make the pool declare itself ready on the first boot
+  ever; every later boot holds 128 bits of credit in the stored seed before
+  the first frame, and SRAM noise is mixed in regardless. A per-source cap
+  was weighed and left out: a rabbit alone with its one access point would
+  then never reach `NAB_RNG_MIN_CREDIT` on that first boot and SAE would
+  never start. Documented in `../crypto/nab_rng.h`.
+
+- **O-1, `-Os` on the pure crypto files** (`opt_size_crypto`, mode
+  `naboot-1.2.1.0-oscrypto`) and **O-2, ChaCha20-Poly1305 as the only AEAD**
+  (`tls_chacha_only`, mode `naboot-1.2.1.0-chacha`; `nab_tls.c` under
+  `NAB_TLS_CHACHA_ONLY`, `make tls-interop-chacha`): measurement modes for a
+  hardware test, in no release. `-Os` for the whole image failed on
+  hardware three times (FLASH-MAP.md). Sizes in FLASH-MAP.md. Both are in
+  the test image `naboot-1.2.1.0-lean-tel` since 2026-11-19: the next
+  section.
+
+- **O-3, byte-loop `strchr`/`memmove`/`memcmp`**: not done; nothing proves
+  them equal to newlib's on this hardware yet, and 1.2.1.0 has room.
+
+## The two levers in one test image, `naboot-1.2.1.0-lean-tel` (2026-11-19)
+
+`-tel` plus `opt_size_crypto` (O-1) and `tls_chacha_only` (O-2), 117,384
+bytes against 122,820 (FLASH-MAP.md), built for Nabazprout and proven
+first in the emulator and under qemu-arm, each proof with `-tel` as the
+control. The rule was no compromise on security: what follows is what was
+measured, with the firmware's own compiler (gcc-arm-none-eabi 12.2.1 of the
+build image, `firmware-arm/tools/cost/Containerfile.release`) unless said otherwise.
+
+**Does `-Os` change a secret-dependent path?** `firmware-arm/tools/cost/ct-levers.sh`
+builds the firmware's X25519 (TweetNaCl `crypto_scalarmult`, the adoption
+key exchange), its Ed25519 verification (`nab_verify_sig`, the update
+gate) and the three tag compares of the warren session (`ct_eq` of
+nab_tls.c, `chachapoly`'s, `crypto_verify_32`) with the firmware's flags at
+`-O1` and `-Os`, runs each under qemu-arm on three inputs of equal length
+and counts the instructions executed:
+
+| case | -O1 | -Os |
+|---|---|---|
+| X25519, scalar a / b / c | 63 635 085 / 63 642 565 / 63 638 144 | 66 446 255 / 66 453 735 / 66 449 313 |
+| Ed25519 verify, message a / b / c | 214 439 355 / 214 446 007 / 214 437 123 | 223 883 602 / 223 890 254 / 223 881 370 |
+| `ct_eq`, tag wrong in byte 0 / byte 15 | 245 / 245 | 257 / 257 |
+| `chachapoly` decrypt, tag wrong in byte 0 / 15 | 19 989 / 19 989 | 20 100 / 20 100 |
+| `crypto_verify_32`, wrong in byte 0 / 31 | 429 / 429 | 461 / 461 |
+
+The three compares cost the same wherever the difference sits, at both
+levels; their disassembly (printed by the script) has one conditional
+branch each, the loop's, and the result is built with `negs/adcs` or a
+shift, never a branch on a byte. The `eq` case of each differs from the
+two others by the harness's own xor that makes the wrong tag and, for
+`chachapoly`, by the decryption that only a right tag reaches (26,540
+against 19,989): a branch on the *result*, which is public.
+
+X25519 and Ed25519 differ by a few thousand instructions between inputs,
+and `blkdiff.py` puts every one of them in libgcc's `__muldi3` (the
+64-bit multiply TweetNaCl's `i64` field arithmetic calls on an ARM7TDMI
+in Thumb): +7,480 between scalars a and b at `-O1` and the same +7,480 at
+`-Os`; +6,652 between messages a and b at both levels. `-Os` adds nothing:
+the dependence is libgcc's and is in every image since the first, at
+`-O1`. It is noted here as a finding of its own (the ARM7TDMI's multiplier
+is data-dependent in cycles too, as `firmware-arm/tools/cost/ct.sh` says); the remote
+measurement it would take, over Wi-Fi, against a 2-8 s exchange, is not a
+threat this device faces, and TweetNaCl is what the flash affords.
+
+**The compiler is part of the verdict.** The same `ct-levers.sh` in the
+Alpine image of `firmware-arm/tools/cost/Containerfile` (gcc 15.1.0) showed `sel25519`,
+TweetNaCl's constant-time swap, compiled at `-Os` into a `cmp; beq` on the
+swap bit -- the scalar's bit in X25519 -- while gcc 12.2's `-Os` keeps it
+branch-free (`ands/eors`, read in the lean image's `Nab.elf` too). A
+constant-time result holds for the compiler that built the image and no
+other, which is one more reason `firmware-arm/Dockerfile` pins bookworm by
+digest; a toolchain change reruns this.
+
+**The vectors at `-Os`, on ARM.** `firmware-arm/tools/cost/run.sh` at `OPT=-Os` in the
+release image: X25519 (RFC 7748), Ed25519 verification on a 64-byte
+message and on the 105 KB runtime, SHA-512, P-256, AES-128 (as CMAC and
+the Wi-Fi use it), SHA-256, ChaCha20-Poly1305 on 1 KB and 16 KB records,
+ECDSA P-256, RSA-2048-PSS, each checked against its published answer,
+all right (`rc=0`), at `-O1` too.
+
+**The host suites at `-Os`.** `make -C firmware-arm/tests` with
+`CFLAGS=-Os ...` and `TNFLAGS="-Os ..."` (TweetNaCl at the level
+`opt_size_crypto` compiles it), under ASan and UBSan, in a Rocky 10
+container with Python 3.13: every suite, then `tls-interop`,
+`tls-interop-chacha` and `tls-cert` live against OpenSSL 3.5 and Python's
+ssl; the same at `-O1` first, as the control. All pass.
+
+**ChaCha20-Poly1305 alone, against what the servers offer.** The
+Terrier's PSK context sets no cipher list (`xmpp.py tls_context`:
+OpenSSL's TLS 1.3 default, which has TLS_CHACHA20_POLY1305_SHA256), and
+Go's TLS 1.3 in Caddy always offers it. Not assumed: the emulator of the
+lean image is built ChaCha-only too (`emulator/Makefile` reads
+`-DNAB_TLS_CHACHA_ONLY` off the patched tree, `nm rabbit-vm` finds no
+`gcm`/`ghash_*`; the first lean emulator still had them because the define
+was appended before `CFLAGS =` ran, and only the symbol count caught it),
+and against `ghcr.io/claravnk/terrier:latest`, realm
+`terrier.warren.test`, it adopts, exchanges its key, binds its XMPP
+session over TLS 1.3 PSK -- `1 challenge(s), 1 answer(s), 1 success`,
+as the control -- and plays the sound sent into the session (6,080 bytes
+to the player; the control 5,360). The Wi-Fi's CCMP is untouched:
+`aes128.c` and `cmac.c` stay, at `-Os`, and `make check`'s WPA2/WPA3
+scenarios run on them.
+
+**The HTTPS boot** (`boot-https-proof.sh`: kx.jsp and bc.jsp through a
+Caddy with a chain of the proof's own, then a rogue chain, then the same
+rabbit again), one hand-compiled bootloader pinned to the proof's host for
+both emulators since the levers change no bytecode: control and lean alike
+take 1 kx.jsp and 1 bc.jsp over TLS (`kx: agreed`, `&k=5&kt=19`), refuse
+the rogue chain with not one kx.jsp in the clear, and boot 3 skips the
+exchange (`&k=0`). The ChaCha-only ClientHello is what Caddy's Go TLS
+took. `config-pages.sh` (24 checks), `default-server-proof.sh`
+(`terrier.cyberloutre.fr/vl` from the release, `-tel` and `-lean-tel`),
+`config-presence.sh` and `noserver-proof.sh` pass on both images.
+
+Not run: `make -C firmware-arm/tests arm` in the build image stopped on
+its missing `net/` staging (the target has no prerequisite for it), and
+the ARM compile of the crypto at `-Os` is the lean image itself.
+
+**Verdict.** O-1 and O-2 hold in the emulator and under qemu-arm with the
+release compiler, without a weaker path: the test image goes to
+Nabazprout, signed by Clara, and neither lever enters a release before it
+has run there.
+

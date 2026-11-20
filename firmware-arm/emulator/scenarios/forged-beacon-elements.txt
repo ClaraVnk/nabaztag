@@ -1,0 +1,24 @@
+# Review S-1 (2026-11-18): the scan parser's element walk read an element's
+# length byte and body past the end of the frame -- SSID, RATES/XRATES (the
+# Violet audit's A3), DSPARMS, a vendor element's OUI, the RSNXE -- and
+# beacon_ie_bounds had bounded the RSN/WPA suite loops only. A stranger's
+# beacons, one per such element, go out beside every beacon round on the
+# access point's channel, so the scan hears them where it hears the AP (the
+# scan runs before the first timed event, which is why they are not `at`
+# events); the rabbit joins its own network all the same.
+#
+# The over-read is a read of a few bytes past a frame: nothing a counter
+# sees. It shows under `make asan`, which delivers every frame in a heap
+# block of exactly its length: a build without ie_walk_bounds reports
+# heap-buffer-overflow READ in ieee80211_input_mgt at the first forged
+# beacon; with it the scan list shows "Forged" with what the frame held.
+# tools/ie-walk-proof.sh runs both.
+
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+forged-beacons rates,ssid,ds,vendor,rsnxe
+tick 50
+stop 20000
+
+at 10000 expect RUN
+at 19000 expect RUN

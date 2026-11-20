@@ -1,0 +1,26 @@
+# The configuration pages, as a phone's browser fetches them.
+#
+# The head button is held at power-on; the phone joins the rabbit's network
+# and asks for each page in turn, saying it takes gzip like any browser.
+# tools/config-pages.sh runs this with --save-dir and checks every answer:
+# every page and the stylesheet gzipped behind the right Content-Type, the
+# setup page's values in /v.js (gzip_pages, gzip_setup, 2026-11-18). Last,
+# the form is sent as "Connect rabbit" sends it (z=1): the rabbit must leave
+# config mode and join the network it was given (Nabazprout stayed in config
+# mode after a save, 2026-11-18).
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 90000
+
+at 5000 get /a.htm
+at 5000 get /v.js
+at 5000 get /s.css
+at 5000 get /u.htm
+at 5000 get /b.htm
+at 5000 get /c
+at 5000 get /favicon.ico
+at 5000 get /b.htm?w=Terrier&k=&m=0&n=&f=1&c=0&z=1
+at 85000 expect RUN
+at 85000 expect-mode managed
+at 89000 expect-no-reset

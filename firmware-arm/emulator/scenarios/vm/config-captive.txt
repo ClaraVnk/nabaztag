@@ -1,0 +1,19 @@
+# Config mode is a captive portal (captive mod, 2026-11-20).
+#
+# A phone that joins the rabbit's network asks its DNS (named by the
+# rabbit's DHCP) for its connectivity-check host; the rabbit answers every
+# name with 192.168.0.1, so the check lands on the setup page and the phone
+# opens it by itself. Before, nothing answered on port 53, Chrome on iOS
+# refused the network ("Internet déconnecté") and the owner had to type
+# the address. The query carries an EDNS record, as iOS sends one: the
+# answer must not echo it. tools/config-captive.sh checks the log.
+config-mode
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 20000
+
+at 5000 dns captive.apple.com
+at 5000 dns connectivitycheck.gstatic.com
+at 5000 get /hotspot-detect.html
+at 19000 expect RUN
+at 19000 expect-mode master
