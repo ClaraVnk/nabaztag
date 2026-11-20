@@ -527,3 +527,15 @@ A factory Karotz (no network, no SSH) is read with a USB key before anything
 is installed on it: `karotz/measure-key/README.md`
 (`sh karotz/measure-key/make-key.sh /Volumes/KAROTZ`). Read-only on the
 rabbit; the flash copy and the readings land on the key under `measure/`.
+
+### Config mode is a captive portal
+
+`emulator/tools/config-captive.sh firmware-arm/bin/naboot-1.2.1.0/Nab.elf`
+runs `scenarios/vm/config-captive.txt`: a phone on the rabbit's setup network
+asks the rabbit's DNS for `captive.apple.com` and
+`connectivitycheck.gstatic.com` (with an EDNS record, as iOS sends one), then
+fetches `/hotspot-detect.html`. Both names must resolve to 192.168.0.1 with no
+additional record echoed, and the probe page must get the setup page (200):
+that is what makes a phone open the setup page by itself. Before the
+`captive` mod (2026-11-20) nothing answered on port 53, and Chrome on iOS
+refused the network ("Internet déconnecté"). Cost: 392 bytes of flash.

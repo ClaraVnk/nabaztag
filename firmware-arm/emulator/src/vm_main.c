@@ -128,6 +128,9 @@ void sim_run_events(void)
       case SIM_EV_UPLOAD:
         phone_start_upload();
         break;
+      case SIM_EV_DNS:
+        phone_dns(e->path);
+        break;
       case SIM_EV_GET:
         phone_get(e->path);
         break;
@@ -503,6 +506,8 @@ int main(int argc, char **argv)
            phone_stats.bytes_sent, phone_stats.segments_sent,
            phone_stats.response_status,
            phone_stats.uploads_finished ? "" : " (not finished)");
+  if(phone_stats.dns_answers)
+    printf("phone dns           %u address(es) from the rabbit\n", phone_stats.dns_answers);
   printf("tcp bytes up/down   %u / %u\n", gw_stats.bytes_from_rabbit,
          gw_stats.bytes_to_rabbit);
   sim_replay_summary();

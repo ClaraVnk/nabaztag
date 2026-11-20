@@ -583,6 +583,9 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "upload")) {
         e->kind = SIM_EV_UPLOAD;
+      } else if(!strcmp(tok[2], "dns") && n >= 4) {
+        e->kind = SIM_EV_DNS;
+        snprintf(e->path, sizeof(e->path), "%s", tok[3]);
       } else if(!strcmp(tok[2], "get") && n >= 4) {
         e->kind = SIM_EV_GET;
         snprintf(e->path, sizeof(e->path), "%s", tok[3]);

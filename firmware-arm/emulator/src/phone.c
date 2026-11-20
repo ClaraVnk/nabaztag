@@ -212,7 +212,7 @@ static void send_ip(uint8_t protocol, uint8_t *payload, uint32_t length)
   seed = (phone_ip >> 16) + (phone_ip & 0xffff) + (rabbit_ip >> 16)
        + (rabbit_ip & 0xffff) + protocol + length;
   sum = checksum(packet + 20, length, seed);
-  wr16(packet + 20 + 16, sum == 0 ? 0xffff : sum);   /* TCP only, here */
+  wr16(packet + 20 + (protocol == 17 ? 6 : 16), sum == 0 ? 0xffff : sum);
   wr16(packet + 10, checksum(packet, 20, 0));
   send_data(bssid, ETHERTYPE_IP, packet, 20 + length);
 }
@@ -535,6 +535,8 @@ static void handle_tcp(const uint8_t *seg, uint32_t length, uint32_t ip_total)
   }
 }
 
+static void handle_dns(const uint8_t *ip, const uint8_t *udp, uint32_t length);
+
 static void handle_ip(const uint8_t *packet, uint32_t length)
 {
   uint32_t hlen, total;
@@ -547,6 +549,80 @@ static void handle_ip(const uint8_t *packet, uint32_t length)
   if(rd32(packet + 16) != phone_ip) return;
   if(packet[9] == 6)
     handle_tcp(packet + hlen, length - hlen, total - hlen);
+  else if(packet[9] == 17)
+    handle_dns(packet, packet + hlen, total - hlen);
+}
+
+/* --- DNS: what a phone asks first on a new network ---------------------
+ * The rabbit's DHCP names it as the DNS server; a phone resolves its own
+ * connectivity check (captive.apple.com, connectivitycheck.gstatic.com)
+ * there. In config mode the rabbit answers every name with itself, so the
+ * phone opens the setup page by itself (captive portal, 2026-11-20). */
+
+#define DNS_PORT_PHONE 40053
+static char dns_queue[GET_MAX][128];
+static int dns_queued, dns_next;
+static uint16_t dns_id = 0x1200;
+
+void phone_dns(const char *name)
+{
+  if(dns_queued < GET_MAX)
+    snprintf(dns_queue[dns_queued++], sizeof(dns_queue[0]), "%s", name);
+}
+
+static void send_dns(const char *name)
+{
+  uint8_t udp[8 + 12 + 130 + 4 + 11];
+  uint8_t *q = udp + 8, *p = q + 12;
+  const char *label = name;
+  uint32_t length;
+
+  memset(udp, 0, sizeof(udp));
+  wr16(q, ++dns_id); wr16(q + 2, 0x0100); wr16(q + 4, 1); wr16(q + 10, 1);
+  while(*label) {                       /* the name, as labels */
+    const char *dot = strchr(label, '.');
+    size_t n = dot ? (size_t)(dot - label) : strlen(label);
+    if(n == 0 || n > 63 || p + 1 + n >= q + 12 + 128) return;
+    *p++ = (uint8_t)n; memcpy(p, label, n); p += n;
+    label += n + (dot ? 1 : 0);
+  }
+  *p++ = 0;
+  wr16(p, 1); wr16(p + 2, 1); p += 4;   /* type A, class IN */
+  /* An EDNS OPT record, as iOS sends one: the answer must not echo it. */
+  *p++ = 0; wr16(p, 41); wr16(p + 2, 1232); p += 4; wr32(p, 0); p += 4; wr16(p, 0); p += 2;
+  length = (uint32_t)(p - udp);
+  wr16(udp, DNS_PORT_PHONE); wr16(udp + 2, 53); wr16(udp + 4, (uint16_t)length);
+  sim_log("phone: DNS %s ?", name);
+  send_ip(17, udp, length);
+}
+
+static void handle_dns(const uint8_t *ip, const uint8_t *udp, uint32_t length)
+{
+  const uint8_t *m = udp + 8, *p, *end = udp + length;
+  uint16_t an;
+
+  (void)ip;
+  if(length < 8 + 12 || rd16(udp) != 53 || rd16(udp + 2) != DNS_PORT_PHONE) return;
+  /* Two questions can be out at once, like a phone's: any id it sent. */
+  if(rd16(m) <= 0x1200 || rd16(m) > dns_id || !(m[2] & 0x80)) {
+    sim_log("phone: DNS answer refused (id %04x, flags %04x)", rd16(m), rd16(m + 2));
+    return;
+  }
+  an = rd16(m + 6);
+  p = m + 12;
+  while(p < end && *p) p += 1 + *p;     /* the question's name */
+  p += 1 + 4;
+  if(an == 0 || p + 16 > end) {
+    sim_log("phone: DNS answer: no address (rcode %u, %u answer(s), additional %u)", m[3] & 15, an, rd16(m + 10));
+    return;
+  }
+  if(rd16(p + 2) != 1 || rd16(p + 10) != 4) {
+    sim_log("phone: DNS answer: not an address (type %u)", rd16(p + 2));
+    return;
+  }
+  phone_stats.dns_answers++;
+  sim_log("phone: DNS answer %u.%u.%u.%u (ttl %u, additional %u)", p[12], p[13], p[14], p[15],
+          (unsigned)rd32(p + 6), rd16(m + 10));
 }
 
 /* --- frames from the rabbit ------------------------------------------- */
@@ -692,6 +768,7 @@ void phone_poll(void)
       }
       break;
     case ST_JOINED:
+      if(dns_next < dns_queued) send_dns(dns_queue[dns_next++]);
       if(upload_wanted && tcp.state == TCP_CLOSED) phone_start_upload();
       else if(get_next < get_queued && (tcp.state == TCP_CLOSED || tcp.state == TCP_DONE))
         start_next_get();

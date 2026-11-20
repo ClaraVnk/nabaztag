@@ -21,6 +21,7 @@ struct phone_stats {
   int      response_status;     /* the status code of the last answer, 0 if none */
   uint32_t upload_started_ms;
   uint32_t upload_finished_ms;
+  uint32_t dns_answers;         /* addresses the rabbit's DNS gave */
 };
 
 extern struct phone_stats phone_stats;
@@ -50,6 +51,8 @@ int phone_start_upload(void);
  * answer. With a save directory set, each answer is kept whole, headers
  * included, under the path's name, so the host can check what was served. */
 void phone_get(const char *path);
+/* Ask the rabbit's DNS for a name's address, once on its network. */
+void phone_dns(const char *name);
 void phone_set_save_dir(const char *dir);
 
 #endif /* _PHONE_H_ */

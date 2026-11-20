@@ -35,7 +35,7 @@ case "$IMAGE" in
   *)
     cp "$IMAGE" "$WORK/boot.bc" ;;
 esac
-cp "$HERE/scenarios/vm/config-pages.txt" "$WORK/scenario.txt"
+cp "${SCENARIO:-$HERE/scenarios/vm/config-pages.txt}" "$WORK/scenario.txt"   # SCENARIO=: config-captive.sh
 
 if [ -z "${NO_BUILD:-}" ]; then
   echo "== building the emulator image (nabgcc mods: $STEPS)"
@@ -50,7 +50,7 @@ if [ -n "${EEPROM:-}" ]; then cp "$EEPROM" "$WORK/conf.eeprom"; CONF="--eeprom /
   "make -s NABGCC=/build/nabgcc BYTECODE=/work/boot.bc vm >/dev/null \
    && ./rabbit-vm /work/scenario.txt $CONF --save-dir /work/out $*" \
   > "$WORK/run.log" 2>&1 || true
-grep -E "phone: (GET|answer|a gzipped|the page)|FAIL|PASS|ok  |resets" "$WORK/run.log"
+grep -E "phone: (GET|DNS|answer|a gzipped|the page)|FAIL|PASS|ok  |resets" "$WORK/run.log"
 
 EXPECT_SERVER="${EXPECT_SERVER:-}" python3 - "$WORK/out" <<'EOF'
 import gzip, json, os, re, sys
