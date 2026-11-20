@@ -39,6 +39,12 @@
 # the Terrier captured -- inside the session (bytecode/patch_mic_in_session.py)
 # or over UDP.
 #
+# --long-press ACTION maps the owner's long press of the head to ACTION
+# (`echo`: "Écoute-toi", record and play it back), with the transcription key
+# that goes nowhere: with --scenario scenarios/vm/xmpp-longpress.txt the
+# verdict then shows what the microphone recorded after a real press, chime
+# included (2026-11-19: 0 bytes on two real rabbits, 12 KB from --api listen).
+#
 # --ota FILE (needs --speak-at) stages FILE, a signed .sim, as the warren's
 # naboot-latest and, ten seconds after the other calls, presses the update
 # button on the rabbit's page as its owner would (log in, the form, its
@@ -114,6 +120,7 @@ while [ $# -gt 0 ]; do
     --speak-at) SPEAK_AT=$2; shift 2 ;;
     --speak) SPEAK=$2; shift 2 ;;
     --api) APIS+=("$2" "$3"); shift 3 ;;
+    --long-press) LONG_PRESS=$2; shift 2 ;;
     --ota) OTA=$2; shift 2 ;;
     --split) SPLIT=1; shift ;;
     --web-restart-at) WEB_RESTART_AT=$2; shift 2 ;;
@@ -246,13 +253,14 @@ podman exec -w /app "$NAME" python3 -c "
 try: from terrier import tenant
 except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); print('   kx_decide', s.kx_decide('$MAC', True), s.kx_get('$MAC')['state'])"
-if [ -n "$SPEAK_AT" ] || [ ${#ATS[@]} -gt 0 ]; then
+if [ -n "$SPEAK_AT" ] || [ ${#ATS[@]} -gt 0 ] || [ -n "${LONG_PRESS:-}" ]; then
   TOKEN=$(podman exec -w /app "$NAME" python3 -c "
 try: from terrier import tenant
 except ImportError: import tenant
 s=tenant.Store('/data/terrier.db'); o=s.create_owner('proof@warren.test','!',True)
 assert s.redeem_pair_code(s.mint_pair_code('$MAC'),o)=='$MAC'; print(s.create_api_token(o,'proof'))
 r=s.get_rabbit('$MAC'); c=dict(r['config'] or {}); c.update(stt_provider='openai', stt_key='proof-not-a-key')
+if '${LONG_PRESS:-}': c['button_actions']={'long_click': {'type': '${LONG_PRESS:-}'}}
 s.save_rabbit_config('$MAC', c)
 from werkzeug.security import generate_password_hash; s.set_password(o, generate_password_hash('proof-password'))")
   echo "   owner and API token made for $MAC"
