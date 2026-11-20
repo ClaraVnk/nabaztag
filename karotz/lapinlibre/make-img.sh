@@ -52,7 +52,7 @@ cat > lapinlibre.rpi-imager.json <<JSON
 {
   "os_list": [
     {
-      "name": "LapinLibre $V (Karotz)",
+      "name": "LapinLibre $V (Karotz, beta)",
       "description": "USB key for a Karotz (Nabaztag v3), not for a Raspberry Pi. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
       "url": "$URL/lapinlibre-$V.img.xz",
       "init_format": "cloudinit",
