@@ -1099,6 +1099,24 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
   }
   body_length = ((uint32_t)fr->body_length[0] << 8) | fr->body_length[1];
 
+  /* strict-eapol: the body is the key frame's fields and its key data,
+   * nothing after (IEEE 802.1X Packet Body Length; 802.11 Key Data Length).
+   * hostapd only checks that the key data fits; an authenticator that
+   * wants the two to agree drops the frame, says nothing, and resends its
+   * message 1 -- the station waits for a message 3 that never comes, which
+   * is Lapinou's E1 k0 behind a Livebox 4 (issue #163, 2026-11-20). */
+  if(a->strict_eapol) {
+    uint32_t kdl = ((uint32_t)fr->key_frame.key_data_length[0] << 8)
+                   | fr->key_frame.key_data_length[1];
+    if(body_length != (uint32_t)EAPOL_KEY_BODY_LENGTH + kdl) {
+      sim_log("AP %s: EAPOL from the station declares %u body bytes for %u of "
+              "fields and key data -- dropped (strict-eapol)", macstr(a->bssid),
+              body_length, (uint32_t)EAPOL_KEY_BODY_LENGTH + kdl);
+      vap_stats.strict_drops++;
+      return;
+    }
+  }
+
   if(hs->stage == HS_SENT_MSG1) {
     uint8_t mine[20];
     uint8_t received[EAPOL_KEYMIC_LENGTH];

@@ -26,6 +26,7 @@ struct vap_stats {
   uint32_t eapol_to_sta;
   uint32_t mics_verified;
   uint32_t mics_failed;
+  uint32_t strict_drops;     /* strict-eapol: station frames dropped for their length */
   uint32_t handshakes_completed;
   uint32_t rekeys_sent;
   uint32_t rekeys_acked;

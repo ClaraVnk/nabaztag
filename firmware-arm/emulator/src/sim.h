@@ -53,6 +53,9 @@ struct sim_ap {
                                the HT PHY membership selector                */
   int      mfpc;            /* 1 = WPA2 announcing PMF capable (MFPC), not
                                required, nothing else changed                */
+  int      strict_eapol;    /* 1 = drops an EAPOL-Key frame whose declared
+                               body is longer than its fields and key data,
+                               as a stricter authenticator may (issue #163) */
   int      sae_auth;        /* ...and it was SAE, so the AKM-defined key
                                schedule applies to the handshake         */
   uint8_t  sta_rsn[40];     /* the RSN IE of the association request,    */

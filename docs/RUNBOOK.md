@@ -573,6 +573,21 @@ channel 1 until the mains.
 station only (listen.sh): the first warm boot after an OTA left the radio
 deaf twice on Nabazprout (2026-11-18, 2026-11-20).
 
+### A stricter access point: the EAPOL replies' length (Livebox 4)
+
+`emulator/tools/livebox-check.sh` (usage in its header) runs every
+`scenarios/vm/livebox-*.txt` under the runtime VM. `livebox-wpa2-strict-eapol.txt`
+puts `strict-eapol` on the virtual AP: it drops an EAPOL-Key frame whose
+declared body is longer than its fields and key data. Before the
+`eapol_exact_body` step every reply the rabbit sent declared 28 bytes too
+many (the key_data member counted on top of the key data), and that
+scenario ended in EAPOL, which is Lapinou's diagnostic behind a Livebox 4
+(issue #163, 2026-11-20: E1, k0, D0/0/0; the same rabbit joins a GL.iNet in
+access-point mode behind it). hostapd only checks that the key data fits.
+With the step, the seven scenarios and `make check` pass. Whether the Livebox
+4 is that strict is for a rabbit on one to tell: `naboot-1.2.1.1` is 1.2.1.0
+plus this step.
+
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 
 Imager 2.x asks for the device before the system: `terrier-os.rpi-imager.json`

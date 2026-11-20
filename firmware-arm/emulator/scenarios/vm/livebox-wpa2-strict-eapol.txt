@@ -1,0 +1,20 @@
+# Issue #163 (2026-11-20): a Livebox 4 the rabbit never joins. Lapinou's
+# diagnostic line behind it: authenticated, message 1 of the four-way
+# handshake received and answered (E1), never a message 3 taken, no group
+# key (k0), no DHCP sent (D0/0/0); the same rabbit joins a GL.iNet (hostapd)
+# in access-point mode behind that same Livebox.
+#
+# The rabbit's messages 2 and 4 declare 28 body bytes more than their fields
+# and key data hold. hostapd only checks that the key data fits; this AP,
+# like a stricter authenticator, drops such a frame and says nothing.
+#
+# The EEPROM is tools/vm-check.sh's wpa2 page (the name carries "wpa2").
+#
+# Runs under the runtime VM: tools/livebox-check.sh.
+
+ap 02:00:5e:10:00:01 Terrier 1 wpa2-ccmp -52 livebox strict-eapol
+psk nabaztag
+tick 50
+stop 90000
+
+at 20000 expect RUN
