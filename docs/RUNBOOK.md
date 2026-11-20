@@ -544,7 +544,7 @@ refused the network ("Internet déconnecté"). Cost: 392 bytes of flash.
 
 `emulator/tools/usb-watch-proof.sh firmware-arm/bin/naboot-1.2.1.0/Nab.elf`
 runs `scenarios/vm/usb-host-stop.txt` with the 1.2.1.0 steps
-(`tools/emu-steps.py`): the emulated USB host runs 12 s with no reset, then
+(`firmware-arm/emulator/tools/emu-steps.py`): the emulated USB host runs 12 s with no reset, then
 stops; the firmware must restart with reason 5 (`usb_watch`, 25 radio-timer
 ticks: 5 s on the rabbit, 10 s in the emulator, whose tick is 400 ms).
 Measured cause, 2026-11-20 over JTAG on Nabazprout: HcControl 0 and
