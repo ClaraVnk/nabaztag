@@ -35,6 +35,6 @@ WORKDIR /ll
 RUN useradd -m -u 1000 builder 2>/dev/null || true; chown -R 1000:1000 /ll
 USER 1000
 ENV LAPINLIBRE_WORK=/work/ll
-# Every stage, the tests included; the key is copied to the /work volume.
-# LL_STAGES: empty = every stage; "test" reruns the tests on the built tree.
+# The stages in LL_STAGES (build.sh leaves out the tests unless LL_TESTS=1;
+# empty = every stage, the tests included); the key is copied to /work.
 CMD ["sh", "-c", "./build.sh $LL_STAGES && rm -rf /work/usbkey && cp -r /work/ll/out/usbkey /work/usbkey && echo BUILD-OK"]

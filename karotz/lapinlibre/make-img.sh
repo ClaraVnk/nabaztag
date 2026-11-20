@@ -9,7 +9,13 @@
 #   (defaults: ~/lapinlibre-work/usbkey, the build's output, and the current dir)
 #
 # Built in an Alpine container with mtools: no root, no loop device. Writes
-# lapinlibre-<version>.img.xz and its .sha256.
+# lapinlibre-<version>.img.xz, its .sha256, and lapinlibre.rpi-imager.json:
+# a Raspberry Pi Imager repository listing that one image, so the key shows
+# up by name in Imager (App options > Content repository, or
+# `rpi-imager --repo <url of the json>`), downloaded and checked there.
+# No init_format in it: Imager's OS customisation writes Raspberry Pi files,
+# which mean nothing to a Karotz, so it stays off. The image is expected at
+# LL_URL (default: the nabaztag release lapinlibre-<version>).
 set -eu
 KEY=${1:-$HOME/lapinlibre-work/usbkey}
 # A build whose tests failed leaves the key in the work tree only.
@@ -23,7 +29,8 @@ VERSION=${VERSION:-$(date -u +%Y%m%d)}
 MB=$(( $(du -sm "$KEY" | cut -f1) + 32 ))
 [ "$MB" -ge 64 ] || MB=64
 mkdir -p "$OUT"
-podman run --rm -v "$KEY:/key:ro,Z" -v "$OUT:/out:Z" -e MB="$MB" -e V="$VERSION" \
+URL=${LL_URL:-https://github.com/ClaraVnk/nabaztag/releases/download/lapinlibre-$VERSION}
+podman run --rm -v "$KEY:/key:ro,Z" -v "$OUT:/out:Z" -e MB="$MB" -e V="$VERSION" -e URL="$URL" \
     docker.io/library/alpine:3.22 sh -euc '
 apk add -q mtools dosfstools sfdisk xz >/dev/null
 img=/out/lapinlibre-$V.img
@@ -36,6 +43,23 @@ mkfs.vfat -F 32 -n LAPINLIBRE --offset 2048 "$img" $(( (MB - 1) * 1024 )) >/dev/
 # CRLF would break the rabbit shell: the files go as built.
 mcopy -s -i "$img@@1M" /key/* ::/
 mdir -i "$img@@1M" ::/ | tail -n +4
+ext_size=$(stat -c %s "$img"); ext_sha=$(sha256sum "$img" | cut -d" " -f1)
 xz -T0 -9 "$img"
 cd /out && sha256sum "lapinlibre-$V.img.xz" > "lapinlibre-$V.img.xz.sha256"
-ls -l "lapinlibre-$V.img.xz"'
+cat > lapinlibre.rpi-imager.json <<JSON
+{
+  "os_list": [
+    {
+      "name": "LapinLibre $V (Karotz)",
+      "description": "USB key for a Karotz (Nabaztag v3), not for a Raspberry Pi. After writing: edit lapinlibre.txt on the key, plug it into the Karotz.",
+      "url": "$URL/lapinlibre-$V.img.xz",
+      "release_date": "$(date -u +%Y-%m-%d)",
+      "extract_size": $ext_size,
+      "extract_sha256": "$ext_sha",
+      "image_download_size": $(stat -c %s "lapinlibre-$V.img.xz"),
+      "image_download_sha256": "$(cut -d" " -f1 "lapinlibre-$V.img.xz.sha256")"
+    }
+  ]
+}
+JSON
+ls -l "lapinlibre-$V.img.xz" lapinlibre.rpi-imager.json'

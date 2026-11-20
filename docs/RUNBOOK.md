@@ -298,6 +298,9 @@ runs the tests alone on the built tree. `karotz/lapinlibre/binfmt-arm.sh`
 registers qemu-arm first. A commit that leaves the kernel alone reuses it
 (`LL_REUSE_UNCHANGED=1`).
 
+The build runs no tests by default, as for Naboot; `LL_TESTS=1` adds
+upstream's whole suite, for a change to LapinLibre's own code (a new
+`LL_COMMIT`), and `LL_STAGES=test` reruns it on the built tree.
 On the dev VM (4 cores, 2026-11-20): 293 of 297 tests pass in about 39
 minutes (the kernel reused, the tests in balanced shards, one per core). The
 four left all time karotzVM under qemu-user: its record's order,
@@ -308,7 +311,12 @@ rounds in 900 s). LapinLibre's own CI does not run these; asked upstream.
 `karotz/lapinlibre/make-img.sh` turns the built key into
 `lapinlibre-<version>.img.xz` (one FAT32 partition, label LAPINLIBRE) for
 Raspberry Pi Imager or balenaEtcher: write it, edit `lapinlibre.txt` on the
-key, plug it into the Karotz.
+key, plug it into the Karotz. It also writes `lapinlibre.rpi-imager.json`, a
+Raspberry Pi Imager repository with that one image: publish both in a
+`lapinlibre-<version>` release (or set `LL_URL` to where the image will be),
+then in Imager, App options > Content repository > the json's URL (or
+`rpi-imager --repo <url>`): LapinLibre appears by name, downloaded and
+checked by its sha256. Pick any device; leave OS customisation off.
 
 ### The three rabbits at once
 
