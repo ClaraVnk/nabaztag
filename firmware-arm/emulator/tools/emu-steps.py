@@ -35,6 +35,8 @@ emu += ["wifi_diag"]
 # image's bootloader then called the wrong opcode (2026-11-19). tls_certs
 # adds them; boot_https goes with it (RUNBOOK §4 already added both by hand).
 emu += ["tls_certs", "boot_https"]
+# usb_watch (2026-11-20): vm_main.c stands in for the USB host controller.
+emu += ["usb_watch"]
 mode = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 m = re.search(r'"%s":\s*"([^"]+)"' % re.escape(mode), mods)
 if not m:

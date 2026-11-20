@@ -60,6 +60,16 @@ static int cpu_gone;
 /* The verifySig opcode's own tally (apply-mods' vinterp step). Weak, so a
  * VM built without the opcode still links. */
 extern int32_t nab_verify_calls __attribute__((weak));
+/* usb_watch (2026-11-20): the firmware's tick, when the step list has it, and
+ * the USB host controller it reads -- running until `usb-host-stop`, like the
+ * OHCI the JTAG wires knocked into reset on Nabazprout. A reset restarts it,
+ * as RSTOUT_N does the real chip. */
+void usbwatch_tick(void) __attribute__((weak));
+static int usb_host_stopped;
+uint32_t usbwatch_frame(void)
+{
+  return usb_host_stopped ? 0xffffffffu : (uint32_t)(sim_now() & 0xffff);
+}
 extern int32_t nab_verify_ok __attribute__((weak));
 extern int32_t nab_verify_nomem __attribute__((weak));
 
@@ -185,6 +195,10 @@ void sim_run_events(void)
       }
       case SIM_EV_INJECT_BEACON: vap_inject_beacon(e->arg); break;
       case SIM_EV_DHCP_ROGUE: gw_dhcp_rogue(0x0a090909u); break;  /* 10.9.9.9 */
+      case SIM_EV_USB_HOST_STOP:
+        usb_host_stopped = 1;
+        sim_log("the USB host controller stops (HcControl 0, the frame number frozen)");
+        break;
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:
       case SIM_EV_EAPOL_OVERSIZED:
@@ -464,7 +478,10 @@ int main(int argc, char **argv)
     if(sim_now() >= next_timer_ms) {
       next_timer_ms = sim_now() + 100;
       counttimer = (uint8_t)((counttimer + 1) & 3);
-      if(!counttimer) rt2501_timer();
+      if(!counttimer) {
+        rt2501_timer();
+        if(usbwatch_tick) usbwatch_tick();
+      }
     }
 
     sim_run_events();
@@ -496,7 +513,8 @@ int main(int argc, char **argv)
          sim.last_reset_reason == 1 ? " (reason 1: the VM ran out of memory)" :
          sim.last_reset_reason == 2 ? " (reason 2: the radio was lost)" :
          sim.last_reset_reason == 3 ? " (reason 3: watchdog)" :
-         sim.last_reset_reason == 4 ? " (reason 4: the bytecode asked)" : "");
+         sim.last_reset_reason == 4 ? " (reason 4: the bytecode asked)" :
+         sim.last_reset_reason == 5 ? " (reason 5: the USB host stopped)" : "");
   if(&nab_verify_calls != NULL)
     printf("verifySig           %d call%s, %d ok, %d out of memory\n",
            nab_verify_calls, nab_verify_calls == 1 ? "" : "s",
@@ -543,6 +561,7 @@ void reset_uc(void)
 {
   sim.resets++;
   sim.last_reset_reason = nab_reset_reason;
+  usb_host_stopped = 0;                 /* RSTOUT_N resets the USB chip too */
   sim_log("the firmware asked for a processor reset (reason %d%s; heap hp=%d sp=%d, %d of %d words free)",
           nab_reset_reason,
           nab_reset_reason == 1 ? ": the VM ran out of memory" : "",

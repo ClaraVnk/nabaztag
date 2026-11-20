@@ -5045,6 +5045,7 @@ def patch_dcc_telemetry(root: Path) -> None:
         "extern uint8_t ieee80211_auth_tx, ieee80211_auth_rx, ieee80211_bss_heard;\n"
         "extern uint16_t ieee80211_auth_status;\n"
         "extern uint8_t nab_tx_errors, nab_bc_loads;\n"
+        "extern int32_t nab_reset_reason, nab_reset_count;   /* reset_reason, vlog.c */\n"
         "extern uint16_t nab_tx_acked, nab_tx_failed;\n"
         "void rt2501_tx_stats_poll(void);\n"
         "uint8_t ieee80211_sae_diag(void);\n\n"
@@ -6624,6 +6625,73 @@ def patch_mdns(root: Path) -> None:
 
     write_flat(p, s, p_nl)
     print(f"[ok]   {p}: mdns announcer wired + tick added to boot loop")
+
+
+def patch_usb_watch(root: Path) -> None:
+    """A USB host that stops is noticed: the rabbit restarts (reason 5).
+
+    Measured on Nabazprout over JTAG, 2026-11-20, 25 minutes after the JTAG
+    wires were plugged into the running rabbit: HcControl 0 (the host
+    controller in USBReset, no list enabled), HcFmNumber 0 and still 0 a
+    second later, the receive and send counters frozen. The ARM ran on, so
+    nothing noticed: rt2501_connected stayed 1, 14 data frames waited in the
+    4 KB of COMRAM for a completion that never came (3736 bytes used), the
+    link watchdog gave up the association, and the scan sat on channel 1 with
+    an empty cache for good -- the belly blinking orange until the mains.
+
+    The frame number of a running OHCI moves every millisecond. Every 200 ms
+    (the main loop's rt2501_timer tick) usbwatch_tick reads it; 25 ticks in a
+    row without a move, or the controller out of its Operational state, and
+    the rabbit resets with reason 5. reset_uc is the watchdog reset with a
+    100 us pulse on RSTOUT_N, which resets the USB chip with the processor;
+    hcd_init then programs it from scratch. The emulator stands in for the
+    controller (usbwatch_frame) and stops it on `usb-host-stop`.
+    Needs reset_reason (nab_reset_reason). Idempotent.
+    """
+    src = root / "src/utils/usbwatch.c"
+    if src.exists():
+        print(f"[skip] {src}: the USB host is already watched")
+        return
+    src.write_text(
+        "/* usb_watch (apply-mods.py): a USB host that stops restarts the rabbit. */\n"
+        "#include <stdint.h>\n\n"
+        "#define USBWATCH_TICKS 25            /* 200 ms each: 5 s */\n"
+        "#define USBWATCH_REASON 5\n\n"
+        "extern int32_t nab_reset_reason;\n"
+        "void reset_uc(void);\n"
+        "uint32_t usbwatch_frame(void);       /* the frame number, ~0 when not running */\n\n"
+        "static uint32_t usbwatch_last = 0xffffffffu;\n"
+        "static uint8_t usbwatch_still;\n\n"
+        "void usbwatch_tick(void)\n{\n"
+        "  uint32_t f = usbwatch_frame();\n"
+        "  if(f != 0xffffffffu && f != usbwatch_last) {\n"
+        "    usbwatch_last = f;\n"
+        "    usbwatch_still = 0;\n"
+        "    return;\n"
+        "  }\n"
+        "  if(++usbwatch_still < USBWATCH_TICKS) return;\n"
+        "  nab_reset_reason = USBWATCH_REASON;\n"
+        "  reset_uc();\n"
+        "}\n")
+    hcd = root / "src/usb/hcd.c"
+    t, nl = read_flat(hcd)
+    if "usbwatch_frame" not in t:
+        t = t.rstrip("\n") + ("\n\n/* usb_watch (apply-mods.py): the frame number while the controller is\n"
+                              "   Operational (HCFS 10b), ~0 otherwise. */\n"
+                              "uint32_t usbwatch_frame(void)\n{\n"
+                              "  if((get_wvalue(HcControl) & 0xC0) != 0x80) return 0xffffffffu;\n"
+                              "  return get_wvalue(HcFmNumber) & 0xffff;\n"
+                              "}\n")
+        write_flat(hcd, t, nl)
+    m = root / "src/main.c"
+    t, nl = read_flat(m)
+    a = '      rt2501_timer();\n      DBG_MAIN(".");\n'
+    if "usbwatch_tick" not in t:
+        if t.count(a) != 1:
+            sys.exit(f"FAIL {m}: the rt2501_timer tick of the main loop not found once")
+        t = t.replace(a, '      rt2501_timer();\n      { extern void usbwatch_tick(void); usbwatch_tick(); }   /* usb_watch */\n      DBG_MAIN(".");\n', 1)
+        write_flat(m, t, nl)
+    print(f"[ok]   usb_watch: src/utils/usbwatch.c, usbwatch_frame in hcd.c, tick in main.c")
 
 
 def patch_captive(root: Path) -> None:
@@ -10588,7 +10656,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -10733,7 +10801,10 @@ def main() -> int:
         # stranger's server today (2026-11-14, …5503).
         # One build since 2026-11-19 (Clara: "plus de variantes, 1 seul build"):
         # the two flash levers and the Wi-Fi telemetry (wifi_diag, boot_diag) in it.
-        "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
+        "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
+        # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
+        # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
+        "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
         "naboot-1.2.0.1-gz": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
         "naboot-1.2.0.1-gzrf": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,rf2528_only,linker_keep,gc_sections",
         "naboot-1.2.0.1-gz-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,mdns,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,gzip_pages,gzip_setup,prune_unreachable,linker_keep,gc_sections",
@@ -11020,6 +11091,7 @@ def main() -> int:
         "bootloader": patch_bootloader,
         "mdns": patch_mdns,
         "captive": patch_captive,
+        "usb_watch": patch_usb_watch,
         "wpa2_gtk": patch_wpa2_group_key,
         "eapol_group_ack": patch_eapol_group_ack,
         "group_cipher": patch_group_cipher,

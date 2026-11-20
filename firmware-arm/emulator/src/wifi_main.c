@@ -216,6 +216,7 @@ void sim_run_events(void)
       }
       case SIM_EV_INJECT_BEACON: vap_inject_beacon(e->arg); break;
       case SIM_EV_DHCP_ROGUE: break;  /* whole-rabbit only */
+      case SIM_EV_USB_HOST_STOP: break;
       case SIM_EV_FORGED_MSG1:
       case SIM_EV_RESEND_MSG3:
       case SIM_EV_EAPOL_OVERSIZED:

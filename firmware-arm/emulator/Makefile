@@ -82,6 +82,11 @@ VM += ../crypto/nab_tls.c ../crypto/nab_tls_vm.c
 ifneq ($(wildcard $(NABGCC)/src/utils/wdiag.c),)
 FW += $(NABGCC)/src/utils/wdiag.c
 endif
+# usb_watch (2026-11-20): the tick is the firmware's; the controller it reads
+# is vm_main.c's (usbwatch_frame), which `usb-host-stop` stops.
+ifneq ($(wildcard $(NABGCC)/src/utils/usbwatch.c),)
+VM += $(NABGCC)/src/utils/usbwatch.c
+endif
 ifneq ($(wildcard $(NABGCC)/src/net/nab_https_vm.c),)
 VM += ../crypto/nab_bn.c ../crypto/nab_rsa.c ../crypto/nab_ecdsa.c ../crypto/nab_x509.c
 # The tree's copy of nab_https_vm.c, not ../crypto's: boot_https puts its

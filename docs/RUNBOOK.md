@@ -539,3 +539,19 @@ additional record echoed, and the probe page must get the setup page (200):
 that is what makes a phone open the setup page by itself. Before the
 `captive` mod (2026-11-20) nothing answered on port 53, and Chrome on iOS
 refused the network ("Internet déconnecté"). Cost: 392 bytes of flash.
+
+### A stopped USB host restarts the rabbit
+
+`emulator/tools/usb-watch-proof.sh firmware-arm/bin/naboot-1.2.1.0/Nab.elf`
+runs `scenarios/vm/usb-host-stop.txt` with the 1.2.1.0 steps
+(`tools/emu-steps.py`): the emulated USB host runs 12 s with no reset, then
+stops; the firmware must restart with reason 5 (`usb_watch`, 25 radio-timer
+ticks: 5 s on the rabbit, 10 s in the emulator, whose tick is 400 ms).
+Measured cause, 2026-11-20 over JTAG on Nabazprout: HcControl 0 and
+HcFmNumber frozen after the JTAG wires were plugged into the running rabbit;
+the radio went silent, COMRAM filled with unsent frames, and the scan sat on
+channel 1 until the mains.
+
+`naboot-1.2.1.0-tel` is the release plus `dcc_telemetry`, for the JTAG
+station only (listen.sh): the first warm boot after an OTA left the radio
+deaf twice on Nabazprout (2026-11-18, 2026-11-20).

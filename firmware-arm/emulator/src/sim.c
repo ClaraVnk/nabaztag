@@ -522,6 +522,8 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "dhcp-rogue")) {
         e->kind = SIM_EV_DHCP_ROGUE;
+      } else if(!strcmp(tok[2], "usb-host-stop")) {
+        e->kind = SIM_EV_USB_HOST_STOP;
       } else if(!strcmp(tok[2], "inject-probe-ssid") && n >= 4) {
         e->kind = SIM_EV_INJECT_PROBE;
         e->arg = (int)strtol(tok[3], NULL, 10);
