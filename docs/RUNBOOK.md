@@ -316,9 +316,11 @@ us; we do not want to compete with them, to look like we borrow their name,
 or to leave owners unsure which system they are installing.
 `terrier-os-<version>.img.xz` (one FAT32 partition, label TERRIEROS) for
 Raspberry Pi Imager or balenaEtcher, and `terrier-os.rpi-imager.json`, an
-Imager repository with that one image. Publish both in a `terrier-os-<version>`
-release (or set `LL_URL` to where the image will be), then in Imager, App
-options > Content repository > the json's URL (or `rpi-imager --repo <url>`):
+Imager repository with that one image. Publish the image in a
+`terrier-os-<version>` release (or set `LL_URL` to where it will be), then
+commit the json as `karotz/lapinlibre/terrier-os.rpi-imager.json`: owners paste
+its raw GitHub address once (App options > Content repository, or
+`rpi-imager --repo <url>`) and every later release reaches them there.
 Terrier OS appears by name, downloaded and checked by its sha256. Pick any
 device. Imager's OS customisation fills the Wi-Fi network, the name and the
 SSH key (our LapinLibre reads its `network-config` and `user-data`;
