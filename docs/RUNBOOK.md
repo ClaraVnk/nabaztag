@@ -492,6 +492,19 @@ repository's root on the dev VM, one heavy job at a time:
    later) reports `lapinlibre <version>`, and without this line the rabbit's
    page and the admin table call the rabbit "LapinLibre". That file is in the
    core: it goes out with the next grouped core deploy.
+7. The update from the rabbit's page (Karotz client 0.1.17 and later):
+   `python3 karotz/lapinlibre/make-ota.py out/terrier-os-<version>.img.xz out --priv ~/.nabaztag/karotz_signing_key.bin`
+   makes `terrier-os-<version>.ota.tar`, its manifest signed with the Karotz
+   client key: on Clara's explicit request only, as every signature.
+   Check it (`--check out/terrier-os-<version>.ota --pub` the Terrier's
+   `karotz_signing_pubkey.h`), attach the `.ota.tar` to the release, then
+   on the VPS: `podman cp` it into the core container's /tmp and run
+   `podman exec terrier-core python3 -m terrier.terrieros /tmp/terrier-os-<version>.ota.tar`.
+   It keeps the package only if it holds as the client checks it, and makes
+   it the one offered (`/data/ota/terrier-os/LATEST`). Every Karotz on
+   Terrier OS with an older build then sees "Update Terrier OS" on its
+   firmware card. Prove it first in the emulator: `karotz/ota`,
+   `OTA_MODE=package`.
 
 ### The three rabbits at once
 
