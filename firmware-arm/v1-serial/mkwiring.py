@@ -21,14 +21,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-# The v1's 4-pin serial header J3 (Newbaztag doc/components.md), pin 1 first.
-# Only the rabbit's TXD is needed to read its log; GND always. The rabbit's
-# RXD and 3V3 stay free: nothing is sent to it, and the Pi does not power it.
+# The v1's 4-pin serial header J3, as Violet's own schematic numbers it (the
+# FCC filing, ../vendor/newbaztag/doc/schematics/schematics-630159.pdf:
+# J3 "UART": 1 3.3v, 2 GND, 3 RC7/RX1 through R38, 4 RC6/TX1 through R37).
+# Newbaztag's components.md lists them the other way round. Only the
+# rabbit's TX is needed to read its log, and GND; its RX and 3.3v stay free.
 RABBIT = [
-    (1, "TXD", "the firmware's log, 9600 baud", 10),
-    (2, "RXD", "leave unconnected", None),
-    (3, "GND", "", 6),
-    (4, "3V3", "leave unconnected", None),
+    (1, "3V3", "leave unconnected", None),
+    (2, "GND", "", 6),
+    (3, "RX", "leave unconnected", None),
+    (4, "TX", "the firmware's log, 9600 baud", 10),
 ]
 
 # Pi 40-pin header: what each used pin is, for the label beside it.
@@ -68,7 +70,7 @@ def main() -> int:
     add(f'<text x="{RX - 110}" y="{RY - 28}" fill="{INK}" font-weight="600">'
         f'rabbit, J3 (4-pin serial header)</text>')
     add(f'<text x="{RX - 110}" y="{RY - 12}" fill="{MUTED}" font-size="11">'
-        f'next to J2, the 5-pin ICSP header: check pin 3 is GND first</text>')
+        f'4 pins above J2 (5 pins), no silkscreen: GND is 2nd from one end</text>')
     rabbit_xy = {}
     for i, (pin, name, note, pi) in enumerate(RABBIT):
         y = RY + i * PAD
@@ -133,7 +135,7 @@ def main() -> int:
     # ---- the legend, which is the thing people actually copy
     ly = RY + 5 * PAD + 30
     add(f'<text x="{RX - 110}" y="{ly - 20}" fill="{MUTED}" font-size="11">'
-        f'pins 2 and 4 stay unconnected: nothing is sent to the rabbit, '
+        f'pins 1 and 3 stay unconnected: nothing is sent to the rabbit, '
         f'the Pi does not power it</text>')
     add(f'<text x="{RX - 110}" y="{ly}" fill="{INK}" font-weight="600">'
         f'the two jumpers</text>')
@@ -151,10 +153,10 @@ def main() -> int:
     add(f'<text x="40" y="{y}" fill="{INK}" font-weight="600">'
         f'before plugging in</text>')
     for i, line in enumerate((
-        "GND first, checked with a meter against the board's ground: no silkscreen.",
+        "Find GND with a meter (continuity to the 8 V adapter's black wire): it is pin 2.",
         "The Pi's serial port, without its console: raspi-config > Interface > Serial.",
         "Then ./listen.sh: 9600 baud, 8N1, /dev/serial0, every line timed.",
-        "Never 3V3 or 5V from the Pi to J3: the v1 has its own 8 V adapter.",
+        "Never 3V3 or 5V from the Pi to J3: the v1 keeps its own 8 V 1 A adapter.",
     )):
         add(f'<text x="40" y="{y + 20 + i * 17}" fill="{MUTED}" '
             f'font-size="11">• {line}</text>')
