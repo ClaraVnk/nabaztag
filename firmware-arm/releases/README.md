@@ -15,11 +15,42 @@
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware we ship: the hardware-verified release the
-community downloads (1.2.1.0). Every earlier release, and the old `minimal`
+community downloads (1.2.1.2). Every earlier release, and the old `minimal`
 rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.2.1.0.signed.sim` — the release
+## `naboot-1.2.1.2.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.2.1.2` (`firmware-arm/apply-mods.py`) |
+| **Firmware version** | `1.2.1.2` |
+| **Build mark** | `z=2611210631` |
+| **Size** | 118 344 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `c12a4825c0e4bb3908fac9fe65d0b76cd6437d5743b88f3281f57a9261dea773` (the `.sim`); the plain image is `6799df98bba2…` |
+
+**What changed since 1.2.1.0 (issue #163):**
+
+- The replies of the WPA2 handshake declare the length they carry. They
+  declared 28 bytes more: hostapd lets that through, a Livebox 4 does not
+  (`eapol_exact_body`).
+- An access point offering WPA and WPA2 together (a MikroTik in
+  `wpa-psk,wpa2-psk`) is scanned as WPA2. It was taken for WPA, then refused
+  as WPA or skipped as WPA2 (`scan_prefers_rsn`).
+- Two counters on the Wi-Fi diagnostic line, `m` and `n`: messages 1 and 3
+  of the handshake received (`eapol_diag`).
+
+**On a rabbit:** Lapinou, behind a Livebox 4 (1.2.1.1, 2026-11-20 23:39)
+and a MikroTik in WPA+WPA2 (this image, 2026-11-21 12:20), both joined at
+the first try; neither ever had. Emulator: `../emulator/scenarios/vm/livebox-wpa2-strict-eapol.txt`
+and `../emulator/scenarios/mikrotik-wpa-wpa2.txt` fail without the steps and pass with
+them. This is the image Lapinou ran, not a rebuild.
+
+`naboot-1.2.1.0` is archived below.
+
+## `archive/naboot-1.2.1.0.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|
@@ -54,7 +85,6 @@ sent from the JTAG test image, was dropped before the signature check and
 installed when sent again. After each update the first Wi-Fi attempt fails
 at 29 s and the next one succeeds: under study for 1.2.1.1.
 
-`naboot-1.2.0.1` is archived below.
 
 ## `archive/naboot-1.2.0.1.signed.sim` — archived (the previous release)
 
