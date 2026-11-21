@@ -616,8 +616,13 @@ returns: the kernel and the root filesystem read back from the flash
 the adoption key and the client the Terrier sent are kept, the image's
 client is shipped beside them. All ten pass on `v0.2.0-50` (2026-11-21). A
 key placed outside `/usr/etc/conf` (an `install.sh` rabbit's `/usr/terrier`)
-is wiped: the key check tells the two apart. This is what the update from
-the rabbit's page will run, with the package in place of the stick.
+is wiped: the key check tells the two apart.
+
+`OTA_MODE=package` (`podman run --rm -e OTA_MODE=package karotz-ota`) is the
+update from the rabbit's page: no stick, the package in the client's folder
+(`/usr/etc/conf/terrier/os-update`, which installs keep) bound on
+/mnt/usbkey where the install reads its stick. The same ten checks pass, and
+the package outlives the install, for the client to remove (2026-11-21).
 
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 

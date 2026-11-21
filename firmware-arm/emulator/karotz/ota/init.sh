@@ -42,7 +42,18 @@ rm -f /sbin/reboot
 printf '#!/bin/sh\ntouch /var/tmp/reboot-asked\n' > /sbin/reboot
 chmod 755 /sbin/reboot
 
-echo "OTA: running the key's install"
+# ota=package (run.sh OTA_MODE): no stick. The update from the rabbit's page
+# puts the package where installs keep things, the client's own folder, and
+# shows it to the install where it reads the stick (KEY=/mnt/usbkey).
+MODE=stick
+case " $(cat /proc/cmdline) " in *" ota=package "*) MODE=package ;; esac
+PKG=/usr/etc/conf/terrier/os-update
+if [ "$MODE" = package ]; then
+    mkdir -p $PKG && cp -a /mnt/usbkey/. $PKG/ && rm -rf /mnt/usbkey/* && mount --bind $PKG /mnt/usbkey
+    echo "OTA: the package is in $PKG, bound on /mnt/usbkey ($(ls /mnt/usbkey | wc -l) files)"
+fi
+
+echo "OTA: running the key's install ($MODE)"
 bash /mnt/usbkey/autorun > /var/tmp/autorun.log 2>&1
 rc=$?
 echo "OTA: the install returned $rc; its log:"
@@ -66,5 +77,8 @@ check "the new /usr is unpacked" "[ -n \"\$(ls /usr/bin 2>/dev/null)\" ]"
 check "the adoption key was kept" "grep -q THE-ADOPTION-KEY /usr/etc/conf/terrier/key 2>/dev/null"
 check "the client the Terrier sent was kept" "grep -q A-NEWER-CLIENT /usr/etc/conf/terrier/terrier-karotz 2>/dev/null"
 check "the image's client is shipped" "[ -x /usr/karotz/terrier/terrier-karotz ]"
+if [ "$MODE" = package ]; then
+    check "the package outlived the install (the client removes it)" "[ -f $PKG/build_id ] && [ -f $PKG/install-log.txt ]"
+fi
 echo "OTA-RESULT"
 /bin/busybox poweroff -f
