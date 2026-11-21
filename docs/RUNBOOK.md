@@ -586,7 +586,20 @@ scenario ended in EAPOL, which is Lapinou's diagnostic behind a Livebox 4
 access-point mode behind it). hostapd only checks that the key data fits.
 With the step, the seven scenarios and `make check` pass. Whether the Livebox
 4 is that strict is for a rabbit on one to tell: `naboot-1.2.1.1` is 1.2.1.0
-plus this step.
+plus this step. It joined Lapinou's Livebox 4 on 2026-11-20 at 23:39.
+
+### An AP offering WPA and WPA2 together (MikroTik)
+
+`firmware-arm/emulator/scenarios/mikrotik-wpa-wpa2.txt`, in `make check`:
+`wpa1-too` makes the virtual AP add the WPA1 vendor element (CCMP) after its
+RSN element, as RouterOS does with `wpa-psk,wpa2-psk`, and refuse a WPA1
+request for TKIP (status 41, as hostapd). Before the `scan_prefers_rsn` step
+the scan took such an AP for WPA: configured WPA, the rabbit refuses it
+(`no_tkip_pairwise`); configured WPA2, OPnetAuth never calls netAuth. Lapinou's
+line behind his MikroTik (issue #163, 2026-11-21): W0 a0 e20, scanning
+forever. To see it fail, build the image with run.sh's STEPS minus
+`scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
+rabbit runs it, the AP set to WPA2 only is the workaround.
 
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 

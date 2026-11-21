@@ -427,6 +427,9 @@ int sim_load(const char *path)
            more than they hold; hostapd reads only key_data_length, another
            authenticator may drop the frame for it. */
         if(!strcmp(tok[i], "strict-eapol")) a->strict_eapol = 1;
+        /* 2026-11-21: a MikroTik offering WPA and WPA2 together; the
+           rabbit's scan took it for WPA, whose request asks for TKIP. */
+        if(!strcmp(tok[i], "wpa1-too")) a->wpa1_too = 1;
       }
       sim.nb_aps++;
     } else if((!strcmp(tok[0], "at") || !strcmp(tok[0], "fetch")) && n >= 3) {

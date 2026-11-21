@@ -53,6 +53,11 @@ struct sim_ap {
                                the HT PHY membership selector                */
   int      mfpc;            /* 1 = WPA2 announcing PMF capable (MFPC), not
                                required, nothing else changed                */
+  int      wpa1_too;        /* 1 = also advertises WPA1 (vendor IE) with
+                               the RSN IE's CCMP, as a MikroTik set to
+                               wpa-psk,wpa2-psk does (issue #163)          */
+  uint8_t  sta_wpa1_group;  /* the station's WPA1 request, 0 = none      */
+  uint8_t  sta_wpa1_pairwise;
   int      strict_eapol;    /* 1 = drops an EAPOL-Key frame whose declared
                                body is longer than its fields and key data,
                                as a stricter authenticator may (issue #163) */
