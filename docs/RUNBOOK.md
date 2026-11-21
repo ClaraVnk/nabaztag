@@ -624,6 +624,16 @@ update from the rabbit's page: no stick, the package in the client's folder
 /mnt/usbkey where the install reads its stick. The same ten checks pass, and
 the package outlives the install, for the client to remove (2026-11-21).
 
+`karotz/lapinlibre/make-ota.py` makes that package from a released image (or
+a key dir): the key's files and a `manifest` (version, build, then
+`file <sha256> <size> <path>` per file), whose bytes the Karotz client key
+signs into `manifest.sig` (`--priv`, on Clara's explicit request only).
+`--check` does what the client will: the signature on the manifest alone,
+then each file's size and sha256, nothing on disk it does not name. The
+client never needs the 24 MB in RAM at once. `test-make-ota.sh` (usage in
+its header) runs it with a throwaway key: made, signed, accepted, and
+refused once one byte of the kernel changed.
+
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 
 Imager 2.x asks for the device before the system: `terrier-os.rpi-imager.json`
