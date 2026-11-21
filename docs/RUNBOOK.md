@@ -601,6 +601,39 @@ forever. To see it fail, build the image with run.sh's STEPS minus
 `scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
 rabbit runs it, the AP set to WPA2 only is the workaround.
 
+### Terrier OS's install, run on a simulated flash (the ground of its update)
+
+`firmware-arm/emulator/karotz/ota/` (usage in its Containerfile) boots the
+Karotz's 2.6.32.71 on QEMU Versatile with nandsim cut as the Karotz's flash
+(mtd1 3 MiB, mtd2 5 MiB, 128 KiB blocks; 2 KiB pages assumed), a released
+Terrier OS image's own root filesystem as the initramfs (unpacked by
+`uncramfs.py`: 7z dropped busybox's links, 2026-11-21), and its key's files
+in /mnt/usbkey; a /usr stands for an installed rabbit's (the image's /usr,
+settings, Wi-Fi, the client's folder `/usr/etc/conf/terrier` with a key and
+a newer client). `init.sh` runs the key's own `autorun` and checks, after it
+returns: the kernel and the root filesystem read back from the flash
+(nanddump) equal the key's, the build is recorded, the settings, the Wi-Fi,
+the adoption key and the client the Terrier sent are kept, the image's
+client is shipped beside them. All ten pass on `v0.2.0-50` (2026-11-21). A
+key placed outside `/usr/etc/conf` (an `install.sh` rabbit's `/usr/terrier`)
+is wiped: the key check tells the two apart.
+
+`OTA_MODE=package` (`podman run --rm -e OTA_MODE=package karotz-ota`) is the
+update from the rabbit's page: no stick, the package in the client's folder
+(`/usr/etc/conf/terrier/os-update`, which installs keep) bound on
+/mnt/usbkey where the install reads its stick. The same ten checks pass, and
+the package outlives the install, for the client to remove (2026-11-21).
+
+`karotz/lapinlibre/make-ota.py` makes that package from a released image (or
+a key dir): the key's files and a `manifest` (version, build, then
+`file <sha256> <size> <path>` per file), whose bytes the Karotz client key
+signs into `manifest.sig` (`--priv`, on Clara's explicit request only).
+`--check` does what the client will: the signature on the manifest alone,
+then each file's size and sha256, nothing on disk it does not name. The
+client never needs the 24 MB in RAM at once. `test-make-ota.sh` (usage in
+its header) runs it with a throwaway key: made, signed, accepted, and
+refused once one byte of the kernel changed.
+
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 
 Imager 2.x asks for the device before the system: `terrier-os.rpi-imager.json`
