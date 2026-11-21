@@ -38,5 +38,8 @@ RUN mkdir -p /karotz/bin && \
     install -m 755 /karotz-stubs/madplay /usr/bin/madplay && \
     install -m 755 /karotz-stubs/dbus-monitor /usr/bin/dbus-monitor && \
     install -m 755 /karotz-stubs/karotz.sh /karotz.sh
+# The OpenKarotz firmware's boot script: what the client (0.1.16, karotz_os)
+# and install.sh's on_karotz recognise it by. Empty: nothing runs it here.
+RUN : > /usr/yaffs_start.sh
 
 CMD ["/karotz.sh"]
