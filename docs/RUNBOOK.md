@@ -483,12 +483,12 @@ repository's root on the dev VM, one heavy job at a time:
    ```
    Then download the release into an empty directory and run
    `sha256sum -c terrier-os-<version>.img.xz.sha256` there.
-5. Commit `out/terrier-os.rpi-imager.json` as
-   `karotz/lapinlibre/terrier-os.rpi-imager.json` (a PR): the address owners
+5. Copy the json from out/ over
+   `karotz/lapinlibre/terrier-os.rpi-imager.json` and commit it (a PR): the address owners
    pasted into Imager reads this file, so the new build reaches them only
    once it is merged.
-6. On the Terrier, add the build to `TERRIER_OS_BUILDS` in
-   `terrier/karotz.py` (`"<version>": "<short name>"`). The client (0.1.16 and
+6. On the Terrier (its private repository), add the build to
+   `TERRIER_OS_BUILDS` in its karotz module (`"<version>": "<short name>"`). The client (0.1.16 and
    later) reports `lapinlibre <version>`, and without this line the rabbit's
    page and the admin table call the rabbit "LapinLibre". That file is in the
    core: it goes out with the next grouped core deploy.
