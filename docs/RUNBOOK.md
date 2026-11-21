@@ -601,6 +601,24 @@ forever. To see it fail, build the image with run.sh's STEPS minus
 `scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
 rabbit runs it, the AP set to WPA2 only is the workaround.
 
+### Terrier OS's install, run on a simulated flash (the ground of its update)
+
+`firmware-arm/emulator/karotz/ota/` (usage in its Containerfile) boots the
+Karotz's 2.6.32.71 on QEMU Versatile with nandsim cut as the Karotz's flash
+(mtd1 3 MiB, mtd2 5 MiB, 128 KiB blocks; 2 KiB pages assumed), a released
+Terrier OS image's own root filesystem as the initramfs (unpacked by
+`uncramfs.py`: 7z dropped busybox's links, 2026-11-21), and its key's files
+in /mnt/usbkey; a /usr stands for an installed rabbit's (the image's /usr,
+settings, Wi-Fi, the client's folder `/usr/etc/conf/terrier` with a key and
+a newer client). `init.sh` runs the key's own `autorun` and checks, after it
+returns: the kernel and the root filesystem read back from the flash
+(nanddump) equal the key's, the build is recorded, the settings, the Wi-Fi,
+the adoption key and the client the Terrier sent are kept, the image's
+client is shipped beside them. All ten pass on `v0.2.0-50` (2026-11-21). A
+key placed outside `/usr/etc/conf` (an `install.sh` rabbit's `/usr/terrier`)
+is wiped: the key check tells the two apart. This is what the update from
+the rabbit's page will run, with the package in place of the stick.
+
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 
 Imager 2.x asks for the device before the system: `terrier-os.rpi-imager.json`
