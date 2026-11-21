@@ -46,9 +46,20 @@ chmod 755 /sbin/reboot
 # puts the package where installs keep things, the client's own folder, and
 # shows it to the install where it reads the stick (KEY=/mnt/usbkey).
 MODE=stick
-case " $(cat /proc/cmdline) " in *" ota=package "*) MODE=package ;; esac
+case " $(cat /proc/cmdline) " in
+    *" ota=package "*) MODE=package ;;
+    *" ota=package-usr-terrier "*) MODE=package-usr-terrier ;;
+esac
 PKG=/usr/etc/conf/terrier/os-update
-if [ "$MODE" = package ]; then
+CLIENT=/usr/etc/conf/terrier
+if [ "$MODE" = package-usr-terrier ]; then
+    # A client installed by install.sh (Gengar, 2026-11-21): its folder,
+    # key and package in /usr/terrier, which the install does not keep.
+    CLIENT=/usr/terrier
+    PKG=/usr/terrier/os-update
+    mkdir -p $CLIENT && mv /usr/etc/conf/terrier/* $CLIENT/ && rmdir /usr/etc/conf/terrier
+fi
+if [ "$MODE" != stick ]; then
     mkdir -p $PKG && cp -a /mnt/usbkey/. $PKG/ && rm -rf /mnt/usbkey/* && mount --bind $PKG /mnt/usbkey
     echo "OTA: the package is in $PKG, bound on /mnt/usbkey ($(ls /mnt/usbkey | wc -l) files)"
 fi
@@ -74,10 +85,10 @@ check "the build is recorded" "cmp -s $K/build_id /usr/etc/conf/lapinlibre_build
 check "the settings were kept" "grep -q lang=fr /usr/etc/conf/voice.conf"
 check "the Wi-Fi was kept" "grep -q 'ssid=\"Terrier\"' /usr/etc/conf/wpa.conf"
 check "the new /usr is unpacked" "[ -n \"\$(ls /usr/bin 2>/dev/null)\" ]"
-check "the adoption key was kept" "grep -q THE-ADOPTION-KEY /usr/etc/conf/terrier/key 2>/dev/null"
-check "the client the Terrier sent was kept" "grep -q A-NEWER-CLIENT /usr/etc/conf/terrier/terrier-karotz 2>/dev/null"
+check "the adoption key was kept" "grep -q THE-ADOPTION-KEY $CLIENT/key 2>/dev/null"
+check "the client the Terrier sent was kept" "grep -q A-NEWER-CLIENT $CLIENT/terrier-karotz 2>/dev/null"
 check "the image's client is shipped" "[ -x /usr/karotz/terrier/terrier-karotz ]"
-if [ "$MODE" = package ]; then
+if [ "$MODE" != stick ]; then
     check "the package outlived the install (the client removes it)" "[ -f $PKG/build_id ] && [ -f $PKG/install-log.txt ]"
 fi
 echo "OTA-RESULT"

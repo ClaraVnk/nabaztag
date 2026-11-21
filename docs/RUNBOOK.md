@@ -624,6 +624,14 @@ update from the rabbit's page: no stick, the package in the client's folder
 /mnt/usbkey where the install reads its stick. The same ten checks pass, and
 the package outlives the install, for the client to remove (2026-11-21).
 
+`OTA_MODE=package-usr-terrier` is Gengar's case (2026-11-21, the first update
+on a real Karotz): a client installed by `install.sh` lives in `/usr/terrier`,
+which the install empties, and the package there went with it while the
+install read it: "ERROR: the settings in lapinlibre.txt were not applied",
+the red nose, the adoption key and the client lost. It fails as Gengar did;
+the client (0.1.18) puts the package in `/usr/etc/conf/os-update` and refuses
+when it does not live in `/usr/etc/conf` itself.
+
 `karotz/lapinlibre/make-ota.py` makes that package from a released image (or
 a key dir): the key's files and a `manifest` (version, build, then
 `file <sha256> <size> <path>` per file), whose bytes the Karotz client key
