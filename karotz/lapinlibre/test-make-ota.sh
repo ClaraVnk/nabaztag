@@ -18,9 +18,13 @@ open("/tmp/pub.h", "w").write("static const uint8_t k[32] = {" + ", ".join("0x%0
 PY
 python3 "$W/karotz/lapinlibre/make-ota.py" /t.img.xz /tmp/out --priv /tmp/seed
 P=$(ls -d /tmp/out/*.ota)
+# An update keeps the rabbit's settings: none in the package.
+if grep -qE '^[A-Z_]+=.' "$P/lapinlibre.txt"; then
+    echo "FAIL: the package sets $(grep -E '^[A-Z_]+=.' "$P/lapinlibre.txt" | cut -d= -f1)"; exit 1
+fi
 python3 "$W/karotz/lapinlibre/make-ota.py" --check "$P" --pub /tmp/pub.h
 printf 'X' | dd of="$P/zImage" bs=1 seek=100 conv=notrunc 2> /dev/null
 if python3 "$W/karotz/lapinlibre/make-ota.py" --check "$P" --pub /tmp/pub.h; then
     echo "FAIL: a changed kernel was accepted"; exit 1
 fi
-echo "PASS: made, signed, checked, and refused once changed"
+echo "PASS: made with no settings, signed, checked, and refused once changed"
