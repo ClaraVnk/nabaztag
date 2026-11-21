@@ -1,0 +1,51 @@
+# Containerfile with FreeRabbits OS's marks: KAROTZ_OS=fros in the Terrier's
+# karotz/proof/run.sh. The client talks to OpenKarotz's web API there too.
+# A Karotz without the Karotz: OpenKarotz's real CGI scripts behind busybox
+# httpd, the hardware they drive replaced by recorders, and the client
+# (built for the rabbit) under qemu-arm. What is recorded is what the
+# scripts asked of the hardware -- the ears program, the LED over D-Bus,
+# mplayer -- after their own parsing, their own sleep state, their own
+# refusals. mplayer's recorder fetches what it is given and decodes it
+# whole (mpg123), so a sound that would not play fails here too.
+#
+#   podman build -t nabaztag-karotz firmware-arm/emulator/karotz
+#   run by firmware-arm/emulator/tools/karotz-proof.sh, and by the Terrier's
+#   karotz/proof/run.sh against its own scenario
+FROM docker.io/library/alpine:3.22
+
+RUN apk add --no-cache bash busybox-extras qemu-arm curl mpg123 util-linux-misc \
+        procps coreutils sox
+
+# OpenKarotz web sources (WTFPL), as installed on a rabbit by its own
+# installer: www -> /usr/www (and /www), data -> /usr/openkarotz.
+ARG OK_COMMIT=1a81055e0b5c2e2ca32cc9010ccf328452d46322
+ARG OK_SHA=2365a943dc3f1577025e2599de899cf538071ba85987179bbcdb706cda23db7e
+RUN curl -fsSL -o /tmp/ok.tgz \
+      "https://codeload.github.com/rofra/karotz-openkarotz-websources-installer/tar.gz/${OK_COMMIT}" && \
+    echo "${OK_SHA}  /tmp/ok.tgz" | sha256sum -c - && \
+    mkdir -p /tmp/ok && tar xzf /tmp/ok.tgz -C /tmp/ok --strip-components=1 && \
+    cp -a /tmp/ok/sources/www /usr/www && ln -s /usr/www /www && \
+    cp -a /tmp/ok/sources/openkarotz /usr/openkarotz && \
+    mkdir -p /usr/openkarotz/Run /usr/openkarotz/Tmp /usr/openkarotz/Rfid /var/run/karotz \
+             /usr/karotz/res/sounds /etc/conf && \
+    chmod -R a+rx /usr/www/cgi-bin && rm -rf /tmp/ok /tmp/ok.tgz && \
+    : > /etc/conf/mplayer.conf
+
+COPY stubs/ /karotz-stubs/
+RUN mkdir -p /karotz/bin && \
+    install -m 755 /karotz-stubs/ears /karotz/bin/ears && \
+    install -m 755 /karotz-stubs/led /karotz/bin/led && \
+    install -m 755 /karotz-stubs/dbus-send /usr/bin/dbus-send && \
+    install -m 755 /karotz-stubs/mplayer /usr/bin/mplayer && \
+    install -m 755 /karotz-stubs/madplay /usr/bin/madplay && \
+    install -m 755 /karotz-stubs/dbus-monitor /usr/bin/dbus-monitor && \
+    install -m 755 /karotz-stubs/karotz.sh /karotz.sh
+# FreeRabbits OS under OpenKarotz, as on FR's Karotz (its dump, measured
+# 2026-11-21): FROS keeps the OpenKarotz boot script and adds its own
+# /usr/scripts/startup.sh, which the client (0.1.16, karotz_os) looks for
+# first; its sys_version is Mindscape's stamp, not a FROS release. The files
+# are empty: only their presence is FROS's here, nothing of its content.
+RUN : > /usr/yaffs_start.sh && mkdir -p /usr/scripts /usr/etc/conf && \
+    : > /usr/scripts/startup.sh && echo 12.07.19.00 > /usr/etc/conf/sys_version
+
+CMD ["/karotz.sh"]
