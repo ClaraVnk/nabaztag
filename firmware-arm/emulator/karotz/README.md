@@ -61,6 +61,19 @@ differences it found:
   `"the rabbit is busy with another request: try again"` where OpenKarotz
   waits.
 
+## On FreeRabbits OS
+
+`Containerfile.fros` is the OpenKarotz one with FreeRabbits OS's marks, as
+measured on FR's Karotz (its dump, 2026-11-21): FROS keeps OpenKarotz's
+`/usr/yaffs_start.sh`, adds `/usr/scripts/startup.sh`, and its
+`/usr/etc/conf/sys_version` is Mindscape's stamp `12.07.19.00`. The client
+talks to OpenKarotz's web API there as well. The files are empty: nothing of
+FROS's content is copied (its public repository carries no licence).
+
+```sh
+KAROTZ_OS=fros NABAZTAG_KAROTZ=$PWD/karotz sh <terrier checkout>/karotz/proof/run.sh
+```
+
 ## Next: the whole Karotz
 
 The rabbit's own kernel and root filesystem on an emulated S3C24xx board.
