@@ -5,7 +5,7 @@
         [--priv <32-byte Ed25519 seed>]          # sign the manifest
     python3 karotz/lapinlibre/make-ota.py --check <out dir>/terrier-os-<v>.ota --pub <signing_pubkey.h>
 
-The package is the key's files as they are (the install reads them from
+The package is the key's files, its settings emptied (the install reads them from
 /mnt/usbkey; the client binds the package there, see
 firmware-arm/emulator/karotz/ota, OTA_MODE=package) and a manifest:
 
@@ -99,9 +99,26 @@ def manifest(key: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def keep_settings(key: Path) -> None:
+    """Every setting of lapinlibre.txt emptied: empty keeps the rabbit's.
+    The stick's own file says TERRIER=<host>, and the install then wrote
+    the client's settings anew and drew a new web password: the rabbit's
+    options (--ears-up) and password were lost to an update (karotz/ota-live,
+    2026-11-21)."""
+    f = key / "lapinlibre.txt"
+    if f.is_file():
+        f.write_text("".join(re.sub(r"^([A-Z_]+)=.*$", r"\1=", line) + "\n"
+                             for line in f.read_text().splitlines()))
+
+
 def make(src: Path, out: Path, priv: Path | None) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
-        key = key_from_image(src, Path(tmp)) if src.is_file() else src
+        key = Path(tmp) / "key"
+        if src.is_file():
+            key = key_from_image(src, Path(tmp))
+        else:
+            shutil.copytree(src, key)
+        keep_settings(key)
         text = manifest(key)
         version = text.splitlines()[1].split(" ", 1)[1]
         pkg = out / f"terrier-os-{version}.ota"

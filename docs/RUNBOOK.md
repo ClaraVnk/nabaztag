@@ -689,7 +689,30 @@ signs into `manifest.sig` (`--priv`, on Clara's explicit request only).
 then each file's size and sha256, nothing on disk it does not name. The
 client never needs the 24 MB in RAM at once. `test-make-ota.sh` (usage in
 its header) runs it with a throwaway key: made, signed, accepted, and
-refused once one byte of the kernel changed.
+refused once one byte of the kernel changed. The package carries no
+settings: its `lapinlibre.txt` is emptied (empty keeps the rabbit's), which
+the test checks. The stick's own said `TERRIER=<host>`, and an update would
+have rewritten the client's settings and drawn a new web password (found by
+`karotz/ota-live`, 2026-11-21).
+
+### Terrier OS's update with the whole rabbit running
+
+`firmware-arm/emulator/karotz/ota-live/` (usage in its Containerfile, built
+from the repository's root) boots a released Terrier OS for real on Linux
+6.12 / QEMU Versatile: its own linuxrc, init, `startup.sh`, D-Bus, the
+daemons and the controller (../fros's stand-ins for the devices), the
+client from `/usr/etc/conf/terrier`, nandsim as the flash. Its only changes
+to the rabbit (`root.sh`): /usr on a disk, QEMU's network card for the
+Wi-Fi (with the loopback, which the client needs), the proof's hook before
+`startup.sh`'s `exit 0`, and a `/sbin/reboot` that copies mtd1/mtd2 first.
+Once up, `phase.sh` runs the install of `make-ota.py`'s package with the
+client's own command (0.1.18), then the rabbit boots the root filesystem the
+install wrote with the /usr it left. Checks: the client and the controller
+run during the install; after it, the build runs and is recorded, the Wi-Fi,
+voice, adoption key, client settings and the Terrier's client are kept, the
+client and the controller run again. All pass on `v0.2.0-50` (2026-11-21,
+about 25 minutes on dev-loutre). Not covered: the radio (Gengar lost its
+Wi-Fi after the power cycle), the real flash's timing.
 
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 
