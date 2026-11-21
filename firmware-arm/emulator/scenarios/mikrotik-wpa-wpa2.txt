@@ -1,0 +1,17 @@
+# Issue #163 (2026-11-21): Lapinou never joins a MikroTik set to
+# wpa-psk,wpa2-psk (CCMP); his line says W0 a0, scanning forever, e20.
+#
+# The beacon carries the RSN element and then the WPA1 vendor element. The
+# scan parser let the vendor element overwrite WPA2 with WPA, so the setup
+# page offered WPA (which the rabbit refuses: WPA1 means TKIP here), and a
+# rabbit configured as WPA2 never calls netAuth (the scan says WPA). With
+# scan_prefers_rsn the scan says WPA2 and the rabbit joins.
+#
+# The rabbit is configured as WPA2 (the harness takes it from wpa2-ccmp).
+
+ap 02:00:5e:20:00:01 Terrier 9 wpa2-ccmp -50 wpa1-too
+psk nabaztag
+tick 50
+stop 30000
+
+at 20000 expect RUN

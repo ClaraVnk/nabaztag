@@ -271,19 +271,22 @@ static uint8_t *put_rsn_ie(uint8_t *p, const struct sim_ap *a)
   return put_ie(p, IEEE80211_ELEMID_RSN, body, (uint8_t)(b - body));
 }
 
-/** @brief The WPA1 vendor element, for an AP that predates RSN. */
-static uint8_t *put_wpa_ie(uint8_t *p, int security)
+/** @brief The WPA1 vendor element, for an AP that predates RSN, or one
+ *  that offers WPA beside WPA2 (wpa1-too: CCMP, as RouterOS's aes-ccm). */
+static uint8_t *put_wpa_ie(uint8_t *p, const struct sim_ap *a)
 {
   uint8_t body[32];
   uint8_t *b = body;
+  uint8_t cipher = RSN_CIPHER_TKIP;
 
-  if(security != SIM_SEC_WPA_TKIP) return p;
+  if(a->wpa1_too && a->security == SIM_SEC_WPA2_CCMP) cipher = RSN_CIPHER_CCMP;
+  else if(a->security != SIM_SEC_WPA_TKIP) return p;
 
   memcpy(b, wpa_vendor, 4); b += 4;
   *b++ = 0x01; *b++ = 0x00;                         /* WPA version 1 */
-  memcpy(b, wpa_oui, 3); b += 3; *b++ = RSN_CIPHER_TKIP;   /* group  */
+  memcpy(b, wpa_oui, 3); b += 3; *b++ = cipher;            /* group  */
   *b++ = 0x01; *b++ = 0x00;
-  memcpy(b, wpa_oui, 3); b += 3; *b++ = RSN_CIPHER_TKIP;   /* pairwise */
+  memcpy(b, wpa_oui, 3); b += 3; *b++ = cipher;            /* pairwise */
   *b++ = 0x01; *b++ = 0x00;
   memcpy(b, wpa_oui, 3); b += 3; *b++ = RSN_AKM_PSK;       /* AKM */
 
@@ -370,7 +373,7 @@ static uint32_t build_beacon(uint8_t *out, const struct sim_ap *a,
   }
   p = put_ie(p, IEEE80211_ELEMID_XRATES, xrates, sizeof(xrates));
   p = put_rsn_ie(p, a);
-  p = put_wpa_ie(p, a->security);
+  p = put_wpa_ie(p, a);
   p = put_rsnxe(p, a);
   if(a->livebox) {
     /* HT Capabilities (26 bytes) and Operation (22), Extended Capabilities,
@@ -630,6 +633,7 @@ static void vap_report_rsn(struct sim_ap *a, const uint8_t *frame,
   const uint8_t *end = frame + length;
 
   a->sta_rsnxe_len = 0;
+  a->sta_wpa1_group = a->sta_wpa1_pairwise = 0;
   vap_stats.assoc_requests++;
   while(ie + 2 <= end && ie + 2 + ie[1] <= end) {
     if(ie[0] == SAE_RSNXE_ID && 2 + ie[1] <= sizeof a->sta_rsnxe) {
@@ -673,6 +677,8 @@ static void vap_report_rsn(struct sim_ap *a, const uint8_t *frame,
     if(ie[0] == IEEE80211_ELEMID_VENDOR && ie[1] >= 22) {
       sim_log("AP %s: the rabbit asks for WPA1, group %s, first pairwise %s",
               macstr(a->bssid), cipher_name(ie[2 + 7]), cipher_name(ie[2 + 13]));
+      a->sta_wpa1_group = ie[2 + 7];
+      a->sta_wpa1_pairwise = ie[2 + 13];
     }
     ie += 2 + ie[1];
   }
@@ -1099,6 +1105,24 @@ static void vap_eapol_from_sta(int ap, const uint8_t *payload, uint32_t length)
   }
   body_length = ((uint32_t)fr->body_length[0] << 8) | fr->body_length[1];
 
+  /* strict-eapol: the body is the key frame's fields and its key data,
+   * nothing after (IEEE 802.1X Packet Body Length; 802.11 Key Data Length).
+   * hostapd only checks that the key data fits; an authenticator that
+   * wants the two to agree drops the frame, says nothing, and resends its
+   * message 1 -- the station waits for a message 3 that never comes, which
+   * is Lapinou's E1 k0 behind a Livebox 4 (issue #163, 2026-11-20). */
+  if(a->strict_eapol) {
+    uint32_t kdl = ((uint32_t)fr->key_frame.key_data_length[0] << 8)
+                   | fr->key_frame.key_data_length[1];
+    if(body_length != (uint32_t)EAPOL_KEY_BODY_LENGTH + kdl) {
+      sim_log("AP %s: EAPOL from the station declares %u body bytes for %u of "
+              "fields and key data -- dropped (strict-eapol)", macstr(a->bssid),
+              body_length, (uint32_t)EAPOL_KEY_BODY_LENGTH + kdl);
+      vap_stats.strict_drops++;
+      return;
+    }
+  }
+
   if(hs->stage == HS_SENT_MSG1) {
     uint8_t mine[20];
     uint8_t received[EAPOL_KEYMIC_LENGTH];
@@ -1505,6 +1529,19 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
       if(!a->authenticated) {
         sim_log("AP %s: assoc without auth, refused", macstr(a->bssid));
         n = build_deauth(out, a, 0, IEEE80211_REASON_ASSOC_NOT_AUTHED);
+        queue_frame(out, n, a->rssi, a->channel);
+        return;
+      }
+      /* hostapd, wpa_validate_wpa_ie(): a WPA1 request for a cipher the
+       * AP does not offer is refused, status 41 (group cipher not valid).
+       * Only the refusal is modelled: the rabbit's WPA1 request always
+       * asks for TKIP, so a wpa1-too AP never runs a WPA1 handshake. */
+      if(a->wpa1_too && a->sta_wpa1_group
+         && (a->sta_wpa1_group != RSN_CIPHER_CCMP
+             || a->sta_wpa1_pairwise != RSN_CIPHER_CCMP)) {
+        sim_log("AP %s: WPA1 with %s refused, status 41, as hostapd does",
+                macstr(a->bssid), cipher_name(a->sta_wpa1_group));
+        n = build_assoc_resp(out, a, 41, 0);
         queue_frame(out, n, a->rssi, a->channel);
         return;
       }

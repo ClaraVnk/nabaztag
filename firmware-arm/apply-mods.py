@@ -2223,6 +2223,76 @@ def patch_eapol_msg2_ie(root: Path) -> None:
     print(f"[ok]   {q}: message 2 names the group cipher the association named")
 
 
+def patch_eapol_exact_body(root: Path) -> None:
+    """Messages 2 and 4 and the group reply declare the body they carry.
+
+    Why (issue #163, 2026-11-20): Lapinou never joins a Livebox 4 -- its
+    boot diagnostic says message 1 of the four-way handshake was answered
+    (E1) and no message 3 was ever taken (k0, D0/0/0) -- while it joins a
+    GL.iNet (hostapd) in access-point mode behind that same Livebox. Every
+    EAPOL-Key frame the rabbit sends declares a Packet Body Length that
+    counts the key_data member (EAPOL_RSN_LENGTH, 28 bytes) on top of the
+    key data it holds: message 2 says 145 bytes for 117, message 4 and the
+    group reply 123 for 95, the rest zeros. hostapd only checks that the
+    key data fits; an authenticator that wants the body to be the fields
+    and the key data drops the frame and resends its message 1. The
+    emulator's strict-eapol AP does exactly that, and the rabbit stays in
+    EAPOL as Lapinou did (scenarios/vm/livebox-wpa2-strict-eapol.txt).
+
+    The body, the MIC span and the bytes sent are now the fields plus the
+    key data, nothing after. Whether the Livebox 4 is such an authenticator
+    is for Lapinou to tell; the frames are right either way.
+    """
+    p = root / "src/net/eapol.c"
+    t, nl = read_flat(p)
+    if "EAPOL_KEY_FIELDS" in t:
+        print(f"[skip] {p}: the EAPOL replies already declare their own body")
+        return
+    edits = []
+
+    def rep(a: str, b: str, label: str, at_least: int = 1, exactly: int | None = None) -> None:
+        nonlocal t
+        c = t.count(a)
+        if (exactly is not None and c != exactly) or c < at_least:
+            sys.exit(f"FAIL {p}: {label}: {c} occurrence(s) of the expected text")
+        t = t.replace(a, b)
+        edits.append(f"{label} x{c}")
+
+    rep("(sizeof(struct eapol_key_frame)+\n                                      rsn_size\n",
+        "(EAPOL_KEY_FIELDS+\n                                      rsn_size\n", "message 2's body", exactly=2)
+    rep("sizeof(struct eapol_frame)+ rsn_size-LLC_LENGTH,",
+        "sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH+ rsn_size-LLC_LENGTH,", "message 2's MIC (SHA-1)", exactly=1)
+    if "sizeof(struct eapol_frame)+\n              rsn_size-LLC_LENGTH," in t:
+        rep("sizeof(struct eapol_frame)+\n              rsn_size-LLC_LENGTH,",
+            "sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH+\n              rsn_size-LLC_LENGTH,", "message 2's MIC (MD5)", exactly=1)
+    rep("sizeof(fr_out)-(EAPOL_RSN_LENGTH-rsn_size)",
+        "sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH+rsn_size", "message 2's send", exactly=1)
+    rx = re.compile(r"(body_length\[[01]\] = \()sizeof\(struct eapol_key_frame\)")
+    c = len(rx.findall(t))
+    if c != 4:
+        sys.exit(f"FAIL {p}: message 4's and the group reply's body: {c} of 4")
+    t = rx.sub(r"\1EAPOL_KEY_FIELDS", t)
+    edits.append("message 4's and the group reply's body x4")
+    rep("sizeof(struct eapol_frame)-LLC_LENGTH",
+        "sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH-LLC_LENGTH", "message 4's and the group reply's MIC", at_least=2)
+    rep("rt2501_send((uint8_t *)&fr_out, sizeof(fr_out), ieee80211_assoc_mac, 1, 1);",
+        "rt2501_send((uint8_t *)&fr_out, sizeof(fr_out)-EAPOL_RSN_LENGTH, ieee80211_assoc_mac, 1, 1);",
+        "message 4's send", exactly=1)
+    rep("rt2501_send((uint8_t *)&fr_out, sizeof(struct eapol_frame),",
+        "rt2501_send((uint8_t *)&fr_out, sizeof(struct eapol_frame)-EAPOL_RSN_LENGTH,",
+        "the group reply's send", exactly=1)
+    # After the last #include: the other steps rewrite the file's
+    # definitions (eapol_state's among them), never its includes.
+    inc = list(re.finditer(r"(?m)^#include [^\n]*\n", t))
+    if not inc:
+        sys.exit(f"FAIL {p}: no #include to put EAPOL_KEY_FIELDS after")
+    at = inc[-1].end()
+    t = (t[:at] + "\n/* eapol_exact_body: an EAPOL-Key frame's fields, before its key data. */\n"
+         "#define EAPOL_KEY_FIELDS (sizeof(struct eapol_key_frame) - EAPOL_RSN_LENGTH)\n" + t[at:])
+    write_flat(p, t, nl)
+    print(f"[ok]   {p}: eapol_exact_body ({'; '.join(edits)})")
+
+
 def patch_wpa3_eapol_akm(root: Path) -> None:
     """Run the four-way handshake on SAE's key schedule, not WPA2-PSK's.
 
@@ -10421,6 +10491,73 @@ def patch_wifi_diag(root: Path) -> None:
 
 
 
+def patch_scan_prefers_rsn(root: Path) -> None:
+    """An AP that offers WPA2 and WPA together is scanned as WPA2.
+
+    Why (issue #163, 2026-11-21): Lapinou never joined a MikroTik set to
+    wpa-psk,wpa2-psk; the setup page listed it as WPA. The beacon carries
+    the RSN element, then the WPA1 vendor element. The parser skips the
+    vendor element only when the encryption byte equals CRYPT_WPA2 exactly,
+    but the RSN branch has already set the cipher bits (0x42, 0x46...), so
+    the vendor element overwrites it with plain WPA. Configured as WPA, the
+    rabbit refuses the network (no_tkip_pairwise: WPA1 here means TKIP);
+    configured as WPA2, OPnetAuth skips netAuth because the scan says WPA.
+    Either way it scans forever: W0 a0 on his diagnostic line. Compare the
+    type nibble only.
+    """
+    q = root / "src/net/ieee80211.c"
+    t, nl = read_flat(q)
+    if "scan_prefers_rsn" in t:
+        print(f"[skip] scan_prefers_rsn: {q} already compares the nibble")
+        return
+    old = ("                if(scan_result.encryption == IEEE80211_CRYPT_WPA2)\n"
+           "                  break;\n")
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: the vendor element's WPA2 guard not found once")
+    t = t.replace(old,
+        "                /* scan_prefers_rsn: the RSN branch set cipher bits */\n"
+        "                if((scan_result.encryption & 0xF0) == IEEE80211_CRYPT_WPA2)\n"
+        "                  break;\n", 1)
+    write_flat(q, t, nl)
+    print(f"[ok]   {q}: scan_prefers_rsn")
+
+
+def patch_eapol_diag(root: Path) -> None:
+    """Two counters on wifi_diag's line: m, messages 1 of the four-way
+    handshake received; n, messages 3 received.
+
+    Why (issue #163, 2026-11-20): Lapinou's line behind a Livebox 4 said E1
+    and k0 -- waiting for a message 3, no group key -- which is either an AP
+    that never sent one (it refused message 2) or a rabbit that refused the
+    one it got. n tells the two apart: 0 is the first. Counted where
+    eapol_input() hands the frame on, before any check of the handler's.
+    Needs wifi_diag.
+    """
+    ep = root / "src/net/eapol.c"
+    t, nl = read_flat(ep)
+    if "nab_m3_rx" not in t:
+        for call, var in (("eapol_input_msg1(frame, length);", "nab_m1_rx"),
+                          ("eapol_input_msg3(frame, length);", "nab_m3_rx")):
+            a = "    " + call + "\n"
+            if t.count(a) != 1:
+                sys.exit(f"FAIL {ep}: the dispatch's {call} not found once")
+            t = t.replace(a, f"    {{ extern uint8_t {var}; {var}++; {call} }}   /* eapol_diag */\n", 1)
+        write_flat(ep, t, nl)
+    wd = root / "src/utils/wdiag.c"
+    t, nl = read_flat(wd)
+    if "nab_m3_rx" in t:
+        print(f"[skip] {wd}: the handshake's counters are already on the line")
+        return
+    a = "uint8_t nab_gtk_rx;                    /* counted in eapol.c */\n"
+    b = "  p = wd_kv(p, 'k', nab_gtk_rx);\n"
+    if t.count(a) != 1 or t.count(b) != 1:
+        sys.exit(f"FAIL {wd}: wifi_diag's line is not the expected shape (wifi_diag first)")
+    t = t.replace(a, a + "uint8_t nab_m1_rx, nab_m3_rx;           /* eapol_diag: counted in eapol.c */\n", 1)
+    t = t.replace(b, b + "  p = wd_kv(p, 'm', nab_m1_rx);\n  p = wd_kv(p, 'n', nab_m3_rx);\n", 1)
+    write_flat(wd, t, nl)
+    print("[ok]   eapol_diag: m (messages 1) and n (messages 3) on the Wi-Fi line")
+
+
 def patch_boot_diag(root: Path) -> None:
     """The boot's story in flash, on the setup page and to the warren.
 
@@ -10656,7 +10793,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.1", "naboot-1.2.1.2", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -10802,6 +10939,13 @@ def main() -> int:
         # One build since 2026-11-19 (Clara: "plus de variantes, 1 seul build"):
         # the two flash levers and the Wi-Fi telemetry (wifi_diag, boot_diag) in it.
         "naboot-1.2.1.0": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
+        # 1.2.1.0 and eapol_exact_body: the EAPOL replies declare the body they
+        # carry; eapol_diag: m and n on the Wi-Fi line, messages 1 and 3 received
+        # (issue #163, a Livebox 4; Lapinou's test build, 2026-11-20).
+        "naboot-1.2.1.1": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,linker_keep,gc_sections",
+        # 1.2.1.1 and scan_prefers_rsn: an AP offering WPA and WPA2 is scanned
+        # as WPA2 (issue #163, a MikroTik in wpa-psk,wpa2-psk; 2026-11-21).
+        "naboot-1.2.1.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
         # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
         # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
         "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
@@ -11041,6 +11185,7 @@ def main() -> int:
     for step_name, deps in (
             ("eapol_ptk_install", ("eapol_replay", "eapol_ptk_rekey", "wpa2_gtk")),
             ("eapol_mic_len", ("wpa2_gtk",)),
+            ("eapol_exact_body", ("wpa2_gtk", "eapol_ptk_install", "wpa3_h2e")),
             ("gtk_no_reinstall", ("wpa2_gtk", "group_cipher", "wpa3_sae")),
             ("no_tkip_pairwise", ("wpa3_sae",)),
             ("sae_required", ("wpa3_sae", "entropy_pool"))):
@@ -11110,6 +11255,7 @@ def main() -> int:
         "rx_protected": patch_rx_protected,
         "eapol_ptk_install": patch_eapol_ptk_install,
         "eapol_mic_len": patch_eapol_mic_len,
+        "eapol_exact_body": patch_eapol_exact_body,
         "gtk_no_reinstall": patch_gtk_no_reinstall,
         "no_tkip_pairwise": patch_no_tkip_pairwise,
         "probe_ssid_bound": patch_probe_ssid_bound,
@@ -11186,6 +11332,8 @@ def main() -> int:
         "boot_noserver": patch_boot_noserver,
         "wifi_diag": patch_wifi_diag,
         "boot_diag": patch_boot_diag,
+        "eapol_diag": patch_eapol_diag,
+        "scan_prefers_rsn": patch_scan_prefers_rsn,
         "boot_strip_wav": patch_boot_strip_wav,
         "boot_strip_login": patch_boot_strip_login,
         "opt_size_crypto": patch_opt_size_crypto,
