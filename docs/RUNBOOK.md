@@ -457,6 +457,55 @@ SSH key (our LapinLibre reads its `network-config` and `user-data`;
 `lapinlibre.txt`, still its name on the key, wins); the user account and the
 locale it asks for are ignored.
 
+### Publishing a Terrier OS build
+
+As done for `terrier-os-v0.2.0-50-ga60c9e8f14c5` (2026-11-20). From this
+repository's root on the dev VM, one heavy job at a time:
+
+1. Point `LL_COMMIT` in `karotz/lapinlibre/Containerfile` at the fork's
+   commit to ship, then build: `sh karotz/lapinlibre/build.sh`
+   (`LL_TESTS=1` when LapinLibre's own code changed). The key lands in
+   `~/lapinlibre-work/usbkey`.
+2. Make the image: `sh karotz/lapinlibre/make-img.sh ~/lapinlibre-work/usbkey out`.
+   The version is the key's `BUILD_VERSION` (`install.conf`, the fork's
+   `git describe`), e.g. `v0.2.0-50-ga60c9e8f14c5`. `out/` then holds
+   `terrier-os-<version>.img.xz`, its `.sha256` and
+   `terrier-os.rpi-imager.json`, which already points at the release of step 4.
+3. Install it on a real Karotz from the image (Imager or balenaEtcher, then
+   the key in the rabbit) and check that it starts, joins the Wi-Fi and
+   reaches the Terrier. Not before this.
+4. Publish, as a pre-release while Terrier OS is in beta:
+   ```sh
+   gh release create terrier-os-<version> -R ClaraVnk/nabaztag --prerelease \
+     --title "Terrier OS <version> (beta)" --notes-file notes.md \
+     out/terrier-os-<version>.img.xz out/terrier-os-<version>.img.xz.sha256 \
+     out/terrier-os.rpi-imager.json
+   ```
+   Then download the release into an empty directory and run
+   `sha256sum -c terrier-os-<version>.img.xz.sha256` there.
+5. Copy the json from out/ over
+   `karotz/lapinlibre/terrier-os.rpi-imager.json` and commit it (a PR): the address owners
+   pasted into Imager reads this file, so the new build reaches them only
+   once it is merged.
+6. On the Terrier (its private repository), add the build to
+   `TERRIER_OS_BUILDS` in its karotz module (`"<version>": "<short name>"`). The client (0.1.16 and
+   later) reports `lapinlibre <version>`, and without this line the rabbit's
+   page and the admin table call the rabbit "LapinLibre". That file is in the
+   core: it goes out with the next grouped core deploy.
+7. The update from the rabbit's page (Karotz client 0.1.17 and later):
+   `python3 karotz/lapinlibre/make-ota.py out/terrier-os-<version>.img.xz out --priv ~/.nabaztag/karotz_signing_key.bin`
+   makes `terrier-os-<version>.ota.tar`, its manifest signed with the Karotz
+   client key: on Clara's explicit request only, as every signature.
+   Check it (`--check out/terrier-os-<version>.ota --pub` the Terrier's
+   `karotz_signing_pubkey.h`), attach the `.ota.tar` to the release, then
+   on the VPS: `podman cp` it into the core container's /tmp and run
+   `podman exec terrier-core python3 -m terrier.terrieros /tmp/terrier-os-<version>.ota.tar`.
+   It keeps the package only if it holds as the client checks it, and makes
+   it the one offered (`/data/ota/terrier-os/LATEST`). Every Karotz on
+   Terrier OS with an older build then sees "Update Terrier OS" on its
+   firmware card. Prove it first in the emulator: `karotz/ota`,
+   `OTA_MODE=package`.
+
 ### The three rabbits at once
 
 Every new rabbit feature is proven on the v1, the v2 and the v3:
