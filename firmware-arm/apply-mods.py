@@ -6856,13 +6856,17 @@ def patch_config_boot(root: Path) -> None:
     t, nl = read_flat(q)
     if "nab_config_boot" not in t:
         a = f"int32_t nab_reset_reason{attr};\n"
-        if a not in t:
+        # The emulator's step list has no reset_reason: its stubs/counters.c
+        # holds nab_config_boot (weak, zero at start, like a power-up).
+        sim = os.environ.get("NAB_SIM") and a not in t
+        if a not in t and not sim:
             sys.exit(f"FAIL {q}: no nab_reset_reason -- run reset_reason first")
-        t = t.replace(a, a + f"int32_t nab_config_boot{attr};\n", 1)
-        write_flat(q, t, nl)
+        if not sim:
+            t = t.replace(a, a + f"int32_t nab_config_boot{attr};\n", 1)
+            write_flat(q, t, nl)
     q = root / "src/main.c"
     t, nl = read_flat(q)
-    if "nab_config_boot" not in t:
+    if "nab_config_boot" not in t and not os.environ.get("NAB_SIM"):
         a = "      nab_reset_reason = nab_reset_count = 0;\n"
         if a not in t:
             sys.exit(f"FAIL {q}: the power-up clear is not there -- run reset_reason first")

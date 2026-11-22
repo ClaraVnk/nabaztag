@@ -56,6 +56,9 @@ extern int32_t nab_reset_reason;
 /* Where sim_flash_done() (below) takes the run when the rabbit flashes. */
 static jmp_buf flash_jmp;
 static int flash_jmp_armed;
+/* configBoot's reset comes back to the start of the boot (reset_uc). */
+static jmp_buf reboot_jmp;
+static int reboot_armed;
 static int cpu_gone;
 /* The verifySig opcode's own tally (apply-mods' vinterp step). Weak, so a
  * VM built without the opcode still links. */
@@ -394,7 +397,12 @@ int main(int argc, char **argv)
   ieee80211_init();
   rt2501_driver_install();
 
-  /* From here on it is main.c's sequence, in main.c's order. */
+  /* From here on it is main.c's sequence, in main.c's order. A reset asked
+   * by configBoot (reason 6, apply-mods.py config_boot) comes back here: the
+   * rabbit restarts, .extbss (the mark) kept, as on the board. */
+  if(setjmp(reboot_jmp))
+    sim_log("the rabbit restarts after its reset (reason 6: config mode asked)");
+  reboot_armed = 1;
   sim_log("vmemInit");
   vmemInit(0);
   /* Test fixture only: model a rabbit that has handed over to the runtime
@@ -572,6 +580,12 @@ void reset_uc(void)
    * returns -1 from here on and the bytecode dereferences it. The rabbit
    * reboots at this point; the run stops here, with its summary. */
   if(_vmem_broken) sim.stop_ms = sim_now();
+  /* configBoot's reset: the only one this program follows into a new boot
+   * (the others keep their old meaning for the proofs that count them). */
+  if(nab_reset_reason == 6 && reboot_armed) {
+    flash_jmp_armed = 0;
+    longjmp(reboot_jmp, 1);
+  }
 }
 
 #define CRYPTO_MS_X25519   3000u
