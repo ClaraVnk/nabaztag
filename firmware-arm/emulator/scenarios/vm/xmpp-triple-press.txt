@@ -1,0 +1,28 @@
+# bytecode: bootloader
+#
+# Three presses of the head on a rabbit online (Clara, 2026-11-22: "On veut
+# aussi quand il est connecté au terrier. Comme le karotz"). Run as boot 2
+# of tools/xmpp-tls-proof.sh --scenario, with a runtime whose cfg-boot
+# policy reads 1 (what the warren serves a Naboot 1.2.1.3): the session
+# runs TLS (bound about 80 s in), and at 120 s the owner presses the head
+# three times, short. The runtime calls configBoot, the rabbit restarts and
+# comes back as its access point with the setup page.
+#
+#   control (cfg-boot:0, as compiled): the three presses are a double
+#      click sent to the warren, a station at 170 s;
+#   fix: "the rabbit restarts after its reset (reason 6...)", master at
+#      170 s, GET / answers 200.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 185000
+
+at 20000 expect RUN
+at 120000 button down
+at 120100 button up
+at 120250 button down
+at 120350 button up
+at 120500 button down
+at 120600 button up
+at 170000 expect-mode master
+at 175000 get /
+at 183000 expect RUN

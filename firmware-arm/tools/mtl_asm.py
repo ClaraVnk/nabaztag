@@ -145,6 +145,8 @@ class Op:
     OPhttpsClose = 168
     # apply-mods.py wifi_diag (Naboot 1.2.1.0), after tls_certs
     OPwifiDiag = 169
+    # apply-mods.py config_boot (Naboot 1.2.1.3), after wifi_diag
+    OPconfigBoot = 170; OPconfigBooted = 171
 
 
 # Opcodes that take a 1-byte unsigned operand.
@@ -484,7 +486,7 @@ _MNEM_TO_OP = {name: code for code, name in
                    160: "OPtlsOut", 161: "OPtlsState", 162: "OPtlsClose",
                    163: "OPresetInfo",
                    164: "OPhttpsStart", 165: "OPhttpsIn", 166: "OPhttpsOut",
-                   167: "OPhttpsState", 168: "OPhttpsClose", 169: "OPwifiDiag",
+                   167: "OPhttpsState", 168: "OPhttpsClose", 169: "OPwifiDiag", 170: "OPconfigBoot", 171: "OPconfigBooted",
                }.items()}
 
 

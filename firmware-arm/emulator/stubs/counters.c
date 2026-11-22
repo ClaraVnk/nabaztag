@@ -9,3 +9,6 @@
 __attribute__((weak)) int32_t nab_reset_reason, nab_reset_count;
 __attribute__((weak)) int32_t nab_verify_calls, nab_verify_ok;
 __attribute__((weak)) int32_t nab_flash_calls, nab_flash_error;
+
+/* config_boot's mark (apply-mods.py): zero at start, as after a power-up. */
+__attribute__((weak)) int32_t nab_config_boot;

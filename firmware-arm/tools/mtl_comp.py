@@ -231,6 +231,9 @@ NATIVES: list[tuple[str | None, str, int, str]] = [
     ("httpsClose", "OPhttpsClose", 0, "fun[]S"),
     # apply-mods.py wifi_diag (Naboot 1.2.1.0)
     ("wifiDiag", "OPwifiDiag", 0, "fun[]S"),
+    # apply-mods.py config_boot (Naboot 1.2.1.3)
+    ("configBoot", "OPconfigBoot", 0, "fun[]I"),
+    ("configBooted", "OPconfigBooted", 0, "fun[]I"),
 ]
 
 # mnemonic name → (opcode, nargs), for mtl_pyc.py and anything else that

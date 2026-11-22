@@ -1,0 +1,49 @@
+// triplepress.mtl -- three short presses of the head open config mode
+// (Clara, 2026-11-22, after a user's ask: "pouvoir passer en mode config sans
+// appuyer sur la tête et donc sans débrancher rebrancher", the plug under
+// the rabbit being 20 years old; "comme le Karotz : 3 appuis courts").
+//
+// Config mode was only the head held at power-on (main: master=button2).
+// A rabbit that cannot reach its Wi-Fi any more (a new box, a new key)
+// stays in the bootloader, orange, and the bootloader read the head only in
+// config mode. Now, while the bootloader runs and the rabbit is not in
+// config mode, three presses within three seconds switch the radio to the
+// access point "Nabaztag-XXXX" and serve the setup page, as the held head
+// at power-on does. Once the runtime runs (the rabbit on its server), the
+// head is the runtime's and this never sees it.
+
+var tp_n=0;;
+var tp_t0=0;;
+var tp_down=0;;
+
+fun boot_enter_config=
+	set master=1;
+	set start=nil;
+	wifiInit 1;
+	resetudp;
+	set wifiscans=sort filterscan netScan nil #scancmpssid;
+	netSetmode IEEE80211_M_MASTER (strcat "Nabaztag" uppermac strget netMac 5) 1;
+	set wifi=gomasterW;
+	0;;
+
+fun boot_triple_press=
+	if button2 then
+	(
+		if !tp_down then
+		(
+			set tp_down=1;
+			if tp_n==0 || (time_ms-tp_t0)>3000 then
+			(
+				set tp_n=0;
+				set tp_t0=time_ms
+			);
+			set tp_n=tp_n+1;
+			if tp_n>=3 then
+			(
+				set tp_n=0;
+				boot_enter_config
+			)
+		)
+	)
+	else set tp_down=0;
+	0;;

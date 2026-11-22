@@ -181,6 +181,10 @@ python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
 # sleepRun read neither, so only the server could wake a rabbit).
 echo "==> patch_head_in_sleep.py  (the head and the tags, read while asleep)"
 python3 "$HERE/patch_head_in_sleep.py" "$BC/sources/main.mtl"
+# Three presses of the head restart into config mode, on Naboot 1.2.1.3
+# (configBoot), when the warren flips cfg-boot (2026-11-22).
+echo "==> patch_triple_press.py  (three short presses: config mode)"
+python3 "$HERE/patch_triple_press.py" "$BC/sources"
 if [ "${EARS_REARM:-1}" = 1 ]; then
   echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
   python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"
@@ -213,7 +217,7 @@ import sys
 b = open(sys.argv[1], "rb").read()
 import os
 lits = [b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
-        b"xmpp-btn:0"]
+        b"xmpp-btn:0", b"cfg-boot:0"]
 if os.environ.get("RUNTIME", "https") != "tls":
     lits += [b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0"]
 for lit in lits:

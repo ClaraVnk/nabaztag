@@ -1,0 +1,23 @@
+# Three short presses of the head open config mode (triple_press mod,
+# 2026-11-22: a user whose rabbit sits on a fragile plug; Clara: "comme le
+# Karotz : 3 appuis courts").
+#
+# No access point the rabbit knows (a WPA2 network whose key it lacks): it boots, scans, and stays in the
+# bootloader, orange, as it does after a change of box. At 20 s the head is
+# pressed three times within a second and a half; the radio becomes the
+# access point and the setup page answers, without a power cycle.
+# tools/config-triple-press.sh checks the log; without the mod (the
+# control) the rabbit is still managed at 40 s.
+ap 02:00:5e:10:00:01 Voisin 6 wpa2-ccmp -52
+tick 50
+stop 50000
+
+at 20000 button down
+at 20200 button up
+at 20500 button down
+at 20700 button up
+at 21000 button down
+at 21200 button up
+at 40000 expect-mode master
+at 42000 get /
+at 49000 expect RUN
