@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 720" width="1040" height="720" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<rect width="1040" height="720" fill="#fdfdfb"/>
+<text x="520" y="34" text-anchor="middle" fill="#161616" font-size="17" font-weight="600">Nabaztag v1 firmware read → PICkit (ICSP)</text>
+<text x="520" y="54" text-anchor="middle" fill="#6b6b6b">five jumpers, read only — the rabbit stays on its own 8 V adapter, the PICkit does not power it</text>
+<text x="40" y="130" fill="#161616" font-weight="600">rabbit, J2 (5-pin header)</text>
+<text x="40" y="147" fill="#6b6b6b" font-size="11">next to the Atmel AT45DB081B; GND is the middle pin</text>
+<rect x="190" y="160" width="16" height="16" rx="3" fill="#7c3aed" stroke="#7c3aed"/>
+<text x="120" y="172" text-anchor="end" fill="#6b6b6b">1</text>
+<text x="180" y="172" text-anchor="end" fill="#161616" font-weight="600">MCLR</text>
+<rect x="190" y="190" width="16" height="16" rx="3" fill="#c2410c" stroke="#c2410c"/>
+<text x="120" y="202" text-anchor="end" fill="#6b6b6b">2</text>
+<text x="180" y="202" text-anchor="end" fill="#161616" font-weight="600">3V3</text>
+<rect x="190" y="220" width="16" height="16" rx="3" fill="#444444" stroke="#444444"/>
+<text x="120" y="232" text-anchor="end" fill="#6b6b6b">3</text>
+<text x="180" y="232" text-anchor="end" fill="#161616" font-weight="600">GND</text>
+<rect x="190" y="250" width="16" height="16" rx="3" fill="#0369a1" stroke="#0369a1"/>
+<text x="120" y="262" text-anchor="end" fill="#6b6b6b">4</text>
+<text x="180" y="262" text-anchor="end" fill="#161616" font-weight="600">PGD</text>
+<rect x="190" y="280" width="16" height="16" rx="3" fill="#15803d" stroke="#15803d"/>
+<text x="120" y="292" text-anchor="end" fill="#6b6b6b">5</text>
+<text x="180" y="292" text-anchor="end" fill="#161616" font-weight="600">PGC</text>
+<text x="700" y="130" fill="#161616" font-weight="600">PICkit 3 / 4 (6-pin header)</text>
+<text x="700" y="147" fill="#6b6b6b" font-size="11">pin 1 is the one under the ▶ arrow</text>
+<rect x="700" y="160" width="16" height="16" rx="3" fill="#7c3aed" stroke="#7c3aed"/>
+<text x="684" y="173" fill="#161616" font-size="13">▶</text>
+<text x="728" y="172" fill="#7c3aed" font-weight="600">pin 1<tspan fill="#6b6b6b" font-weight="400"> · MCLR/VPP</tspan></text>
+<rect x="700" y="190" width="16" height="16" rx="3" fill="#c2410c" stroke="#c2410c"/>
+<text x="728" y="202" fill="#c2410c" font-weight="600">pin 2<tspan fill="#6b6b6b" font-weight="400"> · VDD</tspan></text>
+<rect x="700" y="220" width="16" height="16" rx="3" fill="#444444" stroke="#444444"/>
+<text x="728" y="232" fill="#444444" font-weight="600">pin 3<tspan fill="#6b6b6b" font-weight="400"> · VSS (GND)</tspan></text>
+<rect x="700" y="250" width="16" height="16" rx="3" fill="#0369a1" stroke="#0369a1"/>
+<text x="728" y="262" fill="#0369a1" font-weight="600">pin 4<tspan fill="#6b6b6b" font-weight="400"> · ICSPDAT</tspan></text>
+<rect x="700" y="280" width="16" height="16" rx="3" fill="#15803d" stroke="#15803d"/>
+<text x="728" y="292" fill="#15803d" font-weight="600">pin 5<tspan fill="#6b6b6b" font-weight="400"> · ICSPCLK</tspan></text>
+<rect x="700" y="310" width="16" height="16" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<text x="728" y="322" fill="#6b6b6b" >pin 6<tspan fill="#6b6b6b" font-weight="400"> · LVP/AUX  (leave free)</tspan></text>
+<path d="M 208 168 C 453.0 168, 453.0 168, 698 168" fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M 208 198 C 453.0 198, 453.0 198, 698 198" fill="none" stroke="#c2410c" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M 208 228 C 453.0 228, 453.0 228, 698 228" fill="none" stroke="#444444" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M 208 258 C 453.0 258, 453.0 258, 698 258" fill="none" stroke="#0369a1" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M 208 288 C 453.0 288, 453.0 288, 698 288" fill="none" stroke="#15803d" stroke-width="2.2" stroke-linecap="round"/>
+<text x="40" y="380" fill="#161616" font-weight="600">the five jumpers, straight across</text>
+<rect x="40" y="393" width="11" height="11" rx="2" fill="#7c3aed"/>
+<text x="58" y="402" fill="#161616" font-size="12">rabbit 1 MCLR<tspan fill="#6b6b6b">  →  </tspan>PICkit 1 <tspan fill="#6b6b6b">MCLR/VPP</tspan></text>
+<rect x="40" y="412" width="11" height="11" rx="2" fill="#c2410c"/>
+<text x="58" y="421" fill="#161616" font-size="12">rabbit 2 3V3<tspan fill="#6b6b6b">  →  </tspan>PICkit 2 <tspan fill="#6b6b6b">VDD (sense only)</tspan></text>
+<rect x="40" y="431" width="11" height="11" rx="2" fill="#444444"/>
+<text x="58" y="440" fill="#161616" font-size="12">rabbit 3 GND<tspan fill="#6b6b6b">  →  </tspan>PICkit 3 <tspan fill="#6b6b6b">VSS</tspan></text>
+<rect x="40" y="450" width="11" height="11" rx="2" fill="#0369a1"/>
+<text x="58" y="459" fill="#161616" font-size="12">rabbit 4 PGD<tspan fill="#6b6b6b">  →  </tspan>PICkit 4 <tspan fill="#6b6b6b">ICSPDAT/PGD</tspan></text>
+<rect x="40" y="469" width="11" height="11" rx="2" fill="#15803d"/>
+<text x="58" y="478" fill="#161616" font-size="12">rabbit 5 PGC<tspan fill="#6b6b6b">  →  </tspan>PICkit 5 <tspan fill="#6b6b6b">ICSPCLK/PGC</tspan></text>
+<text x="40" y="602" fill="#161616" font-weight="600">before plugging in</text>
+<text x="40" y="622" fill="#6b6b6b" font-size="11">• J2 has no pin 1 mark: GND (pin 3, the middle) has continuity to the 8 V adapter's black wire;</text>
+<text x="40" y="639" fill="#6b6b6b" font-size="11">•   rabbit powered, pin 2 reads 3.3 V and pin 4 does not: pin 1 is the end next to pin 2.</text>
+<text x="40" y="656" fill="#6b6b6b" font-size="11">• Both power supplies on one earthed strip (a USB laptop on battery is fine): no leakage shocks.</text>
+<text x="40" y="673" fill="#6b6b6b" font-size="11">• MPLAB IPE: device PIC18LF6627, Power > "Power target circuit from tool" OFF (the rabbit has its own).</text>
+<text x="40" y="690" fill="#6b6b6b" font-size="11">• Then Read, and Export > Hex. Never Program or Erase: Violet's firmware has no other copy.</text>
+</svg>

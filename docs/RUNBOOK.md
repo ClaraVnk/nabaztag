@@ -650,6 +650,16 @@ forever. To see it fail, build the image with run.sh's STEPS minus
 `scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
 rabbit runs it, the AP set to WPA2 only is the workaround.
 
+### A Nabaztag v1's serial log on a Raspberry Pi
+
+`firmware-arm/v1-serial/` (README there): two jumpers from the v1's header J3
+(its PIC's UART1, 9600 baud; pin 4 TX and pin 2 GND on Violet's FCC
+schematic) to the Pi's pin 10 (RXD) and pin 6 (GND), drawn by
+`mkwiring.py` into `wiring.svg`; `listen.sh` prints the log on the Pi, each
+line timed. Read only: nothing is sent to the rabbit, the Pi does not power
+it. Our v1 runs firmware 1.4b (`v=14` in its polls, 2026-11-21); the
+emulator's dump is 2.0b.
+
 ### Terrier OS's install, run on a simulated flash (the ground of its update)
 
 `firmware-arm/emulator/karotz/ota/` (usage in its Containerfile) boots the

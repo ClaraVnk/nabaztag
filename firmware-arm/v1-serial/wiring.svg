@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 760" width="1040" height="760" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<rect width="1040" height="760" fill="#fdfdfb"/>
+<text x="520" y="34" text-anchor="middle" fill="#161616" font-size="17" font-weight="600">Nabaztag v1 serial log → Raspberry Pi</text>
+<text x="520" y="54" text-anchor="middle" fill="#6b6b6b">two jumpers, read only — the rabbit stays on its own 8 V adapter</text>
+<text x="40" y="122" fill="#161616" font-weight="600">rabbit, J3 (4-pin serial header)</text>
+<text x="40" y="138" fill="#6b6b6b" font-size="11">4 pins above J2 (5 pins), no silkscreen: GND is 2nd from one end</text>
+<rect x="150" y="150" width="16" height="16" rx="3" fill="#fdfdfb" stroke="#bbbbbb"/>
+<text x="74" y="162" text-anchor="end" fill="#6b6b6b">1</text>
+<text x="140" y="162" text-anchor="end" fill="#6b6b6b" >3V3</text>
+<rect x="150" y="176" width="16" height="16" rx="3" fill="#444444" stroke="#444444"/>
+<text x="74" y="188" text-anchor="end" fill="#6b6b6b">2</text>
+<text x="140" y="188" text-anchor="end" fill="#161616" font-weight="600">GND</text>
+<rect x="150" y="202" width="16" height="16" rx="3" fill="#fdfdfb" stroke="#bbbbbb"/>
+<text x="74" y="214" text-anchor="end" fill="#6b6b6b">3</text>
+<text x="140" y="214" text-anchor="end" fill="#6b6b6b" >RX</text>
+<rect x="150" y="228" width="16" height="16" rx="3" fill="#c2410c" stroke="#c2410c"/>
+<text x="74" y="240" text-anchor="end" fill="#6b6b6b">4</text>
+<text x="140" y="240" text-anchor="end" fill="#161616" font-weight="600">TX</text>
+<text x="620" y="88" fill="#161616" font-weight="600">Raspberry Pi, 40-pin header</text>
+<text x="620" y="104" fill="#6b6b6b" font-size="11">physical pins — same on a 2, 3, 4 or Zero 2 W</text>
+<text x="616" y="116" fill="#6b6b6b" font-size="10">pin 1</text>
+<rect x="620" y="118" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="118" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="142" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="142" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="166" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="166" width="15" height="15" rx="3" fill="#444444" stroke="#444444"/>
+<text x="686" y="181" fill="#444444" font-size="11.5" font-weight="600">pin 6<tspan fill="#6b6b6b" font-weight="400"> · GND</tspan></text>
+<rect x="620" y="190" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="190" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="214" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="214" width="15" height="15" rx="3" fill="#c2410c" stroke="#c2410c"/>
+<text x="686" y="229" fill="#c2410c" font-size="11.5" font-weight="600">pin 10<tspan fill="#6b6b6b" font-weight="400"> · GPIO15 · RXD</tspan></text>
+<rect x="620" y="238" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="238" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="262" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="262" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="286" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="286" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="310" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="310" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="334" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="334" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="358" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="358" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="382" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="382" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="406" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="406" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="430" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="430" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="454" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="454" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="478" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="478" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="502" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="502" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="526" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="526" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="550" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="550" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="620" y="574" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<rect x="648" y="574" width="15" height="15" rx="3" fill="#fdfdfb" stroke="#cfcfcf"/>
+<path d="M 168 184 C 407.0 184, 407.0 173, 646 173" fill="none" stroke="#444444" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M 168 236 C 407.0 236, 407.0 221, 646 221" fill="none" stroke="#c2410c" stroke-width="2.2" stroke-linecap="round"/>
+<text x="40" y="290" fill="#6b6b6b" font-size="11">pins 1 and 3 stay unconnected: nothing is sent to the rabbit, the Pi does not power it</text>
+<text x="40" y="310" fill="#161616" font-weight="600">the two jumpers</text>
+<rect x="40" y="323" width="11" height="11" rx="2" fill="#444444"/>
+<text x="58" y="332" fill="#161616" font-size="12">rabbit 2 GND<tspan fill="#6b6b6b">  →  </tspan>Pi 6 <tspan fill="#6b6b6b">GND</tspan></text>
+<rect x="40" y="342" width="11" height="11" rx="2" fill="#c2410c"/>
+<text x="58" y="351" fill="#161616" font-size="12">rabbit 4 TX<tspan fill="#6b6b6b">  →  </tspan>Pi 10 <tspan fill="#6b6b6b">GPIO15 · RXD</tspan></text>
+<text x="40" y="664" fill="#161616" font-weight="600">before plugging in</text>
+<text x="40" y="684" fill="#6b6b6b" font-size="11">• Find GND with a meter (continuity to the 8 V adapter's black wire): it is pin 2.</text>
+<text x="40" y="701" fill="#6b6b6b" font-size="11">• The Pi's serial port, without its console: raspi-config > Interface > Serial.</text>
+<text x="40" y="718" fill="#6b6b6b" font-size="11">• Then ./listen.sh: 9600 baud, 8N1, /dev/serial0, every line timed.</text>
+<text x="40" y="735" fill="#6b6b6b" font-size="11">• Never 3V3 or 5V from the Pi to J3: the v1 keeps its own 8 V 1 A adapter.</text>
+</svg>
