@@ -12,9 +12,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="$(mktemp)"; trap 'rm -f "$LOG"' EXIT
 SCENARIO="$HERE/scenarios/vm/config-triple-press.txt" "$HERE/tools/config-pages.sh" "$@" > "$LOG" 2>&1 || true
-grep -E "button|mode|phone: GET|phone: answer|expect" "$LOG" | head -20
+grep -E "button|mode|phone: GET|phone: answer|expect|FAIL|PASS" "$LOG" | head -20 || true
 fail=0
-if grep -q "expect-mode master: ok\|mode master.*ok\|PASS.*expect-mode master" "$LOG"; then echo "PASS   config mode after three presses"
+if grep -q "ok   the rabbit is its own access point" "$LOG"; then echo "PASS   config mode after three presses"
 else echo "FAIL   not in config mode after three presses"; fail=1; fi
 if grep -q "phone: answer \"HTTP/1.[01] 200" "$LOG"; then echo "PASS   the setup page answers"
 else echo "FAIL   the setup page did not answer"; fail=1; fi
