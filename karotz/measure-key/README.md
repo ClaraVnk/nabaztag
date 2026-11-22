@@ -19,6 +19,14 @@ did not run it, and nothing on the rabbit changed.
 `mtdN.bin` per flash partition (`nanddump -o`, data without OOB), then
 `md5.txt` and `DONE` last.
 
+On Terrier OS (its `linuxrc` runs a key's `autorun` too, without the
+signature), the two YAFFS partitions come as `mtd5-oob.bin` and
+`mtd6-oob.bin`, **with** their OOB (busybox `nanddump -o`, 528 bytes a
+page): YAFFS1 keeps in the OOB which file each page belongs to, and the
+data-only dump of 2026-11-17 could not be mounted. That is what step 3 of
+`docs/TERRIER-OS-KERNEL.md` mounts with the 6.1 kernel. `mtd6-oob.bin` is
+about 242 MB: a key of 1 GB.
+
 ## Steps
 
 1. Format a key of at least 512 MB as FAT32 (Mac: "MS-DOS (FAT)", Master
