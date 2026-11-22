@@ -821,7 +821,7 @@ now dumps the YAFFS partitions with their OOB on Terrier OS.
 
 A box that turns its Wi-Fi off for the night left Linotte "orange fixe"
 until unplugged (2026-11-21, 23:45 to 04:30). The firmware alone rejoins
-after five hours (`scenarios/night-wifi-off.txt`); the whole rabbit did
+after five hours (`firmware-arm/emulator/scenarios/night-wifi-off.txt`); the whole rabbit did
 not: after 3 h 12 without Wi-Fi the runtime ran out of memory and reset in
 a loop. Every reconnect attempt started a DNS lookup chain that never ended
 (`bytecode/patch_xmpp_dns_chain.py`). `fast <from> <to>` in a scenario runs
