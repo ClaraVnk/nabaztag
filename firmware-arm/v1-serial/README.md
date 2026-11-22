@@ -20,3 +20,20 @@ its polls), the dump in `../vendor/newbaztag` is 2.0b (`v=20`).
 
 The v1's adapter is 8 V, 1 A (`ALIM_8V_1A` on the schematic); it stays the
 rabbit's only supply.
+
+## What it gave on a real v1 (2026-11-22)
+
+Clara's own v1 (firmware 1.4b), wired as `wiring.svg`, the Pi's serial
+console off (`serial-getty@ttyAMA0` disabled: it held the port and read the
+line too):
+
+- **J3 pin 4 (TX)**: idle high, then a regular train of very short low
+  pulses, about 1 µs each, some 33,000 a second, the same at every speed
+  from 2400 to 1,500,000 baud (only `ff` and `ef` at 921,600). No text at
+  any speed: not a serial log.
+- **J3 pin 3 (RX)**: low all the time, nothing received: an input, as the
+  FCC schematic says.
+
+So this firmware writes no serial log on J3. Reading its firmware needs a
+PICkit on J2; its protocol is read on the Terrier's side (its HTTP polls).
+A logic analyser would tell what the pin-4 pulses are.
