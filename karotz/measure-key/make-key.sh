@@ -16,6 +16,15 @@ got=$( (md5sum "$KEY/autorun.sig" 2>/dev/null || md5 -r "$KEY/autorun.sig") | cu
 # LF line ends: the rabbit's shell would choke on CRLF.
 tr -d '\r' < "$HERE/autorun" > "$KEY/autorun"
 chmod 755 "$KEY/autorun" 2>/dev/null || true
+# oobdump, built for the Karotz (Containerfile here), when podman is at hand
+# or OOBDUMP names a built one: the YAFFS partitions with their real spare.
+if [ -n "${OOBDUMP:-}" ]; then
+    cp "$OOBDUMP" "$KEY/oobdump"
+elif command -v podman >/dev/null; then
+    podman build -q -t karotz-oobdump -f "$HERE/Containerfile" "$HERE" >/dev/null &&
+        podman run --rm karotz-oobdump cat /oobdump > "$KEY/oobdump"
+fi
+[ -s "$KEY/oobdump" ] || echo "no oobdump on the key: the YAFFS spare falls back to busybox nanddump" >&2
 rm -rf "$KEY/measure"
 sync
 echo "key ready: $(ls "$KEY")"

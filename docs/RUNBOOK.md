@@ -833,6 +833,31 @@ and rootfs of the steps above:
     # 2026-11-22: "Machine: RABBITV3 (KAROTZ)", /dev/spidev0.1, PASS
     # (QEMU's OHCI fails the same under mini2440's board: the emulator's, not ours)
 
+### Linux 6.1 for the Karotz: a real Karotz's NAND
+
+Step 3 on a real flash. `karotz-flash.py` puts the measure key's copies back
+into one NAND image, each partition at its own offset (Gengar's dmesg: the
+partitions have gaps); QEMU emulates the Karotz's chip (`MINI2440_NAND_CID=0x71`,
+256 MiB of 512-byte pages) with the clocks its bootloader leaves (405/135/67.5
+MHz); the kernel built with `karotz-6.1-realnand.config` reads it:
+
+    karotz/kernel/qemu-mini2440/real-usr.sh <dir> <measure dir>
+    # 2026-11-22: "nand: Samsung NAND 256MiB", Gengar's 8 partitions, data
+    #   byte-identical to the copy; /usr mounts EMPTY: the copy's spare is not
+    #   real (busybox nanddump -o put file text there, 3,445 blocks "bad")
+
+Two 6.1 faults found on the way: the NAND driver read the chip before
+enabling its controller (`s3c2410-nand-inithw.patch`), and QEMU's reset
+clocks left no timing for the board's 20 ns. The spare is now read by
+`karotz/measure-key/oobdump` (MEMREADOOB, every page, bad blocks included),
+proven first against known spares:
+
+    karotz/kernel/qemu-mini2440/oob-proof.sh <dir> <oobdump binary>
+    # 2026-11-22: the two spares written into the flash come back, PASS
+
+Next: a measure key with oobdump on Gengar, then `real-usr.sh` on its
+`mtd6-raw.bin`.
+
 ### Linux 6.1 for the Karotz: its own drivers
 
 Step 5. `karotz/kernel/rabbitv3/rabbitv3-chardevs.c` ports LapinLibre's

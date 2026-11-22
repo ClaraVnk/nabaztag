@@ -63,3 +63,28 @@ b = p.parent / "arm_boot.c"
 t = b.read_text()
 if "0x00800000" in t:
     b.write_text(t.replace("#define INITRD_LOAD_ADDR 0x00800000", "#define INITRD_LOAD_ADDR 0x01000000"))
+
+# The Karotz's own NAND: 256 MiB of 512-byte pages, Samsung id 71, which
+# QEMU's nand.c knows but the board never picks. MINI2440_NAND_CID=0x71 and
+# a -mtdblock file of 524288 pages of 528 bytes (data and OOB, as nanddump
+# -o writes them) give the kernel Gengar's flash as it is (2026-11-22, the
+# measure key's mtd5-oob.bin and mtd6-oob.bin: step 3 on a real /usr).
+n_old = "    mini->nand = nand_init(NAND_MFR_SAMSUNG, nand_cid);\n"
+s = p.read_text()
+if "MINI2440_NAND_CID" not in s:
+    assert s.count(n_old) == 1, "nand_init not found"
+    s = s.replace(n_old, '    if (getenv("MINI2440_NAND_CID"))\n'
+                         '        nand_cid = strtol(getenv("MINI2440_NAND_CID"), NULL, 0);\n' + n_old, 1)
+    p.write_text(s)
+
+# The clocks a Karotz's bootloader leaves: core 405 MHz, memory (HCLK)
+# 135 MHz, peripherals 67.5 MHz (Gengar's 2.6.32 boot log, 2026-11-22):
+# MPLLCON 0x7f021 from the 12 MHz crystal, CLKDIVN 7. QEMU's reset values
+# gave HCLK 240 MHz, at which 6.1's NAND driver found no timing for the
+# board's 20 ns ("cannot get suitable timings").
+s = p.read_text()
+w_old = "stl_phys(0x53000000, 0);"
+if "0x4c000014" not in s:
+    assert s.count(w_old) == 2, "the watchdog writes"
+    s = s.replace(w_old, w_old + " stl_phys(0x4c000004, 0x7f021); stl_phys(0x4c000014, 7);")
+    p.write_text(s)
