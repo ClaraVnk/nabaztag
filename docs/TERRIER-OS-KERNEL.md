@@ -18,8 +18,8 @@ checked before the work starts.
 
 ## What changes, part by part
 
-From LapinLibre's `docs/system.md` (the hardware table) and
-`system/kernel/rabbitv3_defconfig`.
+From LapinLibre's system documentation (its hardware table) and its
+kernel configuration, rabbitv3_defconfig, in ClaraVnk/LapinLibre.
 
 | Part | 2.6.32 today | In 6.1 | Work |
 |---|---|---|---|
@@ -53,7 +53,7 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
 
 1. **Size** — a 6.1 kernel for the S3C2440 from the rabbit's configuration
    translated to 6.1, built on the dev VM (Alpine container, versioned
-   recipe under `karotz/kernel/`): its zImage size, then what must go to fit.
+   recipe in this repository): its zImage size, then what must go to fit.
 2. **Boot in QEMU** — the same kernel in an emulator of an S3C2440 board
    (or the closest QEMU machine), ATAGs with machine 1912, LapinLibre's
    root file system: it reaches its shell.
