@@ -758,6 +758,26 @@ on nandsim). On the dev VM, from the repository root:
     karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
     # 2026-11-22: Linux 6.1.192, ARM920T, cramfs root, "PASS: a shell on the 6.1 kernel"
 
+### Linux 6.1 for the Karotz: YAFFS1
+
+Step 3. The 6.1 kernel carries YAFFS from Yocto's 6.1 tree
+(`karotz/kernel/yaffs2/`, its README) with two changes, kept apart: YAFFS1
+was refused on 512-byte pages (`yaffs1-small-page.patch`), and its tags
+were the 16-byte spare of before 2.6.17 where the Karotz's 2.6.32 wrote
+8-byte packed tags in the free OOB (`yaffs1-mtd1/`, 2009's
+`yaffs_mtdif1.c` ported). nandsim gets `noecc=1`, as the Karotz's NAND
+runs (`nandsim-noecc.patch`, the emulator's kernel only). With the zImage
+and rootfs of the step above:
+
+    karotz/kernel/qemu-mini2440/yaffs.sh /tmp/kz
+    # 2026-11-22: "PASS: YAFFS1 written and read back on 6.1" (mount -t yaffs
+    # on a blank 256 MiB NAND of 512-byte pages, a directory and a file,
+    # unmount, mount, read back)
+
+What is not proven yet: the /usr of a real Karotz. The data-only dump of
+2026-11-17 cannot be mounted (no OOB, so no tags); `karotz/measure-key`
+now dumps the YAFFS partitions with their OOB on Terrier OS.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

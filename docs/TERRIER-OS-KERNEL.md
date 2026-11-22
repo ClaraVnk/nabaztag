@@ -95,4 +95,13 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
   not identified by 6.1, whose s3c2410 NAND driver then oopses in its error
   path (not a concern on a real NAND, to watch in step 4). The machine is
   mini2440 (1999), not the Karotz's 1912: its own board file is step 4.
-  Next: step 3, YAFFS1 on nandsim.
+- 2026-11-22, step 3 begun: YAFFS1 writes and reads back on 6.1, on a
+  simulated Karotz NAND (256 MiB, 512-byte pages, no ECC). Aleph One's tree
+  stops at Linux 5.15: the YAFFS is Yocto's 6.1 port. Two faults found and
+  fixed in it, apart: YAFFS1 refused itself on 512-byte pages, and today's
+  YAFFS1 tags are the 16-byte spare of before 2.6.17, not the 8-byte packed
+  tags in the free OOB that the Karotz's 2.6.32 (yaffs_mtdif1.c, 2009)
+  wrote: 2009's code is ported. The zImage is 2,491,072 bytes (639 KiB to
+  spare). Left for step 3: a real /usr, dumped with its OOB
+  (karotz/measure-key on Terrier OS), mounted on 6.1, written, and read
+  back by 2.6.32.
