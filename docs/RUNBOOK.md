@@ -726,7 +726,7 @@ and quoted names left out), `dnsmasq` as `hotspot.sh` starts it (every name is
 the rabbit; AAAA and HTTPS answered empty, where busybox `dnsd` answered NOTIMP
 and iPhones never opened the page, 2026-11-21), and `httpd` with the setup
 rules (the phones' check paths answer 200 and lead to `setup.html`; the old
-`E404:/setup.html` named a file at the root and served busybox's own 404).
+E404 rule named the setup page at the root and served busybox's own 404).
 The radio itself (the scan, the access point) is only proven on a Karotz.
 
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
