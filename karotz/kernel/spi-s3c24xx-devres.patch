@@ -1,0 +1,40 @@
+--- a/drivers/spi/spi-s3c24xx.c
++++ b/drivers/spi/spi-s3c24xx.c
+@@ -165,9 +165,13 @@
+ 
+ 	/* allocate settings on the first call */
+ 	if (!cs) {
+-		cs = devm_kzalloc(&spi->dev,
+-				  sizeof(struct s3c24xx_spi_devstate),
+-				  GFP_KERNEL);
++		/*
++		 * Not devm on the spi device: setup runs before that device is
++		 * probed, and a devres already there makes the driver core
++		 * refuse it ("Resources present before probing": spidev never
++		 * bound the Karotz's LED driver, Terrier OS, 2026-11-22).
++		 */
++		cs = kzalloc(sizeof(struct s3c24xx_spi_devstate), GFP_KERNEL);
+ 		if (!cs)
+ 			return -ENOMEM;
+ 
+@@ -191,6 +195,12 @@
+ 	return 0;
+ }
+ 
++static void s3c24xx_spi_cleanup(struct spi_device *spi)
++{
++	kfree(spi->controller_state);
++	spi->controller_state = NULL;
++}
++
+ static inline unsigned int hw_txbyte(struct s3c24xx_spi *hw, int count)
+ {
+ 	return hw->tx ? hw->tx[count] : 0;
+@@ -493,6 +503,7 @@
+ 	hw->bitbang.txrx_bufs      = s3c24xx_spi_txrx;
+ 
+ 	hw->master->setup  = s3c24xx_spi_setup;
++	hw->master->cleanup = s3c24xx_spi_cleanup;
+ 
+ 	dev_dbg(hw->dev, "bitbang at %p\n", &hw->bitbang);
+ 
