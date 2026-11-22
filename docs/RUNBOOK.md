@@ -817,6 +817,24 @@ What is not proven yet: the /usr of a real Karotz. The data-only dump of
 2026-11-17 cannot be mounted (no OOB, so no tags); `karotz/measure-key`
 now dumps the YAFFS partitions with their OOB on Terrier OS.
 
+### A night without Wi-Fi (Linotte)
+
+A box that turns its Wi-Fi off for the night left Linotte "orange fixe"
+until unplugged (2026-11-21, 23:45 to 04:30). The firmware alone rejoins
+after five hours (`firmware-arm/emulator/scenarios/night-wifi-off.txt`); the whole rabbit did
+not: after 3 h 12 without Wi-Fi the runtime ran out of memory and reset in
+a loop. Every reconnect attempt started a DNS lookup chain that never ended
+(`bytecode/patch_xmpp_dns_chain.py`). `fast <from> <to>` in a scenario runs
+a stretch of a `realtime` run unpaced, so the night takes six minutes:
+
+    tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+        --bytecode <runtime.hybrid> --emulator <naboot-1.2.1.2 emulator image> \
+        --elf <Nab.elf> --out <dir> --scenario scenarios/vm/xmpp-night-wifi-off.txt
+    # 2026-11-22, runtime without the fix: heap 100% at 11,505,850 ms,
+    #   20,880 resets, final state IDLE
+    # with patch_xmpp_dns_chain.py: no reset, heap 48%, the TLS session back
+    #   after the Wi-Fi, final state RUN
+
 ### Linux 6.1 for the Karotz: its own board file
 
 Step 4. `karotz/kernel/rabbitv3/` is the Karotz's board file ported from
