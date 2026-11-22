@@ -717,6 +717,18 @@ A build not released yet is the update when its key's directory is mounted
 on `/key` (`podman run --rm -v ~/lapinlibre-work/usbkey:/key:ro,Z
 karotz-ota-live`): the rabbit runs the released image and updates to it.
 
+### Linux 6.1 for the Karotz: the size
+
+Step 1 of `docs/TERRIER-OS-KERNEL.md`: does a useful 6.1 fit the Karotz's
+3 MiB kernel partition? `karotz/kernel/Containerfile` fetches Linux 6.1.192
+(kernel.org's sha256) and `karotz/kernel/size.sh` builds tinyconfig plus
+`karotz/kernel/karotz-6.1.config`, lists every asked option Kconfig did not
+keep (an empty list or the size means nothing), and prints the xz zImage's
+size against 3145728 bytes:
+
+    podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
+    podman run --rm karotz-kernel61
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

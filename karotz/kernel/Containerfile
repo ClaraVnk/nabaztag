@@ -1,0 +1,17 @@
+# Linux 6.1 LTS for the Karotz (Samsung S3C2440A, ARM920T): the size proof,
+# step 1 of docs/TERRIER-OS-KERNEL.md. 6.1 is the last LTS with the S3C24xx
+# platform. Alpine (our rule), its bare-metal ARM GCC: enough for a kernel.
+#
+#   podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
+#   podman run --rm karotz-kernel61
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache build-base bc bison flex perl xz curl gcc-arm-none-eabi \
+      binutils-arm-none-eabi linux-headers openssl-dev elfutils-dev python3 diffutils findutils
+ARG LINUX=6.1.192
+# kernel.org's sha256sums.asc for v6.x.
+ARG LINUX_SHA256=1e88e317e20dbc79a2cb9e3d9667e908b262d12e76eb66eed894c5460eb87fca
+RUN curl -fsSL -o /linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${LINUX}.tar.xz" && \
+    echo "${LINUX_SHA256}  /linux.tar.xz" | sha256sum -c - && \
+    mkdir /linux && tar -xJf /linux.tar.xz -C /linux --strip-components=1 && rm /linux.tar.xz
+COPY karotz-6.1.config size.sh /k/
+CMD ["sh", "/k/size.sh"]
