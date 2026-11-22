@@ -794,6 +794,21 @@ and rootfs of the steps above:
     # 2026-11-22: "Machine: RABBITV3 (KAROTZ)", /dev/spidev0.1, PASS
     # (QEMU's OHCI fails the same under mini2440's board: the emulator's, not ours)
 
+### Linux 6.1 for the Karotz: its own drivers
+
+Step 5. `karotz/kernel/rabbitv3/rabbitv3-chardevs.c` ports LapinLibre's
+`rabbit_button`, `rabbit_poweron` and `rabbit_ears` (majors 52, 53, 60) to
+6.1 with the same bytes and ioctls, so the rootfs runs unchanged; the board
+file adds the Samsung PWM and the ears' channels by name. `boot.sh` with
+MACH=1912 now also checks the three drivers probed and reads one byte from
+/dev/rabbit_poweron:
+
+    MACH=1912 karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
+    # 2026-11-22: SPIDEV-OK, the three /dev/rabbit_* drivers, PO "1", PASS
+
+Not proven in QEMU: the ears moving (no motors, no encoder) and the
+encoders' trigger, left as the bootloader set it as 2.6.32 did.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

@@ -112,3 +112,7 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
   lookups. Left for steps 5 and 7: the ADC's battery inputs (6.1's S3C_ADC
   is not built in a multiplatform kernel), the camera interface, the PWM.
   zImage 2,492,976 bytes. Not proven: the real board (needs a flash).
+- 2026-11-22, step 5 done in the emulator: the Karotz's three drivers
+  (button, power-on, ears) on 6.1, same /dev nodes, bytes and ioctls; ears
+  on the Samsung PWM by name, encoder handlers threaded (pwm_config sleeps
+  in 6.1). Probed in QEMU; the ears themselves need Gengar.
