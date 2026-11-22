@@ -2,6 +2,7 @@
 """Answer a v1's p3.jsp polls the way Violet's server did, for the emulator.
 
     python3 violet_warren.py --port 28080 --frame wait.frame --ears 5 10 --after 3
+    sudo python3 violet_warren.py --host 0.0.0.0 --port 80 --frame wait.frame ...  # a real v1
 
 The 05 frame is Violet's Nabaztag_wait.vasm put together by Violet's own
 assembler (Containerfile here); the packet around it follows Violet's
@@ -32,6 +33,7 @@ def sources(left: int, right: int) -> bytes:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 for a real v1 on the LAN")
     ap.add_argument("--port", type=int, default=28080)
     ap.add_argument("--frame", required=True, help="the 05 frame (podman run violet-vasm ...)")
     ap.add_argument("--ears", type=int, nargs=2, metavar=("LEFT", "RIGHT"), default=None)
@@ -65,7 +67,7 @@ def main() -> int:
         def log_message(self, *a):
             pass
 
-    ThreadingHTTPServer(("127.0.0.1", args.port), H).serve_forever()
+    ThreadingHTTPServer((args.host, args.port), H).serve_forever()
     return 0
 
 
