@@ -739,6 +739,25 @@ size against 3145728 bytes:
     podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
     podman run --rm karotz-kernel61
 
+### Linux 6.1 for the Karotz: the boot in QEMU
+
+Step 2: the same kernel in QEMU's S3C2440 (Michel Pollet's mini2440 machine,
+ywandy's fork, pinned in `karotz/kernel/qemu-mini2440/Containerfile`) to a
+shell on LapinLibre's root file system. `direct-boot.py` boots `-kernel` as
+the Karotz's locked bootloader does (ATAGs, a machine number, the watchdog
+off, no U-Boot) and moves the initrd clear of the decompressor;
+`karotz-6.1-debug.config` adds the early UART and the initrd, and leaves out
+the NAND driver (QEMU's NAND is not one 6.1 identifies; the NAND is step 3,
+on nandsim). On the dev VM, from the repository root:
+
+    podman build -t qemu-mini2440 -f karotz/kernel/qemu-mini2440/Containerfile karotz/kernel/qemu-mini2440
+    podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
+    mkdir -p /tmp/kz && podman run --rm -e EXTRA=/k/karotz-6.1-debug.config -e OUT=/out \
+        -v /tmp/kz:/out:Z karotz-kernel61
+    zcat <terrier-os package>/rootfs.img.gz > /tmp/kz/rootfs.cramfs
+    karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
+    # 2026-11-22: Linux 6.1.192, ARM920T, cramfs root, "PASS: a shell on the 6.1 kernel"
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

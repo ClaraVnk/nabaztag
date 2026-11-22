@@ -13,5 +13,5 @@ ARG LINUX_SHA256=1e88e317e20dbc79a2cb9e3d9667e908b262d12e76eb66eed894c5460eb87fc
 RUN curl -fsSL -o /linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${LINUX}.tar.xz" && \
     echo "${LINUX_SHA256}  /linux.tar.xz" | sha256sum -c - && \
     mkdir /linux && tar -xJf /linux.tar.xz -C /linux --strip-components=1 && rm /linux.tar.xz
-COPY karotz-6.1.config size.sh /k/
+COPY karotz-6.1.config karotz-6.1-debug.config size.sh /k/
 CMD ["sh", "/k/size.sh"]
