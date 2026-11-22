@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.1
+
+- **The add-on starts again on a current Home Assistant.** Its base image
+  (`python:3.15-alpine`) is named in the Dockerfile: the Supervisor no longer
+  reads `build.yaml`, built it on Home Assistant's own base, and the add-on
+  stopped at once with `python3: not found`. `build.yaml` is gone.
+
 ## 0.19.0
 
 The fixes of the add-on review of 2026-11-18. Each finding has its test in
