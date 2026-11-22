@@ -385,6 +385,27 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
 ```
 
+Violet's own v1 programs (`firmware-arm/vendor/violet-platform`, MIT) put
+together by Violet's own assembler, and served as Violet's server did, from
+the repository root on the dev VM:
+
+```sh
+podman build -t violet-vasm -f firmware-arm/emulator/tools/violet-vasm/Containerfile .
+podman run --rm violet-vasm Nabaztag_wait.vasm > wait.frame   # the 05 frame, 33747 bytes
+podman build -t nabaztag-v1 -f firmware-arm/emulator/v1/Containerfile firmware-arm
+python3 firmware-arm/emulator/tools/violet-vasm/violet_warren.py --port 28081 \
+    --frame wait.frame --ears 5 10 --after 3 &
+podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --seconds 120
+# 2026-11-22, firmware 2.0b: both ears home at 19 s ("motor stopped, slot 16"),
+# then after the order L5 R10 turn and stop at 52-53 s ("slot 4", "slot 9").
+# Violet served this same program to firmware 12, 14 and 20; ours reboots a
+# real 1.4b at every ear order.
+```
+
+A real v1's firmware, read over ICSP with a PICkit (read only):
+`firmware-arm/v1-icsp/README.md`; its serial log on a Raspberry Pi:
+`firmware-arm/v1-serial/README.md`.
+
 ### The Karotz (Nabaztag v3)
 
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
