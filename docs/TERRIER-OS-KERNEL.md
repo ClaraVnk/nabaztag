@@ -87,4 +87,12 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
   drivers. `karotz/kernel/size.sh` says so (RUNBOOK). 6.1 hides S3C24xx
   behind `UNUSED_BOARD_FILES` and an ARMv4T/v5-only kernel; tinyconfig also
   turns off the MMU, power management and the block and network layers.
-  Next: step 2, the boot in QEMU.
+- 2026-11-22, step 2 done: the same kernel boots in QEMU's S3C2440 to a
+  busybox shell on Terrier OS 58's root file system (`uname`: Linux
+  6.1.192 armv4tl). Its userland is EABI5, so no OABI compatibility is
+  needed. Learnt on the way: without a bootloader the S3C2440's watchdog
+  (on at power-up) reset the board mid-decompression; QEMU's NAND model is
+  not identified by 6.1, whose s3c2410 NAND driver then oopses in its error
+  path (not a concern on a real NAND, to watch in step 4). The machine is
+  mini2440 (1999), not the Karotz's 1912: its own board file is step 4.
+  Next: step 3, YAFFS1 on nandsim.

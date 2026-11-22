@@ -54,3 +54,12 @@ s = s.replace(r_old, "static int mini2440_direct;\n\n" + r_old
 s = s.replace("        mini->kernel = NULL;\n",
               "        mini->kernel = NULL;\n        mini2440_direct = 1;\n", 1)
 p.write_text(s)
+
+# The initrd went to RAM + 8 MiB, where a 6.1 zImage's decompressor copies
+# itself (it ran at 0x3070xxxx): the cramfs was overwritten before the kernel
+# read it ("RAMDISK: Couldn't find valid RAM disk image", 2026-11-22).
+# 16 MiB is clear of it on the 64 MiB board.
+b = p.parent / "arm_boot.c"
+t = b.read_text()
+if "0x00800000" in t:
+    b.write_text(t.replace("#define INITRD_LOAD_ADDR 0x00800000", "#define INITRD_LOAD_ADDR 0x01000000"))
