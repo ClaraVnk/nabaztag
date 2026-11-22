@@ -9,7 +9,7 @@
 # PASS when /usr's sys_version reads back. The flash file is made in <dir>.
 set -eu
 DIR=$(cd "${1:?a directory with zImage and rootfs.cramfs}" && pwd)
-M=$(cd "${2:?the measure key's measure/ directory}" && pwd)
+M=$(cd "${2:?the measure/ directory from the key}" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 python3 "$HERE/karotz-flash.py" "$M" "$DIR/karotz-nand.bin"
 LOG="$DIR/real-usr.log"
