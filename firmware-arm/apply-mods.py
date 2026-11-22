@@ -6836,6 +6836,66 @@ def patch_triple_press(root: Path) -> None:
     write_flat(p, s, p_nl)
     print(f"[ok]   {p}: three presses of the head open config mode")
 
+
+def patch_config_boot(root: Path) -> None:
+    """The runtime can restart the rabbit into config mode (Clara, 2026-11-22:
+    "On veut aussi quand il est connecté au terrier. Comme le karotz").
+
+    RAM does not survive the bytecode's reboot, .extbss does (persist_counters,
+    beside nab_reset_reason). Two core opcodes: configBoot, for the runtime,
+    leaves a mark there, tags the reset 6 and reboots; configBooted, for the
+    bootloader's main, reads the mark AND clears it, so config mode comes once
+    and the next reset is an ordinary boot. The mark is cleared at power-up
+    with the counters. main then starts in config mode for a held head or a
+    mark. A runtime may call configBoot only on a firmware that has it: the
+    warren tells it so (bytecode/patch_triple_press.py). Needs reset_reason;
+    after triple_press. Idempotent.
+    """
+    attr = ' __attribute__((section(".extbss")))'
+    q = root / "src/vm/vlog.c"
+    t, nl = read_flat(q)
+    if "nab_config_boot" not in t:
+        a = f"int32_t nab_reset_reason{attr};\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: no nab_reset_reason -- run reset_reason first")
+        t = t.replace(a, a + f"int32_t nab_config_boot{attr};\n", 1)
+        write_flat(q, t, nl)
+    q = root / "src/main.c"
+    t, nl = read_flat(q)
+    if "nab_config_boot" not in t:
+        a = "      nab_reset_reason = nab_reset_count = 0;\n"
+        if a not in t:
+            sys.exit(f"FAIL {q}: the power-up clear is not there -- run reset_reason first")
+        t = t.replace(a, a + "      { extern int32_t nab_config_boot; nab_config_boot = 0; }\n", 1)
+        write_flat(q, t, nl)
+    add_core_opcode(root, "configBoot", "fun[]I", 0,
+        "      case OPconfigBoot:\n"
+        "        {\n"
+        "          extern int32_t nab_config_boot, nab_reset_reason;\n"
+        "          nab_config_boot = 0x43464742;   /* \"CFGB\" */\n"
+        "          nab_reset_reason = 6;\n"
+        "          sysReboot();\n"
+        "          VPUSH(INTTOVAL(0));\n"
+        "        }\n"
+        "        break;\n")
+    add_core_opcode(root, "configBooted", "fun[]I", 0,
+        "      case OPconfigBooted:\n"
+        "        {\n"
+        "          extern int32_t nab_config_boot;\n"
+        "          int r = nab_config_boot == 0x43464742;\n"
+        "          nab_config_boot = 0;\n"
+        "          VPUSH(INTTOVAL(r));\n"
+        "        }\n"
+        "        break;\n")
+    b = root / "mtl/boot/boot.0.0.0.13.mtl"
+    u, b_nl = read_flat(b)
+    if "configBooted" not in u:
+        if u.count("set master=button2") != 1:
+            sys.exit(f"FAIL {b}: main's `set master=button2` not found once")
+        u = u.replace("set master=button2", "set master=(button2 || configBooted)", 1)
+        write_flat(b, u, b_nl)
+    print("[ok]   config_boot: configBoot/configBooted, reason 6, main starts in config mode on the mark")
+
 # ---------------------------------------------------------------------------
 # Phase 8 — move config-portal HTML pages from Metal globals to C-side ROM.
 # ---------------------------------------------------------------------------
@@ -10986,7 +11046,7 @@ def main() -> int:
         # as WPA2 (issue #163, a MikroTik in wpa-psk,wpa2-psk; 2026-11-21).
         "naboot-1.2.1.2": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
         # 1.2.1.2 and three presses of the head for config mode (2026-11-22).
-        "naboot-1.2.1.2-triple": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
+        "naboot-1.2.1.2-triple": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
         # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
         # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
         "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
@@ -11278,6 +11338,7 @@ def main() -> int:
         "mdns": patch_mdns,
         "captive": patch_captive,
         "triple_press": patch_triple_press,
+        "config_boot": patch_config_boot,
         "usb_watch": patch_usb_watch,
         "wpa2_gtk": patch_wpa2_group_key,
         "eapol_group_ack": patch_eapol_group_ack,

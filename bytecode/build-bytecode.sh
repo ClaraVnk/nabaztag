@@ -175,6 +175,10 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
+# Three presses of the head restart into config mode, on Naboot 1.2.1.3
+# (configBoot), when the warren flips cfg-boot (2026-11-22).
+echo "==> patch_triple_press.py  (a double click then a click: config mode)"
+python3 "$HERE/patch_triple_press.py" "$BC/sources/main.mtl"
 if [ "${EARS_REARM:-1}" = 1 ]; then
   echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
   python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"
@@ -207,7 +211,7 @@ import sys
 b = open(sys.argv[1], "rb").read()
 import os
 lits = [b"xmpp-tls:0", b"xmpp-rfid:0", b"xmpp-res:0", b"xmpp-rsc:0", b"xmpp-mic:0", b"xmpp-ota:0",
-        b"xmpp-btn:0"]
+        b"xmpp-btn:0", b"cfg-boot:0"]
 if os.environ.get("RUNTIME", "https") != "tls":
     lits += [b"xmpp-live:0", b"xmpp-https:0", b"xmpp-otahttps:0"]
 for lit in lits:
