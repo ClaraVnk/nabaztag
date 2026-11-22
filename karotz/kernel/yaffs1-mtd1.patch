@@ -1,0 +1,32 @@
+diff -ru a/fs/yaffs2/Makefile b/fs/yaffs2/Makefile
+--- a/fs/yaffs2/Makefile	2026-11-22 15:54:40
++++ b/fs/yaffs2/Makefile	2026-11-22 15:54:40
+@@ -8,7 +8,7 @@
+ yaffs-y += yaffs_packedtags1.o yaffs_packedtags2.o yaffs_nand.o
+ yaffs-y += yaffs_tagscompat.o yaffs_tagsmarshall.o
+ yaffs-y += yaffs_endian.o
+-yaffs-y += yaffs_mtdif.o
++yaffs-y += yaffs_mtdif.o yaffs_tags_mtd1.o
+ yaffs-y += yaffs_nameval.o yaffs_attribs.o
+ yaffs-y += yaffs_allocator.o
+ yaffs-y += yaffs_yaffs1.o
+diff -ru a/fs/yaffs2/yaffs_vfs.c b/fs/yaffs2/yaffs_vfs.c
+--- a/fs/yaffs2/yaffs_vfs.c	2026-11-22 15:54:40
++++ b/fs/yaffs2/yaffs_vfs.c	2026-11-22 15:54:40
+@@ -187,6 +187,7 @@
+ #include "yaffs_attribs.h"
+ #include "yaffs_linux.h"
+ #include "yaffs_mtdif.h"
++#include "yaffs_tags_mtd1.h"
+ #include "yaffs_packedtags2.h"
+ #include "yaffs_getblockinfo.h"
+ 
+@@ -3104,6 +3105,8 @@
+ 	param->end_block = n_blocks - 1;
+ 
+ 	yaffs_mtd_drv_install(dev);
++	/* YAFFS1 tags as the Karotz's 2.6.32 wrote them (yaffs_tags_mtd1.c). */
++	yaffs_tags_mtd1_install(dev);
+ 
+ 	param->sb_dirty_fn = yaffs_set_super_dirty;
+ 	param->gc_control_fn = yaffs_gc_control_callback;

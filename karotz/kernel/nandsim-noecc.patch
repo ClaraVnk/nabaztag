@@ -1,0 +1,30 @@
+--- a/drivers/mtd/nand/raw/nandsim.c
++++ b/drivers/mtd/nand/raw/nandsim.c
+@@ -163,6 +163,9 @@
+ MODULE_PARM_DESC(bbt,		 "0 OOB, 1 BBT with marker in OOB, 2 BBT with marker in data area");
+ MODULE_PARM_DESC(bch,		 "Enable BCH ecc and set how many bits should "
+ 				 "be correctable in 512-byte blocks");
++static unsigned int noecc;
++module_param(noecc, uint, 0400);
++MODULE_PARM_DESC(noecc,		 "No ECC at all, as on a NAND whose board disables it");
+ 
+ /* The largest possible page size */
+ #define NS_LARGEST_PAGE_SIZE	4096
+@@ -2199,6 +2202,17 @@
+ {
+ 	unsigned int eccsteps, eccbytes;
+ 
++	/*
++	 * noecc=1: no ECC at all, as the Karotz's NAND runs (mach-rabbitv3.c,
++	 * disable_ecc = 1; YAFFS1 does its own). The software ECC this
++	 * simulator imposed took OOB bytes YAFFS1 writes its tags into: every
++	 * write failed its read-back (Terrier OS kernel step 3, 2026-11-22).
++	 */
++	if (noecc) {
++		chip->ecc.engine_type = NAND_ECC_ENGINE_TYPE_NONE;
++		return 0;
++	}
++
+ 	chip->ecc.engine_type = NAND_ECC_ENGINE_TYPE_SOFT;
+ 	chip->ecc.algo = bch ? NAND_ECC_ALGO_BCH : NAND_ECC_ALGO_HAMMING;
+ 

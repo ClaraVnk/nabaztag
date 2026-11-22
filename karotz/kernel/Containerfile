@@ -13,5 +13,28 @@ ARG LINUX_SHA256=1e88e317e20dbc79a2cb9e3d9667e908b262d12e76eb66eed894c5460eb87fc
 RUN curl -fsSL -o /linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${LINUX}.tar.xz" && \
     echo "${LINUX_SHA256}  /linux.tar.xz" | sha256sum -c - && \
     mkdir /linux && tar -xJf /linux.tar.xz -C /linux --strip-components=1 && rm /linux.tar.xz
+# YAFFS (step 3): the Karotz's /usr is YAFFS1. yaffs2/ is Yocto's port of
+# Aleph One's code to 6.1 (its README); hooked in as fs/yaffs2.
+COPY yaffs2/ /linux/fs/yaffs2/
+RUN rm /linux/fs/yaffs2/README.md && \
+    sed -i 's#^source "fs/jffs2/Kconfig"#&\nsource "fs/yaffs2/Kconfig"#' /linux/fs/Kconfig && \
+    echo 'obj-$(CONFIG_YAFFS_FS) += yaffs2/' >> /linux/fs/Makefile && \
+    grep -q 'fs/yaffs2/Kconfig' /linux/fs/Kconfig
+# YAFFS1 on 512-byte pages (the Karotz's NAND, 16 bytes of OOB): the mount
+# chose in-band tags whenever the OOB could not hold YAFFS2's tags, also
+# for YAFFS1, which then refused itself ("NAND geometry problems ... inband
+# 1", 2026-11-22). The test is for YAFFS2 only.
+COPY yaffs1-small-page.patch /k/
+# nandsim (step 3, the emulator only: the shipped config has no nandsim)
+# gets noecc=1, the Karotz's NAND without ECC.
+COPY nandsim-noecc.patch /k/
+# YAFFS1's tags as every kernel after 2.6.17 wrote them, the Karotz's
+# 2.6.32 included (yaffs1-mtd1/: 2009's yaffs_mtdif1.c, ported): today's
+# YAFFS writes the 16-byte spare of before, which neither fits the free OOB
+# nor reads an existing /usr.
+COPY yaffs1-mtd1/ /linux/fs/yaffs2/
+COPY yaffs1-mtd1.patch /k/
+RUN cd /linux && patch -p1 < /k/yaffs1-small-page.patch && patch -p1 < /k/nandsim-noecc.patch && \
+    patch -p1 < /k/yaffs1-mtd1.patch
 COPY karotz-6.1.config karotz-6.1-debug.config size.sh /k/
 CMD ["sh", "/k/size.sh"]

@@ -1,0 +1,11 @@
+--- a/fs/yaffs2/yaffs_vfs.c
++++ b/fs/yaffs2/yaffs_vfs.c
+@@ -2987,7 +2987,7 @@
+ 		yaffs_version = 2;
+ 	}
+ 
+-	if (mtd->oobavail < sizeof(struct yaffs_packed_tags2) ||
++	if ((yaffs_version == 2 && mtd->oobavail < sizeof(struct yaffs_packed_tags2)) ||
+ 	    options.inband_tags)
+ 		inband_tags = 1;
+ 
