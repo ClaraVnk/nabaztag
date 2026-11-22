@@ -78,5 +78,13 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
 
 ## Status
 
-- 2026-11-22: inventory done (this page). Next: step 1, after the Terrier
-  OS release in progress.
+- 2026-11-22: inventory done (this page).
+- 2026-11-22, step 1 done: Linux 6.1.192 with every part of the table
+  (S3C2440 on mini2440's board file, NAND, rt73usb with mac80211, the
+  UDA1341 with OSS, the camera interface, SPI, I2C, PWM, GPIO keys, USB
+  gadget and storage, cramfs) builds to a **2,456,408-byte xz zImage: it
+  fits mtd1 with 673 KiB to spare**, before YAFFS and the three own
+  drivers. `karotz/kernel/size.sh` says so (RUNBOOK). 6.1 hides S3C24xx
+  behind `UNUSED_BOARD_FILES` and an ARMv4T/v5-only kernel; tinyconfig also
+  turns off the MMU, power management and the block and network layers.
+  Next: step 2, the boot in QEMU.
