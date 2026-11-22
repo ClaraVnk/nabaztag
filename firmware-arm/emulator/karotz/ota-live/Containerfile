@@ -14,6 +14,8 @@
 #
 #   podman build -t karotz-ota-live -f firmware-arm/emulator/karotz/ota-live/Containerfile .
 #   podman run --rm karotz-ota-live
+#   podman run --rm -v <a built key dir>:/key:ro,Z karotz-ota-live   # a build not released yet:
+#       the rabbit runs the released image, and updates to that key's build
 FROM docker.io/library/alpine:3.22 AS kernel
 RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi \
         bc bison flex perl xz openssl-dev elfutils-dev linux-headers
@@ -51,4 +53,6 @@ RUN apk add --no-cache qemu-system-arm python3 e2fsprogs e2fsprogs-extra util-li
 COPY --from=kernel /out/ /ota/
 COPY --from=image /out/ /ota/
 COPY firmware-arm/emulator/karotz/ota/uncramfs.py firmware-arm/emulator/karotz/ota-live/root.sh firmware-arm/emulator/karotz/ota-live/phase.sh firmware-arm/emulator/karotz/ota-live/run.sh /ota/
+COPY karotz/lapinlibre/make-ota.py /mk/karotz/lapinlibre/make-ota.py
+COPY firmware-arm/signing/ed25519.py /mk/firmware-arm/signing/ed25519.py
 CMD ["sh", "/ota/run.sh"]
