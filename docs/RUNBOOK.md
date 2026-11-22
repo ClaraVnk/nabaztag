@@ -713,6 +713,21 @@ voice, adoption key, client settings and the Terrier's client are kept, the
 client and the controller run again. All pass on `v0.2.0-50` (2026-11-21,
 about 25 minutes on dev-loutre). Not covered: the radio (Gengar lost its
 Wi-Fi after the power cycle), the real flash's timing.
+A build not released yet is the update when its key's directory is mounted
+on `/key` (`podman run --rm -v ~/lapinlibre-work/usbkey:/key:ro,Z
+karotz-ota-live`): the rabbit runs the released image and updates to it.
+
+### Terrier OS's setup network, without the radio
+
+`karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of
+the setup network with a built key's own binaries under qemu-arm: the scan's
+parser on a real `iwlist` listing (strongest first, WPA3/WPA2/WPA/open, hidden
+and quoted names left out), `dnsmasq` as `hotspot.sh` starts it (every name is
+the rabbit; AAAA and HTTPS answered empty, where busybox `dnsd` answered NOTIMP
+and iPhones never opened the page, 2026-11-21), and `httpd` with the setup
+rules (the phones' check paths answer 200 and lead to `setup.html`; the old
+E404 rule named the setup page at the root and served busybox's own 404).
+The radio itself (the scan, the access point) is only proven on a Karotz.
 
 ### Terrier OS in Raspberry Pi Imager, and the guide's screenshots
 

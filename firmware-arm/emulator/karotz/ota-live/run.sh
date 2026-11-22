@@ -26,8 +26,16 @@ printf "SERVER=10.0.2.2\nIFACE=eth0\nEXTRA='--ok http://127.0.0.1'\n" > $C/terri
 cp $C/terrier/key $C/ota-test/key.before
 cp $C/terrier/settings $C/ota-test/settings.before
 cp $C/terrier/terrier-karotz $C/ota-test/client.before
-# The package where client 0.1.18 puts it: make-ota.py's files.
-cp -a /ota/pkg/. $C/os-update/
+# The package where client 0.1.18 puts it: make-ota.py's files -- of the
+# released build, or of a key mounted on /key (a build to update to).
+if [ -f /key/build_id ]; then
+    python3 /mk/karotz/lapinlibre/make-ota.py /key $W/newpkg > /dev/null
+    cp -a $W/newpkg/*.ota/. $C/os-update/
+    rm -f $C/os-update/manifest $C/os-update/manifest.sig
+    echo "== the update: $(sed -n 's/^BUILD_VERSION=//p' /key/install.conf), from $(sed -n 's/^BUILD_VERSION=//p' $K/install.conf)"
+else
+    cp -a /ota/pkg/. $C/os-update/
+fi
 cp /ota/phase.sh $C/ota-test/phase.sh
 chmod 755 $C/ota-test/phase.sh
 mke2fs -q -t ext2 -L usr -d $U $W/usr.ext2 400M
