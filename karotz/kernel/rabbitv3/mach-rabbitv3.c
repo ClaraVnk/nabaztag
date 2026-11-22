@@ -39,6 +39,7 @@
 #include <linux/input.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
+#include <linux/pwm.h>
 #include <linux/serial_core.h>
 #include <linux/serial_s3c.h>
 #include <linux/spi/spi.h>
@@ -321,6 +322,17 @@ static struct gpiod_lookup_table RabbitV3_udc_gpio_table = {
 	},
 };
 
+/* The Karotz's own character devices (rabbitv3-chardevs.c, step 5): the
+ * head button, the power-on line, the ears. Their PWM channels by name. */
+static struct platform_device RabbitV3_rabbit_button = { .name = "rabbit-button", .id = -1 };
+static struct platform_device RabbitV3_rabbit_poweron = { .name = "rabbit-poweron", .id = -1 };
+static struct platform_device RabbitV3_rabbit_ears = { .name = "rabbit-ears", .id = -1 };
+
+static struct pwm_lookup RabbitV3_pwm_lookup[] = {
+	PWM_LOOKUP("samsung-pwm", 0, "rabbit-ears", "left", 16320, PWM_POLARITY_NORMAL),
+	PWM_LOOKUP("samsung-pwm", 1, "rabbit-ears", "right", 16320, PWM_POLARITY_NORMAL),
+};
+
 static struct platform_device *RabbitV3_devices[] __initdata = {
 	&s3c_device_ohci,
 	&s3c_device_wdt,
@@ -332,6 +344,10 @@ static struct platform_device *RabbitV3_devices[] __initdata = {
 	&s3c_device_nand,
 	&s3c_device_usbgadget,
 	&RabbitV3_button_device,
+	&samsung_device_pwm,
+	&RabbitV3_rabbit_button,
+	&RabbitV3_rabbit_poweron,
+	&RabbitV3_rabbit_ears,
 	&RabbitV3_uda134x_codec,
 	&RabbitV3_uda134x,
 };
@@ -420,6 +436,7 @@ static void __init RabbitV3_init(void)
 	s3c2410_modify_misccr(S3C2410_MISCCR_USBHOST | S3C2410_MISCCR_USBSUSPND0 |
 			      S3C2410_MISCCR_USBSUSPND1, 0);
 
+	pwm_add_table(RabbitV3_pwm_lookup, ARRAY_SIZE(RabbitV3_pwm_lookup));
 	platform_add_devices(RabbitV3_devices, ARRAY_SIZE(RabbitV3_devices));
 	spi_register_board_info(RabbitV3_spi_board_info, ARRAY_SIZE(RabbitV3_spi_board_info));
 }
