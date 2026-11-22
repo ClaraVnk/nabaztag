@@ -370,6 +370,31 @@ tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #   fix: mic: <mac> captured N bytes of audio
 ```
 
+### Config mode from three short presses of the head (Naboot 1.2.1.3)
+
+Offline (the bootloader: a rabbit that cannot reach its Wi-Fi any more),
+`boot-mods/triplepress.mtl`; online (the runtime on its server),
+`bytecode/patch_triple_press.py` and the opcodes of `apply-mods.py
+config_boot`, used only when the warren flips `cfg-boot:0` to 1. Build mode
+`naboot-1.2.1.2-triple` (1.2.1.2 + triple_press + config_boot); the
+emulator image with `config_boot` added to the release's emulator steps.
+From `firmware-arm/emulator` on the dev VM:
+
+```sh
+# offline: control = the 1.2.1.2 Nab.elf, still a station at 40 s
+NO_BUILD=1 TAG=emu-1212 RUNTIME=podman tools/config-triple-press.sh <Nab.elf>
+#   fix: "ok   the rabbit is its own access point", GET / 200
+podman build -f firmware-arm/emulator/Containerfile -t emu-1213 \
+  --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.2.1.2-triple),config_boot .
+# online: the runtime as built (cfg-boot:0) is the control, and a copy with
+# the literal flipped to cfg-boot:1 (what the warren serves a 1.2.1.3) the fix
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <runtime.hybrid> \
+    --emulator emu-1213 --elf <naboot-1.2.1.2-triple Nab.elf> --out /tmp/tp \
+    --scenario scenarios/vm/xmpp-triple-press.txt
+# 2026-11-22: control "controlwait ev=2" (a double click), a station at 170 s;
+#   fix "the rabbit restarts after its reset (reason 6...)", master at 170 s, GET / 200
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
