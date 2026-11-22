@@ -1,5 +1,6 @@
 #!/bin/sh
-# Measure a Karotz before anything is installed on it (Clara, 2026-11-19:
+# Measure a Karotz (factory or Terrier OS, whose linuxrc also runs a key's
+# autorun) before anything is installed on it (Clara, 2026-11-19:
 # "on mesure d'abord, on installe ensuite"). Read-only on the rabbit: it
 # only reads, and writes every result to the key itself.
 #
@@ -31,9 +32,18 @@ ls -la /karotz/bin /usr/karotz/bin /usr/bin /bin /sbin > $O/bins.txt
 ls -laR /usr > $O/usr-tree.txt
 ls -laR /karotz/etc /usr/etc > $O/etc-tree.txt
 
-# Every flash partition, data only (no OOB), in the order of /proc/mtd.
+# Every flash partition, in the order of /proc/mtd. The YAFFS ones (/usr and
+# its rescue) WITH their OOB when busybox has nanddump (Terrier OS does, the
+# factory system does not): YAFFS1 keeps in the OOB which file and which
+# chunk each page is, and a dump without it cannot be mounted (2026-11-22,
+# step 3 of docs/TERRIER-OS-KERNEL.md). Data + OOB: 528 bytes a page.
 for n in $(sed -n 's/^mtd\([0-9]*\):.*/\1/p' /proc/mtd); do
     [ -c /dev/mtd$n ] || mknod /dev/mtd$n c 90 $((n * 2))
+    if grep -q "^mtd$n:.*yaffs" /proc/mtd && busybox --list 2>/dev/null | grep -qx nanddump; then
+        busybox nanddump -o -f $O/mtd$n-oob.bin /dev/mtd$n
+        ls -l $O/mtd$n-oob.bin
+        continue
+    fi
     if [ -x /sbin/nanddump ]; then
         /sbin/nanddump -o -f $O/mtd$n.bin /dev/mtd$n
     else
