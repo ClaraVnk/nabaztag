@@ -1,0 +1,14 @@
+# Violet's own assembler (firmware-arm/vendor/violet-platform/java/Vasm.java,
+# unchanged) with stand-ins for the platform classes it imports, to turn
+# Violet's v1 programs into the exact 05 frame its server sent.
+#
+#   podman build -t violet-vasm -f firmware-arm/emulator/tools/violet-vasm/Containerfile .
+#   podman run --rm violet-vasm Nabaztag_wait.vasm > wait.frame
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache openjdk17-jdk
+COPY firmware-arm/vendor/violet-platform/java/Vasm.java firmware-arm/vendor/violet-platform/java/VasmException.java /src/net/violet/platform/vasm/
+COPY firmware-arm/emulator/tools/violet-vasm/stubs/ /src/
+COPY firmware-arm/vendor/violet-platform/vasm/ /out/net/violet/platform/vasm/
+RUN cd /src && javac -encoding ISO-8859-1 -nowarn -d /out $(find . -name '*.java') 2>&1 | grep -v '^Note:' || true; \
+    test -f /out/net/violet/platform/vasm/Dump.class
+ENTRYPOINT ["java", "-cp", "/out", "net.violet.platform.vasm.Dump"]
