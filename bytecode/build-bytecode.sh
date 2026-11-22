@@ -175,6 +175,10 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
+# A sleeping rabbit reports its head and its tags (2026-11-22: Violet's
+# sleepRun read neither, so only the server could wake a rabbit).
+echo "==> patch_head_in_sleep.py  (the head and the tags, read while asleep)"
+python3 "$HERE/patch_head_in_sleep.py" "$BC/sources/main.mtl"
 if [ "${EARS_REARM:-1}" = 1 ]; then
   echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
   python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"

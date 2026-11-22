@@ -1,0 +1,30 @@
+# bytecode: bootloader
+#
+# A sleeping rabbit, its head and a tag. Run as boot 2 of
+# tools/xmpp-tls-proof.sh --scenario, with `--at 100 sleep '{"asleep":true}'`:
+# the session runs TLS 1.3 PSK (bound about 80 s in), the warren puts the
+# rabbit to sleep at 100 s (the ears reset, then `asleep` is bound), and
+# then the owner, in the dark: a double click at 140 s, a long press at
+# 155 s, a tag at 170 s.
+#
+# What the two runtimes do with it, read in the Terrier's log:
+#
+#   control (the runtime before bytecode/patch_head_in_sleep.py): nothing
+#      after the `asleep` bind -- Violet's sleepRun read neither the button
+#      nor the reader (2026-11-22, the same on a real rabbit);
+#   fix: `button clic=2 (double_click)`, `button clic=3 (long_click)` and
+#      `rfid over the session`, the rabbit still bound `asleep`.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 190000
+
+at 20000 expect RUN
+at 140000 button down
+at 140150 button up
+at 140350 button down
+at 140500 button up
+at 155000 button down
+at 158000 button up
+at 170000 rfid d0021a0b0c0d0e0f
+at 174000 rfid none
+at 185000 expect RUN

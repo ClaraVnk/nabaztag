@@ -370,6 +370,24 @@ tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #   fix: mic: <mac> captured N bytes of audio
 ```
 
+### A sleeping rabbit, its head and its tags
+
+Violet's sleepRun read neither the button nor the reader, so a sleeping rabbit
+could only be woken from the server (2026-11-22, on a real rabbit: a double
+click, a long press and a tag, nothing on the wire).
+bytecode/patch_head_in_sleep.py reports them, in the dark. A runtime built
+with and one built without it (the control: skip that line of
+build-bytecode.sh), from `firmware-arm/emulator` on the dev VM:
+
+```sh
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <runtime.hybrid> \
+    --emulator emu-1212 --elf <naboot-1.2.1.2 Nab.elf> --out /tmp/hs \
+    --scenario scenarios/vm/xmpp-sleep-head.txt --at 100 sleep '{"asleep":true}'
+#   control: nothing after the `asleep` bind
+#   fix: button clic=2 (double_click), button clic=3 (long_click), one
+#        `rfid over the session` for a tag resting 4 s, still bound `asleep`
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
