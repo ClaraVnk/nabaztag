@@ -393,16 +393,18 @@ int main(int argc, char **argv)
             nab_rng_seed_stored() ? "a" : "no");
   }
 
+  /* A reset asked by configBoot (reason 6, apply-mods.py config_boot) comes
+   * back here: the rabbit restarts, .extbss (the mark) kept, as on the board,
+   * and its radio and 802.11 state start over as RSTOUT_N makes them (the
+   * bootloader waits for an idle radio before it becomes an access point). */
+  if(setjmp(reboot_jmp))
+    sim_log("the rabbit restarts after its reset (reason 6: config mode asked)");
+  reboot_armed = 1;
   vap_init();
   ieee80211_init();
   rt2501_driver_install();
 
-  /* From here on it is main.c's sequence, in main.c's order. A reset asked
-   * by configBoot (reason 6, apply-mods.py config_boot) comes back here: the
-   * rabbit restarts, .extbss (the mark) kept, as on the board. */
-  if(setjmp(reboot_jmp))
-    sim_log("the rabbit restarts after its reset (reason 6: config mode asked)");
-  reboot_armed = 1;
+  /* From here on it is main.c's sequence, in main.c's order. */
   sim_log("vmemInit");
   vmemInit(0);
   /* Test fixture only: model a rabbit that has handed over to the runtime
