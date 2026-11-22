@@ -109,5 +109,6 @@ done
 c=$(curl -s -o $T/b -w '%{http_code}' http://127.0.0.1:8080/whatever)
 check "any other path is the setup page" "grep -q 'Network name' $T/b"
 check "the setup page asks for the networks around" "grep -q '/cgi-bin/wifi_networks' $R/usr/www/setup.html && [ -x $R/usr/www/cgi-bin/wifi_networks ]"
+check "the setup page has its Diagnostic, never a password" "grep -q '/cgi-bin/setup_diag' $R/usr/www/setup.html && [ -x $R/usr/www/cgi-bin/setup_diag ] && grep -q 'hotspot/active' $R/usr/www/cgi-bin/setup_diag && ! grep -qiE 'psk|password' $R/usr/www/cgi-bin/setup_diag"
 echo "$fails failure(s)"
 [ $fails = 0 ]
