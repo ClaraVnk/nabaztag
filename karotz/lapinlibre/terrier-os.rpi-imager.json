@@ -12,16 +12,16 @@
   },
   "os_list": [
     {
-      "name": "Terrier OS v0.2.0-54-g58b309b641b0 (Karotz, beta)",
+      "name": "Terrier OS v0.2.0-58-g19ea8d7cb2db (Karotz, beta)",
       "devices": ["karotz"],
       "description": "For a Karotz (Nabaztag v3), not a Raspberry Pi: LapinLibre with WPA3, built for Le Terrier. Set the Wi-Fi in the OS customisation (or in lapinlibre.txt on the key), then plug the key into the Karotz.",
-      "url": "https://github.com/ClaraVnk/nabaztag/releases/download/terrier-os-v0.2.0-54-g58b309b641b0/terrier-os-v0.2.0-54-g58b309b641b0.img.xz",
+      "url": "https://github.com/ClaraVnk/nabaztag/releases/download/terrier-os-v0.2.0-58-g19ea8d7cb2db/terrier-os-v0.2.0-58-g19ea8d7cb2db.img.xz",
       "init_format": "cloudinit",
       "release_date": "2026-11-22",
       "extract_size": 67108864,
-      "extract_sha256": "f1998f92e87424ff17df4ab2e0a8858077346358dbeedcb8152cf541c5751d1f",
-      "image_download_size": 24603740,
-      "image_download_sha256": "2ee49e462f42e1083e66c8f8e6964d1fbe0dddc1aa865a9d913c7446e3ec785d"
+      "extract_sha256": "a78ed619fdd62c7f1fcaa7be4b41054544fff36871f0e465aefa546443160c80",
+      "image_download_size": 24610592,
+      "image_download_sha256": "091b1787ef697c29de648af8a998fb1b14c31dfc541f4c79f809f71151315584"
     }
   ]
 }
