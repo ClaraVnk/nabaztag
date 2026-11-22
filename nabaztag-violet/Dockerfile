@@ -1,10 +1,15 @@
-ARG BUILD_FROM=python:3.15-alpine
+# The base is named here, not in build.yaml: since 2026 the Supervisor builds
+# with BuildKit and no longer reads build.yaml (Home Assistant's developer
+# blog, 2026-04-02), and a user's install was built on Home Assistant's own
+# base, s6 and no Python ("python3: not found", Vantosha's owner, 2026-11-22).
+# 3.13 at least: TLS for adopted rabbits needs SSLContext.set_psk_server_callback.
+# A multi-platform image: amd64 and aarch64 from the same line.
 
 # --- Stage 1: build whisper.cpp (bundled, local STT) ------------------------ #
 # Built on the SAME base as the runtime image so the musl ABI matches. OpenMP is
 # off and libstdc++/libgcc are linked statically, so the resulting binary needs
 # only musl libc at runtime.
-FROM ${BUILD_FROM} AS whisper
+FROM python:3.15-alpine AS whisper
 RUN apk add --no-cache build-base cmake curl
 # Pinned: a release tag, as a source archive from this project's own mirror
 # release (mirror-2026-11, a `git archive` of the tag's commit), checked
@@ -30,7 +35,9 @@ RUN curl -fsSL -o /whisper.tar.gz "${MIRROR}/whisper.cpp-${WHISPER_VERSION}.tar.
 # revision and checked against its SHA-256 (WHISPER_MODELS there).
 
 # --- Stage 2: the add-on --------------------------------------------------- #
-FROM ${BUILD_FROM}
+FROM python:3.15-alpine
+LABEL org.opencontainers.image.title="Nabaztag Terrier" \
+      org.opencontainers.image.source="https://github.com/ClaraVnk/nabaztag"
 WORKDIR /app
 
 # The server runs on the base image's own Python (/usr/local/bin/python3);
