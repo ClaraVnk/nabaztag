@@ -27,6 +27,13 @@ data-only dump of 2026-11-17 could not be mounted. That is what step 3 of
 `docs/TERRIER-OS-KERNEL.md` mounts with the 6.1 kernel. `mtd6-oob.bin` is
 about 242 MB: a key of 1 GB.
 
+Since 2026-11-22 the key also carries `oobdump` (built by `Containerfile`
+here, put on the key by make-key.sh): the busybox copy's spare turned out
+to be file text, not YAFFS tags. With it the YAFFS partitions come as
+`mtd5-raw.bin` and `mtd6-raw.bin` (512 + 16 bytes a page, the spare read
+with MEMREADOOB), and `oobdump-mtdN.txt` says how many spares were not
+blank: none at all on a /usr full of files means the read failed again.
+
 ## Steps
 
 1. Format a key of at least 512 MB as FAT32 (Mac: "MS-DOS (FAT)", Master

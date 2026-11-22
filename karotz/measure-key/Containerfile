@@ -1,0 +1,9 @@
+# oobdump for the Karotz's ARMv4T, static (musl), as the client is built
+# (terrier karotz/Containerfile): zig cc, -mcpu=arm920t, checked v4T.
+#   podman build -t karotz-oobdump -f karotz/measure-key/Containerfile karotz/measure-key
+#   podman run --rm -v "$PWD:/out:Z" karotz-oobdump cp /oobdump /out/
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache zig llvm
+COPY oobdump.c /src/oobdump.c
+RUN cd /src && zig cc -target arm-linux-musleabi -mcpu=arm920t -Os -static -o /oobdump oobdump.c && \
+    llvm-readelf -A /oobdump | grep -A1 'TagName: CPU_arch$' | grep -q 'ARM v4T$'

@@ -39,6 +39,16 @@ ls -laR /karotz/etc /usr/etc > $O/etc-tree.txt
 # step 3 of docs/TERRIER-OS-KERNEL.md). Data + OOB: 528 bytes a page.
 for n in $(sed -n 's/^mtd\([0-9]*\):.*/\1/p' /proc/mtd); do
     [ -c /dev/mtd$n ] || mknod /dev/mtd$n c 90 $((n * 2))
+    # oobdump (beside this script) reads each spare with MEMREADOOB: busybox
+    # nanddump -o gave Gengar's /usr a spare holding file text, not tags
+    # (2026-11-22). mtdN-raw.bin: 512 + 16 bytes a page.
+    if grep -q "^mtd$n:.*yaffs" /proc/mtd && [ -f $K/oobdump ]; then
+        # copied off the FAT key, which may not mount with exec rights
+        cp $K/oobdump /tmp/oobdump && chmod 755 /tmp/oobdump
+        /tmp/oobdump /dev/mtd$n $O/mtd$n-raw.bin > $O/oobdump-mtd$n.txt 2>&1
+        cat $O/oobdump-mtd$n.txt
+        continue
+    fi
     if grep -q "^mtd$n:.*yaffs" /proc/mtd && busybox --list 2>/dev/null | grep -qx nanddump; then
         busybox nanddump -o -f $O/mtd$n-oob.bin /dev/mtd$n
         ls -l $O/mtd$n-oob.bin

@@ -38,12 +38,15 @@ RUN cd /linux && patch -p1 < /k/yaffs1-small-page.patch && patch -p1 < /k/nandsi
     patch -p1 < /k/yaffs1-mtd1.patch
 # 6.1's spidev binds only the names in its table, not "spidev": the Karotz's
 # LED driver gets its own (step 4, 2026-11-22).
-COPY spidev-karotz.patch spi-s3c24xx-devres.patch /k/
+COPY spidev-karotz.patch spi-s3c24xx-devres.patch s3c2410-nand-inithw.patch /k/
 # spi-s3c24xx's setup put a devres on the spi device before its probe, and
 # the driver core refused every device on that bus (step 4, 2026-11-22).
 RUN cd /linux && patch -p1 < /k/spidev-karotz.patch && patch -p1 < /k/spi-s3c24xx-devres.patch
+# The NAND controller enabled before the chip is read: 6.1 scanned first,
+# which worked only behind a bootloader that had left it on (2026-11-22).
+RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
-COPY karotz-6.1.config karotz-6.1-debug.config size.sh /k/
+COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config size.sh /k/
 CMD ["sh", "/k/size.sh"]

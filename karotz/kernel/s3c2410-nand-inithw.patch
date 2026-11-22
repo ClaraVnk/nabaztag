@@ -1,0 +1,33 @@
+--- a/drivers/mtd/nand/raw/s3c2410.c
++++ b/drivers/mtd/nand/raw/s3c2410.c
+@@ -1159,6 +1159,18 @@
+ 		goto exit_error;
+ 	}
+ 
++	/*
++	 * The hardware first: nand_scan reads the chip's id through the
++	 * controller, which inithw is what enables (NFCONT MODE on the 2440).
++	 * Called after the scan, the probe worked only behind a bootloader that
++	 * had left the controller on; without one (QEMU, direct boot) every id
++	 * byte read 0 and "No NAND device found" (Karotz, 2026-11-22).
++	 */
++	/* initialise the hardware */
++	err = s3c2410_nand_inithw(info);
++	if (err != 0)
++		goto exit_error;
++
+ 	/* initialise all possible chips */
+ 
+ 	nmtd = info->mtds;
+@@ -1179,11 +1191,6 @@
+ 		s3c2410_nand_add_partition(info, nmtd, sets);
+ 	}
+ 
+-	/* initialise the hardware */
+-	err = s3c2410_nand_inithw(info);
+-	if (err != 0)
+-		goto exit_error;
+-
+ 	err = s3c2410_nand_cpufreq_register(info);
+ 	if (err < 0) {
+ 		dev_err(&pdev->dev, "failed to init cpufreq support\n");
