@@ -61,9 +61,18 @@ void sim_pace(void)
     return;
   }
   clock_gettime(CLOCK_MONOTONIC, &now);
+  target_us = (long long)sim_now() * 1000;
+  /* `fast <from> <to>`: hours of a night without Wi-Fi in seconds, nothing
+   * outside having anything to say meanwhile; the wall clock picks up again
+   * at <to> where it left off (Linotte, 2026-11-22). */
+  if(sim.fast_to && sim_now() >= sim.fast_from && sim_now() < sim.fast_to) {
+    started.tv_sec = now.tv_sec - (time_t)(target_us / 1000000);
+    started.tv_nsec = now.tv_nsec - (long)((target_us % 1000000) * 1000);
+    while(started.tv_nsec < 0) { started.tv_nsec += 1000000000L; started.tv_sec--; }
+    return;
+  }
   elapsed_us = (long long)(now.tv_sec - started.tv_sec) * 1000000
              + (now.tv_nsec - started.tv_nsec) / 1000;
-  target_us = (long long)sim_now() * 1000;
   wait_us = target_us - elapsed_us;
   if(wait_us > 0) {
     struct timespec rq;
@@ -230,6 +239,8 @@ void sim_note_fetch(void)
  *   tick <ms>                      virtual time per main-loop pass
  *   realtime                       pace the loop to the wall clock, for when
  *                                  something outside has its own timers
+ *   fast <from> <to>               under realtime, run unpaced between these
+ *                                  virtual times (a night without Wi-Fi)
  *   stop <ms>
  *   ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf] [sae-token]
  *                                 [h2e-only] [h2e]
@@ -361,6 +372,9 @@ int sim_load(const char *path)
       snprintf(sim.conf, sizeof(sim.conf), "%s", tok[1]);
     } else if(!strcmp(tok[0], "realtime")) {
       sim.realtime = 1;
+    } else if(!strcmp(tok[0], "fast") && n >= 3) {
+      sim.fast_from = (uint32_t)strtoul(tok[1], NULL, 10);
+      sim.fast_to = (uint32_t)strtoul(tok[2], NULL, 10);
     } else if(!strcmp(tok[0], "config-mode")) {
       sim.config_mode = 1;
     } else if(!strcmp(tok[0], "forged-beacons") && n >= 2) {

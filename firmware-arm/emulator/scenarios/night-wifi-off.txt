@@ -1,0 +1,15 @@
+# The box turns its Wi-Fi off for the night and back on in the morning.
+#
+# Linotte (a Nabaztag:tag on Naboot 1.2.1.2, its owner's box off from 23:45
+# to 04:30) lost the warren at 23:45 on 2026-11-21 and was back only at
+# 04:49, when it was unplugged: "orange fixe" until then, every night. Here
+# the access point goes away for five hours and comes back; the rabbit must
+# rejoin on its own, as it does after a short outage (wpa2-ap-restart.txt).
+ap 02:00:5e:10:00:01 Terrier 6 wpa2-ccmp -52
+psk nabaztag
+tick 50
+stop 18200000
+at 10000    expect RUN
+at 20000    down 02:00:5e:10:00:01
+at 18020000 up 02:00:5e:10:00:01
+at 18190000 expect RUN

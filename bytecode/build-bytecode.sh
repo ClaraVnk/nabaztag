@@ -89,6 +89,8 @@ echo "==> patch_rfid_xmpp.py  (RFID report over the XMPP session when it runs TL
 python3 "$HERE/patch_rfid_xmpp.py" "$BC/sources/main.mtl"
 echo "==> patch_liveness.py  (no BOSH; a write is not a read; 150 s read timeout)"
 python3 "$HERE/patch_liveness.py" "$BC/sources/main.mtl"
+echo "==> patch_xmpp_dns_chain.py  (a failed direct XMPP lookup ends its chain)"
+python3 "$HERE/patch_xmpp_dns_chain.py" "$BC/sources/main.mtl"
 # What the warren has the rabbit say rides inside that TLS session too (an
 # announce record, then the raw bytes, then `ST res:N`) when the warren
 # flipped "xmpp-res:0" to 1 under the HMAC; ST http://.../res/ as before
@@ -175,6 +177,10 @@ fi
 # goes back to sleep instead of staying half awake and deaf to sleep commands.
 echo "==> patch_sleep_after_program.py  (asleep before a program, asleep after it)"
 python3 "$HERE/patch_sleep_after_program.py" "$BC/sources/main.mtl"
+# A sleeping rabbit reports its head and its tags (2026-11-22: Violet's
+# sleepRun read neither, so only the server could wake a rabbit).
+echo "==> patch_head_in_sleep.py  (the head and the tags, read while asleep)"
+python3 "$HERE/patch_head_in_sleep.py" "$BC/sources/main.mtl"
 # Three presses of the head restart into config mode, on Naboot 1.2.1.3
 # (configBoot), when the warren flips cfg-boot (2026-11-22).
 echo "==> patch_triple_press.py  (three short presses: config mode)"

@@ -196,6 +196,7 @@ at 90000 expect RUN
 | `at <ms> expect-replay <u> <g> <r>` | assert `ccmp_replay_count`'s counters exactly: unicast and group frames whose packet number did not increase, and retransmissions; fails when the build has no such step |
 | `at <ms> expect-data-up <n>` | assert exactly `n` data frames were handed up by the driver (`./rabbit`: EAPOL is consumed below, nothing else sends data) |
 | `realtime` | pace the loop to the wall clock |
+| `fast <from> <to>` | under `realtime`, run unpaced between these two virtual times: hours of a night without Wi-Fi in seconds |
 | `fetch <ms> <event>` | any of the above, `<ms>` after the rabbit starts downloading a sound |
 
 `security` is one of `open`, `wep`, `wpa-tkip`, `wpa2-tkip`, `wpa2-ccmp`,

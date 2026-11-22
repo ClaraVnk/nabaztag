@@ -373,7 +373,7 @@ tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 ### Config mode from three short presses of the head (Naboot 1.2.1.3)
 
 Offline (the bootloader: a rabbit that cannot reach its Wi-Fi any more),
-`boot-mods/triplepress.mtl`; online (the runtime on its server),
+`firmware-arm/boot-mods/triplepress.mtl`; online (the runtime on its server),
 `bytecode/patch_triple_press.py` and the opcodes of `apply-mods.py
 config_boot`, used only when the warren flips `cfg-boot:0` to 1. Build mode
 `naboot-1.2.1.3` (1.2.1.2 + triple_press + config_boot); the
@@ -393,6 +393,23 @@ tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <ru
     --scenario scenarios/vm/xmpp-triple-press.txt
 # 2026-11-22: control "controlwait ev=2" (a double click), a station at 170 s;
 #   fix "the rabbit restarts after its reset (reason 6...)", master at 170 s, GET / 200
+
+### A sleeping rabbit, its head and its tags
+
+Violet's sleepRun read neither the button nor the reader, so a sleeping rabbit
+could only be woken from the server (2026-11-22, on a real rabbit: a double
+click, a long press and a tag, nothing on the wire).
+bytecode/patch_head_in_sleep.py reports them, in the dark. A runtime built
+with and one built without it (the control: skip that line of
+build-bytecode.sh), from `firmware-arm/emulator` on the dev VM:
+
+```sh
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <runtime.hybrid> \
+    --emulator emu-1212 --elf <naboot-1.2.1.2 Nab.elf> --out /tmp/hs \
+    --scenario scenarios/vm/xmpp-sleep-head.txt --at 100 sleep '{"asleep":true}'
+#   control: nothing after the `asleep` bind
+#   fix: button clic=2 (double_click), button clic=3 (long_click), one
+#        `rfid over the session` for a tag resting 4 s, still bound `asleep`
 ```
 
 ### The Nabaztag v1 (2005)
@@ -409,6 +426,27 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # 5/10 then 2/3 and stopped, a hand -> sd=8603, a 3 s press -> sd=0004,
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
 ```
+
+Violet's own v1 programs (`firmware-arm/vendor/violet-platform`, MIT) put
+together by Violet's own assembler, and served as Violet's server did, from
+the repository root on the dev VM:
+
+```sh
+podman build -t violet-vasm -f firmware-arm/emulator/tools/violet-vasm/Containerfile .
+podman run --rm violet-vasm Nabaztag_wait.vasm > wait.frame   # the 05 frame, 33747 bytes
+podman build -t nabaztag-v1 -f firmware-arm/emulator/v1/Containerfile firmware-arm
+python3 firmware-arm/emulator/tools/violet-vasm/violet_warren.py --port 28081 \
+    --frame wait.frame --ears 5 10 --after 3 &
+podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --seconds 120
+# 2026-11-22, firmware 2.0b: both ears home at 19 s ("motor stopped, slot 16"),
+# then after the order L5 R10 turn and stop at 52-53 s ("slot 4", "slot 9").
+# Violet served this same program to firmware 12, 14 and 20; ours reboots a
+# real 1.4b at every ear order.
+```
+
+A real v1's firmware, read over ICSP with a PICkit (read only):
+`firmware-arm/v1-icsp/README.md`; its serial log on a Raspberry Pi:
+`firmware-arm/v1-serial/README.md`.
 
 ### The Karotz (Nabaztag v3)
 
@@ -802,6 +840,55 @@ and rootfs of the step above:
 What is not proven yet: the /usr of a real Karotz. The data-only dump of
 2026-11-17 cannot be mounted (no OOB, so no tags); `karotz/measure-key`
 now dumps the YAFFS partitions with their OOB on Terrier OS.
+
+### A night without Wi-Fi (Linotte)
+
+A box that turns its Wi-Fi off for the night left Linotte "orange fixe"
+until unplugged (2026-11-21, 23:45 to 04:30). The firmware alone rejoins
+after five hours (`firmware-arm/emulator/scenarios/night-wifi-off.txt`); the whole rabbit did
+not: after 3 h 12 without Wi-Fi the runtime ran out of memory and reset in
+a loop. Every reconnect attempt started a DNS lookup chain that never ended
+(`bytecode/patch_xmpp_dns_chain.py`). `fast <from> <to>` in a scenario runs
+a stretch of a `realtime` run unpaced, so the night takes six minutes:
+
+    tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+        --bytecode <runtime.hybrid> --emulator <naboot-1.2.1.2 emulator image> \
+        --elf <Nab.elf> --out <dir> --scenario scenarios/vm/xmpp-night-wifi-off.txt
+    # 2026-11-22, runtime without the fix: heap 100% at 11,505,850 ms,
+    #   20,880 resets, final state IDLE
+    # with patch_xmpp_dns_chain.py: no reset, heap 48%, the TLS session back
+    #   after the Wi-Fi, final state RUN
+
+### Linux 6.1 for the Karotz: its own board file
+
+Step 4. `karotz/kernel/rabbitv3/` is the Karotz's board file ported from
+LapinLibre's 2.6.32 (machine RABBITV3, 1912) and `hook.sh` puts it in the
+6.1 tree (mach-types, Kconfig, Makefile). Three faults of 6.1 found on the
+way, each a patch of its own: the SPI controller had no clock lookup and an
+unprepared clock (the board file supplies both), its driver put a devres on
+the SPI device before probe so nothing could bind
+(`spi-s3c24xx-devres.patch`), and spidev no longer binds "spidev"
+(`spidev-karotz.patch`, the LED driver is "karotz-leds"). With the zImage
+and rootfs of the steps above:
+
+    MACH=1912 karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
+    # 2026-11-22: "Machine: RABBITV3 (KAROTZ)", /dev/spidev0.1, PASS
+    # (QEMU's OHCI fails the same under mini2440's board: the emulator's, not ours)
+
+### Linux 6.1 for the Karotz: its own drivers
+
+Step 5. `karotz/kernel/rabbitv3/rabbitv3-chardevs.c` ports LapinLibre's
+`rabbit_button`, `rabbit_poweron` and `rabbit_ears` (majors 52, 53, 60) to
+6.1 with the same bytes and ioctls, so the rootfs runs unchanged; the board
+file adds the Samsung PWM and the ears' channels by name. `boot.sh` with
+MACH=1912 now also checks the three drivers probed and reads one byte from
+/dev/rabbit_poweron:
+
+    MACH=1912 karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
+    # 2026-11-22: SPIDEV-OK, the three /dev/rabbit_* drivers, PO "1", PASS
+
+Not proven in QEMU: the ears moving (no motors, no encoder) and the
+encoders' trigger, left as the bootloader set it as 2.6.32 did.
 
 ### Terrier OS's setup network, without the radio
 

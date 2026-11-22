@@ -105,3 +105,14 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
   spare). Left for step 3: a real /usr, dumped with its OOB
   (karotz/measure-key on Terrier OS), mounted on 6.1, written, and read
   back by 2.6.32.
+- 2026-11-22, step 4 done in the emulator: the Karotz's board file runs on
+  6.1 ("Machine: RABBITV3 (KAROTZ)") to a shell, the LED driver's
+  /dev/spidev0.1 there. Ported pin by pin (6.1 has no raw GPIO registers),
+  NAND without ECC, the chip select and the USB device pull-up as GPIO
+  lookups. Left for steps 5 and 7: the ADC's battery inputs (6.1's S3C_ADC
+  is not built in a multiplatform kernel), the camera interface, the PWM.
+  zImage 2,492,976 bytes. Not proven: the real board (needs a flash).
+- 2026-11-22, step 5 done in the emulator: the Karotz's three drivers
+  (button, power-on, ears) on 6.1, same /dev nodes, bytes and ioctls; ears
+  on the Samsung PWM by name, encoder handlers threaded (pwm_config sleeps
+  in 6.1). Probed in QEMU; the ears themselves need Gengar.
