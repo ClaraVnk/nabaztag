@@ -778,6 +778,22 @@ What is not proven yet: the /usr of a real Karotz. The data-only dump of
 2026-11-17 cannot be mounted (no OOB, so no tags); `karotz/measure-key`
 now dumps the YAFFS partitions with their OOB on Terrier OS.
 
+### Linux 6.1 for the Karotz: its own board file
+
+Step 4. `karotz/kernel/rabbitv3/` is the Karotz's board file ported from
+LapinLibre's 2.6.32 (machine RABBITV3, 1912) and `hook.sh` puts it in the
+6.1 tree (mach-types, Kconfig, Makefile). Three faults of 6.1 found on the
+way, each a patch of its own: the SPI controller had no clock lookup and an
+unprepared clock (the board file supplies both), its driver put a devres on
+the SPI device before probe so nothing could bind
+(`spi-s3c24xx-devres.patch`), and spidev no longer binds "spidev"
+(`spidev-karotz.patch`, the LED driver is "karotz-leds"). With the zImage
+and rootfs of the steps above:
+
+    MACH=1912 karotz/kernel/qemu-mini2440/boot.sh /tmp/kz
+    # 2026-11-22: "Machine: RABBITV3 (KAROTZ)", /dev/spidev0.1, PASS
+    # (QEMU's OHCI fails the same under mini2440's board: the emulator's, not ours)
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

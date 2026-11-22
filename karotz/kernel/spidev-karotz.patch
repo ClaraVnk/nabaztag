@@ -1,0 +1,11 @@
+--- a/drivers/spi/spidev.c
++++ b/drivers/spi/spidev.c
+@@ -703,6 +703,8 @@
+ 	{ .name = "spi-petra" },
+ 	{ .name = "spi-authenta" },
+ 	{ .name = "em3581" },
++	/* The Karotz's LED driver, read and written from user space (Terrier OS). */
++	{ .name = "karotz-leds" },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(spi, spidev_spi_ids);
