@@ -1,0 +1,22 @@
+# bytecode: bootloader
+#
+# The box turns its Wi-Fi off for the night, the whole rabbit this time.
+#
+# Linotte (Naboot 1.2.1.2) lost the warren when its owner's box cut the
+# Wi-Fi at 23:45 on 2026-11-21 and stayed "orange fixe" until unplugged at
+# 04:49, the Wi-Fi back since 04:30. The firmware alone rejoins after five
+# hours (scenarios/night-wifi-off.txt passes), and so does this rabbit
+# after fifteen minutes off (first run, 2026-11-22). So the whole night,
+# 4 h 45 off: `fast` runs it unpaced, the realtime picking up again when
+# the Wi-Fi comes back, about six minutes in all. Run as boot 2 of
+# tools/xmpp-tls-proof.sh (--scenario): the verdict is a TLS session
+# registered after the Wi-Fi is back.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+fast 125000 17220000
+stop 17460000
+
+at 20000    expect RUN
+at 120000   down 02:00:5e:10:00:01
+at 17220000 up 02:00:5e:10:00:01
+at 17450000 expect RUN

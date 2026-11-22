@@ -89,6 +89,8 @@ echo "==> patch_rfid_xmpp.py  (RFID report over the XMPP session when it runs TL
 python3 "$HERE/patch_rfid_xmpp.py" "$BC/sources/main.mtl"
 echo "==> patch_liveness.py  (no BOSH; a write is not a read; 150 s read timeout)"
 python3 "$HERE/patch_liveness.py" "$BC/sources/main.mtl"
+echo "==> patch_xmpp_dns_chain.py  (a failed direct XMPP lookup ends its chain)"
+python3 "$HERE/patch_xmpp_dns_chain.py" "$BC/sources/main.mtl"
 # What the warren has the rabbit say rides inside that TLS session too (an
 # announce record, then the raw bytes, then `ST res:N`) when the warren
 # flipped "xmpp-res:0" to 1 under the HMAC; ST http://.../res/ as before
