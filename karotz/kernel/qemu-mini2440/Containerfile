@@ -1,0 +1,24 @@
+# An emulator of the Karotz's processor, the Samsung S3C2440: step 2 of
+# docs/TERRIER-OS-KERNEL.md. QEMU proper never had the S3C24xx; the one that
+# does is Michel Pollet's QEMU 0.10 "mini2440" (2009-2011), here as
+# ywandy/qemu-mini2440 at fc11033e: the original plus two 2017 commits that
+# make it link (-lz -lrt -lm) and compile vnc-tls.c. Read before use
+# (2026-11-22): nothing in its build fetches or runs anything else.
+#
+#   podman build -t qemu-mini2440 -f karotz/kernel/qemu-mini2440/Containerfile karotz/kernel/qemu-mini2440
+# Rocky, not Alpine: this 2009 C expects glibc (headers it includes by
+# implication; musl's struct timeval stops cmd.c), and GCC 11 is kinder to it.
+FROM docker.io/rockylinux/rockylinux:9
+RUN dnf -y -q install gcc make git zlib-devel perl diffutils which python3 && dnf clean all
+ARG REPO=https://github.com/ywandy/qemu-mini2440
+ARG COMMIT=fc11033ea299516964cf5b85390b90d3b61d390a
+RUN git clone -q "$REPO" /q && git -C /q checkout -q "$COMMIT"
+WORKDIR /q
+# Our one change: boot -kernel directly, ATAGs and a machine number (the
+# Karotz's bootloader does that; this machine expected a U-Boot).
+COPY direct-boot.py /direct-boot.py
+RUN python3 /direct-boot.py hw/mini2440.c
+# 2009 C under GCC 11: the old dialect and common symbols.
+RUN ./configure --target-list=arm-softmmu --disable-sdl --disable-gfx-check --disable-kvm \
+      --extra-cflags="-std=gnu89 -fcommon" \
+    && make -j"$(nproc)" && ./arm-softmmu/qemu-system-arm -M ? | grep -i mini2440

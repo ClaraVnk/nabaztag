@@ -7,13 +7,17 @@ set -eu
 cd /linux
 export ARCH=arm CROSS_COMPILE=arm-none-eabi-
 make -s tinyconfig
-scripts/kconfig/merge_config.sh -m .config /k/karotz-6.1.config > /dev/null
+# EXTRA: more fragments (karotz-6.1-debug.config for the emulator, step 2).
+scripts/kconfig/merge_config.sh -m .config /k/karotz-6.1.config ${EXTRA:-} > /dev/null
 make -s olddefconfig
 echo "== asked but not kept by Kconfig:"
-grep -E '^CONFIG_[A-Z0-9_]+=y' /k/karotz-6.1.config | while IFS= read -r line; do
+cat /k/karotz-6.1.config ${EXTRA:-} | grep -E '^CONFIG_[A-Z0-9_]+=y' | while IFS= read -r line; do
     grep -qx "$line" .config || echo "   ${line%=y}"
 done
 make -s -j"$(nproc)" zImage 2>&1 | grep -vE '^\s*$' | grep -v "warning: -z norelro" | tail -20
 z=$(stat -c %s arch/arm/boot/zImage)
 echo "== zImage: $z bytes (mtd1 holds 3145728: $(( (3145728 - z) / 1024 )) KiB left)"
-[ "$z" -le 3145728 ] && echo "FITS" || echo "TOO BIG"
+if [ "$z" -le 3145728 ]; then echo "FITS"; else echo "TOO BIG"; fi
+# OUT: where to copy the zImage (a mounted directory), for the emulator.
+[ -n "${OUT:-}" ] && cp arch/arm/boot/zImage "$OUT/"
+exit 0
