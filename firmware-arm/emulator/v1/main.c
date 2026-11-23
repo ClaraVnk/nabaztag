@@ -63,6 +63,20 @@ static void report_hot(void)
   for(int k = 0; k < 12 && best[k]; k++) printf("    %05X  %u\n", at[k], best[k]);
 }
 
+/* The gateway saw the rabbit close a connection (src/gw.c): where its PIC
+ * was, and who called it, to find why a v1 with no program stopped reading
+ * Violet's 33 KB answer after 506 bytes (2026-11-23). */
+void sim_log(const char *fmt, ...);
+void gw_rabbit_closed_hook(unsigned long down)
+{
+  char st[160]; int n = 0;
+  for(int i = B.pic.sp; i >= 1 && n < (int)sizeof(st) - 8; i--)
+    n += snprintf(st + n, sizeof(st) - n, " %05X", (unsigned)B.pic.stack[i]);
+  sim_log("v1: %s after %lu bytes down at pc %05X, stack%s",
+          (down & 0x80000000ul) ? "the warren closed" : "closed", down & 0x7ffffffful,
+          (unsigned)B.pic.pc, n ? st : " empty");
+}
+
 int main(int argc, char **argv)
 {
   const char *hex = "nabaztag.hex", *flash = NULL, *warren = NULL;

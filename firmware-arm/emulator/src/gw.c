@@ -38,6 +38,11 @@
 #include "vap.h"
 #include "gw.h"
 
+/* Where the emulated rabbit was when it closed a connection: the v1 prints
+ * its PIC's program counter and stack (v1/main.c), the ARM VM nothing. The
+ * v1 read 506 bytes of Violet's 33 KB wait program and closed (2026-11-23). */
+__attribute__((weak)) void gw_rabbit_closed_hook(unsigned long down) { (void)down; }
+
 struct gw_stats gw_stats;
 
 /* --- the wire --------------------------------------------------------- */
@@ -762,6 +767,7 @@ static void handle_tcp(uint32_t src, uint32_t dst, const uint8_t *tcp,
   if(flags & 0x01) {                       /* FIN */
     c->rcv_nxt++;
     sim_log("gw: the rabbit closed %s:%u", ipstr(src), sport);
+    gw_rabbit_closed_hook(c->down);
     conn_report(c, "closed by the rabbit");
     if(c->big) c->big = 3;
     tcp_send(c, 0x10, NULL, 0);
@@ -898,6 +904,7 @@ void gw_poll(void)
       if(!c->fin_sent) {
         c->fin_sent = 1;
         sim_log("gw: the warren closed %s:%u", ipstr(c->rabbit_ip), c->rabbit_port);
+        gw_rabbit_closed_hook(c->down | 0x80000000ul);   /* the warren's close: where the rabbit is */
         conn_report(c, "closed by the warren");
         tcp_send(c, 0x01 | 0x10, NULL, 0);
         gw_stats.tcp_closed++;
