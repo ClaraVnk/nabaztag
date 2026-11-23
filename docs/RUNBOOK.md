@@ -627,6 +627,23 @@ The last step logged is where it stopped; the next boot's reset report
 (`verify`, `verify_ok`, `flash` in rabbit_events) says what happened after.
 Never in a release: `bytecode/patch_ota_report.py`.
 
+### Loading a new runtime without unplugging (RB)
+
+`bytecode/patch_reload.py` (2026-11-23): the warren sends `RB` in the
+session, the runtime calls Violet's reboot (sysReboot, the reset_uc an update
+ends with), and the rabbit boots again on the runtime served now. The warren
+side is `POST /api/rabbits/<mac>/reload` (Naboot v2 only). Proof, control
+first (a runtime without the patch ignores RB):
+
+```sh
+cd firmware-arm/emulator
+tools/xmpp-tls-proof.sh --terrier <terrier image with /reload> --bytecode <runtime.hybrid> \
+    --emulator <emu of naboot-1.2.1.3> --elf <Nab.elf> --out /tmp/rl \
+    --scenario scenarios/vm/xmpp-reload.txt --at 100 reload '{}'
+# fix: "the rabbit restarts after its reset (reason 0)", a third "serving
+# bytecode" and a new session in /tmp/rl/terrier.log; control: neither
+```
+
 ## 6. The JTAG station
 
 Details: [`firmware-arm/jtag/README.md`](../firmware-arm/jtag/README.md) and
