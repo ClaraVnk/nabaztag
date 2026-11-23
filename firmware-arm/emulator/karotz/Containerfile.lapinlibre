@@ -7,7 +7,7 @@
 #
 #   podman build -t nabaztag-karotz-ll -f Containerfile.lapinlibre firmware-arm/emulator/karotz
 #   OS=lapinlibre tools/karotz-proof.sh ...
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 
 RUN apk add --no-cache bash busybox-extras qemu-arm curl mpg123 util-linux-misc \
         procps coreutils sox git

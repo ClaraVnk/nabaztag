@@ -11,7 +11,7 @@
 #   podman build -t nabaztag-karotz firmware-arm/emulator/karotz
 #   run by firmware-arm/emulator/tools/karotz-proof.sh, and by the Terrier's
 #   karotz/proof/run.sh against its own scenario
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 
 RUN apk add --no-cache bash busybox-extras qemu-arm curl mpg123 util-linux-misc \
         procps coreutils sox

@@ -12,7 +12,7 @@
 #
 #   podman build -t karotz-ota firmware-arm/emulator/karotz/ota
 #   podman run --rm karotz-ota
-FROM docker.io/library/alpine:3.22 AS kernel
+FROM docker.io/library/alpine:3.24 AS kernel
 RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi bc perl xz patch curl
 ARG KSHA=60a5ffe0206a0ea8997c29ccc595aa7dae55f6cb20c7d92aab88029ca4fef598
 RUN curl -fsSLO https://cdn.kernel.org/pub/linux/kernel/v2.6/longterm/v2.6.32/linux-2.6.32.71.tar.xz && \
@@ -26,7 +26,7 @@ COPY kernel.config /kernel.config
 COPY build-kernel.sh /build-kernel.sh
 RUN sh /build-kernel.sh && cc -o /out/gen_init_cpio /k/usr/gen_init_cpio.c
 
-FROM docker.io/library/alpine:3.22 AS image
+FROM docker.io/library/alpine:3.24 AS image
 RUN apk add --no-cache curl xz mtools python3
 COPY uncramfs.py /uncramfs.py
 ARG TOS=v0.2.0-50-ga60c9e8f14c5
@@ -39,7 +39,7 @@ RUN curl -fsSL -o /t.img.xz \
     python3 /uncramfs.py /r/rootfs.cramfs /out/rootfs && \
     test -x /out/rootfs/bin/bash && test -x /out/rootfs/sbin/nandwrite
 
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache qemu-system-arm python3
 COPY --from=kernel /out/ /ota/
 COPY --from=image /out/ /ota/

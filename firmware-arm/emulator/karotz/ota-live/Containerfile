@@ -16,7 +16,7 @@
 #   podman run --rm karotz-ota-live
 #   podman run --rm -v <a built key dir>:/key:ro,Z karotz-ota-live   # a build not released yet:
 #       the rabbit runs the released image, and updates to that key's build
-FROM docker.io/library/alpine:3.22 AS kernel
+FROM docker.io/library/alpine:3.24 AS kernel
 RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi \
         bc bison flex perl xz openssl-dev elfutils-dev linux-headers
 ARG KVER=6.12.116
@@ -35,7 +35,7 @@ RUN cd linux-$KVER \
  && make -s -j"$(nproc)" ARCH=arm CROSS_COMPILE=arm-none-eabi- zImage dtbs \
  && mkdir /out && cp arch/arm/boot/zImage arch/arm/boot/dts/arm/versatile-pb.dtb /out/
 
-FROM docker.io/library/alpine:3.22 AS image
+FROM docker.io/library/alpine:3.24 AS image
 RUN apk add --no-cache curl xz mtools python3
 COPY karotz/lapinlibre/make-ota.py /mk/karotz/lapinlibre/make-ota.py
 COPY firmware-arm/signing/ed25519.py /mk/firmware-arm/signing/ed25519.py
@@ -48,7 +48,7 @@ RUN curl -fsSL -o /t.img.xz \
     python3 /mk/karotz/lapinlibre/make-ota.py /out/key /tmp/pkg && \
     mkdir /out/pkg && cp -a /tmp/pkg/*.ota/. /out/pkg/ && rm -f /out/pkg/manifest /out/pkg/manifest.sig
 
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache qemu-system-arm python3 e2fsprogs e2fsprogs-extra util-linux-misc gzip
 COPY --from=kernel /out/ /ota/
 COPY --from=image /out/ /ota/

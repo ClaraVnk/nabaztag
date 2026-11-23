@@ -2,7 +2,7 @@
 # (terrier karotz/Containerfile): zig cc, -mcpu=arm920t, checked v4T.
 #   podman build -t karotz-oobdump -f karotz/measure-key/Containerfile karotz/measure-key
 #   podman run --rm -v "$PWD:/out:Z" karotz-oobdump cp /oobdump /out/
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache zig llvm
 COPY oobdump.c /src/oobdump.c
 RUN cd /src && zig cc -target arm-linux-musleabi -mcpu=arm920t -Os -static -o /oobdump oobdump.c && \
