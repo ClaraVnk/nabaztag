@@ -981,6 +981,34 @@ MACH=1912 now also checks the three drivers probed and reads one byte from
 Not proven in QEMU: the ears moving (no motors, no encoder) and the
 encoders' trigger, left as the bootloader set it as 2.6.32 did.
 
+### Linux 6.1 for the Karotz: kexec, nothing on the flash
+
+Step 6, the way onto a real Karotz without soldering: Terrier OS's 2.6.32
+kernel rebuilt with `CONFIG_KEXEC` and `CONFIG_ATAGS_PROC` (LapinLibre fork,
+branch `terrier-os-kexec`, `./build.sh system-kernel`) starts the 6.1 kernel
+from a USB key; the flash keeps its kernel, a power cut gives it back.
+`build.sh` builds a static kexec with Terrier OS's own SDK (kexec-tools
+2.0.20: 2.0.31 needs headers 2.6.32 lacks):
+
+    karotz/kexec/build.sh ~/lapinlibre-kexec/ll/work/toolchain/sdk/bin <out>
+    # 2026-11-23: ELF ARM, statically linked, Tag_CPU_arch v4T, 190 088 bytes
+
+`kexec-proof.sh` boots that 2.6.32 in QEMU as the Karotz on an initramfs
+holding kexec, the 6.1 zImage and its test ramdisk (Gengar's ramdisk
+unpacked gives busybox), loads 6.1 with `--atags` (2.6.32 has no device
+tree) and jumps:
+
+    karotz/kexec/kexec-proof.sh <dir> <ramdisk tree>
+    # 2026-11-23: "Linux version 2.6.32.71", "Starting new kernel", "Linux
+    #   version 6.1.192", "Machine: RABBITV3 (KAROTZ)", "Run /bin/sh", PASS
+
+QEMU needed one change, behind `QEMU_ARM920_PIPELINE=1` (`direct-boot.py`):
+2.6.32's `cpu_arm920_reset` turns the MMU off and jumps with an instruction
+the real CPU has already fetched; QEMU fetched it again at its virtual
+address and stopped ("Trying to execute code outside RAM", the control run).
+
+Next, on Gengar: the kexec kernel on the key first, then 6.1 by hand.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

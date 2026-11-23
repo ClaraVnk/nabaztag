@@ -126,3 +126,30 @@ if "always ready" not in t:
     t = t.replace(st_old, "        s->io[0] = s->status | NAND_IOSTATUS_BUSY;  /* bit 6 = ready: always ready */\n")
     nd.write_text(t)
 
+# The ARM920T's pipeline, for kexec only (QEMU_ARM920_PIPELINE=1): Linux
+# 2.6.32's cpu_arm920_reset turns the MMU off and its next instruction,
+# `mov pc, r0`, is already fetched on the real CPU; QEMU fetches it again at
+# its virtual address, 0xc0..., with no MMU, and stops ("Trying to execute
+# code outside RAM", karotz/kexec/kexec-proof.sh, 2026-11-23). With the
+# variable set, a kernel address read with the MMU off is the RAM it maps
+# (0xc0000000 -> 0x30000000), as that prefetch makes it on the board.
+hp = p.parent.parent / "target-arm" / "helper.c"
+h = hp.read_text()
+h_old = """    if ((env->cp15.c1_sys & 1) == 0) {
+        /* MMU/MPU disabled.  */
+        *phys_ptr = address;
+"""
+if "QEMU_ARM920_PIPELINE" not in h:
+    assert h.count(h_old) == 1, "get_phys_addr's MMU-off branch"
+    h = h.replace(h_old, h_old + """        {
+            static int pipeline = -1;
+            if (pipeline < 0)
+                pipeline = getenv("QEMU_ARM920_PIPELINE") != NULL;
+            if (pipeline && address >= 0xc0000000 && address < 0xc4000000)
+                *phys_ptr = address - 0xc0000000 + 0x30000000;
+        }
+""")
+    if "#include <stdlib.h>" not in h:
+        h = "#include <stdlib.h>\n" + h
+    hp.write_text(h)
+
