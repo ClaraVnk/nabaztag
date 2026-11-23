@@ -42,7 +42,8 @@ experimental builds stay out of git (see `../.gitignore`).
 **On a rabbit (2026-11-23):** Monsieur Lapin on 1.2.1.3: three presses opened
 config mode, and a double click woke it from sleep. Nabazprout and Monsieur
 Lapin took 1.2.1.4 over the air inside their sessions at 10:40 and 10:41 and
-came back alone. Emulator: `../emulator/tools/config-idle.sh` (closes at
+came back alone; on 1.2.1.4, the access point opened by three presses
+closed by itself after ten minutes (Clara). Emulator: `../emulator/tools/config-idle.sh` (closes at
 626 s; a phone on the page keeps it open; the 1.2.1.3 control stays open).
 This is the image they run, not a rebuild.
 
