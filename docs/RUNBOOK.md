@@ -1022,6 +1022,31 @@ the initramfs kexec places. The whole chain first in QEMU on Gengar's NAND:
     # 2026-11-23: 2.6.32, KEXEC-LOAD rc=0, 6.1, "usr mounted ro", PASS
     #   (no USB in QEMU: key and wlan0 absent)
 
+### Linux 6.1 for the Karotz: first run on Gengar, and where it stopped
+
+The measure key (above) on Gengar, 2026-11-23. 6.1 left no trace at first,
+with or without its drivers; the nose and the USB key could not say why.
+What found it, all on the key and in the repository:
+
+- a control first: `touch <key>/kexec/go-2632` kexecs into the rabbit's own
+  2.6.32 the same way (nose blue then green: kexec works on the board);
+- `ramoops`: 6.1 keeps its console in 1 MiB at 0x32000000 left out of its
+  memory (`mem=32M@0x30000000 mem=31M@0x32100000`, karotz-6.1-kexec.config);
+- the board's watchdog armed by hand before the jump (`devmem`, after
+  unbinding s3c2410_wdt: its shutdown hook stops it during `kexec -e`), so a
+  6.1 that stops is restarted with RAM kept, and the next 2.6.32 boot saves
+  the MiB to the key (`kexec/log/N-ramoops.bin`, read by `ramoops.py`);
+- `kexec/append.txt` for more of the command line (`initcall_debug`,
+  `initcall_blacklist=s3c2410wdt_driver_init`, which the watchdog needs).
+
+The console stopped at the board's init: `S3C_GPIO_SFN(1)` on port A, which
+6.1 maps to output (bank A: SFN(2) is the function), turned the memory bus's
+lines into outputs (GPACON 007ffffe -> 00000000, read in QEMU, which models
+no bus). With SFN(2), 6.1 runs on Gengar to the measure's end: 8 MTD
+partitions, /usr (YAFFS) mounted read-only, the USB key as sda, wlan0 up
+(rt73). Left: the UDA1341 card (-22), UART IRQ warnings, the restart
+without s3c2410_wdt.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of
