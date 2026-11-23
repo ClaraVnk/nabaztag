@@ -5,6 +5,9 @@
 # reading, 2026-11-23), what the kernel sees is written to the USB key under
 # kexec/log/, and the rabbit waits for the mains: power-cycled, it boots its
 # own 2.6.32 again. Every line also goes to the console, for QEMU.
+# The nose says how far it got, for a rabbit with no console (2026-11-23:
+# the first try left the key empty and the nose red, which 2.6.32 had set):
+# blue = 6.1 runs this, green = the key was written, purple = no key.
 B=/bin/busybox
 $B mkdir -p /proc /sys /dev /tmp /usr /key
 $B mount -t proc p /proc
@@ -14,6 +17,8 @@ $B mount -t tmpfs t /tmp
 O=/tmp/m
 $B mkdir -p $O
 say() { $B echo "MEASURE $*"; $B echo "$*" >> $O/summary.txt; }
+nose() { $B killall led 2> /dev/null; /karotz/bin/led -l "$1" -p "$1" > /dev/null 2>&1 & }
+nose 0000FF
 say "uname $($B uname -a)"
 $B cat /proc/cmdline > $O/cmdline.txt
 $B cat /proc/mtd > $O/mtd.txt
@@ -55,6 +60,9 @@ if [ -n "$KEY" ]; then
     $B mkdir -p $D && $B cp $O/* $D/ && $B sync
     $B umount $KEY
     say "written to the key: kexec/log/$n-6.1"
+    nose 00FF00
+else
+    nose FF00FF
 fi
 $B umount /usr 2> /dev/null
 say "done: unplug the rabbit to go back to 2.6.32"

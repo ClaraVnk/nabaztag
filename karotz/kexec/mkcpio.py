@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""An initramfs (newc cpio, gzip) from an unpacked Terrier OS ramdisk's /bin
-and /lib, an /init, and extra files: kexec-proof.sh's and the measure key's.
+"""An initramfs (newc cpio, gzip) from an unpacked Terrier OS ramdisk's /bin,
+/lib and /karotz/bin (the nose's `led` tool), an /init, and extra files: kexec-proof.sh's and the measure key's.
 
     mkcpio.py <out.cpio.gz> <ramdisk tree> <init> [name=path ...]
 """
@@ -20,13 +20,13 @@ def ent(name, mode, data=b"", rdev=(0, 0)):
     out.append(rec)
 
 
-for d in ("bin", "lib", "dev", "proc", "sys", "tmp", "usr", "key"):
+for d in ("bin", "lib", "karotz", "karotz/bin", "dev", "proc", "sys", "tmp", "usr", "key"):
     ent(d, stat.S_IFDIR | 0o755)
 ent("dev/console", stat.S_IFCHR | 0o600, rdev=(5, 1))
-for sub in ("bin", "lib"):
+for sub in ("bin", "lib", "karotz/bin"):
     for root, dirs, files in os.walk(os.path.join(tree, sub)):
         rel = os.path.relpath(root, tree)
-        if rel != sub:
+        if rel != sub and rel != "karotz":
             ent(rel, stat.S_IFDIR | 0o755)
         for f in files:
             p = os.path.join(root, f)
