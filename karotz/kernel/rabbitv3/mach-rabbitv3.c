@@ -367,13 +367,16 @@ static void __init RabbitV3_gpio_setup(void)
 
 	s3c_gpio_cfgall_range(S3C2410_GPB(0), 5, S3C_GPIO_OUTPUT, S3C_GPIO_PULL_NONE);
 
+	pr_info("rabbitv3: gpio A B\n");
 	s3c_gpio_cfgall_range(S3C2410_GPC(0), 16, S3C_GPIO_INPUT, S3C_GPIO_PULL_UP);
 	s3c_gpio_cfgall_range(S3C2410_GPD(0), 16, S3C_GPIO_INPUT, S3C_GPIO_PULL_UP);
 
+	pr_info("rabbitv3: gpio C D\n");
 	s3c_gpio_cfgall_range(S3C2410_GPE(0), 4, S3C_GPIO_SFN(2), S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(S3C2410_GPE(4), S3C_GPIO_OUTPUT);
 	s3c_gpio_cfgpin_range(S3C2410_GPE(11), 3, S3C_GPIO_SFN(2));
 
+	pr_info("rabbitv3: gpio E\n");
 	s3c_gpio_cfgall_range(S3C2410_GPG(2), 2, S3C_GPIO_SFN(3), S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(S3C2410_GPG(7), S3C_GPIO_SFN(3));
 	s3c_gpio_setpull(S3C2410_GPG(7), S3C_GPIO_PULL_NONE);
@@ -383,6 +386,7 @@ static void __init RabbitV3_gpio_setup(void)
 	s3c_gpio_cfgpin(S3C2410_GPG(11), S3C_GPIO_SFN(2));
 	s3c_gpio_setpull(S3C2410_GPG(11), S3C_GPIO_PULL_NONE);
 
+	pr_info("rabbitv3: gpio G\n");
 	s3c_gpio_cfgall_range(S3C2410_GPH(1), 5, S3C_GPIO_SFN(2), S3C_GPIO_PULL_NONE);
 	s3c_gpio_setpull(S3C2410_GPH(9), S3C_GPIO_PULL_NONE);
 	s3c_gpio_setpull(S3C2410_GPH(10), S3C_GPIO_PULL_NONE);
@@ -401,11 +405,21 @@ static void __init RabbitV3_init_time(void)
 	s3c24xx_timer_init();
 }
 
+/*
+ * One line per step of the board's init (2026-11-23): on Gengar, 6.1's
+ * console, kept by ramoops, stopped after "ramoops: using ..." and before
+ * "S3C2440: Initialising architecture" -- in here, most likely, the board's
+ * first run on real hardware. The last line logged names the step.
+ */
+#define RV3_STEP(n, what) pr_info("rabbitv3: init %d %s\n", n, what)
+
 static void __init RabbitV3_init(void)
 {
 	struct clk *upll, *spi;
 
+	RV3_STEP(0, "start");
 	RabbitV3_gpio_setup();
+	RV3_STEP(1, "gpio");
 
 	/* SPI0's clock: 6.1's S3C2440 clocks have the "spi" gate but no lookup
 	 * for the controller ("s3c2410-spi.0: No clock for device" in QEMU,
@@ -419,12 +433,14 @@ static void __init RabbitV3_init(void)
 		clk_prepare(spi);
 	}
 
+	RV3_STEP(2, "spi clock");
 	upll = clk_get(NULL, "upll");
 	if (!IS_ERR(upll)) {
 		clk_set_rate(upll, RABBITV3_UPLL_HZ);
 		clk_put(upll);
 	}
 
+	RV3_STEP(3, "upll");
 	s3c_nand_set_platdata(&RabbitV3_nand_info);
 	s3c_i2c0_set_platdata(&RabbitV3_i2c_info);
 	s3c_ohci_set_platdata(&RabbitV3_usb_info);
@@ -433,12 +449,16 @@ static void __init RabbitV3_init(void)
 	gpiod_add_lookup_table(&RabbitV3_udc_gpio_table);
 	s3c24xx_udc_set_platdata(&RabbitV3_udc_cfg);
 
+	RV3_STEP(4, "platdata");
 	s3c2410_modify_misccr(S3C2410_MISCCR_USBHOST | S3C2410_MISCCR_USBSUSPND0 |
 			      S3C2410_MISCCR_USBSUSPND1, 0);
 
+	RV3_STEP(5, "misccr usb host");
 	pwm_add_table(RabbitV3_pwm_lookup, ARRAY_SIZE(RabbitV3_pwm_lookup));
 	platform_add_devices(RabbitV3_devices, ARRAY_SIZE(RabbitV3_devices));
+	RV3_STEP(6, "devices");
 	spi_register_board_info(RabbitV3_spi_board_info, ARRAY_SIZE(RabbitV3_spi_board_info));
+	RV3_STEP(7, "done");
 }
 
 MACHINE_START(RABBITV3, "RABBITV3 (KAROTZ)")
