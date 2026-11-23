@@ -15,11 +15,40 @@
 > stock rabbit works fine with the Home Assistant add-on.
 
 This folder holds the firmware we ship: the hardware-verified release the
-community downloads (1.2.1.2). Every earlier release, and the old `minimal`
+community downloads (1.2.1.4). Every earlier release, and the old `minimal`
 rescue build, is in `archive/`. Each is reproducible and signed. Test / dev /
 experimental builds stay out of git (see `../.gitignore`).
 
-## `naboot-1.2.1.2.signed.sim` — the release
+## `naboot-1.2.1.4.signed.sim` — the release
+
+| | |
+|---|---|
+| **Hardware** | Nabaztag:tag v2 (2006 — mic + RFID) |
+| **Build mode** | `naboot-1.2.1.4` (`firmware-arm/apply-mods.py`) |
+| **Firmware version** | `1.2.1.4` |
+| **Build mark** | `z=2611230928` |
+| **Size** | 118 768 of 126 976 bytes |
+| **Signature** | Ed25519, by the Naboot project key (`../keys/signing_pubkey.h`) |
+| **sha256** | `d7ab6642f29c07bb9f1b44ed73991daf215baac598fd91f744d104aab9aebe0c` (the `.sim`); the plain image is `79a7d0c961ad…` |
+
+**What changed since 1.2.1.2:**
+
+- Three short presses of the head open config mode, on its server or
+  offline, without unplugging (1.2.1.3: `triple_press`, `config_boot`; online,
+  the runtime calls `configBoot` when the warren says the firmware has it).
+- Config mode closes by itself: ten minutes with nobody on the setup page and
+  the rabbit restarts as an unplug would (1.2.1.4: `config_timeout`).
+
+**On a rabbit (2026-11-23):** Monsieur Lapin on 1.2.1.3: three presses opened
+config mode, and a double click woke it from sleep. Nabazprout and Monsieur
+Lapin took 1.2.1.4 over the air inside their sessions at 10:40 and 10:41 and
+came back alone. Emulator: `../emulator/tools/config-idle.sh` (closes at
+626 s; a phone on the page keeps it open; the 1.2.1.3 control stays open).
+This is the image they run, not a rebuild.
+
+`naboot-1.2.1.2` is archived below.
+
+## `archive/naboot-1.2.1.2.signed.sim` — archived (the previous release)
 
 | | |
 |---|---|
