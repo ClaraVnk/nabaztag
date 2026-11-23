@@ -7,7 +7,7 @@
 # binaries as they are).
 #
 # No dump goes into this image: boot.sh takes the dump directory at run time.
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 
 RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi \
         bc bison flex perl xz openssl-dev elfutils-dev linux-headers \

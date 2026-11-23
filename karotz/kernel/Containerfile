@@ -4,7 +4,7 @@
 #
 #   podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
 #   podman run --rm karotz-kernel61
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache build-base bc bison flex perl xz curl gcc-arm-none-eabi \
       binutils-arm-none-eabi linux-headers openssl-dev elfutils-dev python3 diffutils findutils
 ARG LINUX=6.1.192

@@ -4,7 +4,7 @@
 #
 #   podman build -t violet-vasm -f firmware-arm/emulator/tools/violet-vasm/Containerfile .
 #   podman run --rm violet-vasm Nabaztag_wait.vasm > wait.frame
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache openjdk17-jdk
 COPY firmware-arm/vendor/violet-platform/java/Vasm.java firmware-arm/vendor/violet-platform/java/VasmException.java /src/net/violet/platform/vasm/
 COPY firmware-arm/emulator/tools/violet-vasm/stubs/ /src/

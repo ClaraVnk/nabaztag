@@ -12,7 +12,7 @@
 #
 #   podman build -t karotz-wpa3 firmware-arm/emulator/karotz/wpa3
 #   podman run --rm karotz-wpa3
-FROM docker.io/library/alpine:3.22 AS kernel
+FROM docker.io/library/alpine:3.24 AS kernel
 RUN apk add --no-cache build-base gcc-arm-none-eabi binutils-arm-none-eabi bc perl xz patch curl
 ARG KSHA=60a5ffe0206a0ea8997c29ccc595aa7dae55f6cb20c7d92aab88029ca4fef598
 RUN curl -fsSLO https://cdn.kernel.org/pub/linux/kernel/v2.6/longterm/v2.6.32/linux-2.6.32.71.tar.xz && \
@@ -29,7 +29,7 @@ COPY kernel.config /kernel.config
 COPY build-kernel.sh /build-kernel.sh
 RUN sh /build-kernel.sh control && sh /build-kernel.sh wpa3
 
-FROM docker.io/library/alpine:3.22 AS user
+FROM docker.io/library/alpine:3.24 AS user
 RUN apk add --no-cache zig make perl curl pkgconf bison flex linux-headers file build-base
 COPY sources.sha256 /src/
 WORKDIR /src
@@ -43,7 +43,7 @@ RUN sh /src/build-user.sh libs
 COPY hostapd.config wpa_supplicant.config init.c /src/
 RUN sh /src/build-user.sh apps
 
-FROM docker.io/library/alpine:3.22
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache qemu-system-arm cpio
 COPY --from=kernel /out/ /wpa3/
 COPY --from=user /out/ /wpa3/rootfs/
