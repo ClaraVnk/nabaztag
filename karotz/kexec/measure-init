@@ -1,0 +1,62 @@
+#!/bin/busybox sh
+# The 6.1 kernel's first boot on a real Karotz, started by kexec from
+# Terrier OS's 2.6.32 (karotz/kexec/autorun): a measure, nothing written to
+# the flash. /usr is mounted read-only (6.1's YAFFS has only been proven
+# reading, 2026-11-23), what the kernel sees is written to the USB key under
+# kexec/log/, and the rabbit waits for the mains: power-cycled, it boots its
+# own 2.6.32 again. Every line also goes to the console, for QEMU.
+B=/bin/busybox
+$B mkdir -p /proc /sys /dev /tmp /usr /key
+$B mount -t proc p /proc
+$B mount -t sysfs s /sys
+$B mount -t devtmpfs d /dev
+$B mount -t tmpfs t /tmp
+O=/tmp/m
+$B mkdir -p $O
+say() { $B echo "MEASURE $*"; $B echo "$*" >> $O/summary.txt; }
+say "uname $($B uname -a)"
+$B cat /proc/cmdline > $O/cmdline.txt
+$B cat /proc/mtd > $O/mtd.txt
+$B cat /proc/cpuinfo > $O/cpuinfo.txt
+say "mtd partitions $($B grep -c mtd /proc/mtd)"
+# /usr, read only: what Terrier OS's linuxrc mounts read-write.
+if $B mount -t yaffs -o ro /dev/mtdblock6 /usr 2>> $O/summary.txt; then
+    say "usr mounted ro: $($B ls /usr | $B tr '\n' ' ')"
+    say "usr VERSION $($B cat /usr/VERSION 2> /dev/null)"
+else
+    say "usr NOT mounted"
+fi
+# The key: the USB host and usb-storage, then FAT.
+i=0
+while [ $i -lt 30 ] && [ ! -e /dev/sda1 ] && [ ! -e /dev/sda ]; do $B sleep 1; i=$((i + 1)); done
+say "usb disk after ${i}s: $($B ls /dev/sd* 2> /dev/null | $B tr '\n' ' ')"
+KEY=
+for d in /dev/sda1 /dev/sda; do
+    [ -e $d ] && $B mount -t vfat $d /key 2>> $O/summary.txt && KEY=/key && break
+done
+say "key ${KEY:-NOT mounted}"
+# The Wi-Fi dongle (rt73usb) and a scan, no association.
+$B sleep 5
+$B ifconfig -a > $O/ifconfig.txt 2>&1
+if $B ifconfig wlan0 up 2>> $O/summary.txt; then
+    say "wlan0 up"
+    if [ -x /usr/sbin/iwlist ]; then
+        LD_LIBRARY_PATH=/usr/lib:/lib /usr/sbin/iwlist wlan0 scan > $O/scan.txt 2>&1
+        say "scan: $($B grep -c ESSID $O/scan.txt) networks"
+    fi
+else
+    say "wlan0 NOT up"
+fi
+$B ls /sys/bus/usb/devices > $O/usb.txt 2>&1
+$B dmesg > $O/dmesg.txt
+if [ -n "$KEY" ]; then
+    n=$($B ls $KEY/kexec/log 2> /dev/null | $B wc -l)
+    D=$KEY/kexec/log/$n-6.1
+    $B mkdir -p $D && $B cp $O/* $D/ && $B sync
+    $B umount $KEY
+    say "written to the key: kexec/log/$n-6.1"
+fi
+$B umount /usr 2> /dev/null
+say "done: unplug the rabbit to go back to 2.6.32"
+$B cat $O/summary.txt > /dev/console 2> /dev/null
+exec $B sh

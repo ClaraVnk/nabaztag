@@ -1007,7 +1007,20 @@ QEMU needed one change, behind `QEMU_ARM920_PIPELINE=1` (`direct-boot.py`):
 the real CPU has already fetched; QEMU fetched it again at its virtual
 address and stopped ("Trying to execute code outside RAM", the control run).
 
-Next, on Gengar: the kexec kernel on the key first, then 6.1 by hand.
+On Gengar (2026-11-23): the kexec kernel installed by Terrier OS's own key
+install (the v0.2.0-58 key, its zImage and KERNEL_MD5 replaced, a new
+BUILD_ID; karotz/ota's ten checks passed on it first). Then 6.1 is started
+once, as a measure: `make-key.sh` puts kexec, the 6.1 zImage, the measure
+initramfs (`measure-init`: /usr mounted READ-ONLY, the USB key, the Wi-Fi
+dongle, dmesg, written to the key's kexec/log/) and its `autorun` on the key;
+`touch <key>/kexec/go` arms it for one boot. The command line is written out:
+the bootloader's own carries `initrd=0x31800000,...`, which would win over
+the initramfs kexec places. The whole chain first in QEMU on Gengar's NAND:
+
+    karotz/kexec/make-key.sh <kexec> <6.1 zImage> <ramdisk tree> <key dir>
+    karotz/kexec/measure-proof.sh <dir> <ramdisk tree> <measure dir>
+    # 2026-11-23: 2.6.32, KEXEC-LOAD rc=0, 6.1, "usr mounted ro", PASS
+    #   (no USB in QEMU: key and wlan0 absent)
 
 ### Terrier OS's setup network, without the radio
 

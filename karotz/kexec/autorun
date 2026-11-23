@@ -1,0 +1,30 @@
+#!/bin/bash
+# Gengar, 6.1 on hardware: Terrier OS's linuxrc runs this from the USB key
+# at boot, under the 2.6.32 kernel built with CONFIG_KEXEC (karotz/kexec).
+# Only when kexec/go is on the key, and once (go is removed first): 6.1 is
+# loaded with the measure initramfs (measure-init, built by make-key.sh) and
+# started. Nothing is written to the flash; power-cycled, the rabbit boots
+# its own 2.6.32. Without kexec/go the boot carries on as usual.
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+K=/mnt/usbkey
+[ -e $K/kexec/go ] || exit 0
+rm -f $K/kexec/go
+mkdir -p $K/kexec/log
+D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32
+mkdir -p $D
+{ date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
+# Everything the jump needs in RAM: the key is put away before it.
+cp $K/kexec/kexec $K/kexec/zImage-6.1 $K/kexec/measure.cpio.gz /tmp/ || exit 0
+# Not the bootloader's command line: its initrd=0x31800000,... would win
+# over the initramfs kexec places (Gengar's dmesg, 2026-11-22); the board
+# file names the partitions. real-boot.sh's, with the measure's /init.
+/tmp/kexec -l /tmp/zImage-6.1 --atags --initrd=/tmp/measure.cpio.gz \
+    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0" >> $D/before.txt 2>&1
+rc=$?
+echo "kexec -l rc=$rc" >> $D/before.txt
+sync
+[ $rc = 0 ] || exit 0
+mount -o remount,ro /usr 2>> $D/before.txt
+mount -o remount,ro $K 2>> $D/before.txt
+sync
+/tmp/kexec -e
