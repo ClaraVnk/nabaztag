@@ -1035,8 +1035,8 @@ What found it, all on the key and in the repository:
 - the board's watchdog armed by hand before the jump (`devmem`, after
   unbinding s3c2410_wdt: its shutdown hook stops it during `kexec -e`), so a
   6.1 that stops is restarted with RAM kept, and the next 2.6.32 boot saves
-  the MiB to the key (`kexec/log/N-ramoops.bin`, read by `ramoops.py`);
-- `kexec/append.txt` for more of the command line (`initcall_debug`,
+  the MiB to the key (`<key>/kexec/log/N-ramoops.bin`, read by `ramoops.py`);
+- `<key>/kexec/append.txt` for more of the command line (`initcall_debug`,
   `initcall_blacklist=s3c2410wdt_driver_init`, which the watchdog needs).
 
 The console stopped at the board's init: `S3C_GPIO_SFN(1)` on port A, which
