@@ -46,8 +46,17 @@ with out.open("wb") as f:
             assert len(data) == pages * (PAGE + OOB), f"{oob.name}: {len(data)} bytes, want {pages * (PAGE + OOB)}"
             f.write(data)
         else:
-            data = (d / f"mtd{n}.bin").read_bytes()[:size]
-            assert len(data) == size, f"mtd{n}.bin: {len(data)} bytes, want {size}"
+            raw = (d / f"mtd{n}.bin").read_bytes()
+            # The key's `nanddump -o` keeps each page's spare after it: a
+            # 2 KiB page and 64 bytes, not the data alone. Read as data, it
+            # put Gengar's kernel and ramdisk 64 bytes further at every page,
+            # and its ramdisk would not inflate (2026-11-23). The spare it
+            # wrote is not the flash's (see oobdump), so an erased one here.
+            if len(raw) == pages * (PAGE + OOB):
+                data = b"".join(raw[i * (PAGE + OOB):i * (PAGE + OOB) + PAGE] for i in range(pages))
+            else:
+                data = raw[:size]
+            assert len(data) == size, f"mtd{n}.bin: {len(raw)} bytes, want {size} or {pages * (PAGE + OOB)}"
             for i in range(pages):
                 f.write(data[i * PAGE:(i + 1) * PAGE] + b"\xff" * OOB)
         total += pages

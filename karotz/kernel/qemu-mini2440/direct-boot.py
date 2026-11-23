@@ -113,3 +113,16 @@ if "row3" not in t:
         t = t.replace(old, new)
     nd.write_text(t)
 
+# The status register never said ready: bit 6 (NAND_STATUS_READY to Linux,
+# named BUSY here) stayed 0, and 6.1's nand_wait warned at every operation,
+# a stack trace on the console each time; Gengar's /usr took longer to mount
+# than the five minutes given (2026-11-23, real-boot.sh). Nothing here is
+# ever busy, so the status always says ready.
+nd = p.parent / "nand.c"
+t = nd.read_text()
+st_old = "        s->io[0] = s->status;\n"
+if "always ready" not in t:
+    assert t.count(st_old) == 1, "READSTATUS"
+    t = t.replace(st_old, "        s->io[0] = s->status | NAND_IOSTATUS_BUSY;  /* bit 6 = ready: always ready */\n")
+    nd.write_text(t)
+

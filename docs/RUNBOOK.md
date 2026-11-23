@@ -948,6 +948,24 @@ slices across mtd6) and compares it with the measure:
     # 2026-11-23: bin devtools etc karotz lib sbin scripts share spool www,
     #   VERSION=v0.2.0-58-g19ea8d7cb2db (Gengar's own), PASS
 
+### Linux 6.1 for the Karotz: its own system
+
+Step 4. `real-boot.sh` boots the 6.1 kernel in QEMU on the Karotz's own
+ramdisk (mtd2, a gzipped cramfs) with the command line its bootloader gives
+(Gengar's `/proc/cmdline`), the NAND rebuilt by `karotz-flash.py`:
+
+    karotz/kernel/qemu-mini2440/real-boot.sh <dir> <measure dir> [seconds]
+    # 2026-11-23: "Run /linuxrc", /usr mounted rw from the NAND, "[START]
+    #   starting init", its services up; those that need Wi-Fi fail (no
+    #   wlan0: QEMU has no USB here)
+
+Two things on the way. The key's `nanddump -o` copies (kernel, ramdisks)
+keep each 2 KiB page's 64-byte spare after it: `karotz-flash.py` and
+`real-boot.sh` take the data out of them (read whole, the ramdisk would not
+inflate). And QEMU's NAND never said ready (status bit 6): 6.1 warned at
+every operation, 45 000 console lines, and /usr was still mounting after
+five minutes; `direct-boot.py` now answers ready.
+
 ### Linux 6.1 for the Karotz: its own drivers
 
 Step 5. `karotz/kernel/rabbitv3/rabbitv3-chardevs.c` ports LapinLibre's
