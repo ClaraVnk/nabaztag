@@ -465,13 +465,15 @@ Violet's wait program shows the (service, value) sources it is sent on the
 belly; the emulator logs the LED driver's dot correction (`leds dc:`, 16
 outputs, 7 bits each), which carries the colours. `violet_warren.py --info
 TYPE VALUE` fills a source; `v1-violet-info.sh` compares no source, the
-weather "sun" and the weather "rain":
+weather "sun" and "rain", the air (7 5) and the mail (6 1). With no source
+the program still lights the belly in a default colour (@inforst), so each
+source must show belly patterns the run without one never has:
 
 ```sh
 tools/v1-violet-info.sh [seconds]
-# 2026-11-23, firmware 2.0b: none = the nose's outputs 12-13 only; sun = the
-# belly's outputs 3 5 6 8 9 11 at 0x64 (red and green: yellow); rain =
-# output 10 alone; PASS
+# 2026-11-23, firmware 2.0b: patterns not seen without a source: sun 10
+#   (outputs 3 5 6 8 9 11 at 0x64: red and green, yellow), rain 5, air 10,
+#   mail 2; PASS
 ```
 
 A real v1's firmware, read over ICSP with a PICkit (read only):
