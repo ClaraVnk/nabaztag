@@ -360,12 +360,27 @@ static struct platform_device *RabbitV3_devices[] __initdata = {
  * GPG the SPI chip selects nSS0/nSS1, SPICLK1, GPG9 an output and GPG11
  * EINT19, GPH UART0 and UART1. GPF is left as the bootloader set it.
  */
+/* Ports A and B, logged around each call: on Gengar 6.1 stopped after
+ * "init 0 start" and before "gpio A B" (2026-11-23), so in one of these
+ * three; GPA is the memory bus's address and control lines. */
+#define RV3_REGS(what) pr_info("rabbitv3: gpio %s GPACON %08x GPBCON %08x GPBUP %08x\n", what, \
+	__raw_readl(S3C2410_GPACON), __raw_readl(S3C2410_GPBCON), __raw_readl(S3C2410_GPBUP))
+
 static void __init RabbitV3_gpio_setup(void)
 {
+	RV3_REGS("before");
 	s3c_gpio_cfgpin(S3C2410_GPA(0), S3C_GPIO_OUTPUT);
-	s3c_gpio_cfgpin_range(S3C2410_GPA(1), 22, S3C_GPIO_SFN(1));
+	RV3_REGS("GPA0");
+	/* SFN(2), not SFN(1): 6.1's bank A maps SFN(1) to output and SFN(2) to
+	 * the pin's function (s3c24xx_gpio_setcfg_abank, "Map output to 0, and
+	 * SFN2 to 1"). SFN(1) turned the memory bus's address and control lines
+	 * into outputs and froze Gengar at its first run (2026-11-23); QEMU
+	 * models no bus and never noticed. */
+	s3c_gpio_cfgpin_range(S3C2410_GPA(1), 22, S3C_GPIO_SFN(2));
+	RV3_REGS("GPA1-22");
 
 	s3c_gpio_cfgall_range(S3C2410_GPB(0), 5, S3C_GPIO_OUTPUT, S3C_GPIO_PULL_NONE);
+	RV3_REGS("GPB0-4");
 
 	pr_info("rabbitv3: gpio A B\n");
 	s3c_gpio_cfgall_range(S3C2410_GPC(0), 16, S3C_GPIO_INPUT, S3C_GPIO_PULL_UP);
