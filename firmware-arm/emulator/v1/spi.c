@@ -163,11 +163,33 @@ static void tlc_byte(uint8_t in)
   tlc_shift[sizeof(tlc_shift) - 1] = in;
 }
 
+static uint8_t tlc_dc[14];             /* the last dot correction latched */
+
 void spi_latch(void)
 {
   int dc_mode = ((B.lat[PA] & ~B.tris[PA]) >> 5) & 1;   /* MODE: RA5 */
   uint16_t v = (uint16_t)((tlc_shift[12] << 8) | tlc_shift[13]);
-  if(dc_mode) return;
+  /* The dot correction: 7 bits per output, 112 bits, how bright each LED
+   * is -- the belly's colours (2026-11-23: Violet's wait program shows its
+   * sources there; only the on/off word was logged, so the belly showed
+   * nothing). Output 15 first: the 16 values from the shift register. */
+  if(dc_mode) {
+    if(memcmp(tlc_dc, tlc_shift, sizeof(tlc_dc))) {
+      char s[16 * 3 + 1], *q = s;
+      for(int out = 15; out >= 0; out--) {
+        int bit = out * 7, val = 0;
+        for(int b = 6; b >= 0; b--) {
+          int pos = bit + b, byte = 13 - pos / 8, sh = pos % 8;
+          val = (val << 1) | ((tlc_shift[byte] >> sh) & 1);
+        }
+        q += sprintf(q, "%02x ", val);
+      }
+      q[-1] = 0;
+      board_log("leds dc: %s", s);
+      memcpy(tlc_dc, tlc_shift, sizeof(tlc_dc));
+    }
+    return;
+  }
   if(v != tlc_onoff) {
     char s[17];
     for(int i = 0; i < 16; i++) s[i] = (v >> (15 - i)) & 1 ? '#' : '.';
