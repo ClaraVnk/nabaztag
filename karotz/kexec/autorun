@@ -58,11 +58,17 @@ rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync
 [ $rc = 0 ] || exit 0
-# The board's own watchdog, armed now (2.6.32's s3c2410_wdt, 30 s): 6.1 that
-# stops anywhere is restarted, RAM kept, and the ramoops above saves its
-# console. 6.1 must not stop it: the key's append.txt blacklists its
-# s3c2410wdt_driver_init, and clk_ignore_unused keeps its clock running.
-watchdog -T 30 -t 100 /dev/watchdog 2>> $D/before.txt
+# The board's own watchdog, armed now (~30 s): 6.1 that stops anywhere is
+# restarted, RAM kept, and the ramoops above saves its console. Not through
+# /dev/watchdog: kexec -e shuts the drivers down and s3c2410_wdt's shutdown
+# stops it (Gengar, 2026-11-23: no restart, no log). The driver is unbound
+# first (its remove stops it too), then the registers are set by hand:
+# WTCNT 61788 ticks of PCLK 67.5 MHz / 256 / 128, WTCON prescaler 255,
+# enable, /128, reset. 6.1 must not stop it: append.txt blacklists its
+# s3c2410wdt_driver_init; clk_ignore_unused keeps its clock running.
+echo s3c2410-wdt > /sys/bus/platform/drivers/s3c2410-wdt/unbind 2>> $D/before.txt
+devmem 0x53000004 32 61788 && devmem 0x53000008 32 61788 && devmem 0x53000000 32 0xFF39
+echo "WTCON $(devmem 0x53000000 32) WTCNT $(devmem 0x53000008 32)" >> $D/before.txt
 mount -o remount,ro /usr 2>> $D/before.txt
 mount -o remount,ro $K 2>> $D/before.txt
 sync
