@@ -7,8 +7,11 @@
 #
 # Runs scenarios/vm/config-idle.txt (PHONE=1: config-idle-phone.txt) through
 # config-pages.sh's VM build; same environment (RUNTIME, STEPS, TAG,
-# NO_BUILD). The control is a Naboot 1.2.1.3 image: its own access point to
-# the end, every "expect-mode managed" fails.
+# NO_BUILD). The emulator image must carry the image's core opcodes: build
+# it with MOD_STEPS from emu-steps.py naboot-1.2.1.3 (TAG=...). With
+# run.sh's default steps the 1.2.1.4 bootloader ran on the wrong opcodes and
+# the VM crashed at boot (2026-11-23). The control is a Naboot 1.2.1.3 image:
+# its own access point to the end, "expect-mode managed" fails.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="$(mktemp)"; trap 'rm -f "$LOG"' EXIT
