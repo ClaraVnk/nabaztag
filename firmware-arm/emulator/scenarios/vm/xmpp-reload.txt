@@ -1,0 +1,21 @@
+# bytecode: bootloader
+#
+# The warren restarts a rabbit so that it loads the runtime served now,
+# without anyone unplugging it (Clara, 2026-11-23). Run as boot 2 of
+# tools/xmpp-tls-proof.sh --scenario with `--at 100 reload '{}'`: the
+# session runs TLS (bound about 80 s in), at 100 s the warren sends RB, the
+# runtime calls Violet's reboot (sysReboot -> reset_uc), and the rabbit
+# boots again, fetches its runtime and binds a new session.
+#
+#   control (a runtime without patch_reload.py): RB is a key it does not
+#      know, no reset, one session;
+#   fix: "the rabbit restarts after its reset (reason 0)", RUN again by
+#      250 s, a second session in the warren's log.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+follow-resets
+stop 260000
+
+at 20000 expect RUN
+at 90000 expect RUN
+at 250000 expect RUN

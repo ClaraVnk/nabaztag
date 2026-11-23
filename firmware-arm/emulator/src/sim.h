@@ -160,6 +160,7 @@ struct sim_scenario {
   uint32_t         fast_from, fast_to; /* `fast`: unpaced between these */
   int              run_entries;  /* how many times ieee80211_state reached RUN */
   int              config_mode;  /* the head button is held at power-on */
+  int              follow_resets; /* `follow-resets`: every reset starts a new boot */
   /* forged-beacons: a stranger's beacon with each of these elements, next
      to every beacon round, on the first AP's channel (review S-1) */
   int              forged[8];
