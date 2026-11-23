@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Put a Karotz's whole NAND back together from the measure key's dumps, as
-QEMU's mini2440 NAND reads a -mtdblock file: every 512-byte page followed by
-its 16 bytes of OOB, 524288 pages for the 256 MiB chip (id 71).
+QEMU's mini2440 NAND reads a -mtdblock file: every page followed by its OOB.
 
-    karotz-flash.py <measure dir> <out>
+    karotz-flash.py <measure dir> <out>      (prints the chip id last)
+
+The geometry is the chip the factory kernel names in dmesg.txt. Gengar's is
+a Hynix 0xDA, 2048-byte pages and 64 bytes of OOB (measure of 2026-11-23,
+oobdump: 119808 pages of 2112 bytes in mtd6); the 512-byte id 71 assumed
+before it held the bytes in the wrong pages, and /usr mounted empty.
 
 mtd5 and mtd6 (YAFFS) come with their OOB (mtdN-raw.bin from oobdump, or
 mtdN-oob.bin from busybox nanddump -o, whose spare was not real); the
@@ -14,12 +18,17 @@ import re
 import sys
 from pathlib import Path
 
-PAGE, OOB, PAGES = 512, 16, 524288
+# Chip id -> page, OOB, pages (256 MiB both): what QEMU's nand.c builds.
+GEOMETRY = {0x71: (512, 16, 524288), 0xDA: (2048, 64, 131072)}
 
 d, out = Path(sys.argv[1]), Path(sys.argv[2])
+dmesg = (d / "dmesg.txt").read_text(errors="replace")
+cid = int(re.search(r"NAND device: Manufacturer ID: 0x[0-9a-f]+, Chip ID: 0x([0-9a-f]+)", dmesg).group(1), 16)
+assert cid in GEOMETRY, f"chip id {cid:#x}: no geometry for it"
+PAGE, OOB, PAGES = GEOMETRY[cid]
 parts = re.findall(r"^mtd(\d+): ([0-9a-f]{8}) [0-9a-f]{8} ", (d / "log.txt").read_text(), re.M)
 assert len(parts) == 8, f"/proc/mtd in log.txt: {len(parts)} partitions"
-offsets = [int(a, 16) for a in re.findall(r"^0x([0-9a-f]{12})-0x[0-9a-f]{12} : ", (d / "dmesg.txt").read_text(errors="replace"), re.M)]
+offsets = [int(a, 16) for a in re.findall(r"^0x([0-9a-f]{12})-0x[0-9a-f]{12} : ", dmesg, re.M)]
 assert len(offsets) == len(parts), f"dmesg.txt: {len(offsets)} partition lines"
 total = 0
 with out.open("wb") as f:
@@ -43,4 +52,5 @@ with out.open("wb") as f:
                 f.write(data[i * PAGE:(i + 1) * PAGE] + b"\xff" * OOB)
         total += pages
         print(f"mtd{n}: {pages} pages at {at:#x}{' with OOB' if oob.exists() else ''}")
-print(f"{out}: {PAGES} pages ({total} from the dumps)")
+print(f"{out}: {PAGES} pages of {PAGE}+{OOB} ({total} from the dumps)")
+print(f"{cid:#x}")
