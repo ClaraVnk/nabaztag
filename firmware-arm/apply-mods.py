@@ -6837,6 +6837,54 @@ def patch_triple_press(root: Path) -> None:
     print(f"[ok]   {p}: three presses of the head open config mode")
 
 
+def patch_config_timeout(root: Path) -> None:
+    """Config mode closes by itself after CONFIG_IDLE seconds of nobody on it.
+
+    Violet's access point stays open until a save on the setup page or the
+    mains: three presses of the head on Naboot 1.2.1.3 left Monsieur Lapin an
+    open network with nobody to close it (Clara, 2026-11-23: "le hotspot
+    ... se referme au bout de 10 min ?" -- it did not). The bootloader now
+    notes the time on entering config mode and on every request to the setup
+    server (cbhttp), and after 600 s with neither it reboots, as an unplug
+    would: a rabbit with its Wi-Fi saved comes back on it, a new one comes
+    back as on any power-up. A phone on the page keeps it open.
+
+    Ints only: Metal's `if` jumps on 0 alone, nil is true. After config_boot
+    (the mode's order). Idempotent.
+    """
+    boot = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = boot.read_bytes().decode("latin-1")
+    if "CONFIG_IDLE" in s:
+        print(f"[skip] {boot}: config mode already closes by itself")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+    at = "\nfun cbhttp req=\n"
+    if t.count(at) != 1:
+        sys.exit("FAIL config_timeout: fun cbhttp not found once")
+    t = t.replace(at, (
+        "\n// config_timeout (apply-mods.py): config mode reboots after CONFIG_IDLE\n"
+        "// seconds with no request on the setup server.\n"
+        "const CONFIG_IDLE=600;;\n"
+        "var cfgseen=0;;\n"
+        "\nfun cbhttp req=\n\tset cfgseen=time;\n"), 1)
+    old = "\t\t\t\t\tstartconfigserver 80;\n\t\t\t\t\tmasterW)\n"
+    if t.count(old) != 1:
+        sys.exit("FAIL config_timeout: the entry into config mode is not the shape this step expects")
+    t = t.replace(old, "\t\t\t\t\tstartconfigserver 80;\n\t\t\t\t\tset cfgseen=time;\n\t\t\t\t\tmasterW)\n", 1)
+    old = ("\t\t\t\t\t\t\tnetSetmode IEEE80211_M_MANAGED nil 11;\n\t\t\t\t\t\t\tnil)\n"
+           "\t\t\t\t\t)\n\t\t\t)\n\t\t|(gostationW")
+    if t.count(old) != 1:
+        sys.exit("FAIL config_timeout: masterW is not the shape this step expects")
+    t = t.replace(old, (
+        "\t\t\t\t\t\t\tnetSetmode IEEE80211_M_MANAGED nil 11;\n\t\t\t\t\t\t\tnil)\n"
+        "\t\t\t\t\t)\n"
+        "\t\t\t\telse if master>0 && time-cfgseen>CONFIG_IDLE then\t// config_timeout\n"
+        "\t\t\t\t\t(reboot 0x0407FE58 0x13fb6754; nil)\n"
+        "\t\t\t)\n\t\t|(gostationW"), 1)
+    boot.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print("[ok]   config_timeout: config mode reboots after 600 s with nobody on the page")
+
 def patch_config_boot(root: Path) -> None:
     """The runtime can restart the rabbit into config mode (Clara, 2026-11-22:
     "On veut aussi quand il est connecté au terrier. Comme le karotz").
@@ -10896,7 +10944,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.1", "naboot-1.2.1.2", "naboot-1.2.1.3", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.1", "naboot-1.2.1.2", "naboot-1.2.1.3", "naboot-1.2.1.4", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -11052,6 +11100,7 @@ def main() -> int:
         # 1.2.1.2 and config mode from three short presses of the head, offline and
     # online (2026-11-22).
         "naboot-1.2.1.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
+        "naboot-1.2.1.4": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,config_timeout,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
         # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
         # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
         "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
@@ -11344,6 +11393,7 @@ def main() -> int:
         "captive": patch_captive,
         "triple_press": patch_triple_press,
         "config_boot": patch_config_boot,
+        "config_timeout": patch_config_timeout,
         "usb_watch": patch_usb_watch,
         "wpa2_gtk": patch_wpa2_group_key,
         "eapol_group_ack": patch_eapol_group_ack,
