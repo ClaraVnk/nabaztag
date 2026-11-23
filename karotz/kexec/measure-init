@@ -12,7 +12,8 @@ B=/bin/busybox
 $B mkdir -p /proc /sys /dev /tmp /usr /key
 $B mount -t proc p /proc
 $B mount -t sysfs s /sys
-$B mount -t devtmpfs d /dev
+# 6.1 has devtmpfs; the 2.6.32 control may not: mdev fills /dev then.
+$B mount -t devtmpfs d /dev 2> /dev/null || $B mdev -s
 $B mount -t tmpfs t /tmp
 O=/tmp/m
 $B mkdir -p $O
@@ -33,10 +34,13 @@ else
 fi
 # The key: the USB host and usb-storage, then FAT.
 i=0
-while [ $i -lt 30 ] && [ ! -e /dev/sda1 ] && [ ! -e /dev/sda ]; do $B sleep 1; i=$((i + 1)); done
-say "usb disk after ${i}s: $($B ls /dev/sd* 2> /dev/null | $B tr '\n' ' ')"
+# sda under 6.1 (usb-storage); uba under 2.6.32 (its ub driver).
+while [ $i -lt 30 ] && [ ! -e /dev/sda1 ] && [ ! -e /dev/sda ] && [ ! -e /dev/uba1 ]; do
+    $B sleep 1; i=$((i + 1)); $B mdev -s 2> /dev/null
+done
+say "usb disk after ${i}s: $($B ls /dev/sd* /dev/ub* 2> /dev/null | $B tr '\n' ' ')"
 KEY=
-for d in /dev/sda1 /dev/sda; do
+for d in /dev/sda1 /dev/sda /dev/uba1 /dev/uba; do
     [ -e $d ] && $B mount -t vfat $d /key 2>> $O/summary.txt && KEY=/key && break
 done
 say "key ${KEY:-NOT mounted}"

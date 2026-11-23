@@ -3,23 +3,31 @@
 # at boot, under the 2.6.32 kernel built with CONFIG_KEXEC (karotz/kexec).
 # Only when kexec/go is on the key, and once (go is removed first): 6.1 is
 # loaded with the measure initramfs (measure-init, built by make-key.sh) and
-# started. Nothing is written to the flash; power-cycled, the rabbit boots
+# started. kexec/go-2632 instead starts the rabbit's own 2.6.32 (the key's
+# zImage, the one installed) the same way: the control, a kernel known to
+# run on this board and light its nose (2026-11-23: 6.1 left no trace). Nothing is written to the flash; power-cycled, the rabbit boots
 # its own 2.6.32. Without kexec/go the boot carries on as usual.
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 K=/mnt/usbkey
-[ -e $K/kexec/go ] || exit 0
-rm -f $K/kexec/go
+if [ -e $K/kexec/go-2632 ]; then
+    rm -f $K/kexec/go-2632; KERNEL=$K/zImage; NAME=2.6.32-control
+elif [ -e $K/kexec/go ]; then
+    rm -f $K/kexec/go; KERNEL=$K/kexec/zImage-6.1; NAME=6.1
+else
+    exit 0
+fi
 mkdir -p $K/kexec/log
-D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32
+D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32-to-$NAME
 mkdir -p $D
 { date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
 # Everything the jump needs in RAM: the key is put away before it.
-cp $K/kexec/kexec $K/kexec/zImage-6.1 $K/kexec/measure.cpio.gz /tmp/ || exit 0
+cp $K/kexec/kexec $K/kexec/measure.cpio.gz /tmp/ && cp $KERNEL /tmp/zImage-next || exit 0
 # Not the bootloader's command line: its initrd=0x31800000,... would win
 # over the initramfs kexec places (Gengar's dmesg, 2026-11-22); the board
-# file names the partitions. real-boot.sh's, with the measure's /init.
-/tmp/kexec -l /tmp/zImage-6.1 --atags --initrd=/tmp/measure.cpio.gz \
-    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0" >> $D/before.txt 2>&1
+# file names the partitions. real-boot.sh's, with the measure's /init;
+# panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
+/tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/measure.cpio.gz \
+    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0 panic=10" >> $D/before.txt 2>&1
 rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync
