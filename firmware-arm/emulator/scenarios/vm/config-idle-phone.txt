@@ -1,0 +1,19 @@
+# Config mode stays open while somebody is on the page (config_timeout):
+# as config-idle.txt, with a phone asking for the setup page at 500 s. The
+# 600 s count from that request: its own access point at 1000 s, a station
+# at 1200 s. tools/config-idle.sh PHONE=1 checks the log.
+ap 02:00:5e:10:00:01 Voisin 6 wpa2-ccmp -52
+tick 50
+follow-resets
+stop 1205000
+
+at 20000 button down
+at 20200 button up
+at 20500 button down
+at 20700 button up
+at 21000 button down
+at 21200 button up
+at 40000 expect-mode master
+at 500000 get /
+at 1000000 expect-mode master
+at 1200000 expect-mode managed
