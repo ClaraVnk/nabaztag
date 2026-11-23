@@ -29,11 +29,13 @@ def frame(kind: int, body: bytes) -> bytes:
     return bytes([kind]) + len(body).to_bytes(3, "big") + body
 
 
-def sources(left: int, right: int, info: list[tuple[int, int]] = ()) -> bytes:
+def sources(left: int, right: int, info: list[tuple[int, int]] = (), msg: int = 0) -> bytes:
+    """The 04 frame: eight (service, value) pairs, the ears, and byte 18,
+    colormsg_1: a message waiting, the nose's colour (@showmsg), 0 none."""
     pairs = bytearray(16)
     for i, (kind, value) in enumerate(info[:8]):
         pairs[2 * i], pairs[2 * i + 1] = kind, value
-    return frame(4, EV_DUMMY.to_bytes(4, "big") + bytes(pairs) + bytes([left, right, 0]))
+    return frame(4, EV_DUMMY.to_bytes(4, "big") + bytes(pairs) + bytes([left, right, msg]))
 
 
 def main() -> int:
@@ -44,6 +46,8 @@ def main() -> int:
     ap.add_argument("--ears", type=int, nargs=2, metavar=("LEFT", "RIGHT"), default=None)
     ap.add_argument("--info", type=int, nargs=2, action="append", metavar=("TYPE", "VALUE"),
                     default=[], help="a (service, value) pair, after --after polls")
+    ap.add_argument("--msg", type=int, default=0,
+                    help="byte 18, a message waiting (its colour), after --after polls")
     ap.add_argument("--after", type=int, default=3)
     ap.add_argument("--interval", type=int, default=1, help="03 frame value")
     args = ap.parse_args()
@@ -62,11 +66,12 @@ def main() -> int:
             if state["polls"] > args.after:
                 info = [tuple(i) for i in args.info]
             tc = (q.get("tc") or [""])[0].upper()
-            body = b"\x7f" + sources(left, right, info)
+            msg = args.msg if state["polls"] > args.after else 0
+            body = b"\x7f" + sources(left, right, info, msg)
             if tc != f"{EV_DUMMY:08X}":
                 body += program
             body += frame(3, bytes([args.interval])) + b"\xff"
-            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right} info {info}"
+            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right} info {info} msg {msg}"
                   f"{' + program' if tc != f'{EV_DUMMY:08X}' else ''}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=ISO-8859-1")
