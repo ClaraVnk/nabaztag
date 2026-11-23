@@ -20,6 +20,16 @@ if dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | head -c 6 | grep -q K
     dd if=/dev/zero of=/dev/mem bs=4096 seek=$RAM count=1 conv=notrunc 2> /dev/null
     sync
 fi
+# What 6.1's ramoops kept of its console (1 MiB at 0x32000000, "DBGC"
+# zones) when the watchdog armed below restarted the board: saved raw to the
+# key, its first page wiped (karotz/kexec/ramoops.py reads it).
+OOPS=$((0x32000000 / 4096))
+if dd if=/dev/mem bs=4096 skip=$OOPS count=256 2> /dev/null | grep -q DBGC; then
+    mkdir -p $K/kexec/log
+    dd if=/dev/mem bs=4096 skip=$OOPS count=256 of=$K/kexec/log/$(ls $K/kexec/log | wc -l)-ramoops.bin 2> /dev/null
+    dd if=/dev/zero of=/dev/mem bs=4096 seek=$OOPS count=256 conv=notrunc 2> /dev/null
+    sync
+fi
 if [ -e $K/kexec/go-2632 ]; then
     rm -f $K/kexec/go-2632; KERNEL=$K/zImage; NAME=2.6.32-control
 elif [ -e $K/kexec/go ]; then
@@ -41,12 +51,18 @@ cp $K/kexec/kexec $K/kexec/measure.cpio.gz /tmp/ && cp $KERNEL /tmp/zImage-next 
 # over the initramfs kexec places (Gengar's dmesg, 2026-11-22); the board
 # file names the partitions. real-boot.sh's, with the measure's /init;
 # panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
+# The memory around 0x32000000 is left out (two mem=) for ramoops.
 /tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/measure.cpio.gz \
-    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
+    --append="console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ramoops.mem_address=0x32000000 ramoops.mem_size=0x100000 ramoops.console_size=0xC0000 ramoops.record_size=0x10000 ramoops.ecc=0 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
 rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync
 [ $rc = 0 ] || exit 0
+# The board's own watchdog, armed now (2.6.32's s3c2410_wdt, 30 s): 6.1 that
+# stops anywhere is restarted, RAM kept, and the ramoops above saves its
+# console. 6.1 must not stop it: the key's append.txt blacklists its
+# s3c2410wdt_driver_init, and clk_ignore_unused keeps its clock running.
+watchdog -T 30 -t 100 /dev/watchdog 2>> $D/before.txt
 mount -o remount,ro /usr 2>> $D/before.txt
 mount -o remount,ro $K 2>> $D/before.txt
 sync
