@@ -88,3 +88,28 @@ if "0x4c000014" not in s:
     assert s.count(w_old) == 2, "the watchdog writes"
     s = s.replace(w_old, w_old + " stl_phys(0x4c000004, 0x7f021); stl_phys(0x4c000014, 7);")
     p.write_text(s)
+
+# A 2 KiB-page chip above 128 MiB (Gengar's Hynix 0xDA, 131072 pages) takes a
+# third row address byte, five in all. nand.c ran the read at the fourth and
+# kept the address in 32 bits: every page past 65535 read as the page 65536
+# below it, and Gengar's /usr mounted with half its directories (2026-11-23,
+# nand-compare.sh: mtd7, at page 130688, read back wrong). Wait for the fifth
+# byte when the chip is that big, and hold the address in 64 bits.
+nd = p.parent / "nand.c"
+t = nd.read_text()
+if "row3" not in t:
+    pairs = [
+        ("    uint32_t cmd, addr;\n", "    uint32_t cmd;\n    uint64_t addr;  /* row3: five address bytes */\n"),
+        ("void (*blk_load)(NANDFlashState *s, uint32_t addr, int offset);",
+         "void (*blk_load)(NANDFlashState *s, uint64_t addr, int offset);"),
+        ("        s->addr |= value << (s->addrlen * 8);\n",
+         "        s->addr |= (uint64_t) value << (s->addrlen * 8);\n"),
+        ("               s->addrlen == 4 && (\n",
+         "               s->addrlen == (s->pages > 65536 ? 5 : 4) && (\n"),
+        ("                uint32_t addr, int offset)", "                uint64_t addr, int offset)"),
+    ]
+    for old, new in pairs:
+        assert t.count(old) == 1, old
+        t = t.replace(old, new)
+    nd.write_text(t)
+

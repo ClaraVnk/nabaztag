@@ -6,6 +6,8 @@
 # names, it reads mtd5 with its spare (oobdump, carried in mtd7's data) and
 # 8 MiB slices of mtd6's data across the partition (dd skips by reading, so
 # the far ones take minutes), and compares their MD5 with the measure's.
+# mtd7 sits at page 130688 of 131072: above 128 MiB, where a 2 KiB-page chip
+# needs a third row address byte.
 #
 #   karotz/kernel/qemu-mini2440/nand-compare.sh <dir> <measure dir> <oobdump binary>
 #
@@ -41,6 +43,12 @@ PY
 )
 set -- $WANT
 W5=$1 W7=$2 PAGE=$3 N=$4; shift 4; SLICES="$*"
+# The mtd6 reads, written here: the container's shell has no PAGE.
+GUEST6=""
+for sl in $SLICES; do mib=${sl%%:*}
+  GUEST6="$GUEST6
+dd if=/dev/mtd6 bs=$PAGE skip=$((mib * 1048576 / PAGE)) count=$N 2>/dev/null | md5sum | sed s/^/M6-$mib-/"
+done
 LOG="$DIR/nand-compare.log"
 podman run --rm -e MINI2440_MACH=1912 -e MINI2440_NAND_CID=$CID -v "$DIR":/k:Z qemu-mini2440 sh -c "
   cp /k/karotz-nand.bin /tmp/n.bin
@@ -49,8 +57,7 @@ podman run --rm -e MINI2440_MACH=1912 -e MINI2440_NAND_CID=$CID -v "$DIR":/k:Z q
    echo '/mnt/oobdump /dev/mtd5 /mnt/o5.bin | sed s/^/OD-/'
    echo 'md5sum /mnt/o5.bin | sed s/^/M5-/'
    echo 'dd if=/dev/mtd7 bs=$PAGE count=$((40960 / PAGE)) 2>/dev/null | md5sum | sed s/^/M7-/'
-   for sl in $SLICES; do mib=\${sl%%:*}
-     echo \"dd if=/dev/mtd6 bs=$PAGE skip=\$((mib * 1048576 / PAGE)) count=$N 2>/dev/null | md5sum | sed s/^/M6-\$mib-/\"; done
+   printf '%s\\n' \"$GUEST6\"
    sleep 1500) |
   timeout 1700 ./arm-softmmu/qemu-system-arm -M mini2440 -no-reboot -nographic -mtdblock /tmp/n.bin \
     -kernel /k/zImage -initrd /k/rootfs.cramfs \
