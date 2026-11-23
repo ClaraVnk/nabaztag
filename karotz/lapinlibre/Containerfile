@@ -4,7 +4,7 @@
 # exception to our Alpine-or-Rocky rule, asked by Clara (2026-11-19, "fais
 # ubuntu on sera sûr que ça marche"). Only the build host: nothing of Ubuntu
 # reaches the rabbit, which runs LapinLibre's own Buildroot system.
-FROM docker.io/library/ubuntu:24.04
+FROM docker.io/library/ubuntu:26.04
 ARG LL_REPO=https://github.com/ClaraVnk/LapinLibre.git
 ARG LL_COMMIT=19ea8d7
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \

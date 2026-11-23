@@ -3,7 +3,7 @@
 # to our Alpine/Rocky rule (Clara, 2026-11-20): Imager 2.0.12 needs glibc
 # 2.35+, Rocky 9's is 2.34, Rocky 10 has no virtual X server (no Xvfb, Xvnc
 # nor Weston) and Alpine is musl. The image is removed after the shots.
-FROM docker.io/library/ubuntu:24.04
+FROM docker.io/library/ubuntu:26.04
 ARG IMAGER=2.0.12
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       xvfb xdotool imagemagick ca-certificates curl fonts-dejavu-core \
