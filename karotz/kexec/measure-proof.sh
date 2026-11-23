@@ -19,6 +19,8 @@ if [ "${NEXT:-61}" = 2632 ]; then NEXTK=zImage-2632; WANT="Linux version 2.6.32"
 CID=$(python3 "$HERE/../kernel/qemu-mini2440/karotz-flash.py" "$M" "$DIR/karotz-nand.bin" | tail -1)
 python3 "$HERE/mkcpio.py" "$DIR/measure.cpio.gz" "$TREE" "$HERE/measure-init"
 APPEND=$(sed -n 's/.*--append="\([^"]*\)".*/\1/p' "$HERE/autorun")
+# The key's kexec/append.txt is EXTRA here.
+APPEND=$(echo "$APPEND" | sed 's/ \$EXTRA$//')" ${EXTRA:-}"
 cat > "$DIR/outer-init" <<EOI
 #!/bin/busybox sh
 /bin/busybox mount -t proc p /proc

@@ -20,6 +20,10 @@ mkdir -p $K/kexec/log
 D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32-to-$NAME
 mkdir -p $D
 { date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
+# kexec/append.txt, when there: more of the command line, one try at a time
+# (initcall_blacklist=... to find the driver 6.1 stops in, 2026-11-23).
+EXTRA=$(cat $K/kexec/append.txt 2> /dev/null | tr -d '\r\n')
+echo "extra: $EXTRA" >> $D/before.txt
 # Everything the jump needs in RAM: the key is put away before it.
 cp $K/kexec/kexec $K/kexec/measure.cpio.gz /tmp/ && cp $KERNEL /tmp/zImage-next || exit 0
 # Not the bootloader's command line: its initrd=0x31800000,... would win
@@ -27,7 +31,7 @@ cp $K/kexec/kexec $K/kexec/measure.cpio.gz /tmp/ && cp $KERNEL /tmp/zImage-next 
 # file names the partitions. real-boot.sh's, with the measure's /init;
 # panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
 /tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/measure.cpio.gz \
-    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0 panic=10" >> $D/before.txt 2>&1
+    --append="console=ttySAC0,115200 rdinit=/init mem=65536K k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
 rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync

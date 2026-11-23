@@ -60,7 +60,7 @@ $B ls /sys/bus/usb/devices > $O/usb.txt 2>&1
 $B dmesg > $O/dmesg.txt
 if [ -n "$KEY" ]; then
     n=$($B ls $KEY/kexec/log 2> /dev/null | $B wc -l)
-    D=$KEY/kexec/log/$n-6.1
+    D=$KEY/kexec/log/$n-$($B uname -r | $B cut -d- -f1)
     $B mkdir -p $D && $B cp $O/* $D/ && $B sync
     $B umount $KEY
     say "written to the key: kexec/log/$n-6.1"
