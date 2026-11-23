@@ -10,7 +10,9 @@ MessageSerializer.generatePingPacket for a waiting rabbit: 7F, the 04 sources
 (id 7FFFFFFF, eight empty (service, value) pairs, LEFT ear, RIGHT ear, 00),
 the program when the rabbit does not already run it (tc), the 03 poll
 interval, and FF. --ears changes the ears once the rabbit has polled --after
-times, as an owner's order would.
+times, as an owner's order would; --info TYPE VALUE fills a (service, value)
+pair the same way (1 = the weather, 0 sun .. 5 storm: the program's
+@infofirsttype), up to eight.
 """
 
 from __future__ import annotations
@@ -27,8 +29,11 @@ def frame(kind: int, body: bytes) -> bytes:
     return bytes([kind]) + len(body).to_bytes(3, "big") + body
 
 
-def sources(left: int, right: int) -> bytes:
-    return frame(4, EV_DUMMY.to_bytes(4, "big") + bytes(16) + bytes([left, right, 0]))
+def sources(left: int, right: int, info: list[tuple[int, int]] = ()) -> bytes:
+    pairs = bytearray(16)
+    for i, (kind, value) in enumerate(info[:8]):
+        pairs[2 * i], pairs[2 * i + 1] = kind, value
+    return frame(4, EV_DUMMY.to_bytes(4, "big") + bytes(pairs) + bytes([left, right, 0]))
 
 
 def main() -> int:
@@ -37,6 +42,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=28080)
     ap.add_argument("--frame", required=True, help="the 05 frame (podman run violet-vasm ...)")
     ap.add_argument("--ears", type=int, nargs=2, metavar=("LEFT", "RIGHT"), default=None)
+    ap.add_argument("--info", type=int, nargs=2, action="append", metavar=("TYPE", "VALUE"),
+                    default=[], help="a (service, value) pair, after --after polls")
     ap.add_argument("--after", type=int, default=3)
     ap.add_argument("--interval", type=int, default=1, help="03 frame value")
     args = ap.parse_args()
@@ -49,14 +56,17 @@ def main() -> int:
             q = parse_qs(urlsplit(self.path).query)
             state["polls"] += 1
             left, right = (0, 0)
+            info = []
             if args.ears and state["polls"] > args.after:
                 left, right = args.ears
+            if state["polls"] > args.after:
+                info = [tuple(i) for i in args.info]
             tc = (q.get("tc") or [""])[0].upper()
-            body = b"\x7f" + sources(left, right)
+            body = b"\x7f" + sources(left, right, info)
             if tc != f"{EV_DUMMY:08X}":
                 body += program
             body += frame(3, bytes([args.interval])) + b"\xff"
-            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right}"
+            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right} info {info}"
                   f"{' + program' if tc != f'{EV_DUMMY:08X}' else ''}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=ISO-8859-1")
