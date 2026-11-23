@@ -913,9 +913,10 @@ and rootfs of the steps above:
 
 Step 3 on a real flash. `karotz-flash.py` puts the measure key's copies back
 into one NAND image, each partition at its own offset (Gengar's dmesg: the
-partitions have gaps); QEMU emulates the Karotz's chip (`MINI2440_NAND_CID=0x71`,
-256 MiB of 512-byte pages) with the clocks its bootloader leaves (405/135/67.5
-MHz); the kernel built with `karotz-6.1-realnand.config` reads it:
+partitions have gaps); QEMU emulates the chip the factory kernel names in the
+measure's dmesg (Gengar: Hynix `0xDA`, 256 MiB of 2 KiB pages with 64 bytes of
+spare; the 512-byte `0x71` was a guess) with the clocks its bootloader leaves
+(405/135/67.5 MHz); the kernel built with `karotz-6.1-realnand.config` reads it:
 
     karotz/kernel/qemu-mini2440/real-usr.sh <dir> <measure dir>
     # 2026-11-22: "nand: Samsung NAND 256MiB", Gengar's 8 partitions, data
@@ -931,8 +932,21 @@ proven first against known spares:
     karotz/kernel/qemu-mini2440/oob-proof.sh <dir> <oobdump binary>
     # 2026-11-22: the two spares written into the flash come back, PASS
 
-Next: a measure key with oobdump on Gengar, then `real-usr.sh` on its
-`mtd6-raw.bin`.
+Gengar's measure with oobdump (2026-11-23): 119 808 pages of 2 112 bytes in
+mtd6, real YAFFS2 tags, no bad block. Above 128 MiB a 2 KiB-page chip takes a
+third row address byte; QEMU's `nand.c` ran the read at the fourth and kept
+32 bits, so every page past 65535 read as the one 64 Ki pages below, and /usr
+mounted with half its directories. `direct-boot.py` now waits for the fifth
+byte on such a chip and holds the address in 64 bits. `nand-compare.sh` reads
+the flash back under 6.1 (mtd5 with its spare through oobdump, mtd7, and 8 MiB
+slices across mtd6) and compares it with the measure:
+
+    karotz/kernel/qemu-mini2440/nand-compare.sh <dir> <measure dir> <oobdump binary>
+    # control (QEMU without the fifth byte): mtd7 and mtd5 DIFFERENT, FAIL
+    # 2026-11-23: every slice the same, PASS
+    karotz/kernel/qemu-mini2440/real-usr.sh <dir> <measure dir>
+    # 2026-11-23: bin devtools etc karotz lib sbin scripts share spool www,
+    #   VERSION=v0.2.0-58-g19ea8d7cb2db (Gengar's own), PASS
 
 ### Linux 6.1 for the Karotz: its own drivers
 
