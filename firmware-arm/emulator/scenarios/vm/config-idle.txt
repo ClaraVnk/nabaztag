@@ -1,0 +1,26 @@
+# Config mode closes by itself (config_timeout, Naboot 1.2.1.4; Clara,
+# 2026-11-23: the access point stayed open after three presses).
+#
+# No network the rabbit knows: three presses at 20 s open config mode, and
+# nobody comes. 600 s after it opened the bootloader reboots, as an unplug
+# would, and the rabbit is a station again (scanning for its network).
+# tools/config-idle.sh checks the log.
+#
+#   control (no config_timeout, Naboot 1.2.1.3): its own access point at
+#      700 s, no reset;
+#   fix: its own access point at 600 s, "the rabbit restarts after its
+#      reset", a station at 700 s.
+ap 02:00:5e:10:00:01 Voisin 6 wpa2-ccmp -52
+tick 50
+follow-resets
+stop 705000
+
+at 20000 button down
+at 20200 button up
+at 20500 button down
+at 20700 button up
+at 21000 button down
+at 21200 button up
+at 40000 expect-mode master
+at 600000 expect-mode master
+at 700000 expect-mode managed

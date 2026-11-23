@@ -370,6 +370,23 @@ tools/xmpp-tls-proof.sh --terrier <image> --bytecode <runtime.hybrid> \
 #   fix: mic: <mac> captured N bytes of audio
 ```
 
+### Config mode closes by itself (Naboot 1.2.1.4)
+
+`apply-mods.py config_timeout`: the bootloader notes the time on entering
+config mode and on every request to the setup page, and reboots after 600 s
+with neither (an unplug, in effect). Mode `naboot-1.2.1.4` = 1.2.1.3 +
+config_timeout. From `firmware-arm/emulator` on the dev VM, with an emulator
+image carrying the image's opcodes:
+
+```sh
+podman build -f firmware-arm/emulator/Containerfile -t emu-1214 \
+  --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.2.1.3) .
+TAG=emu-1214 NO_BUILD=1 tools/config-idle.sh <naboot-1.2.1.4 Nab.elf>          # reset at ~626 s, a station at 700 s
+PHONE=1 TAG=emu-1214 NO_BUILD=1 tools/config-idle.sh <naboot-1.2.1.4 Nab.elf>  # GET / at 500 s: reset at ~1101 s
+TAG=emu-1214 NO_BUILD=1 tools/config-idle.sh <naboot-1.2.1.3 Nab.elf>          # control: still master at 700 s, FAIL
+```
+(Nab.bin must sit beside Nab.elf: bootbc.py lifts the bootloader from it.)
+
 ### Config mode from three short presses of the head (Naboot 1.2.1.3)
 
 Offline (the bootloader: a rabbit that cannot reach its Wi-Fi any more),
