@@ -69,6 +69,19 @@ else
     nose FF00FF
 fi
 $B umount /usr 2> /dev/null
-say "done: unplug the rabbit to go back to 2.6.32"
+# The log in RAM, written last, just before the restart: KXLOG, its length,
+# the summary and dmesg's end, at 0x33E00000 (below the bootloader). 6.1's
+# /dev/mem writes only inside its own memory (mem=62M refused it, QEMU
+# 2026-11-23), so this overwrites whatever 6.1 kept there: it no longer
+# matters. The 2.6.32 autorun saves it to the key after the restart.
+RAM=$((0x33E00000 / 4096))
+{ $B cat $O/summary.txt; $B echo ---; $B tail -c 60000 $O/dmesg.txt; } > /tmp/ramlog.txt
+{ $B echo "KXLOG $($B wc -c < /tmp/ramlog.txt)"; $B cat /tmp/ramlog.txt; } > /tmp/ramlog
+$B dd if=/tmp/ramlog of=/dev/mem bs=4096 seek=$RAM conv=notrunc 2> /dev/null && $B sync
+say "ram: $($B dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | $B head -c 12)"
+say "done: restarting"
 $B cat $O/summary.txt > /dev/console 2> /dev/null
+# The restart is the sign that 6.1 got this far (2026-11-23: the nose stayed
+# red with USB off, and 6.1's own SPI was never proven on the board).
+$B reboot -f
 exec $B sh

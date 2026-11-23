@@ -43,7 +43,7 @@ rm -f "$DIR/karotz-nand.bin" "$DIR/measure.cpio.gz" "$DIR/outer.cpio.gz" "$DIR/o
 grep -aE "^Linux version|KEXEC-|^MEASURE|Kernel panic" "$LOG" | cut -c1-150 | head -30
 if [ "$(grep -ac "^Linux version" "$LOG")" -ge 2 ] && grep -aq "^$WANT" "$LOG" \
    && grep -aq "^MEASURE usr mounted ro" "$LOG" \
-   && grep -aq "^MEASURE done" "$LOG"; then
+   && grep -aq "^MEASURE done" "$LOG" && grep -aq "^MEASURE ram: KXLOG" "$LOG"; then
   echo "PASS: 2.6.32 -> kexec -> ${NEXTK} measure, /usr read-only ($LOG)"
 else
   echo "FAIL ($LOG)"; exit 1

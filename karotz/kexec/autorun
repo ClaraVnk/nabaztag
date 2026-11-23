@@ -9,6 +9,17 @@
 # its own 2.6.32. Without kexec/go the boot carries on as usual.
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 K=/mnt/usbkey
+# What a 6.1 measure left in RAM before it restarted the rabbit (measure-init):
+# saved to the key, then wiped, at every boot that finds it.
+RAM=$((0x33E00000 / 4096))
+if dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | head -c 6 | grep -q KXLOG; then
+    mkdir -p $K/kexec/log
+    R=$K/kexec/log/$(ls $K/kexec/log | wc -l)-ram
+    n=$(dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | head -1 | cut -d' ' -f2)
+    dd if=/dev/mem bs=4096 skip=$RAM count=16 2> /dev/null | head -c $((n + 20)) > $R.txt
+    dd if=/dev/zero of=/dev/mem bs=4096 seek=$RAM count=1 conv=notrunc 2> /dev/null
+    sync
+fi
 if [ -e $K/kexec/go-2632 ]; then
     rm -f $K/kexec/go-2632; KERNEL=$K/zImage; NAME=2.6.32-control
 elif [ -e $K/kexec/go ]; then
