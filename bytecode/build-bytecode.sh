@@ -185,6 +185,10 @@ python3 "$HERE/patch_head_in_sleep.py" "$BC/sources/main.mtl"
 # (configBoot), when the warren flips cfg-boot (2026-11-22).
 echo "==> patch_triple_press.py  (three short presses: config mode)"
 python3 "$HERE/patch_triple_press.py" "$BC/sources"
+# RB: the warren restarts a rabbit, which loads the runtime served now
+# instead of waiting for someone to unplug it (2026-11-23).
+echo "==> patch_reload.py  (RB: restart and load the runtime served now)"
+python3 "$HERE/patch_reload.py" "$BC/sources/main.mtl"
 if [ "${EARS_REARM:-1}" = 1 ]; then
   echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
   python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"

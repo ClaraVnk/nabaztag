@@ -273,6 +273,8 @@ void sim_note_fetch(void)
  *   at <ms> expect-sae-refused <n>     >= n PSK attempts refused on a SAE network
  *   at <ms> reauth [<bssid>]      the AP repeats its authentication reply
  *   at <ms> drop-eapol <count>
+ *   follow-resets                  every reset starts a new boot, not only
+ *                                 configBoot's (the runtime's RB, 2026-11-23)
  *   at <ms> expect <state>         assert ieee80211_state, else exit non-zero
  *   at <ms> expect-sae h2e|hnp     assert which password element derivation
  *                                 the AP saw in the last SAE commit:
@@ -377,6 +379,8 @@ int sim_load(const char *path)
       sim.fast_to = (uint32_t)strtoul(tok[2], NULL, 10);
     } else if(!strcmp(tok[0], "config-mode")) {
       sim.config_mode = 1;
+    } else if(!strcmp(tok[0], "follow-resets")) {
+      sim.follow_resets = 1;
     } else if(!strcmp(tok[0], "forged-beacons") && n >= 2) {
       /* Beside every beacon round, on the first AP's channel: the scan
          runs before the first timed event is looked at, so a forged

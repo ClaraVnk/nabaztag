@@ -397,8 +397,12 @@ int main(int argc, char **argv)
    * back here: the rabbit restarts, .extbss (the mark) kept, as on the board,
    * and its radio and 802.11 state start over as RSTOUT_N makes them (the
    * bootloader waits for an idle radio before it becomes an access point). */
-  if(setjmp(reboot_jmp))
-    sim_log("the rabbit restarts after its reset (reason 6: config mode asked)");
+  if(setjmp(reboot_jmp)) {
+    if(sim.last_reset_reason == 6)
+      sim_log("the rabbit restarts after its reset (reason 6: config mode asked)");
+    else
+      sim_log("the rabbit restarts after its reset (reason %d)", sim.last_reset_reason);
+  }
   reboot_armed = 1;
   vap_init();
   ieee80211_init();
@@ -584,7 +588,9 @@ void reset_uc(void)
   if(_vmem_broken) sim.stop_ms = sim_now();
   /* configBoot's reset: the only one this program follows into a new boot
    * (the others keep their old meaning for the proofs that count them). */
-  if(nab_reset_reason == 6 && reboot_armed) {
+  /* `follow-resets`: every other one too, but a VM out of memory (the
+   * runtime's RB, 2026-11-23: the bytecode's reboot, then a new boot). */
+  if((nab_reset_reason == 6 || (sim.follow_resets && !_vmem_broken)) && reboot_armed) {
     flash_jmp_armed = 0;
     longjmp(reboot_jmp, 1);
   }
