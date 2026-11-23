@@ -37,6 +37,10 @@ emu += ["wifi_diag"]
 emu += ["tls_certs", "boot_https"]
 # usb_watch (2026-11-20): vm_main.c stands in for the USB host controller.
 emu += ["usb_watch"]
+# config_boot (2026-11-22): counters.c holds its mark and vm_main.c takes its
+# reset (reason 6); without it the triple-press proof of naboot-1.2.1.3 saw a
+# station where the rabbit should be its own access point.
+emu += ["config_boot"]
 mode = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
 m = re.search(r'"%s":\s*"([^"]+)"' % re.escape(mode), mods)
 if not m:
