@@ -215,6 +215,10 @@ memory access is `TBLRD` for strings and the opcode table). So:
 
 ## 6. The Wi-Fi card: reading its station firmware (unparks WPA2 or buries it)
 
+**Measured on Lazare, 2026-11-24 (`wifi-probe.py`): station firmware
+1.4.2.** Below 1.7.0: WPA2 is buried for this card as it stands (RUNBOOK,
+the v1 section).
+
 WPA2 on the v1 is parked until the card's station firmware version is known
 (1.7.0 at least for host-side encryption, `hostap_hw.c`). Neither firmware
 ever reads it: a 400 s run with `--trace-bus` shows **only RID writes**
