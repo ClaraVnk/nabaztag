@@ -1,0 +1,12 @@
+; A v1 program that plays one sound and stops: what the firmware does with
+; an "Audi" file (v1-audi.py), seen on the emulator's OKI register log.
+; Put together by Violet's own assembler (Dump sound-test.vasm), with
+; test.audi mounted in the audio directory (tools/v1-study.sh).
+
+/snd	file	test.audi
+
+	ld	r0,/snd
+	wavplay	r0
+@l	wait	10
+	bra	@l
+	END

@@ -491,6 +491,26 @@ nothing); its
 serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
 
+What could be improved in the v1's firmware, 1.4b and 2.0b, with the
+evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
+
+```sh
+cd firmware-arm/v1-icsp
+./pic18dis.py dis dumps/violet-v1-1.4b.hex 2170 21D0   # a listing (byte addresses)
+./pic18dis.py funcs dumps/violet-v1-1.4b.hex           # call targets, sizes, callers
+./pic18dis.py strings dumps/violet-v1-1.4b.hex
+./pic18dis.py dead dumps/violet-v1-1.4b.hex            # code no path from the vectors reaches
+./pic18dis.py diff dumps/violet-v1-1.4b.hex ../vendor/newbaztag/firmware/original/nabaztag.hex
+# 132 functions identical, 89 changed by a few instructions, the rest listed
+cd ../emulator
+tools/v1-study.sh both /tmp/v1-study          # on the dev VM: the network broken under
+                                              # the firmware (server gone, AP gone, no DNS)
+                                              # and the OKI registers for a sound at
+                                              # 8/16/32 kHz; V1_PORT (28090) and +1
+tools/v1-study.sh both /tmp/v1-study sound    # the sound part alone
+tools/violet-vasm/v1-audi.py 16000 1.5 a.audi [--low-first]   # a test tone for a real rabbit
+```
+
 ### The Karotz (Nabaztag v3)
 
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware

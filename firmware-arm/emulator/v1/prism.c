@@ -417,8 +417,38 @@ void prism_attr_write(uint8_t a, uint8_t v)
   attr[a] = v;
 }
 
+/* The access point goes away (--link-down AT SECONDS): the card reports
+ * link status 2 and, while down, carries nothing either way. After SECONDS
+ * it re-associates by itself and reports 1 again, as a Prism card in BSS
+ * mode does; SECONDS 0 is an access point that never comes back, so only
+ * the firmware's own re-initialisation of the card (INITIALIZE, ENABLE) is
+ * shown. 2026-11-24: how Violet's firmware lives through a Wi-Fi drop. */
+static uint64_t down_at, down_until;
+static int down_forever, is_down;
+
+void prism_link_down(uint64_t at_ms, uint64_t seconds)
+{
+  down_at = at_ms;
+  down_until = at_ms + seconds * 1000;
+  down_forever = seconds == 0;
+}
+
+int prism_link_is_down(void) { return is_down; }
+
 void prism_tick(void)
 {
+  if(down_at && !is_down && board_ms() >= down_at) {
+    is_down = 1;
+    down_at = 0;
+    if(enabled) { connected_reported = 0; link_status(2); }
+    board_log("card: the access point is gone%s", down_forever ? " for good" : "");
+  }
+  if(is_down && !down_forever && board_ms() >= down_until) {
+    is_down = 0;
+    board_log("card: the access point is back");
+    if(enabled) link_at = board_ms() + 300;
+  }
+  if(is_down) return;
   if(enabled && !connected_reported && board_ms() >= link_at && !(reg[R_EVSTAT / 2] & EV_INFO)) {
     connected_reported = 1;
     link_status(1);
@@ -434,7 +464,7 @@ int prism_link_up(void) { return enabled && connected_reported; }
 void prism_receive(const uint8_t *dst, const uint8_t *src, const uint8_t *llc, unsigned len)
 {
   struct fidbuf *b;
-  if(!enabled) return;
+  if(!enabled || is_down) return;
   if(reg[R_EVSTAT / 2] & EV_RX) {
     if(B.trace_bus) board_log("card: a frame arrived before the last one was taken, queued");
   }

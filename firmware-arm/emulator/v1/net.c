@@ -47,5 +47,9 @@ void prism_transmitted(const uint8_t *buf, unsigned size)
     board_log("card: transmit %u bytes to %02x:%02x:%02x:%02x:%02x:%02x: %s", len,
               buf[46], buf[47], buf[48], buf[49], buf[50], buf[51], hex);
   }
+  if(prism_link_is_down()) {
+    if(net_trace) board_log("card: %u bytes transmitted into the void, the link is down", len);
+    return;
+  }
   gw_from_rabbit(buf + 60, len);
 }

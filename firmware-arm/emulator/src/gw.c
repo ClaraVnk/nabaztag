@@ -366,6 +366,12 @@ void gw_dhcp_rogue(uint32_t rogue)
 
 /* --- DNS -------------------------------------------------------------- */
 
+/* A resolver that does not answer (the gateway that drops its DNS, the
+ * v2's issue; for the v1, 2026-11-24: does Violet's firmware ask again, and
+ * does it ever re-resolve once it has an address). */
+static int gw_dns_mute;
+void gw_set_dns_mute(int on) { gw_dns_mute = on; }
+
 /**
  * @brief Answer an A query with the gateway's own address.
  *
@@ -807,6 +813,10 @@ static void handle_udp(uint32_t src, uint32_t dst, const uint8_t *udp,
             rd16(udp + 4), length);
 
   if(dport == 67) { handle_dhcp(udp + 8, udp_length - 8u); return; }
+  if(dport == 53 && gw_dns_mute) {
+    sim_log("gw: DNS query swallowed (--dns-mute)");
+    return;
+  }
   if(dport == 53) { handle_dns(src, sport, udp + 8, udp_length - 8u); return; }
 
   sim_log("gw: a UDP datagram for %s:%u, %u bytes — nothing listens there",
