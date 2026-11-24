@@ -1107,6 +1107,17 @@ the Terrier's orders: everything the Terrier asks of a Karotz works on 6.1,
 from the key, nothing written to the flash.
 
 
+
+**The belly's colours, 2026-11-24 22:52 (Gengar, by kexec).** The kernel of
+the 6.1 review (HZ=200, inotify, panic=10) built with **both** extra configs,
+`EXTRA="/k/karotz-6.1-debug.config /k/karotz-6.1-realnand.config"`: the
+debug one alone is the QEMU kernel (nandsim instead of the real NAND, no
+`mtdblock6`, no `/usr`, no Wi-Fi: the 21:37 run, read off the new
+`dmesg-boot.txt`). With both, `/usr` mounted, the client on the Terrier, and
+Clara saw red, green, blue and yellow right, then the client's yellow/off
+pulse (600 ms) right: the blue belly seen before under 6.1 was that pulse at
+HZ=100 (led-daemon steps it every 30 ms). The USB hub came up with the key
+and the dongle on this run.
 ### Linux 6.1 for the Karotz: the review of 2026-11-24, and its proofs
 
 `karotz/kernel/REVIEW-6.1.md` ranks what the review found (the hub's wrong
