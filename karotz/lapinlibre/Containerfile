@@ -26,6 +26,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # D-Bus daemons): the tests call them (tests/, shutil.which
 # and ["ip", ...]) but host-prereqs.sh does not install them; without usleep
 # the rabbit's CGI scripts answered 1 and 276 web API tests failed (2026-11-19).
+# Terrier OS's own changes to LapinLibre (patches/README.md), one commit on
+# LL_COMMIT with a fixed date: the same tree and the same `git describe`
+# (the lapinlibre-base provenance line) from one build to the next.
+# test-patches.sh checks they apply before a build is started.
+COPY patches/ /patches/
+RUN cd /ll && for p in /patches/*.patch; do git apply --index "$p"; done \
+ && GIT_AUTHOR_DATE=2026-11-24T00:00:00Z GIT_COMMITTER_DATE=2026-11-24T00:00:00Z \
+    git -c user.name="Terrier OS" -c user.email=build@example.com commit -q -m "Terrier OS patches" \
+ && git describe --tags --match "v[0-9]*" --abbrev=12
 WORKDIR /ll
 # The work tree (downloads, Buildroot output) on the volume: a rebuild redoes
 # only what changed.
