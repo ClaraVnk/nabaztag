@@ -648,12 +648,12 @@ flock ~/heavy.lock env V1_PORT=28140 sh firmware-arm/emulator/tools/vm-escape-pr
 # PASS
 ```
 
-The hostile program (`tools/violet-vasm/escape.vasm`) drives every VM store and
+The hostile program (`firmware-arm/emulator/tools/violet-vasm/escape.vasm`) drives every VM store and
 load at its largest index; `nabv1 --vm-audit LO HI` records where each lands.
 All stay in the VM arena (registers 0xA70-0xA7F, data 0xB00-0xBFF, call stack
 0xC00-0xCFF): never an SFR, the hardware stack or EECON1. The emulator now
 models the flash self-write (TBLWT holding latches + the EECON1 55h/AAh
-unlock, `pic18.c`/`board.c`), which `tools/selfwrite_stub.py` exercises as the
+unlock, `pic18.c`/`board.c`), which `firmware-arm/emulator/tools/selfwrite_stub.py` exercises as the
 control. A loader still needs ICSP (a PICkit) to install the first time.
 
 ### The Karotz (Nabaztag v3)

@@ -45,7 +45,7 @@ PASS
    program-memory access in either firmware is `TBLRD` (strings and the opcode
    table). No native code writes flash or the data EEPROM, so a control-flow
    redirect, even if one were possible, has no gadget to reach.
-2. **dynamic** — the hostile program `violet-vasm/escape.vasm`, assembled by
+2. **dynamic** — the hostile program `../emulator/tools/violet-vasm/escape.vasm`, assembled by
    Violet's own assembler, drives every store and load the VM has (`STR r,i`,
    `STR r,r`, `STR r,i,r`, the `LDR` forms, `BSR`/`RTS`) at the largest index a
    register or an immediate can carry, in an endless loop. `nabv1 --vm-audit
