@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Lazare's 1.4b with a probe that keeps the Wi-Fi card's station firmware.
 
-    firmware-arm/v1-icsp/wifi-probe.py <in.hex> <out.hex>   the probe image
-    firmware-arm/v1-icsp/wifi-probe.py --read <read.hex>   what it kept
+    firmware-arm/v1-icsp/wifi-probe.py <in.hex> <out.hex> [RID]   the probe image
+    firmware-arm/v1-icsp/wifi-probe.py --read <read.hex>         what it kept
+
+RID is FD20 (station firmware, the default), FD0B (the card itself: which
+Prism chip) or FD02 (its primary firmware). Lazare's station firmware read
+1.4.2 (2026-11-24): too old for WPA2, so the next question is whether this
+card can take a newer one in its own flash, which its chip (FD0B) and its
+primary firmware (FD02) tell. One RID per run: 88 bytes hold no more.
 
 Why (2026-11-24): WPA2 on the v1 is parked until the card's station firmware
 version is known (1.7.0 at least for host-side encryption, hostap_hw.c), and
@@ -68,16 +74,16 @@ def bra(here, to):
     return [0xD000 | (((to - here - 2) >> 1) & 0x7FF)]
 
 
-def probe():
+def probe(rid=0xFD20):
     w = []
     pc = lambda: PROBE + 2 * len(w)
-    w += movlw(0x20) + movwf_b(0xFA) + movlw(0xFD) + movwf_b(0xFB)
-    w += movlw(0x02) + call(0x3754)                  # PARAM0 <- 0xFD20
+    w += movlw(rid & 0xFF) + movwf_b(0xFA) + movlw(rid >> 8) + movwf_b(0xFB)
+    w += movlw(0x02) + call(0x3754)                  # PARAM0 <- the RID
     w += movlw(0x21) + movwf_b(0xEE) + clrf_b(0xEF)
     w += call(0x35C8)                                # ACCESS (read RID)
-    w += movlw(0x20) + movwf_b(0xEE) + movlw(0xFD) + movwf_b(0xEF)
+    w += movlw(rid & 0xFF) + movwf_b(0xEE) + movlw(rid >> 8) + movwf_b(0xEF)
     w += clrf_b(0xF0) + clrf_b(0xF1)
-    w += call(0x348C)                                # BAP0 <- FD20, offset 0
+    w += call(0x348C)                                # BAP0 <- the RID, offset 0
     w += clrf_a(EEADRH) + clrf_a(EEADR)
     loop = pc()
     w += movlw(0x36) + call(0x372C)                  # DATA0 -> 0x00 lo, 0x01 hi
@@ -144,7 +150,10 @@ def save(mem, path):
     open(path, "w").write("".join(":" + r.hex().upper() + "\n" for r in out))
 
 
-def main(src, dst):
+def main(src, dst, rid="FD20"):
+    rid = int(rid, 16)
+    if rid not in IDENTITIES:
+        sys.exit(f"RID {rid:04X}: one of {', '.join(f'{r:04X}' for r in IDENTITIES)}")
     if not hashlib.sha256(open(src, "rb").read()).hexdigest().startswith(SHA):
         sys.exit(f"{src} is not Lazare's 1.4b dump ({SHA}...)")
     mem = load(src)
@@ -153,7 +162,7 @@ def main(src, dst):
     if [mem[HOOK - 8 + i] for i in range(8)] != [0x01, 0x0E, 0x00, 0x01,
                                                   0xEE, 0x6F, 0xEF, 0x6B]:
         sys.exit("0x2992 does not set ENABLE")
-    w = probe()
+    w = probe(rid)
     if PROBE + 2 * len(w) > END:
         sys.exit(f"probe is {2 * len(w)} bytes, {END - PROBE} free")
     if any(mem.get(a, 0xFF) != 0xFF for a in range(PROBE, END)):
@@ -161,27 +170,41 @@ def main(src, dst):
     put(mem, PROBE, w)
     put(mem, HOOK, call(PROBE))
     save(mem, dst)
-    print(f"probe {2 * len(w)} bytes at 0x{PROBE:04X}, hook at 0x{HOOK:04X}")
+    print(f"probe of RID {rid:04X}, {2 * len(w)} bytes at 0x{PROBE:04X}, hook at 0x{HOOK:04X}")
 
+
+# The identity records (hostap_hw.c, prism2_check_sta_fw_version and
+# friends: read it there): length 5 words, the type, then component id, variant, major,
+# minor. Only the low byte of each is kept: the component ids differ there.
+IDENTITIES = {0xFD20: "station firmware", 0xFD0B: "the card (NIC)",
+              0xFD02: "primary firmware"}
 
 def report(path):
-    """The version from a dump read after the probed rabbit has booted."""
+    """What the probe kept, from a dump read after the probed rabbit booted."""
     mem = load(path)
     ee = [mem.get(0xF00000 + i) for i in range(6)]
     if None in ee:
         sys.exit(f"{path} holds no data EEPROM (0xF00000)")
     print("EEPROM 0x000-0x005:", " ".join(f"{x:02X}" for x in ee))
-    if ee[:2] != [0x05, 0x20]:
-        sys.exit("no station identity record there (05 20 expected): "
+    rid = next((r for r in IDENTITIES if ee[:2] == [0x05, r & 0xFF]), None)
+    if rid is None:
+        sys.exit("no identity record there (05 20, 05 0B or 05 02 expected): "
                  "the probe did not run, or the card refused the read")
     if 0xFF in ee[2:]:
         print("a byte reads FF: an interrupt hit its write; boot it again")
-    print(f"station firmware {ee[4]}.{ee[5]}.{ee[3]} (component 0x{ee[2]:02X})"
-          f": WPA2 needs 1.7.0 or later")
+    version = f"{ee[4]}.{ee[5]}.{ee[3]}"
+    if rid == 0xFD20:
+        print(f"station firmware {version} (component 0x{ee[2]:02X})"
+              f": WPA2 needs 1.7.0 or later")
+    elif rid == 0xFD0B:
+        print(f"the card: component 0x80{ee[2]:02X} (low byte kept), "
+              f"hardware {version}; which chip: hostap's own table")
+    else:
+        print(f"primary firmware {version} (component 0x{ee[2]:02X})")
 
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--read"]:
         report(sys.argv[2])
     else:
-        main(*sys.argv[1:3])
+        main(*sys.argv[1:4])
