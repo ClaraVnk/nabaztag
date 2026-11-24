@@ -634,6 +634,28 @@ tools/v1-study.sh both /tmp/v1-study sound    # the sound part alone
 tools/violet-vasm/v1-audi.py 16000 1.5 a.audi [--low-first]   # a test tone for a real rabbit
 ```
 
+Can the downloaded program escape Violet's VM and run native PIC code (the
+question under "a loader without a PICkit"): `firmware-arm/v1-icsp/VM-ESCAPE.md`
+(2026-11-24). **No, on neither firmware.** Measured 2026-11-24/25 on the dev VM:
+
+```sh
+cd /tmp/vmesc                                  # a copy of firmware-arm, not local
+flock ~/heavy.lock env V1_PORT=28140 sh firmware-arm/emulator/tools/vm-escape-proof.sh
+# == 1. static: TBLWT=0 EECON=0 in 1.4b and 2.0b (no native flash-write gadget)
+# == 2. 2.0b: vm-audit 6405 stores, destinations A73..CFE, outside arena: 0
+#       1.4b: vm-audit 6492 stores, destinations A70..CFE, outside arena: 0
+# == 3. control: native code DID write flash row 00100 on the same emulator
+# PASS
+```
+
+The hostile program (`firmware-arm/emulator/tools/violet-vasm/escape.vasm`) drives every VM store and
+load at its largest index; `nabv1 --vm-audit LO HI` records where each lands.
+All stay in the VM arena (registers 0xA70-0xA7F, data 0xB00-0xBFF, call stack
+0xC00-0xCFF): never an SFR, the hardware stack or EECON1. The emulator now
+models the flash self-write (TBLWT holding latches + the EECON1 55h/AAh
+unlock, `pic18.c`/`board.c`), which `firmware-arm/emulator/tools/selfwrite_stub.py` exercises as the
+control. A loader still needs ICSP (a PICkit) to install the first time.
+
 ### The Karotz (Nabaztag v3)
 
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware

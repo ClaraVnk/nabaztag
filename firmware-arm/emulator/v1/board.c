@@ -178,13 +178,24 @@ static void sfr_write(struct pic18 *pic, uint16_t a, uint8_t v)
       B.ee_unlock = (v == 0x55) ? 1 : (B.ee_unlock == 1 && v == 0xAA) ? 2 : 0;
       return;
     case SFR_EECON1:
-      if((v & 0x02) && !(v & 0xC0)) {      /* WR on the data EEPROM */
-        if((v & 0x04) && B.ee_unlock == 2) {
+      if(v & 0x02) {                        /* WR: start a write */
+        if(!((v & 0x04) && B.ee_unlock == 2)) {
+          board_log("nvm: write refused (WREN %d, unlock %d)", !!(v & 0x04), B.ee_unlock);
+        } else if(v & 0x80) {               /* EEPGD: program (flash) memory */
+          uint32_t row = pic->flash_row & ~0x3Fu;
+          if(row + 64 > PIC_FLASH_SIZE) {
+            board_log("flash: write past end at %06X", row);
+          } else if(v & 0x10) {             /* FREE: erase the 64-byte row */
+            for(int i = 0; i < 64; i++) pic->flash[row + i] = 0xFF;
+            board_log("flash: erase row %05X", row);
+          } else {                          /* write the 64 holding latches */
+            for(int i = 0; i < 64; i++) pic->flash[row + i] = pic->flash_latch[i];
+            board_log("flash: write row %05X (latch[0]=%02X)", row, pic->flash_latch[0]);
+          }
+        } else if(!(v & 0x40)) {            /* data EEPROM (EEPGD=0, CFGS=0) */
           unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];
           B.eeprom[at] = pic->ram[SFR_EEDATA];
           board_log("eeprom: [%03X] <- %02X", at, B.eeprom[at]);
-        } else {
-          board_log("eeprom: write refused (WREN %d, unlock %d)", !!(v & 0x04), B.ee_unlock);
         }
         pic->ram[SFR_EECON1] = v & (uint8_t)~0x02;
       }

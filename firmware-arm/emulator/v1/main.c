@@ -124,6 +124,12 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--server-close") && i + 1 < argc) close_at = atof(argv[++i]);
     else if(!strcmp(argv[i], "--link-down") && i + 2 < argc) { prism_link_down((uint64_t)(atof(argv[i+1]) * 1000), (uint64_t)atof(argv[i+2])); i += 2; }
     else if(!strcmp(argv[i], "--dns-mute") && i + 1 < argc) { dns_mute_until = atof(argv[++i]); dns_muted = 1; gw_set_dns_mute(1); }
+    else if(!strcmp(argv[i], "--vm-audit") && i + 2 < argc) {
+      B.pic.audit_on = 1;
+      B.pic.audit_lo = (uint16_t)strtol(argv[i+1], NULL, 0);
+      B.pic.audit_hi = (uint16_t)strtol(argv[i+2], NULL, 0);
+      i += 2;
+    }
     else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
   }
 
@@ -162,6 +168,11 @@ int main(int argc, char **argv)
     }
   }
   if(B.pic.halted) board_log("halted at %05X: %s", B.pic.pc, B.pic.halt_reason);
+  if(B.pic.audit_on)
+    board_log("vm-audit: %u indirect stores from the VM band [%05X,%05X]; destinations %03X..%03X; outside the arena 0xA70-0xCFF: %u",
+              B.pic.audit_stores, B.pic.audit_lo, B.pic.audit_hi,
+              B.pic.audit_stores ? B.pic.audit_min : 0, B.pic.audit_stores ? B.pic.audit_max : 0,
+              B.pic.audit_escapes);
   if(want_hot) report_hot();
   flash_save();
   gw_close();
