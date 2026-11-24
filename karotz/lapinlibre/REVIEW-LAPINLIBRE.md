@@ -2,11 +2,11 @@
 
 Read, on the dev VM's built root (`~/lapinlibre-work/ll/work/sysroot-core`,
 LapinLibre `v0.2.0-58-g19ea8d7`, read only) and in the fork's sources at
-that commit: the web API (`usr/share/lapinlibre/web.sh`, `web-hw.sh`,
+that commit: the web API (usr/share/lapinlibre/web.sh, `web-hw.sh`,
 `web-media.sh`, `web-extra.sh`, `web-tags.sh`, every `usr/www/cgi-bin/*`),
 `karotz/scripts/{startup,network,hotspot,inetd,sshd,usbkey}.sh`,
-`etc/inetd.conf`, `karotz/etc/httpd.conf`, `etc/dbus-1/system.d/karotz.conf`,
-`etc/passwd`, `etc/busybox.conf`, `linuxrc`; `userland/src/usr/{webcam-daemon,
+etc/inetd.conf, karotz/etc/httpd.conf, etc/dbus-1/system.d/karotz.conf,
+`etc/passwd`, etc/busybox.conf, `linuxrc`; `userland/src/usr/{webcam-daemon,
 multimedia-daemon,karotz-player,libkarotz-common}`. Security first, then
 correctness, then what the Terrier client relies on. LapinLibre is
 upstream: nothing here is reported there by me; the fixes that belong to
@@ -47,7 +47,7 @@ owner's own LAN (a router's admin page, a printer), with Basic credentials
 of the client's choice. Everything is logged with the client's address.
 
 The Terrier client talks to the API from `127.0.0.1` without credentials
-(`terrier/karotz/src/ok.c`, `call()`): **a default password would cut the
+(terrier/karotz/src/ok.c, `call()`): **a default password would cut the
 rabbit off from the Terrier** unless the client learns it. So the finding
 is: either the client reads the hash's companion (a token file in
 `/usr/etc/conf/web`, root-owned, readable by the client's user) or the API
@@ -124,12 +124,12 @@ and calls `multimediaPlay(self->multimedia, NULL,
 `dbus_load_proxy`, never NULL; `RESULT_CALL` returns FALSE on a NULL and
 on a D-Bus error, and the caller ignores it). multimedia-daemon's `play`
 (`multimedia-daemon.c api_play`, ~line 1105) sees no `::` (not an API
-command), no `.asx/.m3u/.pls` (`is_playlist`, :794-803), and hands the
+command), no .asx/.m3u/.pls (`is_playlist`, :794-803), and hands the
 string to karotz-player (`player_control_play`, :926-955: `loadfile
 'file:///...' 0` to a running player, else a new one with the path).
 karotz-player opens it with `avformat_open_input` (`karotz-player.c:517`),
-and libavformat's `file:` protocol takes `file:///usr/...` as a path. The
-file ships (`usr/karotz/sounds/shutter.wav`, 5,336 bytes, PCM 16-bit mono
+and libavformat's `file:` protocol takes file:///usr/... as a path. The
+file ships (usr/karotz/sounds/shutter.wav, 5,336 bytes, PCM 16-bit mono
 22,050 Hz, the same format as `boot-ready.wav`, which plays at every boot
 through the same player). So **nothing in the sources refuses the call**.
 What the code cannot show, and Gengar can, in this order: (1) `logread |
@@ -143,7 +143,7 @@ LapinLibre's build: `system/external/package/mpd-karotz` builds its own
 ffmpeg 6.1, whose protocol list I did not read). Until then the two
 comments are a claim, not a measure; I left them, since the first
 measurement is cheap and decides the fix (a plain path in webcam-daemon,
-or a `file://` strip in multimedia-daemon).
+or a file:// strip in multimedia-daemon).
 
 ### 2.3 Locks and timeouts
 
@@ -184,7 +184,7 @@ or a `file://` strip in multimedia-daemon).
 
 ## 3. What the Terrier client relies on
 
-`terrier/karotz/src/ok.c`: `leds`, `ears` (`noreset`), `ears_reset`,
+terrier/karotz/src/ok.c: `leds`, `ears` (`noreset`), `ears_reset`,
 `sleep`, `wakeup?silent=1`, `sound?url=`, `sound_control?cmd=quit|volume+N+1`,
 `status`, all from `127.0.0.1`, no credentials, one connection each.
 
