@@ -504,7 +504,7 @@ firmware-arm/emulator/tools/violet-vasm/one-motor-proof.sh   # repo root, dev VM
 # both firmwares; the Terrier's frame is 33860 bytes.
 ```
 
-The review of Violet's program (`tools/violet-vasm/REVIEW.md`, 2026-11-24:
+The review of Violet's program (`firmware-arm/emulator/tools/violet-vasm/REVIEW.md`, 2026-11-24:
 findings by value, what was measured, what the Terrier should know) and its
 three other patches, each a hang of Violet's program the Terrier can run into,
 against Violet's frame as the control, on both firmwares:
