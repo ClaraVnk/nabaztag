@@ -687,12 +687,16 @@ cd firmware-arm/emulator && tools/v1-native-proof.sh     # dev VM, ~3 min, PASS/
 # Since phase 2 the hex is out/18f6525/full.hex (loader + application + the
 # test key) and the first boot spends ~10 s seeding slot A before the
 # application starts; the proof's budgets were raised accordingly.
+# 2026-11-25: PASS on the loader with the hash in assembly, the application
+# at 0x2000: first poll at 7.3 s (the 5.7 s seed first); loader 8 144 B,
+# application 27 278 B (RAM 1 408 / 1 794).
 ```
 
 **The v1 loader, phase 2** (`firmware-arm/v1-native`, DESIGN.md section 7;
 2026-11-24): a permanent boot block at 0x0000-0x2FFF (12 KB with SDCC: the
-HMAC-SHA-256 alone is 4 KB of its output, section 2 of DESIGN.md has the
-measurements), the application linked from 0x3000, two image slots in the
+HMAC-SHA-256 alone was 4 KB of its output; 0x0000-0x1FFF and 8 144 B since
+2026-11-25, below), the application linked from 0x3000 (0x2000 since
+2026-11-25), two image slots in the
 serial flash (pages 16 and 208), a per-rabbit key in the PIC's data EEPROM
 (written at ICSP time, `mkimage.py full`), HMAC-SHA-256 over header and
 image, the copy in the part's 8-byte blocks with the 55h/AAh sequence, a
@@ -725,8 +729,13 @@ cd firmware-arm/emulator && tools/v1-loader-proof.sh     # dev VM or a Mac with 
 #      A installed, v30 polls;
 #   6. v33 never feeds the watchdog: installed, five watchdog boots, then
 #      "never confirmed", back to A, v30 polls.
-# tools/sha256-host.c: the loader's SHA-256 compiled on the host against
-# Python (the two sigma bugs of the first build were found there).
+# tools/sha256-host.c (gone with the C hash on 2026-11-25): the loader's
+# SHA-256 compiled on the host against Python (the two sigma bugs of the
+# first build were found there).
+# 2026-11-25: PASS again with the hash in assembly and the application at
+# 0x2000 (27 328 B, 427 rows): slot A seeded in 5.7 s, the update's HMAC
+# checked in 5.4 s, 427 rows and 3 416 blocks written and read back in
+# 0.74 s, v31's banner 6.5 s after the reset; the rest as above.
 tools/v1-audio-proof.sh                                  # ~4 min, PASS/FAIL
 # 2026-11-24: PASS. Violet's 1.4b and our firmware play the same 16 kHz
 # Audi tone; the OKI start sequence (45 <- 01, 35 <- 06, 29 <- 01, 33 <- 01),
@@ -738,6 +747,33 @@ tools/v1-audio-proof.sh                                  # ~4 min, PASS/FAIL
 tools/v1-native-proof.sh                                 # phase 1's proof on the new layout
 # 2026-11-24: PASS; first poll at 11.6 s (the 10 s seed first). loader
 # 12 014 B, application 27 670 B (RAM 1 470 / 1 793).
+```
+
+**The loader's hash in assembly, the loader under 8 KB** (2026-11-25,
+`firmware-arm/v1-native/src/loader/sha256.asm`, DESIGN.md section 2 for
+the measurements of each lever): SHA-256 and HMAC-SHA-256 in PIC18
+assembly behind the unchanged C API (`sha256.h`, SDCC's calling
+convention), SDCC's `crt0`, the loader's loops in 64-byte rows, a smaller
+state record; loader 12 014 → 8 144 B (8 106 on the 6627), the
+application moved from 0x3000 to 0x2000 (40 KB for it, 13.7 KB free), the
+seed and the check of a 27 KB image 5.7 s instead of 10. The hash is
+checked on the emulated PIC against Python (hashlib, hmac), not on the
+host any more (tools/sha256-host.c is gone with the C hash). Emulator
+only.
+
+```sh
+cd firmware-arm/emulator && tools/v1-sha-proof.sh        # dev VM or a Mac with podman, ~1 min, PASS/FAIL
+# builds the loader and the test image (make shatest: src/loader/shatest.c,
+# linked like the loader, the watchdog on) for both boards, runs the image
+# for 300 PIC seconds on Lazare's board, compares every `sha`/`hmac` line
+# of its UART with Python's: SHA-256 of "", "abc", the 448-bit message, a
+# 1000-byte pattern, the million 'a'; HMAC-SHA-256 of RFC 4231's cases 1-5
+# and of the pattern under a 32-byte key.
+# 2026-11-25: PASS, 11 digests equal; the million 'a' in 188 s:
+# 12 034 us per 64-byte block (the C hash: 150 000 cycles, 25 ms).
+tools/v1-loader-proof.sh                                 # PASS, numbers above
+tools/v1-native-proof.sh                                 # PASS, numbers above
+tools/v1-audio-proof.sh                                  # PASS
 ```
 
 What the Terrier must serve for an update (not changed in that repository):

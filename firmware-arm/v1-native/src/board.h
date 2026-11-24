@@ -32,7 +32,7 @@
 #define FLASH_END       0xC000UL
 #define WRITE_BLOCK     8
 #endif
-#define APP_BASE        0x3000          /* the loader owns 0x0000-0x2FFF (also an asm literal) */
+#define APP_BASE        0x2000          /* the loader owns 0x0000-0x1FFF (also an asm literal); 0x3000 until 2026-11-25 */
 #define APP_MAX         (FLASH_END - APP_BASE)
 #define APP_HDR_OFF     0x40            /* the application's header, after the vectors */
 
@@ -131,7 +131,6 @@ void uart_init(void);
 void uart_putc(char c);
 void log_s(const __code char *s);        /* string from flash */
 void log_hex8(uint8_t v);
-void log_hex16(uint16_t v);
 void log_nl(void);
 void log_line(const __code char *s);     /* s then newline */
 
@@ -146,7 +145,7 @@ void    flash_write(uint16_t page, __data const uint8_t *buf, uint16_t n);  /* n
  * slot+1), then read in order. Page 0 of a slot is its header. */
 void    slot_seek(uint8_t slot);
 void    slot_next(__data uint8_t *buf, uint8_t n);
-void    slot_write_page(uint8_t slot, uint16_t index, __data const uint8_t *buf, uint16_t n);
+#define slot_write_page(slot, index, buf, n) flash_write(slot_page(slot) + (index), buf, n)
 uint16_t slot_page(uint8_t slot);
 
 /* --- common/state.c */

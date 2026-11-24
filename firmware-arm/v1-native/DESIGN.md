@@ -8,7 +8,9 @@ updated over the network (`../v1-icsp/VM-ESCAPE.md`), and on Clara's rabbit
 flashed over ICSP with a PICkit 3 (done four times on 2026-11-24, the
 original restored each time). Phase 1 is the skeleton end to end, phase 2
 the loader that makes the firmware updatable over the network (section 7)
-and the first size pass (section 2); both proven in the emulator only: no
+and the first size pass (section 2); the second size pass (2026-11-25,
+section 2) put the hash in assembly and the loader under 8 KB, the
+application now starts at 0x2000. All proven in the emulator only: no
 rabbit, no PICkit, no write to any PIC.
 
 What runs (2026-11-24, `../emulator/tools/v1-native-proof.sh`, the numbers
@@ -16,7 +18,7 @@ are the emulator's, with the PIC's cycle count as its clock):
 
 | Step | Measured |
 |---|---|
-| Image | phase 1: 22 920 bytes of 49 152 (46 %), RAM 1 015 bytes. Phase 2: loader 12 014 B (0x0000-0x2FFF), application 27 670 B from 0x3000 (sizes below, section 2), RAM 1 470 / 1 793 B |
+| Image | phase 1: 22 920 bytes of 49 152 (46 %), RAM 1 015 bytes. Phase 2: loader 12 014 B (0x0000-0x2FFF), application 27 670 B from 0x3000, RAM 1 470 / 1 793 B. After the second size pass (2026-11-25, section 2): loader 8 144 B (0x0000-0x1FFF), application 27 278 B from 0x2000, RAM 1 408 / 1 794 B |
 | Boot to the card associated | 579 ms (200 ms of it the two waits copied from Violet's pin sequence, below) |
 | DHCP lease | 614 ms |
 | DNS answer | 1 102 ms (the hop's ARP first, then the query) |
@@ -25,7 +27,8 @@ are the emulator's, with the PIC's cycle count as its clock):
 | Ears | each moved 2 holes after the first answer, one motor at a time, the emulator's sensors counted |
 | Watchdog (512 ms, on) | never fired |
 | Serial flash | AT45DB081B recognised by its density bits, page 0 written and read back, the boot counter at 2 on the second run |
-| Loader (phase 2) | slot A seeded in 10.1 s, an update downloaded in 1.3 s, verified in 9.9 s, 3 472 blocks written and read back in 0.8 s, the new image polling 14 s after its download; twelve power cuts, a bad key, a corrupt row, a corrupt slot and a crashing image all end on a polling rabbit (section 7.5) |
+| Loader (phase 2) | slot A seeded in 10.1 s, an update downloaded in 1.3 s, verified in 9.9 s, 3 472 blocks written and read back in 0.8 s, the new image polling 14 s after its download; twelve power cuts, a bad key, a corrupt row, a corrupt slot and a crashing image all end on a polling rabbit (section 7.5). With the hash in assembly (2026-11-25): seeded in 5.7 s, verified in 5.4 s |
+| SHA-256 on the PIC (2026-11-25) | FIPS 180-4's "abc", the 448-bit message, the million 'a' and the empty message, RFC 4231's HMAC cases 1-5: all equal to Python's on the emulated PIC; 12 034 µs per 64-byte block (`../emulator/tools/v1-sha-proof.sh`) |
 | Audio (phase 2) | the OKI start sequence, the 29 toggles and the 12 000 data bytes identical to Violet's for the same tone; the bursts split where the file sits in the serial flash (ours 226, Violet's 188) (`../emulator/tools/v1-audio-proof.sh`) |
 
 ## 1. Prior art, read first
@@ -65,8 +68,9 @@ are the emulator's, with the PIC's cycle count as its clock):
 file): no distribution packages them (Alpine 3.21 and edge, Rocky 9 and 10
 with EPEL were checked). Build: `podman build -t v1native-toolchain -f
 Containerfile .`, then `podman run --rm -v "$PWD":/src:Z -w /src
-v1native-toolchain make`; one command, reproducible, `out/nabv1native.hex`
-and the sizes.
+v1native-toolchain make`; one command, reproducible, `out/18f6525/full.hex`
+and the sizes. The one assembly file, `src/loader/sha256.asm`, goes through
+gputils' `gpasm -c` and links with SDCC's objects.
 
 Why not XC8: Microchip's free mode runs with most of the optimiser off
 ("Free" is a licence tier; the output is routinely 30-50 % larger than PRO
@@ -105,14 +109,29 @@ table, and the application calling the loader's UART, SPI and flash
 routines through a jump table instead of carrying its own copy (about
 1.5 KB; it binds the two images' ABIs together, so later).
 
-**The loader is 12 014 B**, not the 4 KB the phase-1 plan reserved: with
-SDCC's pic16 output, HMAC-SHA-256 is 3.9 KB, the serial flash and slot
-driver 1.3 KB, the state record 0.9 KB, the UART log 0.5 KB, the loader's
-own logic 2.6 KB, the C start-up and the constants the rest. An 8 KB block
-would need the SHA-256 round in assembly (about 1 KB there) and a leaner
-log; the 6525's hardware write protection covers 0x0000-0x07FF in any
-case (section 7.2), and what the loader protects itself with is that it
-never writes below 0x3000.
+**The loader was 12 014 B** after phase 2, not the 4 KB the phase-1 plan
+reserved: with SDCC's pic16 output, HMAC-SHA-256 was 3.9 KB (4.4 with its
+tables), the serial flash and slot driver 1.3 KB, the state record 0.9 KB,
+the UART log 0.5 KB, the loader's own logic 2.6 KB, the C start-up and the
+constants the rest.
+
+**The size pass of 2026-11-25** brought it to **8 144 B** (8 106 on the
+6627), measured on the linker maps at each step, SDCC's options unchanged
+(`--opt-code-size`, `--obanksel=3`, `--fommit-frame-pointer` change
+nothing; `--extended` would save 644 B but the 6525 has no extended
+instruction set; `--pno-banksel` 156 B but the data is banked):
+
+| Lever | Loader | Note |
+|---|---|---|
+| SHA-256 and the HMAC in PIC18 assembly (`src/loader/sha256.asm`) | 12 014 → 9 010 | 1 106 B of code and 288 B of tables instead of 4.4 KB: all the working words in the access bank (no BANKSEL in the round), little-endian words so that one routine adds any word to any word, the block buffer *is* the 16-word schedule ring (bytes stored at `blen ^ 3`), rotations as byte moves then carry chains the shorter way round, the HMAC with SDCC's own calling convention (arguments at FSR2 + 2) so that `sha256.h` did not change. The C tools/sha256-host.c went with the C hash: Python's `hashlib` is the reference now, on the emulated PIC (7.5) |
+| SDCC's `crt0` instead of `crt0iz` for the loader | − 150 | no initialised data; no static of the loader relies on a zero before it is written |
+| 64-byte rows instead of 32-bit byte counts and addresses in the loader (`hdr_rows`, `pic_seek(row)`, the slot loops) | − 354 | the 6627's 0x2000..0x17FFF is 1 408 rows; the length check is three bytes of the header |
+| the state record on one array at constant addresses, one pass for sum and magic (`src/common/state.c`) | − 124 | SDCC computes a fresh pointer for every `p[i]`; the application gains the same |
+| `slot_write_page` a macro over `flash_write` | − 168 | the wrapper's parameter shuffling cost more than the add at the two call sites |
+| `log_hex16` dropped (two `log_hex8`), `block_write` with `*p++`, the header filled in one loop | − 70 | |
+| speed: the bit steps of a rotation inlined, the word moves of the round direct | + 14 | 86 000 → 72 000 cycles per block, 14.3 → 12.0 ms |
+
+What is left in the 8 KB: the loader's own logic 2.7 KB (of which `main` 860 B and the seed 580 B), the hash 1.4 KB, the serial flash driver 1.3 KB, the state record 1.1 KB, the UART log and its strings 0.7 KB. The 6525's hardware write protection covers 0x0000-0x07FF in any case (section 7.2), and what the loader protects itself with is that it never writes below APP_BASE. The margin is 48 B on the 6525: a change to the loader must be paid for in the same file.
 
 The PIC's own linker script is `18f6525-native.lkr`: gputils' with banks
 2-5 merged, because gplink places an array inside one 256-byte bank and the
@@ -169,23 +188,24 @@ Design choices:
 
 | Range | Size | Phase 2 | Later |
 |---|---|---|---|
-| 0x0000-0x2FFF | 12 KB | **the loader** (section 7): 12 014 B used, with the CONFIG words; the reset vector, the AT45 and slot driver, HMAC-SHA-256, the 8-byte block write, the state record, a UART log in hex. WRTB can protect 0x0000-0x07FF on the 6525 (left off until the loader has run on the rabbit) | an assembly SHA-256 round would bring it under 8 KB |
-| 0x3000-0xBFFF | 36 KB | the application, 27 670 B, linked from 0x3000 (`--ivt-loc`, `entry.asm`): phase 1 plus the update path, the state record, the OKI | WPA2 (~6 KB: CCMP + 4-way handshake, PMK computed off-rabbit), the Prism flashing path (~2 KB), a program layer of our own (open) |
+| 0x0000-0x1FFF | 8 KB | **the loader** (section 7): 8 144 B used (12 014 and 12 KB until 2026-11-25), with the CONFIG words; the reset vector, the AT45 and slot driver, HMAC-SHA-256 in assembly, the 8-byte block write, the state record, a UART log in hex. WRTB can protect 0x0000-0x07FF on the 6525 (left off until the loader has run on the rabbit) | 48 B free: nothing |
+| 0x2000-0xBFFF | 40 KB | the application, 27 278 B, linked from 0x2000 (`--ivt-loc`, `entry.asm`): phase 1 plus the update path, the state record, the OKI | WPA2 (~6 KB: CCMP + 4-way handshake, PMK computed off-rabbit), the Prism flashing path (~2 KB), a program layer of our own (open) |
 
 A Violet-VM compatibility layer (~20 KB) does not fit and is not planned.
-WPA2 and the Prism flashing path fit in what is left only if the size
-levers above are taken (the 16-bit TCP, the jump table); on the 2.0b
-board's 96 KB none of this is tight. Left today: about 9 KB.
+Left for the application today: 13.7 KB (40 960 − 27 278), against 8.7 KB
+before the loader shrank and the base moved: WPA2 and the Prism flashing
+path fit without the other size levers (the 16-bit TCP, the jump table);
+on the 2.0b board's 96 KB none of this is tight.
 
 ### 4.2 PIC RAM, 3 968 bytes
 
 | Use | Bytes | Phase |
 |---|---|---|
-| Application, measured (udata + the 256-byte stack, `size.py` from the map) | 1 793 | 2 |
+| Application, measured (udata + the 256-byte stack, `size.py` from the map) | 1 794 | 2 |
 | of which the frame buffer | 340 | 1 |
 | of which the update's page buffer (528: a 161 page) and header | 592 | 2 |
 | SDCC's stack (its default; nothing recurses, 128 would do) | 256 | 1 |
-| Loader, measured (its own RAM; the application starts over it): a 528-byte page, the SHA-256 state and key pads | 1 470 | 2 |
+| Loader, measured (its own RAM; the application starts over it): a 528-byte page, the hash's 59 bytes in the access bank and 160 banked (state, block, key pad) | 1 408 | 2 |
 | WPA2: PTK, the replay counter, AES round keys (the WPA2 study on the branch emu/v1-wpa-cost) | ~450 | 3 |
 | Left for the application | ~1 700 | |
 
@@ -240,11 +260,16 @@ listed; frame 03's value (the poll interval) is logged, not yet honoured:
 
 Done in phase 2 (2026-11-24, `../emulator/tools/v1-loader-proof.sh`):
 
-- **The loader** (section 7): a permanent boot block at 0x0000-0x0FFF, two
+- **The loader** (section 7): a permanent boot block at 0x0000-0x1FFF
+  (0x2FFF until 2026-11-25), two
   image slots in the serial flash, HMAC-SHA-256 under a per-rabbit key,
   the copy row by row with the PIC's self-write sequence, read-back, the
   fallback to the other slot, the boot counter for an image that never
-  confirms itself. The application is linked from 0x1000.
+  confirms itself. The application is linked from 0x2000.
+- **The hash in assembly** (2026-11-25, `src/loader/sha256.asm`, section
+  2): the loader 12 014 → 8 144 B, the seed and the check of an image
+  5.7 s instead of 10; FIPS 180-4 and RFC 4231 vectors equal to Python's
+  on the emulated PIC (`../emulator/tools/v1-sha-proof.sh`).
 - **The update path in the application** (`src/app/update.c`): our frame
   10 in the poll's answer, `GET /vl/v1/fw`, the image streamed into the
   other slot a page at a time, the header page last, then `reset`.
@@ -294,13 +319,13 @@ HMAC was checked. Everything the loader does follows from that.
 
 | | |
 |---|---|
-| Loader | PIC flash 0x0000-0x0FFF, linked at 0 with the CONFIG words (`loader-18f6525.lkr`); the application is linked from 0x1000 (`app-18f6525.lkr`, `--ivt-loc=0x1000`). `make` gives both, `full.hex` for the PICkit and the emulator, `app-N.img` for the Terrier (`mkimage.py`) |
+| Loader | PIC flash 0x0000-0x1FFF, linked at 0 with the CONFIG words (`loader-18f6525.lkr`, `src/loader/config.c`); the application is linked from 0x2000 (`app-18f6525.lkr`, `--ivt-loc=0x2000`; 0x3000 until 2026-11-25). `make` gives both, `full.hex` for the PICkit and the emulator, `app-N.img` for the Terrier (`mkimage.py`) |
 | Key | 32 bytes in the PIC's data EEPROM at 0x000, programmed with the firmware over ICSP (`mkimage.py full` puts it at 0xF00000 in the hex). All 0xFF = no key: the application runs, no image is ever installed. The Terrier keeps the same key per rabbit and signs with it; the application never reads it |
 | Slot A, slot B | serial flash pages 16-207 and 208-399 (section 4.3): page 0 of a slot is its header, the image follows packed on 264-byte pages (528 on the 161). 44 KB of PIC18LF6525 image fits in 171 pages |
 | Slot header (64 B) | `struct app_hdr` (board.h): `NBV1`, format 1, board (0x25 = 6525, 0x27 = 6627), version, length (a multiple of 64), *pending* (1: install me) at 12; the HMAC at 16; `complete` = 0xA5 at 48, written last |
-| Application header | the same first 16 bytes at 0x1040 in the PIC, so that the loader can seed a slot from the PIC and `mkimage.py` can patch the length after the link |
+| Application header | the same first 16 bytes at 0x2040 in the PIC, so that the loader can seed a slot from the PIC and `mkimage.py` can patch the length after the link |
 | State record (16 B) | pages 2 and 3, `struct lstate`: active slot, tries, flags (confirmed), skip_ver, a sequence number and a checksum: two copies, the newer valid one wins, a write goes to the other page. A write cut by the power loses one copy, never the record |
-| HMAC | HMAC-SHA-256(key, header[0..11] ‖ image). SHA-256 written for the PIC (`src/loader/sha256.c`: a 16-word schedule ring, byte-wise rotations, the watchdog cleared per block) |
+| HMAC | HMAC-SHA-256(key, header[0..11] ‖ image). SHA-256 and the HMAC in PIC18 assembly (`src/loader/sha256.asm`, section 2; `sha256.h` is the C API, with SDCC's calling convention): the block buffer is the 16-word schedule ring, the working words in the access bank, the watchdog cleared per block; checked against FIPS 180-4 and RFC 4231 on the emulated PIC (`../emulator/tools/v1-sha-proof.sh`) |
 
 ### 7.2 At power-on
 
@@ -325,10 +350,10 @@ HMAC was checked. Everything the loader does follows from that.
    `LS_MAX_TRIES` (5) boots; the sixth falls back to the other slot and
    records the version in `skip_ver`. The application confirms by writing
    the state with the flag once the Terrier has answered a poll.
-5. `STKPTR = 0`, `goto 0x1000`. No application (0xFFFF at 0x1000): a log
+5. `STKPTR = 0`, `goto 0x2000`. No application (0xFFFF at 0x2000): a log
    line and a loop that feeds the watchdog.
 
-The loader writes PIC rows from 0x1000 up only, by construction; WRTB in
+The loader writes PIC rows from 0x2000 up only, by construction; WRTB in
 CONFIG6H can protect 0x0000-0x07FF on the 6525 against the application on
 top (left off until the loader has run on the rabbit, as the firmware must
 stay readable and replaceable over ICSP; the 6627's BBSIZ can cover the
@@ -365,11 +390,13 @@ the running image is never overwritten by a download.
 
 Lazare's board in the emulator (`--pic 6525 --flash-chip 081`), the PIC's
 cycle count as the clock, the application 27 712 B (v30 to v33 differ by
-their version only, v33 by a loop that never feeds the watchdog):
+their version only, v33 by a loop that never feeds the watchdog). The
+times are phase 2's; the run of 2026-11-25 with the hash in assembly and
+the application at 0x2000 (27 328 B, 427 rows) follows the table:
 
 | Run | What happened | Measured |
 |---|---|---|
-| 1. first boot | no state, a key: slot A seeded from the PIC, then the application polls | HMAC + 105 page writes in 10.0 s; slot A's HMAC equals Python's `hmac` over the same 12 + 27 712 bytes (the C SHA-256 checked against the standard, `tools/sha256-host.c`); no PIC flash write |
+| 1. first boot | no state, a key: slot A seeded from the PIC, then the application polls | HMAC + 105 page writes in 10.0 s; slot A's HMAC equals Python's `hmac` over the same 12 + 27 712 bytes (the C SHA-256 checked against the standard, tools/sha256-host.c); no PIC flash write |
 | 2. a good update | frame 10 offers v31 at 2.0 s; downloaded into B; reset; the loader checks, copies, reads back, runs v31; v31 polls and confirms | download 27 712 B in 1.39 s; HMAC check 9.9 s; 433 rows erased, 3 464 blocks of 8 written and read back in 0.81 s; v31's banner 11.1 s after the reset, its first poll answered 1.6 s later, the state confirmed |
 | 3. a bad signature | v32 signed with another key: downloaded, pending; the loader refuses it | "bad hmac" after 9.9 s, `skip_ver` = 32, v31 runs on, no PIC flash write; the application does not fetch v32 again although every poll offers it |
 | 4. twelve power cuts | the run cut at random points, a third each during the download, the HMAC check, the copy and the state write; then a restart | every restart ends on v31 polling: a cut before the header page is written leaves no pending slot and the next poll offers v31 again; a cut in the HMAC check or the copy finds the slot pending and installs it again (a half-written PIC is simply overwritten); a cut after the state write finds the PIC equal to B |
@@ -382,6 +409,30 @@ every erase and block write). The seed and each HMAC check cost about 10 s
 of the PIC's time for 27 KB (SDCC's 32-bit code: 150 000 cycles per
 64-byte block; a 44 KB image would take 16 s), the copy under a second
 here and an estimated 7 s on the part (DS39612's 2 ms per block).
+
+**2026-11-25, the hash in assembly, the same six runs, PASS**: slot A seeded
+in 5.7 s (HMAC over 27 328 B, equal to Python's); the HMAC check of the
+update 5.4 s, 427 rows erased and 3 416 blocks written and read back
+in 0.74 s, v31's banner 6.5 s after the reset; "bad hmac" after
+5.4 s; the twelve cuts, the corrupt row, the corrupt slot and v33 as
+before. The block costs 72 000 cycles (12.0 ms, 12 034 µs per block
+measured over the million 'a' of `v1-sha-proof.sh`), 2 times faster
+than the C, not the 10 an unrolled round would give: the rotations are
+still bit by bit through the carry (28 bit steps and 9 byte moves per
+round) and the eight round variables are moved down a word at the end of
+each round; what remains was left in favour of the 48 B of margin
+(section 2). A 44 KB image would take about 8.5 s.
+
+**The vectors on the PIC** (`../emulator/tools/v1-sha-proof.sh`, the test
+image `src/loader/shatest.c` linked like the loader, the watchdog on):
+SHA-256 of "", "abc", the 448-bit message, a 1000-byte pattern and the
+million 'a'; HMAC-SHA-256 of RFC 4231's cases 1 to 5 (6 and 7 take a
+131-byte key, above the 64 `hmac_init` accepts; the rabbit's keys are 32
+bytes) and of the pattern under a 32-byte key: eleven digests, all equal
+to Python's `hashlib` and `hmac`. The first build of the assembly got
+every digest wrong: gpasm's `EQU` of a relocatable label keeps the offset
+within the section and loses the relocation, so every `lfsr` on a round
+variable pointed 0x0B too low; text macros instead.
 
 ### 7.6 What it could not establish
 

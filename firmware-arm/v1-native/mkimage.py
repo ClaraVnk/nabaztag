@@ -4,7 +4,7 @@
     mkimage.py image --app app.hex --key KEY --out app.img
         The application as the Terrier serves it: a 64-byte header (board.h
         struct app_hdr: 'NBV1', format, board, version, length; the
-        HMAC-SHA-256 at 16; the rest 0xFF) then the image, from 0x3000,
+        HMAC-SHA-256 at 16; the rest 0xFF) then the image, from 0x2000,
         rounded up to 64 bytes with 0xFF. The HMAC covers the header's first
         12 bytes and the image. Prints the HMAC.
     mkimage.py full --loader loader.hex --app app.hex --key KEY --out full.hex
@@ -23,7 +23,7 @@ import hmac
 import struct
 import sys
 
-APP_BASE = 0x3000
+APP_BASE = 0x2000
 HDR_OFF = 0x40
 HDR_SIZE = 64
 HMAC_OFF = 16
