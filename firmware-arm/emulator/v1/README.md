@@ -67,6 +67,7 @@ Read in the process, against what the sources said:
 | `--ssid NAME` | the network the card reports |
 | `--hand EAR SLOTS AT` | a hand turns ear 0 or 1 by SLOTS holes at AT seconds |
 | `--press AT HOLD` | the head button, pressed at AT seconds for HOLD seconds |
+| `--stall EAR` | ear 0 or 1 is stalled: its motor runs, its wheel never turns (Lazare's right ear, 2026-11-24) |
 | `--flash FILE` | keep the serial flash (configuration page, program) across runs |
 | `--trace-bus`, `--trace-pins`, `--trace-net`, `--hot` | what the card, the pins, the gateway and the PC did |
 

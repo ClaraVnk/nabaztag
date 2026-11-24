@@ -36,6 +36,15 @@ void ears_hand(int ear, int n, uint64_t at_ms)
 {
   if(hands < 8) { hand[hands].ear = ear; hand[hands].n = n; hand[hands].at_ms = at_ms; hands++; }
 }
+
+/* A stalled ear (Lazare's right one, 2026-11-24: the motor draws current and
+ * the wheel does not turn): the motor is on and the sensor never changes. */
+static int stalled[2];
+
+void ears_stall(int ear)
+{
+  stalled[ear & 1] = 1;
+}
 static uint64_t last_cycles;
 
 /* Sensor level at a phase, and which slot it is in. */
@@ -104,7 +113,8 @@ void ears_poll(void)
 
     if(dir != x->dir) {
       level_at(x->phase, &slot);
-      if(dir) board_log("ear %d: motor %s (slot %d)", e, dir > 0 ? "forward" : "backward", slot);
+      if(dir) board_log("ear %d: motor %s (slot %d)%s", e, dir > 0 ? "forward" : "backward", slot,
+                        stalled[e] ? ", stalled: the wheel does not turn" : "");
       else    board_log("ear %d: motor stopped, slot %d, after %lld ms of turning", e, slot,
                         (long long)(x->moved_us / 1000));
       x->dir = dir;
@@ -112,6 +122,7 @@ void ears_poll(void)
     }
     if(!dir) continue;
     x->moved_us += dt;
+    if(stalled[e]) continue;
     x->phase = (x->phase + dir * dt) % TURN_US;
     if(x->phase < 0) x->phase += TURN_US;
     lvl = level_at(x->phase, &slot);

@@ -5,7 +5,7 @@
  *   nabv1 [--hex nabaztag.hex] [--flash v1.flash] [--seconds N]
  *         [--mac 0019db00beef] [--warren host] [--port80 port] [--ssid name] [--trace-pins] [--trace-bus]
  *         [--trace-net] [--hot] [--hand EAR SLOTS AT_SECONDS]...
- *         [--press AT_SECONDS HOLD_SECONDS]...
+ *         [--press AT_SECONDS HOLD_SECONDS]... [--stall EAR]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +23,7 @@ void board_step(void);
 void ears_init(int pos0, int pos1);
 void ears_poll(void);
 void ears_hand(int ear, int n, uint64_t at_ms);
+void ears_stall(int ear);
 
 static uint32_t hot[PIC_FLASH_SIZE / 2];
 
@@ -100,6 +101,7 @@ int main(int argc, char **argv)
       press[presses].until_ms = press[presses].at_ms + (uint64_t)(atof(argv[i+2]) * 1000);
       presses++; i += 2;
     }
+    else if(!strcmp(argv[i], "--stall") && i + 1 < argc) ears_stall(atoi(argv[++i]));
     else if(!strcmp(argv[i], "--mac") && i + 1 < argc) {
       unsigned v[6];
       if(sscanf(argv[++i], "%2x%2x%2x%2x%2x%2x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6)
