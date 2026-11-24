@@ -1107,6 +1107,53 @@ the Terrier's orders: everything the Terrier asks of a Karotz works on 6.1,
 from the key, nothing written to the flash.
 
 
+### Linux 6.1 for the Karotz: the review of 2026-11-24, and its proofs
+
+`karotz/kernel/REVIEW-6.1.md` ranks what the review found (the hub's wrong
+control reads behind the "power" symptom, the belly's pulse timer, the
+config tinyconfig left). What it changed, each with its proof:
+
+`karotz/kernel/syscalls-audit.py` reads `sys_call_table` out of vmlinux and
+the `svc` numbers out of every ARM ELF of a root tree, and names the
+syscalls the kernel answers with ENOSYS (the way nanosleep, select and
+flock were found one boot at a time on 2026-11-24). `size.sh` now leaves
+vmlinux and System.map in OUT for it, and checks the `is not set` lines of
+the config as well:
+
+    mkdir -p /tmp/kz && podman run --rm -e OUT=/out -v /tmp/kz:/out:Z karotz-kernel61
+    podman run --rm karotz-kernel61 cat /linux/arch/arm/tools/syscall.tbl > /tmp/kz/syscall.tbl
+    podman run --rm -v /tmp/kz:/w:Z -v <Terrier OS root, e.g. ~/lapinlibre-work/ll/work/sysroot-core>:/rootfs:ro,Z \
+        karotz-kernel61 python3 /k/syscalls-audit.py /w/vmlinux /w/System.map /w/syscall.tbl /rootfs
+    # 2026-11-24, config before the review: 127 of 452 entries ENOSYS; inotify_init/add_watch/
+    #   rm_watch/init1 wanted by dbus-daemon and libgio (via uClibc), shm*/sem*/msg* by busybox
+    #   ipcs, gpg and libortp, madvise by libcrypto and madplay -> CONFIG_INOTIFY_USER=y
+    # after: the inotify line gone; SysV IPC and madvise left out on purpose (REVIEW-6.1.md 2.1)
+
+`karotz-6.1.config`: `INOTIFY_USER`, `PANIC_TIMEOUT=10`, `HZ_200` (2.6.32's
+tick; not yet seen on Gengar), `SWAP` and `LEGACY_PTYS` off, the OHCI glue
+named. Size 2,508,304 -> 2,502,688 bytes (2026-11-24), nothing "asked but
+not kept". `qemu-mini2440/panic.sh` boots the kernel with an init that does
+not exist: PASS when it says "Rebooting in 10 seconds" (the BIOS adds
+nothing to the command line, so `panic=` cannot come from there):
+
+    MACH=1912 karotz/kernel/qemu-mini2440/boot.sh /tmp/kz      # 2026-11-24: PASS
+    karotz/kernel/qemu-mini2440/panic.sh /tmp/kz               # 2026-11-24: PASS
+    # boot.sh looked for /dev/spidev0.1 and failed since the LED's chip select
+    # became 0 (b260135): it is spidev0.0 in QEMU, spidev0.1 on the rabbit by mdev.
+
+`karotz/kexec/test-mkcpio.sh`: `mkcpio.py` read a FIFO or a device node of
+the tree as a file and hung; they are copied as what they are now
+(2026-11-24: PASS; the control, without the fix, hit the 20 s timeout).
+
+`rabbitv3-chardevs.c` clamps the ear speed to the PWM period (255):
+compiles; the motors need Gengar.
+
+Note for the next image build: `karotz/kernel/Containerfile` pins
+`alpine:3.24` but Alpine's GCC moved under it (15.1.0 on 2026-11-22,
+16.1.0 on 2026-11-24): a kernel built on another day is another compiler.
+Pin the package (`gcc-arm-none-eabi=<version>`) when the flash kernel is
+built, and keep the zImage's sha256 with the release.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of
