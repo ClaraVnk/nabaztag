@@ -1047,6 +1047,18 @@ partitions, /usr (YAFFS) mounted read-only, the USB key as sda, wlan0 up
 (rt73). Left: the UDA1341 card (-22), UART IRQ warnings, the restart
 without s3c2410_wdt.
 
+2026-11-24, the rest: the card registers with the S3C24xx DMA driver
+(`CONFIG_S3C24XX_DMAC`, "Missing dma channel" before). The USB worked once
+by chance: the same kernel then read the internal hub's descriptor empty
+("bad descriptor, ignoring hub"), the DMA and the watchdog ruled out by
+A/B runs. `usbcore.old_scheme_first=1` enumerates the hub every time; 6.1
+then refuses its devices ("insufficient available bus power", the hub
+claims to be bus-powered, the board powers them): the measure writes
+`bConfigurationValue` itself, and the key, the Wi-Fi (`wlan0` up) and the
+restart by 6.1's own watchdog all work. For Terrier OS on 6.1: that
+command-line option, and a boot rule configuring the hub's devices.
+
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of
