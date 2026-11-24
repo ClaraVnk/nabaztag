@@ -1132,7 +1132,7 @@ the config as well:
 `karotz-6.1.config`: `INOTIFY_USER`, `PANIC_TIMEOUT=10`, `HZ_200` (2.6.32's
 tick; not yet seen on Gengar), `SWAP` and `LEGACY_PTYS` off, the OHCI glue
 named. Size 2,508,304 -> 2,502,688 bytes (2026-11-24), nothing "asked but
-not kept". `qemu-mini2440/panic.sh` boots the kernel with an init that does
+not kept". `karotz/kernel/qemu-mini2440/panic.sh` boots the kernel with an init that does
 not exist: PASS when it says "Rebooting in 10 seconds" (the BIOS adds
 nothing to the command line, so `panic=` cannot come from there):
 

@@ -195,7 +195,7 @@ trigger in the driver. Not changed: a wrong guess would stop the ears.
 - `autorun:19,73,85,104`: the log directory's number is `ls | wc -l`,
   which counts files too (`N-ramoops.bin` beside `N-.../`): two runs can
   share a number, nothing is lost (the directory names differ).
-- `qemu-mini2440/boot.sh:17,26` still looked for `/dev/spidev0.1`: the LED
+- qemu-mini2440/boot.sh:17,26 still looked for `/dev/spidev0.1`: the LED
   moved to chip select 0 in b260135 and the proof failed (QEMU has no mdev
   alias). Fixed to `spidev0.0`; PASS again 2026-11-24.
 - `Containerfile:7-9` pins `alpine:3.24` but not the toolchain: GCC 15.1.0
@@ -212,7 +212,7 @@ trigger in the driver. Not changed: a wrong guess would stop the ears.
 ## 3. Security
 
 The kernel itself is a small surface on a LAN appliance; the real one is
-LapinLibre's web API (`karotz/lapinlibre/REVIEW-LAPINLIBRE.md`). Here:
+LapinLibre's web API (karotz/lapinlibre/REVIEW-LAPINLIBRE.md). Here:
 
 - `CONFIG_DEVMEM` and `KALLSYMS` are in the kexec config only
   (`karotz-6.1-kexec.config:6-10`); the flash config has neither. Good.
@@ -249,7 +249,7 @@ LapinLibre's web API (`karotz/lapinlibre/REVIEW-LAPINLIBRE.md`). Here:
   and `LEGACY_PTYS` came in. `size.sh`'s "asked but not kept" check now
   covers `is not set` lines, and the audit covers the syscalls; a saved
   full `.config` beside the fragment would make the next drift visible
-  in a diff (`out/.config` after `size.sh`).
+  in a diff (out/.config after `size.sh`).
 - The board file's `RV3_STEP`/`RV3_REGS` lines (`mach-rabbitv3.c:373,443`)
   were the 2026-11-23 bisect's; they cost nothing and stay useful in
   ramoops. Keep.
