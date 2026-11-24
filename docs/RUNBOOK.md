@@ -451,10 +451,15 @@ V1_FW=1.4b tools/v1-proof.sh --terrier <terrier checkout>
 ```
 
 The 1.4b firmware keeps the PIC's brown-out reset and its watchdog on
-(CONFIG2L 0A, CONFIG2H 0F; 2.0b has both off). Two ear motors started in
-the same step dipped the supply and restarted Lazare at every two-ear
-order (2026-11-24, one ear alone did not): the Terrier's program starts
-them one at a time. The emulator models the watchdog, not the supply; on
+(CONFIG2L 0A, CONFIG2H 0F; 2.0b has both off). On Lazare (2026-11-24) the
+left ear alone moves, the right one alone restarts the rabbit: with the
+brown-out reset turned off (`no-brownout.py`, written over ICSP and
+verified) it no longer restarted, and the right ear still did not turn,
+in silence -- its motor or its bridge draws current without turning, a
+fault of that rabbit, not of the firmware. The original was written back
+(verified against the dump): the reset cuts a stalled motor. The
+Terrier's program starts the motors one at a time all the same (the
+smaller peak). The emulator models the watchdog, not the supply; on
 the 161 flash model the 1.4b firmware lost the program it had just written
 and never polled again, hence `--flash-chip 081`.
 
@@ -478,7 +483,11 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 A real v1's firmware, read over ICSP with a PICkit (read only):
 `firmware-arm/v1-icsp/README.md`, `firmware-arm/v1-icsp/read.sh <out.hex>
 [PIC18LF6525|PIC18LF6627]` (MPLAB X 6.20 on the Mac: 6.30 dropped the
-PICkit 3; 2026-11-24, Lazare's 1.4b in `firmware-arm/v1-icsp/dumps`); its
+PICkit 3; 2026-11-24, Lazare's 1.4b in `firmware-arm/v1-icsp/dumps`);
+`no-brownout.py <in.hex> <out.hex>` clears CONFIG2L's BOREN alone, written
+with `ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F<out.hex>` and back with the
+dump the same way (check the hex is there first: a missing file writes
+nothing); its
 serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
 
