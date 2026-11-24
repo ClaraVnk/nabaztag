@@ -1373,3 +1373,16 @@ tool below; `make-img.sh` writes both). The Karotz guide's screenshots come
 from `karotz/lapinlibre/imager-shots/` (Imager 2.0.12 on Xvfb, steps in
 `shots.sh`): repository URL, device, system, Wi-Fi; Ubuntu by exception,
 removed after use.
+
+**Before a second try on Lazare (2026-11-25).** The first (2026-11-24) stuck
+at blue (the card never associated) and wiped Violet's configuration: the
+native firmware wrote its boot counter at serial-flash page 0, where Violet
+keeps its settings (`v1-setup.sh` restored them). Now: pages 0-3 never
+written (the configuration at 4-5, the loader's state at 6-7, the log at
+8-15; `v1-loader-proof.sh` checks pages 0-3 stay blank); the card set up
+with Violet's own RID values and order, read off the emulator's RID trace
+(`card: RID ... <- n bytes: ...`, FC03 0, FC06 3, FC07 1514, FC84 0x0F,
+FCB0 1 Mb/s, FCB3/FCB4 0x0F); SSID and server set at build time
+(`APP_DEFS='-DSSID=\"<name>\" -DSERVER_NAME=\"<host>\" -DNO_EAR_DEMO'`).
+On the dev VM: v1-native-proof, v1-loader-proof and v1-audio-proof PASS (the
+two last with shared `:z` mounts; SELinux refused `:Z` between containers).

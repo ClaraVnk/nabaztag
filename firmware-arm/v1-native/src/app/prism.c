@@ -47,6 +47,11 @@
 #define RID_AUTH      0xFC2A
 #define RID_TXRATES   0xFCB0
 #define RID_STAID     0xFD20
+#define RID_OWNCHAN   0xFC03
+#define RID_SCALE     0xFC06
+#define RID_BASICRATES 0xFC84
+#define RID_FCB3      0xFCB3
+#define RID_FCB4      0xFCB4
 #define INFO_LINK     0xF200
 
 #define TX_BUF_BYTES  1600
@@ -223,12 +228,22 @@ uint8_t prism_join(const __code char *ssid)
   for(i = 0; i < 32; i++) b[i] = 0;
   while(ssid[n] && n < 32) { b[n] = (uint8_t)ssid[n]; n++; }
   w[0] = n;
+  /* What Violet's 1.4b writes, in its order and with its values (the
+   * emulator's RID trace, 2026-11-25): on Lazare our first set (no FC03,
+   * FC06, FC84, FCB3, FCB4; 2304 and automatic rates) never associated,
+   * the belly stuck at blue. Copied as they are before anything is
+   * simplified; FCB3 and FCB4 are undocumented. */
   if(rid_write1(RID_PORTTYPE, 1)) return 1;          /* BSS: an access point */
   if(rid_write(RID_SSID, w, 17)) return 2;
-  if(rid_write1(RID_MAXLEN, 2304)) return 3;
+  if(rid_write1(RID_OWNCHAN, 0)) return 3;
+  if(rid_write1(RID_SCALE, 3)) return 3;
+  if(rid_write1(RID_MAXLEN, 1514)) return 3;
+  if(rid_write1(RID_BASICRATES, 0x000F)) return 6;
+  if(rid_write1(RID_TXRATES, 0x0001)) return 6;      /* 1 Mb/s, as Violet's */
+  if(rid_write1(RID_FCB3, 0x000F)) return 6;
+  if(rid_write1(RID_FCB4, 0x000F)) return 6;
   if(rid_write1(RID_AUTH, 1)) return 4;              /* open system */
   if(rid_write1(RID_WEPFLAGS, 0)) return 5;          /* no WEP (phase 1) */
-  if(rid_write1(RID_TXRATES, 0x000F)) return 6;      /* 1, 2, 5.5, 11 Mb/s */
   linked = 0;
   return cmd(CMD_ENABLE, 0) ? 7 : 0;
 }

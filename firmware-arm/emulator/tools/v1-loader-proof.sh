@@ -36,7 +36,7 @@ ms_of() { grep -m1 -- "$2" "$1" | sed -E 's/^\[ *([0-9]+) ms\].*/\1/'; }
 
 echo "== build"
 podman build -q -t v1native-toolchain -f "$NATIVE/Containerfile" "$NATIVE" >/dev/null
-podman run --rm -v "$NATIVE":/src:Z -w /src v1native-toolchain sh -c '
+podman run --rm -v "$NATIVE":/src:z -w /src v1native-toolchain sh -c '
   make clean >/dev/null && make >/dev/null && make size &&
   make app image APP_VERSION=31 >/dev/null &&
   make app image APP_VERSION=32 KEY=keys/wrong.key | grep ^image &&
@@ -55,14 +55,14 @@ warren() {
   [ -z "$WARREN" ] || { podman rm -f "v1warren-$PORT" >/dev/null 2>&1 || true; wait "$WARREN" 2>/dev/null || true; }
   # In a container on the host network, like the emulator: on a Mac that
   # network is the podman machine's, where a warren on the Mac is unreachable.
-  podman run --rm --network host --name "v1warren-$PORT" -v "$PWD/tools":/t:ro,Z -v "$FW":/img:ro,Z \
+  podman run --rm --network host --name "v1warren-$PORT" -v "$PWD/tools":/t:ro,z -v "$FW":/img:ro,z \
     docker.io/library/python:3.13-alpine python3 -u /t/v1_native_warren.py "$PORT" "$@" >> "$OUT/warren.log" 2>&1 &
   WARREN=$!
   sleep 2
 }
 trap '[ -z "$WARREN" ] || { kill $WARREN 2>/dev/null; podman rm -f "v1warren-$PORT" >/dev/null 2>&1; }' EXIT
 emu() {
-  podman run --rm --network host -v "$FW":/img:Z nabaztag-v1-native \
+  podman run --rm --network host -v "$FW":/img:z nabaztag-v1-native \
     --hex /img/full.hex --pic 6525 --flash-chip 081 --flash /img/sf.bin --pic-flash /img/pic.bin \
     --warren 127.0.0.1 --port80 "$PORT" "$@"
 }
@@ -91,6 +91,10 @@ need "$L" 'uart: poll 1 done' "no poll answered"
 none "$L" 'uart: update: image confirmed' "the seeded image is confirmed by the loader itself; the application should not write the state"
 [ "$(slot_hmac 16)" = "$HMAC30" ] || fail "slot A's HMAC $(slot_hmac 16) is not Python's $HMAC30"
 none "$L" 'flash: write' "the seed wrote the PIC's flash"
+# Pages 0-3 are Violet's (its configuration at page 0): never written, so a
+# rabbit put back on Violet's firmware finds its settings (2026-11-25).
+python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(0 if all(b == 0xFF for b in d[:4*528]) else 1)" "$FW/sf.bin" \
+  || fail "pages 0-3 of the serial flash were written: Violet's configuration lives there"
 SEED_MS=$(ms_of "$L" 'uart: L: seeded A')
 echo "   seeded A in ${SEED_MS} ms (HMAC over $(grep -E '^image: board 0x25 version 30 ' "$OUT/build.log" | tail -1 | sed -E 's/.*length ([0-9]+).*/\1/') bytes, the same HMAC as mkimage.py); run at $(ms_of "$L" 'uart: L: run') ms"
 snap s1
