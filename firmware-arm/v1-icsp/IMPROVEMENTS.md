@@ -4,7 +4,7 @@ A study, 2026-11-24, of Violet's two PIC firmwares for the v1 (2005), the way
 Naboot improved the v2's: what an owner would gain, what the code says, what
 it would cost on this PIC and this card, and how the emulator would prove it
 before a rabbit. Nothing here was flashed. Every claim about the firmware
-cites an address in one of the two dumps or a run of `tools/v1-study.sh`.
+cites an address in one of the two dumps or a run of `../emulator/tools/v1-study.sh`.
 
 | | 1.4b (Lazare) | 2.0b (Newbaztag's rabbit) |
 |---|---|---|
@@ -60,7 +60,7 @@ twice, not two firmwares:
 
 ## 2. What the firmware does when the network breaks (measured)
 
-`tools/v1-study.sh` runs Violet's wait program behind the emulator's
+`../emulator/tools/v1-study.sh` runs Violet's wait program behind the emulator's
 gateway and breaks the network under the firmware. Both firmwares gave the
 same timeline to the second; the numbers are 1.4b's.
 
@@ -161,7 +161,7 @@ sound intelligible or not is between the encoder and the chip:
 
 The emulator cannot settle 1 or 2: its OKI is a register log, the FIFO
 status it returns is 0, so it shows the registers and the first bursts and
-not the pace (`tools/v1-study.sh` prints both).
+not the pace (`../emulator/tools/v1-study.sh` prints both).
 
 ## 4. Room: what fits where
 
@@ -175,7 +175,7 @@ not the pace (`tools/v1-study.sh` prints both).
   itself a rebuild of a firmware we have no source for. The English page
   text (0x10F0-0x1600, about 1.3 KB) is the other reserve, at the price of
   the page. Anything larger (WPA2: about 6 KB of code and 450 bytes of RAM
-  per `../emulator/v1/wpa/README.md`) **cannot go on a PIC18LF6525**.
+  per the WPA2 study (v1/wpa/README.md on the branch emu/v1-wpa-cost)) **cannot go on a PIC18LF6525**.
 - **2.0b: 46 884 bytes free** above 0xC8DC, 6 KB of them reachable-but-dead
   elsewhere not needed. WPA2, a DNS re-query, a LED diagnostic and a loader
   all fit, in flash. RAM is the limit: 3 936 bytes on the 18F6627, 172 never
@@ -250,7 +250,7 @@ and 1.4b-class rabbits only with the bigger PIC.
 | 3 | **Re-resolve the server's name** (before a retry, or every N polls), 2.0b | a server that moves does not strand the rabbits | section 2, `--dns-mute`, the single DNS query | under 100 bytes, calls existing code | low; the retry path is the measured one | `--dns-mute` then a changed answer, the poll follows |
 | 4 | **A LED diagnostic before the program runs** (no AP / no DHCP / no DNS / refused), 2.0b | the "it does nothing" rabbit says why | section 2: single letters on serial only | a few hundred bytes; the TLC5922 driver exists (the boot clears the LEDs, `leds:` in the emulator's log) | low | each scenario of `v1-study.sh` shows its colour in `leds:` |
 | 5 | **A loader with signed images over the poll**, 2.0b | updates without a PICkit | section 5 | ~1 KB loader + HMAC-SHA-256, a flash-write model in the emulator first | a half-written image; mitigated by flag-last writes | emulator: write path, then an image installed over HTTP |
-| 6 | **WPA2**, 2.0b-class only, after #2 says >= 1.7.0 | the v1 on a modern network | `../emulator/v1/wpa/README.md` | ~6 KB, 450 B RAM, 0.8 s handshake | the card's BAP write into RX buffers (unknown) | the WPA2 access point in the emulator, then the rabbit |
+| 6 | **WPA2**, 2.0b-class only, after #2 says >= 1.7.0 | the v1 on a modern network | the WPA2 study (v1/wpa/README.md on the branch emu/v1-wpa-cost) | ~6 KB, 450 B RAM, 0.8 s handshake | the card's BAP write into RX buffers (unknown) | the WPA2 access point in the emulator, then the rabbit |
 | 7 | **1.4b: brown-out off** stays a per-rabbit CONFIG change, not a firmware one | a rabbit that restarts on an ear | `no-brownout.py`, 2026-11-24: Lazare's right ear is a motor fault | one CONFIG bit | the reset is what cuts a stalled motor | done once, written back |
 | 8 | Poll interval, scan, roaming | nothing to gain: the interval is the server's (frame 03), the card roams by itself (section 2, link back -> poll in 0.2 s) | | | | |
 
