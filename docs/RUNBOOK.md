@@ -556,6 +556,15 @@ flash, on a PC with a PCMCIA slot (hostap's `prism2_srec -f`, which checks
 compatibility; never the primary alone). The v1's card is a removable
 PCMCIA card (BenQ 802.11b). Not done.
 
+The matching Intersil files (primary 1.1.1, station 1.7.4 for flash and for
+RAM), not kept here (Intersil's, no licence to redistribute), are fetched
+from two mirrors and checked against their hashes:
+`firmware-arm/v1-icsp/prism-fw.sh [DIR]` (default `~/.nabaztag/prism-fw`).
+Both list NIC 0x800C variant 0 in their own compatibility records. First
+try on a PC with a 16-bit PCMCIA slot: the RAM image (`prism2_srec -r`),
+gone at power off; the flash (`-f`, primary and station together) only
+after.
+
 What could be improved in the v1's firmware, 1.4b and 2.0b, with the
 evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
 
