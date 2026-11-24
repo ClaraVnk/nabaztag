@@ -480,6 +480,26 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 # real 1.4b at every ear order.
 ```
 
+The Terrier's copy of that program, `Nabaztag_wait_terrier.vasm`
+(`tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
+image builds: in `@moveears` the right ear waits while `/dir0` says the left
+one turns), against Violet's as the control, on both firmwares:
+
+```sh
+firmware-arm/emulator/tools/violet-vasm/one-motor-proof.sh   # repo root, dev VM, ~90 s
+# 2026-11-24: PASS. On an order (L5 R10, then L2 R6) Violet's frame starts
+# both motors in the same millisecond (2.0b: left 48635 ms, right 48636;
+# 1.4b: 48293, 48294); the Terrier's starts the right one the millisecond
+# the left one stops (2.0b: left 48635-51980, right 51980-56682; 1.4b: left
+# 48555-51767, right 51768-57170), on both orders. st=01 after the program,
+# a hand on the right ear reported (sd=9007 on 2.0b, 8E0F on 1.4b, both
+# frames alike; the value moves with the second the hand comes, 8204/9004/
+# 9010 on Violet's own, so the script checks the report, not its value), a
+# click with a message waiting sends sd=0003, the 1.4b watchdog never fires.
+# Still both motors at once, in both programs: the acquisition turn
+# (@motorturn) at boot and after a hand.
+```
+
 A real v1's firmware, read over ICSP with a PICkit (read only):
 `firmware-arm/v1-icsp/README.md`, `firmware-arm/v1-icsp/read.sh <out.hex>
 [PIC18LF6525|PIC18LF6627]` (MPLAB X 6.20 on the Mac: 6.30 dropped the
