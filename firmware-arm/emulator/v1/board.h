@@ -30,6 +30,8 @@ struct board {
   /* uart */
   char     line[256];
   unsigned line_len;
+  uint8_t  eeprom[1024];               /* data EEPROM, erased = FF (board_init) */
+  int      ee_unlock;                  /* 1 after 55h on EECON2, 2 after AAh */
   /* adc: what each channel reads (10 bits) */
   uint16_t adc[16];
 };

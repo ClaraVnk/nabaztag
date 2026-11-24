@@ -70,6 +70,14 @@ Read in the process, against what the sources said:
 | `--stall EAR` | ear 0 or 1 is stalled: its motor runs, its wheel never turns (Lazare's right ear, 2026-11-24) |
 | `--flash FILE` | keep the serial flash (configuration page, program) across runs |
 | `--trace-bus`, `--trace-pins`, `--trace-net`, `--hot` | what the card, the pins, the gateway and the PC did |
+| `--server-vanish AT`, `--server-close AT` | at AT seconds the server dies without a FIN, or closes its connections |
+| `--link-down AT SECONDS` | the access point is gone from AT for SECONDS (0: for good); the card reports link status 2, then 1 when it is back |
+| `--dns-mute UNTIL` | no DNS answer before UNTIL seconds (0: never) |
+
+The last three are what `../tools/v1-study.sh` uses to see how Violet's
+firmware lives through a broken network (`../../v1-icsp/IMPROVEMENTS.md`,
+2026-11-24): a card re-initialisation after about 52 s on every failure
+path, DNS asked once per power-on.
 
 ## Proofs
 

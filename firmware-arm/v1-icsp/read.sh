@@ -15,7 +15,8 @@
 # IPE has been opened once. 2026-11-24, Lazare: "Read successfully".
 set -eu
 OUT=${1:?usage: read.sh <out.hex> [device]}
-DEV=${2:-PIC18LF6525}
+DEV=${2:-18LF6525}
+DEV=${DEV#PIC}   # ipecmd wants 18LF6525: "PIC18LF6525" became PICPIC18LF6525 (2026-11-24)
 IPECMD=${IPECMD:-/Applications/microchip/mplabx/v6.20/mplab_platform/mplab_ipe/bin/ipecmd.sh}
 case "$OUT" in /*) ;; *) OUT=$(pwd)/$OUT ;; esac
 "$IPECMD" -P"$DEV" -TPPK3 -GF"$OUT"

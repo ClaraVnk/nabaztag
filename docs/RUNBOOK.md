@@ -481,7 +481,7 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 ```
 
 The Terrier's copy of that program, `Nabaztag_wait_terrier.vasm`
-(`tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
+(`firmware-arm/emulator/tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
 image builds: in `@moveears` the right ear waits while `/dir0` says the left
 one turns), against Violet's as the control, on both firmwares:
 
@@ -550,6 +550,71 @@ dump the same way (check the hex is there first: a missing file writes
 nothing); its
 serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
+
+**The Wi-Fi card's station firmware** (does WPA2 have a chance on the v1:
+1.7.0 or later): `firmware-arm/v1-icsp/wifi-probe.py` adds 88 bytes to the
+1.4b dump that read the card's station identity (RID FD20) just before the
+firmware enables it, and keep it in the PIC's unused data EEPROM (Lazare
+writes no serial text, so not the serial port). Proven on the emulator
+first, witness included:
+
+```sh
+firmware-arm/emulator/tools/wifi-probe-proof.sh    # PASS: 05 20 1F 01 01 07 kept, polls as the dump
+# 2026-11-24: witness 10 polls, no EEPROM write; probe 10 polls, EEPROM
+# 05 20 1F 01 01 07 00 00 (emulated card 1.7.1); no watchdog in either
+```
+
+Then on the rabbit, the PICkit on J2 as for the dump, its own adapter on:
+
+```sh
+cd firmware-arm/v1-icsp
+./wifi-probe.py dumps/violet-v1-1.4b.hex /tmp/probe.hex && ls -l /tmp/probe.hex
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F/tmp/probe.hex     # write, verify
+# release the PICkit (unplug its USB), let the rabbit boot ~30 s, then:
+./read.sh /tmp/after.hex PIC18LF6525
+./wifi-probe.py --read /tmp/after.hex                # station firmware X.Y.Z
+ipecmd.sh -P18LF6525 -TPPK3 -E                       # erase all: -M leaves the EEPROM bytes
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -Fdumps/violet-v1-1.4b.hex   # the original back, verified
+```
+
+`-M` alone skipped the EEPROM's FF bytes and its verify failed on the
+probe's (2026-11-24): erase first, then the original reads back identical,
+EEPROM included.
+
+**Result on Lazare (2026-11-24): station firmware 1.4.2** (EEPROM `05 20 1F
+02 01 04`, component 0x1F). Host-side WPA2 needs 1.7.0 or later: not with
+this card's firmware, whatever the PIC. The one way left would load a newer
+station firmware into the card's RAM at every boot (Intersil's, not free,
+about 64 KB from the serial flash): not pursued. Lazare runs its original
+firmware again (read back, 0 bytes differ).
+
+**The card itself (FD0B, same day): component 0x800C, hardware 1.0.0**
+(EEPROM `05 0B 0C 00 01 00`). 0x800C is among the NIC ids Intersil's
+Prism 2.5 station images list (`sf010409.hex`; primary `pk010004.hex`), so
+the card could take station 1.7.4 with its matching primary in its own
+flash, on a PC with a PCMCIA slot (hostap's `prism2_srec -f`, which checks
+compatibility; never the primary alone). The v1's card is a removable
+PCMCIA card (BenQ 802.11b). Not done.
+
+What could be improved in the v1's firmware, 1.4b and 2.0b, with the
+evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
+
+```sh
+cd firmware-arm/v1-icsp
+./pic18dis.py dis dumps/violet-v1-1.4b.hex 2170 21D0   # a listing (byte addresses)
+./pic18dis.py funcs dumps/violet-v1-1.4b.hex           # call targets, sizes, callers
+./pic18dis.py strings dumps/violet-v1-1.4b.hex
+./pic18dis.py dead dumps/violet-v1-1.4b.hex            # code no path from the vectors reaches
+./pic18dis.py diff dumps/violet-v1-1.4b.hex ../vendor/newbaztag/firmware/original/nabaztag.hex
+# 132 functions identical, 89 changed by a few instructions, the rest listed
+cd ../emulator
+tools/v1-study.sh both /tmp/v1-study          # on the dev VM: the network broken under
+                                              # the firmware (server gone, AP gone, no DNS)
+                                              # and the OKI registers for a sound at
+                                              # 8/16/32 kHz; V1_PORT (28090) and +1
+tools/v1-study.sh both /tmp/v1-study sound    # the sound part alone
+tools/violet-vasm/v1-audi.py 16000 1.5 a.audi [--low-first]   # a test tone for a real rabbit
+```
 
 ### The Karotz (Nabaztag v3)
 

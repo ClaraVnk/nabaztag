@@ -6,6 +6,14 @@
  *         [--mac 0019db00beef] [--warren host] [--port80 port] [--ssid name] [--trace-pins] [--trace-bus]
  *         [--trace-net] [--hot] [--hand EAR SLOTS AT_SECONDS]...
  *         [--press AT_SECONDS HOLD_SECONDS]... [--stall EAR]
+ *         [--server-vanish AT] [--server-close AT] [--link-down AT SECONDS]
+ *         [--dns-mute UNTIL_SECONDS]
+ *
+ * The last four break the network under the firmware, to see what Violet's
+ * code does when the server or the access point goes away (2026-11-24):
+ * --server-vanish, the server dies without a FIN; --server-close, it closes
+ * cleanly; --link-down, the access point is gone for SECONDS (0: for good);
+ * --dns-mute, no DNS answer until that second (0: never).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +38,9 @@ static uint32_t hot[PIC_FLASH_SIZE / 2];
 /* The head button, RB0, low while pressed. */
 static struct { uint64_t at_ms, until_ms; int state; } press[8];
 static int presses;
+
+static double vanish_at = -1, close_at = -1, dns_mute_until = -1;
+static int dns_muted;
 
 static void button_poll(void)
 {
@@ -109,6 +120,10 @@ int main(int argc, char **argv)
     }
     else if(!strcmp(argv[i], "--hand") && i + 3 < argc) { ears_hand(atoi(argv[i+1]), atoi(argv[i+2]), (uint64_t)(atof(argv[i+3]) * 1000)); i += 3; }
     else if(!strcmp(argv[i], "--trace-net")) { net_trace = 1; gw_set_trace(1); }
+    else if(!strcmp(argv[i], "--server-vanish") && i + 1 < argc) vanish_at = atof(argv[++i]);
+    else if(!strcmp(argv[i], "--server-close") && i + 1 < argc) close_at = atof(argv[++i]);
+    else if(!strcmp(argv[i], "--link-down") && i + 2 < argc) { prism_link_down((uint64_t)(atof(argv[i+1]) * 1000), (uint64_t)atof(argv[i+2])); i += 2; }
+    else if(!strcmp(argv[i], "--dns-mute") && i + 1 < argc) { dns_mute_until = atof(argv[++i]); dns_muted = 1; gw_set_dns_mute(1); }
     else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
   }
 
@@ -138,7 +153,13 @@ int main(int argc, char **argv)
       B.pic.pc = 0; B.pic.sp = 0; B.pic.wdt_clear = B.pic.cycles;
       for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) B.pic.ram[a] = 0xFF;
     }
-    if((B.pic.cycles & 0x3FF) < 2) { prism_tick(); prism_rx_pump(); gw_poll(); ears_poll(); button_poll(); }
+    if((B.pic.cycles & 0x3FF) < 2) {
+      prism_tick(); prism_rx_pump(); gw_poll(); ears_poll(); button_poll();
+      double now = (double)B.pic.cycles / CYCLES_HZ;
+      if(vanish_at >= 0 && now >= vanish_at) { vanish_at = -1; gw_server_vanish(); }
+      if(close_at >= 0 && now >= close_at) { close_at = -1; gw_server_close(0); }
+      if(dns_muted && dns_mute_until > 0 && now >= dns_mute_until) { dns_muted = 0; gw_set_dns_mute(0); board_log("gw: DNS answers again"); }
+    }
   }
   if(B.pic.halted) board_log("halted at %05X: %s", B.pic.pc, B.pic.halt_reason);
   if(want_hot) report_hot();

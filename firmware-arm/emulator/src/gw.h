@@ -63,6 +63,8 @@ void gw_server_close(int graceful);
  * sends on them from now on is swallowed. The half-open connection a rabbit
  * is left with when its server went away while it could not hear. */
 void gw_server_vanish(void);
+/* While on, DNS queries are swallowed: a resolver that does not answer. */
+void gw_set_dns_mute(int on);
 void gw_close(void);
 
 #endif /* _GW_H_ */
