@@ -19,7 +19,12 @@ case "$(uname -r)" in
     D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-os-6.1
     mkdir -p $D
     { date; cat /proc/cmdline; cat /proc/mounts; ls -la /etc/; } > $D/state-0.txt 2>&1
-    dmesg > $D/dmesg.txt 2>&1; sync
+    dmesg > $D/dmesg.txt 2>&1
+    # The boot's own kernel log, kept apart: dmesg.txt is rewritten every 30 s
+    # and os-prelude's ps lines filled the ring before the run of 2026-11-24
+    # 21:37 could say why /usr (YAFFS, mtdblock6) was not mounted.
+    cp $D/dmesg.txt $D/dmesg-boot.txt; cat /proc/mtd > $D/mtd.txt 2>&1
+    grep -i yaffs /proc/filesystems >> $D/mtd.txt 2>&1; sync
     # Every LED order the daemons get, for 10 minutes, on the key (Clara,
     # 2026-11-24: the belly stays blue under 6.1, dark under 2.6.32; a
     # recorder in /tmp was lost with the reboot). Once D-Bus is up.
