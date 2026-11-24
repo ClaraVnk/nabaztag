@@ -169,6 +169,27 @@ static void sfr_write(struct pic18 *pic, uint16_t a, uint8_t v)
     case SFR_TMR3H: B.tmr3 = (uint16_t)((B.tmr3 & 0x00FF) | (v << 8)); return;
     case SFR_TMR2: B.tmr2 = v; return;
     case SFR_TXREG1: uart_tx(v); return;
+    /* The data EEPROM (1 KB, DS39612 section 7), for the Wi-Fi card probe
+     * (v1-icsp/wifi-probe.py, 2026-11-24): a write takes WREN, then 55h and
+     * AAh on EECON2 right before WR, as the datasheet demands; it lands at
+     * once (the real one takes ~4 ms) and is logged. Neither Violet
+     * firmware touches it. */
+    case SFR_EECON2:
+      B.ee_unlock = (v == 0x55) ? 1 : (B.ee_unlock == 1 && v == 0xAA) ? 2 : 0;
+      return;
+    case SFR_EECON1:
+      if((v & 0x02) && !(v & 0xC0)) {      /* WR on the data EEPROM */
+        if((v & 0x04) && B.ee_unlock == 2) {
+          unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];
+          B.eeprom[at] = pic->ram[SFR_EEDATA];
+          board_log("eeprom: [%03X] <- %02X", at, B.eeprom[at]);
+        } else {
+          board_log("eeprom: write refused (WREN %d, unlock %d)", !!(v & 0x04), B.ee_unlock);
+        }
+        pic->ram[SFR_EECON1] = v & (uint8_t)~0x02;
+      }
+      B.ee_unlock = 0;
+      return;
     case SFR_SSPBUF:
       pic->ram[SFR_SSPBUF] = spi_transfer(v);
       pic->ram[SFR_SSPSTAT] |= 1;          /* BF */
@@ -192,6 +213,7 @@ static const struct pic18_board board_ops = { sfr_read, sfr_write };
 void board_init(void)
 {
   memset(&B, 0, sizeof(B));
+  memset(B.eeprom, 0xFF, sizeof(B.eeprom));
   B.pic.board = &board_ops;
   for(int i = 0; i < 16; i++) B.adc[i] = 512;
   /* Inputs at rest: button released (pulled up), flash ready, OKI IRQ idle,
