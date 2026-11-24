@@ -758,7 +758,7 @@ state record; loader 12 014 → 8 144 B (8 106 on the 6627), the
 application moved from 0x3000 to 0x2000 (40 KB for it, 13.7 KB free), the
 seed and the check of a 27 KB image 5.7 s instead of 10. The hash is
 checked on the emulated PIC against Python (hashlib, hmac), not on the
-host any more (`tools/sha256-host.c` is gone with the C hash). Emulator
+host any more (tools/sha256-host.c is gone with the C hash). Emulator
 only.
 
 ```sh

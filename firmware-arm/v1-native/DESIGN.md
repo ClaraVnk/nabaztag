@@ -123,10 +123,10 @@ instruction set; `--pno-banksel` 156 B but the data is banked):
 
 | Lever | Loader | Note |
 |---|---|---|
-| SHA-256 and the HMAC in PIC18 assembly (`src/loader/sha256.asm`) | 12 014 → 9 010 | 1 106 B of code and 288 B of tables instead of 4.4 KB: all the working words in the access bank (no BANKSEL in the round), little-endian words so that one routine adds any word to any word, the block buffer *is* the 16-word schedule ring (bytes stored at `blen ^ 3`), rotations as byte moves then carry chains the shorter way round, the HMAC with SDCC's own calling convention (arguments at FSR2 + 2) so that `sha256.h` did not change. The C `tools/sha256-host.c` went with the C hash: Python's `hashlib` is the reference now, on the emulated PIC (7.5) |
+| SHA-256 and the HMAC in PIC18 assembly (`src/loader/sha256.asm`) | 12 014 → 9 010 | 1 106 B of code and 288 B of tables instead of 4.4 KB: all the working words in the access bank (no BANKSEL in the round), little-endian words so that one routine adds any word to any word, the block buffer *is* the 16-word schedule ring (bytes stored at `blen ^ 3`), rotations as byte moves then carry chains the shorter way round, the HMAC with SDCC's own calling convention (arguments at FSR2 + 2) so that `sha256.h` did not change. The C tools/sha256-host.c went with the C hash: Python's `hashlib` is the reference now, on the emulated PIC (7.5) |
 | SDCC's `crt0` instead of `crt0iz` for the loader | − 150 | no initialised data; no static of the loader relies on a zero before it is written |
 | 64-byte rows instead of 32-bit byte counts and addresses in the loader (`hdr_rows`, `pic_seek(row)`, the slot loops) | − 354 | the 6627's 0x2000..0x17FFF is 1 408 rows; the length check is three bytes of the header |
-| the state record on one array at constant addresses, one pass for sum and magic (`common/state.c`) | − 124 | SDCC computes a fresh pointer for every `p[i]`; the application gains the same |
+| the state record on one array at constant addresses, one pass for sum and magic (`src/common/state.c`) | − 124 | SDCC computes a fresh pointer for every `p[i]`; the application gains the same |
 | `slot_write_page` a macro over `flash_write` | − 168 | the wrapper's parameter shuffling cost more than the add at the two call sites |
 | `log_hex16` dropped (two `log_hex8`), `block_write` with `*p++`, the header filled in one loop | − 70 | |
 | speed: the bit steps of a rotation inlined, the word moves of the round direct | + 14 | 86 000 → 72 000 cycles per block, 14.3 → 12.0 ms |
@@ -396,7 +396,7 @@ the application at 0x2000 (27 328 B, 427 rows) follows the table:
 
 | Run | What happened | Measured |
 |---|---|---|
-| 1. first boot | no state, a key: slot A seeded from the PIC, then the application polls | HMAC + 105 page writes in 10.0 s; slot A's HMAC equals Python's `hmac` over the same 12 + 27 712 bytes (the C SHA-256 checked against the standard, `tools/sha256-host.c`); no PIC flash write |
+| 1. first boot | no state, a key: slot A seeded from the PIC, then the application polls | HMAC + 105 page writes in 10.0 s; slot A's HMAC equals Python's `hmac` over the same 12 + 27 712 bytes (the C SHA-256 checked against the standard, tools/sha256-host.c); no PIC flash write |
 | 2. a good update | frame 10 offers v31 at 2.0 s; downloaded into B; reset; the loader checks, copies, reads back, runs v31; v31 polls and confirms | download 27 712 B in 1.39 s; HMAC check 9.9 s; 433 rows erased, 3 464 blocks of 8 written and read back in 0.81 s; v31's banner 11.1 s after the reset, its first poll answered 1.6 s later, the state confirmed |
 | 3. a bad signature | v32 signed with another key: downloaded, pending; the loader refuses it | "bad hmac" after 9.9 s, `skip_ver` = 32, v31 runs on, no PIC flash write; the application does not fetch v32 again although every poll offers it |
 | 4. twelve power cuts | the run cut at random points, a third each during the download, the HMAC check, the copy and the state write; then a restart | every restart ends on v31 polling: a cut before the header page is written leaves no pending slot and the next poll offers v31 again; a cut in the HMAC check or the copy finds the slot pending and installs it again (a half-written PIC is simply overwritten); a cut after the state write finds the PIC equal to B |
