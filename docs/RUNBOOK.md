@@ -429,6 +429,25 @@ tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest --bytecode <ru
 #        `rfid over the session` for a tag resting 4 s, still bound `asleep`
 ```
 
+### A lossy link keeps its session (TCP backoff)
+
+`at <ms> stall <ms>` in a scenario: nothing passes either way for that long,
+the Wi-Fi still associated (the gateway swallows the rabbit's segments and
+holds the server's back). What a bad mesh did to Pinkyblack (2026-11-24:
+probes up to 9.6 s late, 6 % lost, the session redialled 82 times a day):
+the bytecode's tcp.mtl resent every second and closed after ten.
+`bytecode/patch_tcp_backoff.py` resends at 1, 2, 4 ... 64 s and gives up at
+90 s, before the 150 s liveness.
+
+```sh
+tools/xmpp-tls-proof.sh --terrier ghcr.io/claravnk/terrier:latest \
+    --bytecode <runtime.hybrid> --emulator <image> --elf <Nab.elf> \
+    --out /tmp/st --scenario scenarios/vm/xmpp-stall.txt
+# 2026-11-24, 30 s stalled: today's runtime 13 resends, the connection
+#   closed, one more session (10, 3 disconnects); with the backoff 6
+#   resends and the session kept (8, 2)
+```
+
 ### The Nabaztag v1 (2005)
 
 `firmware-arm/emulator/v1` runs Violet's own v1 firmware (vendored in
