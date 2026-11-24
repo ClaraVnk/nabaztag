@@ -511,6 +511,34 @@ nothing); its
 serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
 
+**The Wi-Fi card's station firmware** (does WPA2 have a chance on the v1:
+1.7.0 or later): `firmware-arm/v1-icsp/wifi-probe.py` adds 88 bytes to the
+1.4b dump that read the card's station identity (RID FD20) just before the
+firmware enables it, and keep it in the PIC's unused data EEPROM (Lazare
+writes no serial text, so not the serial port). Proven on the emulator
+first, witness included:
+
+```sh
+firmware-arm/emulator/tools/wifi-probe-proof.sh    # PASS: 05 20 1F 01 01 07 kept, polls as the dump
+# 2026-11-24: witness 10 polls, no EEPROM write; probe 10 polls, EEPROM
+# 05 20 1F 01 01 07 00 00 (emulated card 1.7.1); no watchdog in either
+```
+
+Then on the rabbit, the PICkit on J2 as for the dump, its own adapter on:
+
+```sh
+cd firmware-arm/v1-icsp
+./wifi-probe.py dumps/violet-v1-1.4b.hex /tmp/probe.hex && ls -l /tmp/probe.hex
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F/tmp/probe.hex     # write, verify
+# release the PICkit (unplug its USB), let the rabbit boot ~30 s, then:
+./read.sh /tmp/after.hex PIC18LF6525
+./wifi-probe.py --read /tmp/after.hex                # station firmware X.Y.Z
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -Fdumps/violet-v1-1.4b.hex   # the original back, verified
+```
+
+The original goes back with the full erase of `-M`, EEPROM included (it was
+blank as read), and `-Y` checks every byte written.
+
 What could be improved in the v1's firmware, 1.4b and 2.0b, with the
 evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
 
