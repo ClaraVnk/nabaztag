@@ -1339,3 +1339,9 @@ VM's `~/heavy.lock` was held by an `aardvark-dns` that had inherited it from
 a plain `flock` (`ls -l /proc/<pid>/fd | grep heavy.lock` names it); a stale
 holder needs that fd closed or the process restarted before any `flock -o`
 job starts.
+
+Measured 2026-11-24 on the dev VM: 1.2.1.5 declined once, two
+authentication tries, final RUN (radio 4): "PASS joined at the second
+access point after the first declined"; the 1.2.1.4 control declined three
+times, final IDLE: "PASS the control retried the declining node only and
+never joined"; "== mesh-fallback-proof: every check passed".
