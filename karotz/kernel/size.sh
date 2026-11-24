@@ -11,13 +11,14 @@ make -s tinyconfig
 scripts/kconfig/merge_config.sh -m .config /k/karotz-6.1.config ${EXTRA:-} > /dev/null
 make -s olddefconfig
 echo "== asked but not kept by Kconfig:"
-cat /k/karotz-6.1.config ${EXTRA:-} | grep -E '^CONFIG_[A-Z0-9_]+=y' | while IFS= read -r line; do
-    grep -qx "$line" .config || echo "   ${line%=y}"
+cat /k/karotz-6.1.config ${EXTRA:-} | grep -E '^CONFIG_[A-Z0-9_]+=|^# CONFIG_[A-Z0-9_]+ is not set' | while IFS= read -r line; do
+    grep -qx "$line" .config || echo "   $line"
 done
 make -s -j"$(nproc)" zImage 2>&1 | grep -vE '^\s*$' | grep -v "warning: -z norelro" | tail -20
 z=$(stat -c %s arch/arm/boot/zImage)
 echo "== zImage: $z bytes (mtd1 holds 3145728: $(( (3145728 - z) / 1024 )) KiB left)"
 if [ "$z" -le 3145728 ]; then echo "FITS"; else echo "TOO BIG"; fi
-# OUT: where to copy the zImage (a mounted directory), for the emulator.
-[ -n "${OUT:-}" ] && cp arch/arm/boot/zImage "$OUT/"
+# OUT: where to copy the zImage (a mounted directory), for the emulator, with
+# vmlinux and System.map for syscalls-audit.py.
+[ -n "${OUT:-}" ] && cp arch/arm/boot/zImage vmlinux System.map .config "$OUT/"
 exit 0

@@ -217,6 +217,11 @@ static struct platform_driver rabbit_poweron_driver = {
 #define PWM_PERIOD_NS		16320
 #define PWM_DUTY_SHIFT		6
 #define PWM_SPEED_STOPPED	1
+/* The fastest speed whose duty fits the period (255 x 64 = 16320 ns): a
+ * larger |pwm| from user space made pwm_config() refuse the duty (-EINVAL)
+ * and the ear kept its previous speed, direction line flipped (review of
+ * 2026-11-24). ears-daemon sends 1 to 255 (LapinLibre WEB_EAR_SPEED 100). */
+#define PWM_SPEED_MAX		(PWM_PERIOD_NS >> PWM_DUTY_SHIFT)
 
 #define EAR_DIR_FORWARD		0
 #define EAR_DIR_BACKWARD	1
@@ -353,7 +358,7 @@ static long rabbit_ears_ioctl(struct file *file, unsigned int cmd, unsigned long
 	unsigned long flags;
 	struct ear_move move;
 	struct ear *e;
-	int values[2];
+	int values[2], speed;
 
 	if (_IOC_TYPE(cmd) != RABBIT_EARS_MAGIC)
 		return -ENOTTY;
@@ -366,12 +371,14 @@ static long rabbit_ears_ioctl(struct file *file, unsigned int cmd, unsigned long
 		if (copy_from_user(&move, uarg, sizeof(move)))
 			return -EFAULT;
 		e = &ears[_IOC_NR(cmd) == RABBIT_EARS_MOVE_RIGHT ? EAR_RIGHT : EAR_LEFT];
+		/* |pwm| within the period; INT_MIN has no absolute value. */
+		speed = move.pwm == INT_MIN ? PWM_SPEED_MAX : min(abs(move.pwm), PWM_SPEED_MAX);
 		mutex_lock(&ears_move_lock);
 		e->target = move.pos;
 		if (e->position < e->target)
-			ear_run(e, abs(move.pwm));
+			ear_run(e, speed);
 		else if (e->position > e->target)
-			ear_run(e, -abs(move.pwm));
+			ear_run(e, -speed);
 		else
 			ear_run(e, 0);
 		mutex_unlock(&ears_move_lock);
