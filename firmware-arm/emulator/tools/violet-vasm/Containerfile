@@ -6,9 +6,13 @@
 #   podman run --rm violet-vasm Nabaztag_wait.vasm > wait.frame
 #   podman run --rm violet-vasm Nabaztag_wait_terrier.vasm > wait-terrier.frame
 #
-# Nabaztag_wait_terrier.vasm is Violet's with patches/ applied (the
-# Terrier's changes, kept apart from Violet's source): one ear motor starts
-# at a time (2026-11-24).
+# Nabaztag_wait_terrier.vasm is Violet's with patches/ applied in name order
+# (the Terrier's changes, kept apart from Violet's source): one ear motor
+# starts at a time, on an order and in the homing and acquisition turns; the
+# acquisition turn gives up after 40 s on an ear that does not turn; a click
+# the server answers with no message program goes back to waiting after 40 s;
+# eight sources of type 14 no longer stop the rabbit polling (2026-11-24,
+# REVIEW.md).
 FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache openjdk17-jdk patch
 COPY firmware-arm/vendor/violet-platform/java/Vasm.java firmware-arm/vendor/violet-platform/java/VasmException.java /src/net/violet/platform/vasm/
@@ -17,7 +21,11 @@ COPY firmware-arm/vendor/violet-platform/vasm/ /out/net/violet/platform/vasm/
 COPY firmware-arm/emulator/tools/violet-vasm/patches/ /patches/
 RUN cd /out/net/violet/platform/vasm && cp Nabaztag_wait.vasm Nabaztag_wait_terrier.vasm && \
     for p in /patches/*.patch; do patch --binary Nabaztag_wait_terrier.vasm < "$p"; done && \
-    grep -q "one motor starts at a time" Nabaztag_wait_terrier.vasm
+    grep -q "one motor starts at a time" Nabaztag_wait_terrier.vasm && \
+    grep -q "the homing turn too" Nabaztag_wait_terrier.vasm && \
+    grep -q "40 s, then 0" Nabaztag_wait_terrier.vasm && \
+    grep -q "not here for ever" Nabaztag_wait_terrier.vasm && \
+    grep -q "after eight hops, no belly" Nabaztag_wait_terrier.vasm
 RUN cd /src && javac -encoding ISO-8859-1 -nowarn -d /out $(find . -name '*.java') 2>&1 | grep -v '^Note:' || true; \
     test -f /out/net/violet/platform/vasm/Dump.class
 ENTRYPOINT ["java", "-cp", "/out", "net.violet.platform.vasm.Dump"]

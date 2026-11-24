@@ -1,7 +1,10 @@
 #!/bin/sh
-# One ear motor at a time: patches/one-motor-at-a-time.patch proven in the v1
-# emulator, on both firmwares a real v1 runs (Newbaztag's 2.0b, Lazare's
-# 1.4b), with Violet's own frame as the control.
+# One ear motor at a time: patches/one-motor-at-a-time.patch (an order) and
+# patches/p2-acquisition-one-motor.patch (the homing turn at boot, the
+# acquisition turn after a hand) proven in the v1 emulator, on both firmwares
+# a real v1 runs (Newbaztag's 2.0b, Lazare's 1.4b), with Violet's own frame
+# as the control. The two other patches ride along (review-proof.sh proves
+# them) and must not break any of this.
 #
 #   firmware-arm/emulator/tools/violet-vasm/one-motor-proof.sh   # repo root, dev VM
 #   V1_PORT=28082 ...                                             # 28081 taken
@@ -21,9 +24,10 @@
 # 9010 from one second to the next (2026-11-24, 2.0b, a hand at 118 to 122 s),
 # its acquisition turn rounding to another hole. PASS when the control starts
 # both motors together on each order and the patched program never does, on
-# both firmwares, and the 1.4b watchdog never fires. Not covered: that
-# acquisition turn (@motorturn, at boot and after a hand) still starts both
-# motors at once, in both programs.
+# both firmwares, and the 1.4b watchdog never fires; and (2026-11-24, p2)
+# when the control's homing turn at boot and acquisition turn after the hand
+# start both motors together, the patched program's start the right one
+# once the left one has stopped.
 set -eu
 cd "$(dirname "$0")/../../../.."
 OUT=$(mktemp -d)
@@ -37,7 +41,7 @@ podman build -q -t nabaztag-v1 -f firmware-arm/emulator/v1/Containerfile firmwar
 podman run --rm violet-vasm Nabaztag_wait.vasm > "$OUT/violet.frame"
 podman run --rm violet-vasm Nabaztag_wait_terrier.vasm > "$OUT/terrier.frame"
 [ "$(wc -c < "$OUT/violet.frame")" -eq 33747 ] || fail "Violet's frame is not 33747 bytes"
-[ "$(wc -c < "$OUT/terrier.frame")" -eq 33754 ] || fail "the Terrier's frame is not 33754 bytes"
+[ "$(wc -c < "$OUT/terrier.frame")" -eq 33860 ] || fail "the Terrier's frame is not 33860 bytes"
 
 # emu FW ARGS...: the emulator on firmware 2.0b or 1.4b (its own flash chip).
 emu() {
@@ -61,36 +65,39 @@ run() {
   wait $W 2>/dev/null || true
 }
 
-# starts LOG: one line per movement of both ears, from the emulator's
-# "ear N: motor forward/stopped" lines: the ms each motor ran and the slot it
-# stopped at, what it is (the orders come at polls 4 and 8, so a movement
-# between 30 s and the hand at 120 s answers one; before and after it is the
-# acquisition turn, whose stop slots differ between the two firmwares), then
-# "together" (both started within 1 ms), "serial" (the right one started
-# after the left one stopped) or "overlap". Two movements are 3 s apart at
-# least.
+# starts LOG: one line per start of an ear motor, from the emulator's
+# "ear N: motor forward/stopped" lines: the window it falls in (the orders
+# come at polls 4 and 8, so a start between 30 s and the hand at 120 s
+# answers one; before and after it is the homing or acquisition turn), the
+# ear, the ms, and what the other motor was doing: "alone" (stopped),
+# "together" (started within 1 ms), "overlap" (running). 2026-11-24: the
+# earlier grouping of starts into movements broke when the ears' return
+# after the acquisition came less than 3 s after it (it waits for a poll).
 starts() {
   awk '
     /ear [01]: motor (forward|backward|stopped)/ {
       match($0, /^\[ *[0-9]+/); t = substr($0, RSTART + 1, RLENGTH - 1) + 0
       match($0, /ear [01]:/); e = substr($0, RSTART + 4, 1) + 0
-      if ($0 ~ /stopped/) {
-        match($0, /slot [0-9]+/); slot[m, e] = substr($0, RSTART + 5, RLENGTH - 5) + 0
-        run[e] = 0; stop[m, e] = t; last = t; next
-      }
-      if (!run[0] && !run[1] && t - last > 3000) m++
-      if (!((m, e) in start)) start[m, e] = t
-      run[e] = 1
-    }
+      if ($0 ~ /stopped/) { run[e] = 0; next }
+      o = 1 - e
+      v = run[o] ? (t - start[o] <= 1 ? "together" : "overlap") : "alone"
+      run[e] = 1; start[e] = t
+      w = t > 30000 && t < 120000 ? "order" : "acquisition"
+      printf "%s: ear %d starts at %d ms, other motor %s: %s\n", w, e, t, run[o] ? "running" : "stopped", v
+    }' "$1" | awk '
+    # the first of two motors started in the same ms is "alone" at its own
+    # start: give it the verdict of the second
+    { line[NR] = $0 }
     END {
-      for (i = 1; i <= m; i++) if ((i, 0) in start && (i, 1) in start) {
-        d = start[i, 1] - start[i, 0]; if (d < 0) d = -d
-        v = d <= 1 ? "together" : (start[i, 1] >= stop[i, 0] ? "serial" : "overlap")
-        o = start[i, 0] > 30000 && start[i, 0] < 120000 ? "order" : "acquisition"
-        printf "%s: left %d-%d ms (slot %d), right %d-%d ms (slot %d): %s\n", \
-          o, start[i, 0], stop[i, 0], slot[i, 0], start[i, 1], stop[i, 1], slot[i, 1], v
+      for (i = 1; i <= NR; i++) {
+        if (i < NR && line[i] ~ /alone$/ && line[i + 1] ~ /together$/) {
+          split(line[i], a, " at "); split(line[i + 1], b, " at ")
+          ta = a[2] + 0; tb = b[2] + 0
+          if (tb - ta <= 1) sub(/stopped: alone$/, "starting too: together", line[i])
+        }
+        print line[i]
       }
-    }' "$1"
+    }'
 }
 
 for fw in 2.0b 1.4b; do
@@ -103,13 +110,15 @@ for fw in 2.0b 1.4b; do
     grep -q 'st=01&tc=7FFFFFFF' "$OUT/$fw-$frame-warren.log" || fail "$fw $frame: the program was not taken"
     grep -q 'sd=0003' "$OUT/$fw-$frame-warren.log" || fail "$fw $frame: the click sent no sd=0003"
     grep -q 'sd=[89][0-9A-F]\{3\}' "$OUT/$fw-$frame-warren.log" || fail "$fw $frame: the hand was not reported"
-    [ "$(grep -c '^order' "$OUT/$fw-$frame.starts")" -eq 2 ] || fail "$fw $frame: not two movements of both ears for the two orders"
+    [ "$(grep -c '^order: ear 1' "$OUT/$fw-$frame.starts")" -eq 2 ] || fail "$fw $frame: the right ear did not start twice for the two orders"
+    [ "$(grep -c '^acquisition: ear 1' "$OUT/$fw-$frame.starts")" -ge 2 ] || fail "$fw $frame: the right ear did not start in the homing and acquisition turns"
     grep -q 'watchdog' "$OUT/$fw-$frame.log" && fail "$fw $frame: the watchdog fired"
     if [ "$frame" = violet ]; then
-      [ "$(grep -c '^order.*together$' "$OUT/$fw-$frame.starts")" -eq 2 ] || fail "$fw control: an order did not start both motors together"
+      [ "$(grep -c '^order: ear 1.*together$' "$OUT/$fw-$frame.starts")" -eq 2 ] || fail "$fw control: an order did not start both motors together"
+      grep -q '^acquisition: ear 1.*together$' "$OUT/$fw-$frame.starts" || fail "$fw control: no homing or acquisition turn started both motors together"
     else
-      [ "$(grep -c '^order.*serial$' "$OUT/$fw-$frame.starts")" -eq 2 ] || fail "$fw terrier: an order started the two motors at once"
+      grep -qv 'alone$' "$OUT/$fw-$frame.starts" && fail "$fw terrier: a motor started while the other one ran"
     fi
   done
 done
-echo "PASS one motor at a time: Violet's frame starts both ears together on an order, the Terrier's one after the other, on 2.0b and 1.4b ($OUT)"
+echo "PASS one motor at a time: Violet's frame starts both ears together on an order and in its homing and acquisition turns, the Terrier's one after the other, on 2.0b and 1.4b ($OUT)"
