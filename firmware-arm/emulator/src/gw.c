@@ -80,6 +80,19 @@ void gw_set_port443(uint16_t port) { gw_port443_to = port; }
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
  * reach its warren", and exactly what you want when the answer is no. */
+uint32_t sim_now(void) __attribute__((weak));
+static uint32_t gw_stall_until;
+static uint32_t gw_stalled_frames;
+
+void gw_stall(uint32_t ms)
+{
+  if(!sim_now) return;
+  gw_stall_until = sim_now() + ms;
+  gw_stalled_frames = 0;
+  sim_log("gw: the link stalls for %u ms -- nothing passes either way", ms);
+}
+static int gw_stalled(void);
+
 static int gw_trace;
 
 void gw_set_trace(int on) { gw_trace = on; }
@@ -971,18 +984,6 @@ void gw_set_subnet(const char *gateway, const char *rabbit)
  * (2026-11-24, Pinkyblack: the bytecode's tcp.mtl gives up after ten
  * one-second retries).
  */
-uint32_t sim_now(void) __attribute__((weak));
-static uint32_t gw_stall_until;
-static uint32_t gw_stalled_frames;
-
-void gw_stall(uint32_t ms)
-{
-  if(!sim_now) return;
-  gw_stall_until = sim_now() + ms;
-  gw_stalled_frames = 0;
-  sim_log("gw: the link stalls for %u ms -- nothing passes either way", ms);
-}
-
 static int gw_stalled(void)
 {
   if(!gw_stall_until || !sim_now) return 0;
