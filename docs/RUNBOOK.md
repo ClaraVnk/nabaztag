@@ -481,7 +481,7 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 ```
 
 The Terrier's copy of that program, `Nabaztag_wait_terrier.vasm`
-(`tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
+(`firmware-arm/emulator/tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
 image builds: in `@moveears` the right ear waits while `/dir0` says the left
 one turns), against Violet's as the control, on both firmwares:
 
