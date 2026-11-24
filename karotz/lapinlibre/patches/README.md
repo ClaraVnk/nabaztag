@@ -12,3 +12,4 @@ Clara decides what is reported to LapinLibre.
 | 0001 | inetd takes 600 web connections a minute, not 60: past the count BusyBox inetd stops httpd for ten minutes, and the Terrier client on the rabbit opens one connection per LED or ear order (`test-inetd-rate.sh`, 2026-11-24). |
 | 0003 | the install removes `/usr/etc/inetd.conf` as it does `inittab`, so the new one (0001) is copied at the next boot; `linuxrc` copies these files only when missing. |
 | 0002 | `LL_BUILD_VERSION` names the release (Terrier OS 1.0.0, `../VERSION`); the LapinLibre commit stays in `/karotz/etc/lapinlibre-base`. |
+| 0004 | the web API answers the rabbit itself only (127.0.0.1) when the install drew the password (the client's, run on the rabbit): nothing on the network reaches it; a password the owner chose keeps it open to the local network, with the login (Clara, 2026-11-24, "fermé par défaut"). The setup network keeps its own rules (hotspot.sh). `test-web-local.sh`. |
