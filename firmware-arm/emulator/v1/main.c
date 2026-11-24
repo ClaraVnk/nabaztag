@@ -7,7 +7,14 @@
  *         [--trace-net] [--hot] [--hand EAR SLOTS AT_SECONDS]...
  *         [--press AT_SECONDS HOLD_SECONDS]... [--stall EAR]
  *         [--server-vanish AT] [--server-close AT] [--link-down AT SECONDS]
- *         [--dns-mute UNTIL_SECONDS]
+ *         [--dns-mute UNTIL_SECONDS] [--pic 6525|6627] [--pic-flash FILE] [--trace-flash]
+ *         [--trace-oki]
+ *
+ * --pic 6525 is Lazare's PIC18LF6525 (48 KB, 8-byte write blocks; the
+ * default is the 2.0b board's PIC18F6627, 96 KB, 64-byte rows); --pic-flash
+ * keeps the PIC's own flash across runs (what the v1 loader writes), the
+ * hex loaded first and the file laid over it when it exists, saved at exit:
+ * a run cut with --seconds at any point is a power cut mid-copy (2026-11-24).
  *
  * The last four break the network under the firmware, to see what Violet's
  * code does when the server or the access point goes away (2026-11-24):
@@ -41,6 +48,34 @@ static int presses;
 
 static double vanish_at = -1, close_at = -1, dns_mute_until = -1;
 static int dns_muted;
+static const char *pic_flash_path;
+
+/* A reset that is not a power-on: the watchdog's or the RESET instruction's.
+ * RAM keeps its content (the firmware may read why it restarted), the ports
+ * are inputs again, the PC is 0. */
+static void soft_reset(void)
+{
+  B.pic.pc = 0; B.pic.sp = 0; B.pic.wdt_clear = B.pic.cycles; B.pic.reset_req = 0;
+  for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) B.pic.ram[a] = 0xFF;
+  for(int p = 0; p < NPORTS; p++) B.tris[p] = 0xFF;
+}
+
+static void pic_flash_load(void)
+{
+  FILE *f;
+  if(!pic_flash_path || !(f = fopen(pic_flash_path, "rb"))) return;
+  size_t n = fread(B.pic.flash, 1, PIC_FLASH_SIZE, f);
+  fclose(f);
+  board_log("pic flash: %zu bytes from %s laid over the hex", n, pic_flash_path);
+}
+
+static void pic_flash_save(void)
+{
+  FILE *f;
+  if(!pic_flash_path || !(f = fopen(pic_flash_path, "wb"))) return;
+  fwrite(B.pic.flash, 1, PIC_FLASH_SIZE, f);
+  fclose(f);
+}
 
 static void button_poll(void)
 {
@@ -120,6 +155,15 @@ int main(int argc, char **argv)
     }
     else if(!strcmp(argv[i], "--hand") && i + 3 < argc) { ears_hand(atoi(argv[i+1]), atoi(argv[i+2]), (uint64_t)(atof(argv[i+3]) * 1000)); i += 3; }
     else if(!strcmp(argv[i], "--trace-net")) { net_trace = 1; gw_set_trace(1); }
+    else if(!strcmp(argv[i], "--trace-flash")) B.trace_flash = 1;
+    else if(!strcmp(argv[i], "--trace-oki")) B.trace_oki = 1;
+    else if(!strcmp(argv[i], "--pic-flash") && i + 1 < argc) pic_flash_path = argv[++i];
+    else if(!strcmp(argv[i], "--pic") && i + 1 < argc) {
+      const char *d = argv[++i];
+      if(!strcmp(d, "6525")) { B.pic.write_block = 8; B.pic.flash_end = 0xC000; }
+      else if(!strcmp(d, "6627")) { B.pic.write_block = 64; B.pic.flash_end = PIC_FLASH_SIZE; }
+      else { fprintf(stderr, "--pic takes 6525 or 6627\n"); return 2; }
+    }
     else if(!strcmp(argv[i], "--server-vanish") && i + 1 < argc) vanish_at = atof(argv[++i]);
     else if(!strcmp(argv[i], "--server-close") && i + 1 < argc) close_at = atof(argv[++i]);
     else if(!strcmp(argv[i], "--link-down") && i + 2 < argc) { prism_link_down((uint64_t)(atof(argv[i+1]) * 1000), (uint64_t)atof(argv[i+2])); i += 2; }
@@ -137,6 +181,8 @@ int main(int argc, char **argv)
   int n = pic18_load_hex(&B.pic, hex);
   if(n <= 0) { fprintf(stderr, "cannot read %s\n", hex); return 2; }
   board_log("firmware: %d bytes from %s, CONFIG4L %02X", n, hex, B.pic.config[6]);
+  memcpy(B.eeprom, B.pic.eeprom, sizeof(B.eeprom));
+  pic_flash_load();
   board_log("flash: %d bytes from %s", flash_load(flash), flash ? flash : "(blank)");
 
   ears_init(3, 3);
@@ -156,8 +202,11 @@ int main(int argc, char **argv)
     if((wdt_cfg || (B.pic.ram[0xFD1] & 1)) && B.pic.cycles - B.pic.wdt_clear > wdt_period) {
       board_log("watchdog: no CLRWDT for %llu ms, at pc %05X: reset #%u",
                 (unsigned long long)(wdt_period * 1000 / CYCLES_HZ), B.pic.pc, ++wdt_resets);
-      B.pic.pc = 0; B.pic.sp = 0; B.pic.wdt_clear = B.pic.cycles;
-      for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) B.pic.ram[a] = 0xFF;
+      soft_reset();
+    }
+    if(B.pic.reset_req) {
+      board_log("reset: RESET instruction at pc %05X: reset #%u", B.pic.pc - 2, ++B.pic.resets);
+      soft_reset();
     }
     if((B.pic.cycles & 0x3FF) < 2) {
       prism_tick(); prism_rx_pump(); gw_poll(); ears_poll(); button_poll();
@@ -174,6 +223,9 @@ int main(int argc, char **argv)
               B.pic.audit_stores ? B.pic.audit_min : 0, B.pic.audit_stores ? B.pic.audit_max : 0,
               B.pic.audit_escapes);
   if(want_hot) report_hot();
+  if(B.flash_erases || B.flash_writes)
+    board_log("pic flash: %u rows erased, %u blocks of %u written", B.flash_erases, B.flash_writes, B.pic.write_block);
+  pic_flash_save();
   flash_save();
   gw_close();
   return 0;

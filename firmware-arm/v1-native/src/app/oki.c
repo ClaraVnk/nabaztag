@@ -1,0 +1,99 @@
+/*
+ * oki.c -- the OKI ML2870A: Violet's register sequence, measured on the
+ * emulator's bus log of the 1.4b firmware (2026-11-24, tools/v1-audio-proof.sh)
+ * and read in its code (v1-icsp/IMPROVEMENTS.md section 3). The chip has no
+ * public datasheet: every value here is Violet's, nothing is understood
+ * beyond what the names in IMPROVEMENTS.md say.
+ *
+ *   clock: CCP1 PWM on RC2 at Fosc/4 = 6 MHz (Timer2 prescaler 1, PR2 0,
+ *          duty 2 of 4 ticks)
+ *   boot:  the 22 register writes below, in Violet's order
+ *   play:  45 <- 01, 35 <- rate (3: 8 kHz, 6: 16 kHz, 7: 32 kHz), 29 <- 01,
+ *          33 <- 01, 10 ms; then for each burst: 29 <- 00, register 01 then
+ *          up to 64 data bytes in one chip select (a burst never crosses a
+ *          serial flash page: Violet's page cache did not, and the bytes
+ *          and burst lengths are compared with its log), 29 <- 01; the FIFO
+ *          status (register 06, bit 0) is read before each burst; at the
+ *          end 33 <- 00, 29 <- 00.
+ *
+ * The data bytes go to the chip as they are in the file; the nibble order
+ * the real ML2870A wants is not settled (IMPROVEMENTS.md #1), so a flag
+ * swaps the nibbles of every byte: OKI_SWAP_NIBBLES at build time today, a
+ * configuration bit when the page exists. The emulator's OKI is a register
+ * log whose FIFO status is always "room": the proof is the sequence and the
+ * bytes, not the pace.
+ */
+#include "board.h"
+
+static const __code uint8_t boot_regs[][2] = {
+  { 0x11, 0x21 }, { 0x13, 0x00 }, { 0x15, 0x01 }, { 0x19, 0x1D }, { 0x17, 0x00 }, { 0x17, 0x08 },
+  { 0x57, 0x00 }, { 0x55, 0xFF }, { 0x41, 0x00 }, { 0x43, 0xFF }, { 0x45, 0x00 },
+  { 0x63, 0x0F }, { 0x37, 0x00 }, { 0x39, 0x19 }, { 0x67, 0xCB }, { 0x25, 0x40 }, { 0x21, 0xC0 },
+  { 0x23, 0x01 }, { 0x35, 0x03 }, { 0x45, 0x00 }, { 0x31, 0x00 }, { 0x29, 0x00 }
+};
+
+static void oki_wr(uint8_t reg, uint8_t v)
+{
+  OKI_CS = 0;
+  spi_xfer(reg); spi_xfer(v);
+  OKI_CS = 1;
+}
+
+static uint8_t oki_rd(uint8_t reg)
+{
+  uint8_t v;
+  OKI_CS = 0;
+  spi_xfer(reg); v = spi_xfer(0);
+  OKI_CS = 1;
+  return v;
+}
+
+void oki_init(void)
+{
+  uint8_t i;
+  TRISCbits.TRISC2 = 0;
+  PR2 = 0;
+  CCPR1L = 0;
+  CCP1CON = 0x2C;               /* PWM, the duty's two low bits = 2 */
+  T2CON = 0x04;                 /* on, prescaler 1 */
+  OKI_RST = 1;
+  delay_ms(2);
+  for(i = 0; i < sizeof(boot_regs) / 2; i++) oki_wr(boot_regs[i][0], boot_regs[i][1]);
+}
+
+/* An "Audi" file in the serial flash from page `page`: 16-byte header (byte
+ * 8 gives the rate), the ADPCM from offset 16, `length` data bytes. */
+void oki_play(uint16_t page, uint32_t length)
+{
+  uint8_t  buf[64], n, i, rate;
+  uint16_t off = 16;
+  flash_read(page, 8, &rate, 1);
+  rate = rate == 0x1F ? 3 : rate == 0x7D ? 7 : 6;
+  log_s("oki: play "); log_dec((uint16_t)length); log_s(" B rate "); log_dec(rate); log_nl();
+  oki_wr(0x45, 0x01); oki_wr(0x35, rate); oki_wr(0x29, 0x01); oki_wr(0x33, 0x01);
+  delay_ms(10);
+  while(length) {
+    uint16_t room = flash_page_size - off;
+    n = room < 64 ? (uint8_t)room : 64;
+    if(length < n) n = (uint8_t)length;
+    flash_read(page, off, buf, n);
+    off += n; length -= n;
+    if(off == flash_page_size) { off = 0; page++; }
+    { uint16_t k; for(k = 0; k < 20000 && (oki_rd(0x06) & 1); k++) clrwdt(); }  /* room in the FIFO */
+    oki_wr(0x29, 0x00);
+    OKI_CS = 0;
+    spi_xfer(0x01);
+    for(i = 0; i < n; i++) {
+#ifdef OKI_SWAP_NIBBLES
+      spi_xfer((uint8_t)((buf[i] << 4) | (buf[i] >> 4)));
+#else
+      spi_xfer(buf[i]);
+#endif
+    }
+    OKI_CS = 1;
+    oki_wr(0x29, 0x01);
+    clrwdt();
+  }
+  oki_wr(0x33, 0x00); oki_wr(0x29, 0x00);
+  log_line("oki: done");
+}

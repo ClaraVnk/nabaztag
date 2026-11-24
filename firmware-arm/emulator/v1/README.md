@@ -43,6 +43,11 @@ User-Agent: VIOLET
 The firmware never enables an interrupt, so the core has none. The card
 does 802.11 and WEP itself, so the model has no radio: ENABLE reports the
 link up, and the card's 802.3 frames (LLC/SNAP at offset 60) go to `gw.c`.
+Since the native firmware's loader (2026-11-24): the `RESET` instruction
+resets the core (ports inputs, PC 0, RAM kept; "reset: RESET instruction")
+instead of halting it, the data EEPROM is readable through EECON1.RD and
+takes its content from the hex's 0xF00000 records (the loader's key), and
+the flash self-write models the 6525's 8-byte blocks under `--pic 6525`.
 
 Read in the process, against what the sources said:
 
@@ -69,6 +74,9 @@ Read in the process, against what the sources said:
 | `--press AT HOLD` | the head button, pressed at AT seconds for HOLD seconds |
 | `--stall EAR` | ear 0 or 1 is stalled: its motor runs, its wheel never turns (Lazare's right ear, 2026-11-24) |
 | `--flash FILE` | keep the serial flash (configuration page, program) across runs |
+| `--pic 6525` | Lazare's PIC18LF6525: 48 KB, 8-byte flash write blocks (DS39612); the default is the 2.0b board's PIC18F6627, 96 KB, 64-byte rows (DS39646). The row or block written is the one TBLPTR points at when WR is set, as on the part |
+| `--pic-flash FILE` | keep the PIC's own flash across runs: the hex is loaded, then FILE laid over it when it exists, and the flash saved at exit. With `--seconds` cut short, a run is a power cut in the middle of whatever the loader was writing (`../tools/v1-loader-proof.sh`) |
+| `--trace-flash`, `--trace-oki` | every PIC flash erase and write; the OKI's registers with every byte of a data burst |
 | `--trace-bus`, `--trace-pins`, `--trace-net`, `--hot` | what the card, the pins, the gateway and the PC did |
 | `--server-vanish AT`, `--server-close AT` | at AT seconds the server dies without a FIN, or closes its connections |
 | `--link-down AT SECONDS` | the access point is gone from AT for SECONDS (0: for good); the card reports link status 2, then 1 when it is back |
@@ -96,6 +104,20 @@ path, DNS asked once per power-on.
 DHCP, DNS, polls `../tools/v1_native_warren.py` every 10 s, moves the ears,
 writes its configuration page in the serial flash; PASS/FAIL with the
 image's flash and RAM use.
+
+`../tools/v1-loader-proof.sh`: its loader (v1-native DESIGN.md section 7):
+the first boot seeds slot A, an offered update is downloaded, installed and
+polls, a bad signature is refused, twelve power cuts at random points of
+the update each end on a polling image, a corrupt PIC row is repaired from
+the slot, a corrupt slot falls back to the other, an image that never feeds
+the watchdog is abandoned after five boots.
+
+`../tools/v1-audio-proof.sh`: its OKI path against Violet's 1.4b playing
+the same 16 kHz tone: the start registers, the burst lengths and every data
+byte equal.
+
+The warrens of these proofs run in a container on the host network, like
+the emulator: on a Mac the podman machine's network is not the Mac's.
 
 ## The 1.4b firmware and the watchdog
 

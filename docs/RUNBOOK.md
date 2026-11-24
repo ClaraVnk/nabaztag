@@ -684,7 +684,68 @@ cd firmware-arm/emulator && tools/v1-native-proof.sh     # dev VM, ~3 min, PASS/
 # flash's /CS is RB4 (RB3 never moves); before the card's COR write Violet
 # pulls RG0 and RG3 low at 3 ms and RF4 low at 284 ms -- copied as is,
 # unnamed until the schematic is read (DESIGN.md, risks).
+# Since phase 2 the hex is out/18f6525/full.hex (loader + application + the
+# test key) and the first boot spends ~10 s seeding slot A before the
+# application starts; the proof's budgets were raised accordingly.
 ```
+
+**The v1 loader, phase 2** (`firmware-arm/v1-native`, DESIGN.md section 7;
+2026-11-24): a permanent boot block at 0x0000-0x2FFF (12 KB with SDCC: the
+HMAC-SHA-256 alone is 4 KB of its output, section 2 of DESIGN.md has the
+measurements), the application linked from 0x3000, two image slots in the
+serial flash (pages 16 and 208), a per-rabbit key in the PIC's data EEPROM
+(written at ICSP time, `mkimage.py full`), HMAC-SHA-256 over header and
+image, the copy in the part's 8-byte blocks with the 55h/AAh sequence, a
+read-back, a two-copy state record (pages 2-3), fallback to the other slot
+and a five-boot limit for an image that never reaches the Terrier. The
+application fetches an offered image (frame 10 in the poll's answer, then
+`GET /vl/v1/fw`) into the other slot and executes `reset`. Emulator only.
+
+```sh
+cd firmware-arm/emulator && tools/v1-loader-proof.sh     # dev VM or a Mac with podman, ~12 min, PASS/FAIL
+# 2026-11-24: PASS. Builds loader + app-30/31/32/33 (32 signed with
+# keys/wrong.key, 33 with -DAPP_BROKEN) and the 2.0b board's pair, the
+# emulator image, then six runs on Lazare's board (--pic 6525 --flash-chip
+# 081 --pic-flash):
+#   1. first boot: slot A seeded from the PIC in 10.0 s (HMAC of 27 712 B),
+#      the same HMAC as Python's hmac module over the same bytes;
+#   2. v31 offered at 2.0 s, downloaded (27 712 B in 1.4 s) into B, reset,
+#      HMAC checked in 9.9 s, 433 rows erased and 3 464 blocks of 8 written
+#      and read back in 0.8 s, v31 polling at 16.1 s and confirmed;
+#   3. v32 signed with another key: "bad hmac", refused, v31 runs on, no PIC
+#      flash write, the refused version not fetched again (skip_ver);
+#   4. twelve power cuts (V1_CUTS, V1_SEED), a third each during the
+#      download, the HMAC check, the copy and state write: every restart
+#      came back on v31 and polled (a cut before the header page is
+#      written: the next poll fetches again; during the check or the copy:
+#      the pending slot is installed again; after the state write: the PIC
+#      equals B);
+#   5. a byte of the PIC's application flipped: "PIC differs", reinstalled
+#      from B; the same with a byte of slot B flipped too: B fails its HMAC,
+#      A installed, v30 polls;
+#   6. v33 never feeds the watchdog: installed, five watchdog boots, then
+#      "never confirmed", back to A, v30 polls.
+# tools/sha256-host.c: the loader's SHA-256 compiled on the host against
+# Python (the two sigma bugs of the first build were found there).
+tools/v1-audio-proof.sh                                  # ~4 min, PASS/FAIL
+# 2026-11-24: PASS. Violet's 1.4b and our firmware play the same 16 kHz
+# Audi tone; the OKI start sequence (45 <- 01, 35 <- 06, 29 <- 01, 33 <- 01),
+# the 29 toggles around each burst and the 12 000 data bytes are identical
+# (our bursts split at our serial flash page ends: 226 of them to Violet's
+# 188); we add 33/29 <- 00 at the end (Violet's stopADPCM, which the
+# emulator's silent IRQ never triggers). Nibble order and table: on the
+# real rabbit only (OKI_SWAP_NIBBLES).
+tools/v1-native-proof.sh                                 # phase 1's proof on the new layout
+# 2026-11-24: PASS; first poll at 11.6 s (the 10 s seed first). loader
+# 12 014 B, application 27 670 B (RAM 1 470 / 1 793).
+```
+
+What the Terrier must serve for an update (not changed in that repository):
+`GET /vl/v1/fw?sn=<MAC>&v=<fw>&b=<0x25|0x27>` with the `app-N.img` that
+`mkimage.py image --key <that rabbit's key>` produced for that board, and a
+frame `10` (two bytes, the version) in the poll's answer when it is newer
+than `v=`; one 32-byte key per rabbit, the same one the PICkit put in the
+EEPROM. DESIGN.md section 8 has the rest of the frames (design only).
 
 ### The Karotz (Nabaztag v3)
 

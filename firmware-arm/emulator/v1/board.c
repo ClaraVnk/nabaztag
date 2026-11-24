@@ -178,19 +178,36 @@ static void sfr_write(struct pic18 *pic, uint16_t a, uint8_t v)
       B.ee_unlock = (v == 0x55) ? 1 : (B.ee_unlock == 1 && v == 0xAA) ? 2 : 0;
       return;
     case SFR_EECON1:
+      if((v & 0x01) && !(v & 0xC0)) {       /* RD: a data EEPROM byte, at once */
+        unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];
+        pic->ram[SFR_EEDATA] = B.eeprom[at];
+        v &= (uint8_t)~0x01;
+        pic->ram[SFR_EECON1] = v;
+      }
       if(v & 0x02) {                        /* WR: start a write */
+        /* The row or block written is the one TBLPTR points at when WR is
+         * set (DS39612 6.5, DS39646 6.5), not the last TBLWT's: a loader
+         * that leaves the pointer in the next row writes the wrong one on
+         * the real part, and now here too (2026-11-24). */
+        uint32_t tbl = (uint32_t)(pic->ram[SFR_TBLPTRL] | (pic->ram[SFR_TBLPTRH] << 8) |
+                                  ((pic->ram[SFR_TBLPTRU] & 0x3F) << 16));
+        unsigned wb = pic->write_block;
         if(!((v & 0x04) && B.ee_unlock == 2)) {
           board_log("nvm: write refused (WREN %d, unlock %d)", !!(v & 0x04), B.ee_unlock);
         } else if(v & 0x80) {               /* EEPGD: program (flash) memory */
-          uint32_t row = pic->flash_row & ~0x3Fu;
-          if(row + 64 > PIC_FLASH_SIZE) {
+          uint32_t row = tbl & ~0x3Fu, blk = tbl & ~(uint32_t)(wb - 1);
+          if(row + 64 > pic->flash_end) {
             board_log("flash: write past end at %06X", row);
           } else if(v & 0x10) {             /* FREE: erase the 64-byte row */
             for(int i = 0; i < 64; i++) pic->flash[row + i] = 0xFF;
-            board_log("flash: erase row %05X", row);
-          } else {                          /* write the 64 holding latches */
-            for(int i = 0; i < 64; i++) pic->flash[row + i] = pic->flash_latch[i];
-            board_log("flash: write row %05X (latch[0]=%02X)", row, pic->flash_latch[0]);
+            B.flash_erases++;
+            if(B.trace_flash) board_log("flash: erase row %05X", row);
+          } else {                          /* write the holding latches */
+            for(unsigned i = 0; i < wb; i++) pic->flash[blk + i] = pic->flash_latch[i];
+            memset(pic->flash_latch, 0xFF, sizeof(pic->flash_latch));
+            B.flash_writes++;
+            if(B.trace_flash || B.flash_writes <= 2)
+              board_log("flash: write %s %05X (latch[0]=%02X)", wb == 64 ? "row" : "block", blk, pic->flash[blk]);
           }
         } else if(!(v & 0x40)) {            /* data EEPROM (EEPGD=0, CFGS=0) */
           unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];

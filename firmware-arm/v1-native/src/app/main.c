@@ -1,15 +1,21 @@
 /*
- * main.c -- a native firmware for the Nabaztag v1 (2005), phase 1: the
- * skeleton end to end. Boot, log, LEDs, serial flash, the Wi-Fi card joined,
- * DHCP, DNS, the Terrier polled over HTTP, the ears moved once, the watchdog
- * fed. No interrupt anywhere: one loop polls everything, as Violet's
- * firmware did, so the emulator's PIC core (which has none) runs it as is.
+ * main.c -- a native firmware for the Nabaztag v1 (2005): the application,
+ * linked from APP_BASE behind the loader. Boot, log, LEDs, serial flash,
+ * the Wi-Fi card joined, DHCP, DNS, the Terrier polled over HTTP, the ears
+ * moved once, an offered image downloaded (update.c), the watchdog fed. No
+ * interrupt anywhere: one loop polls everything, as Violet's firmware did,
+ * so the emulator's PIC core (which has none) runs it as is.
  */
 #include "board.h"
 
+/* The header the loader and mkimage.py read: who this image is for and how
+ * long it is (mkimage.py fills the length after the link). */
+__code __at(APP_BASE + APP_HDR_OFF) struct app_hdr app_hdr = {
+  { 'N', 'B', 'V', '1' }, 1, BOARD_ID, APP_VERSION, 0, 0, { 0, 0, 0 }
+};
+
 /* The configuration page of the serial flash (DESIGN.md, memory map): page
- * 0, "NAB1", a format byte, a boot counter. Phase 1 writes nothing else. */
-#define CFG_PAGE   0
+ * 0, "NAB1", a format byte, a boot counter. Nothing else is written yet. */
 struct config { uint8_t magic[4]; uint8_t format; uint8_t pad; uint16_t boots; };
 
 static void config_boot(void)
@@ -17,19 +23,29 @@ static void config_boot(void)
   struct config c;
   uint8_t density = flash_init();
   log_s("flash: ");
-  if(density == 0x09) log_line("AT45DB081B, 264-byte pages");
-  else if(density == 0x0B) log_line("AT45DB161, 528-byte pages");
-  else { log_line("not found"); return; }
-  flash_read(CFG_PAGE, 0, (__data uint8_t *)&c, sizeof(c));
+  if(density == 0x09) log_line("AT45DB081B");
+  else if(density == 0x0B) log_line("AT45DB161");
+  else { log_line("none"); return; }
+  flash_read(PG_CONFIG, 0, (__data uint8_t *)&c, sizeof(c));
   if(c.magic[0] != 'N' || c.magic[1] != 'A' || c.magic[2] != 'B' || c.magic[3] != '1' || c.format != 1) {
     c.magic[0] = 'N'; c.magic[1] = 'A'; c.magic[2] = 'B'; c.magic[3] = '1';
     c.format = 1; c.pad = 0; c.boots = 0;
     log_s("config: new page; ");
   }
   c.boots++;
-  flash_write(CFG_PAGE, (__data const uint8_t *)&c, sizeof(c));
-  flash_read(CFG_PAGE, 0, (__data uint8_t *)&c, sizeof(c));
+  flash_write(PG_CONFIG, (__data const uint8_t *)&c, sizeof(c));
+  flash_read(PG_CONFIG, 0, (__data uint8_t *)&c, sizeof(c));
   log_s("config: boot #"); log_dec(c.boots); log_nl();
+  update_init();
+}
+
+/* The sound directory's autoplay: sound 0 at boot (tools/v1-audio-proof.sh). */
+static void sound_boot(void)
+{
+  struct snd_dir d;
+  flash_read(PG_SOUNDS, 0, (__data uint8_t *)&d, 6 + sizeof(d.s[0]));
+  if(d.magic[0] != 'S' || d.magic[1] != 'N' || d.magic[2] != 'D' || d.magic[3] != '1' || !d.count || !d.autoplay) return;
+  oki_play(d.s[0].page, d.s[0].length);
 }
 
 static uint16_t leds;
@@ -47,8 +63,13 @@ void main(void)
   spi_init();
   ears_init();
   log_nl(); log_line("nabv1 native " FW_VERSION);
+#ifdef APP_BROKEN
+  for(;;) ;                     /* a test image that never feeds the watchdog (the loader's fallback proof) */
+#endif
   show(LED_BOT_R);
   config_boot();
+  oki_init();
+  sound_boot();
 
   r = prism_init();
   if(r) { log_s("card: init error "); log_dec(r); log_nl(); }
@@ -78,6 +99,7 @@ void main(void)
     if(polls_answered != last_polls) {
       last_polls = polls_answered;
       show(leds | LED_TOP_G);
+      update_confirm();
       /* Once the Terrier has answered: each ear two holes, one motor at a
        * time (two at once restarted Lazare, 2026-11-24). */
       if(ear_demo == 0) { ear_demo = 1; ear_move(0, 2); }
