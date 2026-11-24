@@ -159,6 +159,7 @@ at 90000 expect RUN
 | directive | meaning |
 |---|---|
 | `ap <bssid> <ssid> <channel> <security> [<rssi>] [pmf]` | one access point |
+| `ap … decline <status>` | …that answers every open-system authentication with that status code (`37`: declined), as a mesh node steering a client away does; the rest of the network is untouched |
 | `psk <passphrase>` | the pre-shared key |
 | `tick <ms>` | virtual time per main-loop pass |
 | `stop <ms>` | when the run ends |

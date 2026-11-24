@@ -1307,3 +1307,35 @@ tool below; `make-img.sh` writes both). The Karotz guide's screenshots come
 from `karotz/lapinlibre/imager-shots/` (Imager 2.0.12 on Xvfb, steps in
 `shots.sh`): repository URL, device, system, Wi-Fi; Ubuntu by exception,
 removed after use.
+
+### A network with several access points: the next one after a refusal (Naboot 1.2.1.5)
+
+2026-11-24. `apply-mods.py bss_fallback`: the bootloader keeps every scanned
+access point of the configured network, strongest first and once per BSSID,
+so `boot_loop`'s 20 s retry (`tl wifiscans`) moves to the next one instead of
+rescanning into the same strongest node for ever (Pinkyblack on a TP-Link
+Deco that declines its authentication, status 37: `a4 r3/25`). Mode
+`naboot-1.2.1.5` = 1.2.1.4 + bss_fallback. The analysis, the two other
+"orange after a restart" rabbits and the Nabazprout proposal:
+`firmware-arm/docs/WARM-REBOOT-FREEZE.md`.
+
+From the repository root, builds on the dev VM (one heavy job at a time):
+
+```sh
+REMOTE_LOCK="-o $HOME/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.4 --remote <dev-vm> --runtime podman   # control
+REMOTE_LOCK="-o $HOME/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.5 --remote <dev-vm> --runtime podman
+# on the dev VM, repository copied there, both bin/naboot-1.2.1.{4,5}/Nab.{elf,bin} beside:
+flock -o ~/heavy.lock podman build -f firmware-arm/emulator/Containerfile -t emu-1215 \
+  --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.2.1.5) .
+TAG=emu-1215 NO_BUILD=1 firmware-arm/emulator/tools/mesh-fallback-proof.sh \
+  firmware-arm/bin/naboot-1.2.1.5/Nab.elf firmware-arm/bin/naboot-1.2.1.4/Nab.elf
+```
+
+Expected: `PASS joined at the second access point after the first declined`
+for 1.2.1.5 and `PASS the control retried the declining node only and never
+joined` for 1.2.1.4 (the scenario: `scenarios/vm/mesh-decline-wpa2.txt`,
+the virtual AP's `decline <status>` option). Not run on 2026-11-24: the dev
+VM's `~/heavy.lock` was held by an `aardvark-dns` that had inherited it from
+a plain `flock` (`ls -l /proc/<pid>/fd | grep heavy.lock` names it); a stale
+holder needs that fd closed or the process restarted before any `flock -o`
+job starts.

@@ -448,6 +448,11 @@ int sim_load(const char *path)
         /* 2026-11-21: a MikroTik offering WPA and WPA2 together; the
            rabbit's scan took it for WPA, whose request asks for TKIP. */
         if(!strcmp(tok[i], "wpa1-too")) a->wpa1_too = 1;
+        /* 2026-11-24: a Deco mesh node declining a rabbit's authentication
+           (status 37) on every try, while another node of the same network
+           would have taken it. */
+        if(!strcmp(tok[i], "decline") && i + 1 < n)
+          a->decline_auth = (int)strtol(tok[++i], NULL, 10);
       }
       sim.nb_aps++;
     } else if((!strcmp(tok[0], "at") || !strcmp(tok[0], "fetch")) && n >= 3) {
