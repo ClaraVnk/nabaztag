@@ -1172,6 +1172,27 @@ MACH=1912 now also checks the three drivers probed and reads one byte from
 Not proven in QEMU: the ears moving (no motors, no encoder) and the
 encoders' trigger, left as the bootloader set it as 2.6.32 did.
 
+### Terrier OS's patches to LapinLibre (review of 2026-11-24)
+
+`karotz/lapinlibre/REVIEW-LAPINLIBRE.md` is the review of LapinLibre as
+Terrier OS ships it (the web API, the start-up, the daemons' D-Bus chain).
+What our build changes is in `karotz/lapinlibre/patches/` (its README names
+each), applied by the `Containerfile` on `LL_COMMIT` as one dated commit, so
+the tree and `git describe` are the same from one build to the next. Two
+proofs, both without a rabbit:
+
+    karotz/lapinlibre/test-patches.sh
+    # 2026-11-24: "PASS: 3 patches apply to 19ea8d7, image.py compiles, LL_BUILD_VERSION taken"
+    karotz/lapinlibre/test-inetd-rate.sh        # on the dev VM (podman)
+    # 2026-11-24: nowait.600: 61 of 61 answered; nowait.60: 59 of 61; PASS
+
+The second is the measure behind patch 0001: BusyBox inetd refuses the
+connection past its count and pauses the service for ten minutes, and the
+Terrier client on the rabbit opens one connection per LED or ear order.
+`karotz/lapinlibre/VERSION` (1.0.0) is the number the build stamps
+(`LL_BUILD_VERSION`, patch 0002); the LapinLibre commit it came from is on
+the rabbit in `/karotz/etc/lapinlibre-base`.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

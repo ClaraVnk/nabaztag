@@ -1,0 +1,19 @@
+diff --git a/image/usbkey/autorun b/image/usbkey/autorun
+index 55df58d..381e59f 100755
+--- a/image/usbkey/autorun
++++ b/image/usbkey/autorun
+@@ -153,10 +153,12 @@ rm -rf /usr/install /usr/yaffs* /usr/.install_yaffs_start
+ bash /mnt/usbkey/applysettings.sh || ERROR "the settings in lapinlibre.txt were not applied"
+ cp "${KEY}/build_id" "${CONF}/lapinlibre_build_id" || ERROR "can't record the build id"
+ 
+-# 8. Done: the new root filesystem's inittab is copied at the next boot.
++# 8. Done: the new root filesystem's inittab and inetd.conf are copied at the next boot
++# (linuxrc copies them only when missing; a rabbit installed before the web server's connection
++# count changed kept the old inetd.conf for good, Terrier OS review 2026-11-24).
+ stop_loop
+ play install-done.mp3
+-rm -f /usr/etc/inittab
++rm -f /usr/etc/inittab /usr/etc/inetd.conf
+ sync
+ LOG "Rebooting into build ${BUILD_ID}"
+ /sbin/reboot -f
