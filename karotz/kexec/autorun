@@ -27,6 +27,12 @@ case "$(uname -r)" in
           # The client and the clock (2026-11-24: the client ran under 6.1,
           # never reached the Terrier, and the date stayed in 1970).
           echo "== resolv.conf"; cat /etc/resolv.conf
+          # LapinLibre's API lock (web.sh web_lock): every request answered
+          # "busy" within a second under 6.1, not after its 5 s wait.
+          echo "== lock"; ls -l /var/lock/ 2>&1 | head -5
+          ( exec 9>> /var/lock/lapinlibre-web.lock && flock -n -x 9; echo "flock -n: $?" ) 2>&1
+          ( exec 9>> /var/lock/lapinlibre-web.lock && timeout 2 flock -x 9; echo "timeout flock: $?" ) 2>&1
+          timeout 1 sleep 3; echo "timeout sleep: $? (143 or 124 expected)"
           echo "== ntp"; nslookup pool.ntp.org 2>&1 | tail -3
           for d in /usr/etc/conf/terrier /usr/terrier; do
               [ -f $d/client.log ] && { echo "== $d/client.log"; tail -40 $d/client.log; }

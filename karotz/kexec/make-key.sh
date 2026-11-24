@@ -16,11 +16,13 @@ python3 "$HERE/mkcpio.py" "$KEY/kexec/measure.cpio.gz" "$TREE" "$HERE/measure-in
 # /init with /usr mounted read-only (6.1's YAFFS writing not yet proven).
 sed 's#^mount -t yaffs /dev/mtdblock6 /usr$#mount -t yaffs -o ro /dev/mtdblock6 /usr#' "$TREE/linuxrc" > "$KEY/kexec/linuxrc-ro"
 grep -q "mount -t yaffs -o ro /dev/mtdblock6 /usr" "$KEY/kexec/linuxrc-ro" || { echo "linuxrc: /usr mount line not found"; exit 1; }
-# The Terrier client's directory in RAM over the read-only /usr: run.sh
-# appends to client.log there, and a failed redirection never started the
-# client (Gengar under 6.1, 2026-11-24). The flash is not touched.
+# /usr/etc (/etc, the client's conf/terrier among it) and /usr/terrier in
+# RAM over the read-only /usr: run.sh appends to client.log there, and a
+# failed redirection never started the client; udhcpc writes resolv.conf
+# there, and the rabbit had no DNS (Gengar under 6.1, 2026-11-24). The
+# flash is not touched.
 sed -i.bak 's#^mount -t yaffs -o ro /dev/mtdblock6 /usr$#&\
-for d in /usr/etc/conf/terrier /usr/terrier; do [ -d $d ] || continue; m=/var/rw$(echo $d | tr / _); mkdir -p $m; cp -a $d/. $m/; mount --bind $m $d; done#' "$KEY/kexec/linuxrc-ro" && rm -f "$KEY/kexec/linuxrc-ro.bak"
+for d in /usr/etc /usr/terrier; do [ -d $d ] || continue; m=/var/rw$(echo $d | tr / _); mkdir -p $m; cp -a $d/. $m/; mount --bind $m $d; done#' "$KEY/kexec/linuxrc-ro" && rm -f "$KEY/kexec/linuxrc-ro.bak"
 grep -q "mount --bind" "$KEY/kexec/linuxrc-ro" || { echo "linuxrc: the client directory bind failed"; exit 1; }
 # Traced: os-prelude, right after the #! line.
 sed -i.bak "1r $HERE/os-prelude" "$KEY/kexec/linuxrc-ro" && rm -f "$KEY/kexec/linuxrc-ro.bak"
