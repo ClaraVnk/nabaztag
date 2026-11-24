@@ -66,6 +66,57 @@ the ramdisk's own boot (it is only in the kexec key today,
 `karotz/kexec/os-prelude:26-49`): a hub that reads wrong at boot otherwise
 leaves the rabbit without Wi-Fi until the next power cut.
 
+**Read the same evening (2026-11-24, 23:00), the cause is candidate 1,
+and it is in the allocator, not the HCD.** tinyconfig sets `CONFIG_SLOB=y`
+(`kernel/configs/tiny.config`); 2.6.32's rabbitv3 config had `SLAB`.
+SLOB's kmalloc (`mm/slob.c:478-510`) puts a 32-byte size header before
+each object and does not round the object up: a 2-byte `usb_get_status`
+buffer, the 4-byte `hub->status`, the 8-byte `hub->buffer`, the 15-byte
+`hub->descriptor` (kzalloc) and the 18-byte device descriptor
+(`hub.c:1448-1461`, `message.c:1117,1201`) each end in the middle of a
+32-byte cache line whose rest is free, and SLOB writes its free-list words
+there (`set_slob`, `slob.c:146`) at every allocation in that page. The
+ARM920T's DMA maintenance (`arch/arm/mm/proc-arm920.S:235-246,304-306`)
+invalidates the buffer's lines when it is mapped for the device and does
+nothing at unmap: anything that touches the line between the map and the
+completion pulls it back into the cache, stale, and the CPU then reads
+what was there before the transfer. Zeros from the kzalloc'd hub
+descriptor are "hub doesn't have any ports"; 0 in the status word is
+"bus-powered"; the previous contents of an 18-byte kmalloc are "bad
+descriptor". The old scheme's device-descriptor read uses a 64-byte
+buffer (`GET_DESCRIPTOR_BUFSIZE`, `hub.c:4839`), two whole lines: that is
+why `usbcore.old_scheme_first=1` cured that one read and none of the
+others. QEMU could never show it (no OHCI in the mini2440 model).
+
+Fixed in the branch: `CONFIG_SLUB=y` (`karotz-6.1.config`): SLUB's kmalloc
+classes on ARM start at `ARCH_KMALLOC_MINALIGN` (32) and are multiples of
+it, so every USB buffer owns its lines, as under 2.6.32's SLAB. The two
+workarounds stay in until Gengar has shown the hub enumerating on every
+boot without them; `karotz-6.1-hubtest.config` builds the kexec kernel
+with the built-in command line emptied (old scheme off) for that A/B,
+and `karotz/kexec/usb-measure` records the registers, the USB tree and the
+hub lines under both kernels (RUNBOOK). Needs Gengar.
+
+Candidate 2 is closed by reading the BIOS: Gengar's mtd0, OOB stripped,
+writes UPLLCON = (56, 2, 2) at 0x33f845b8 at every power-on (and again
+in its power-wheel loop at 0x33f84b58), the value 2.6.32 writes; 6.1
+cannot change it (its UPLL has no rate table, `clk-s3c2410.c:157`,
+`clk-pll.c` min ops), so the flash boot inherits 48 MHz. The board file
+now writes it anyway if it reads anything else, and logs MPLLCON,
+UPLLCON, CLKCON, CLKSLOW, CLKDIVN and MISCCR ("rabbitv3: clocks").
+Candidate 3 stays open for the measure (usb-measure reads CLKCON).
+
+The warm-restart wedge under 2.6.32 after a 6.1 run is not explained by
+the above (2.6.32's buffers are fine); what differs at the restart is the
+OHCI's shutdown: 2.6.32's `ohci_shutdown` writes HcControl with HCFS =
+USBRESET, a bus reset on both root ports that the TUSB2046 sees; 6.1's
+does a software reset and leaves the controller suspended, the hub in
+whatever state 6.1's wrong reads had put it. The board file registers a
+reboot notifier that does what 2.6.32 did (reboot and kexec both run it,
+`kernel_restart_prepare`). In QEMU it logs its HcControl read (no OHCI
+there, 0 -> 0); its effect needs Gengar, cold against warm, with
+usb-measure.
+
 ### 1.2 The belly's colours: the pulse, not the bytes
 
 The LED frames are not where to look. led-daemon sends **two-byte SPI

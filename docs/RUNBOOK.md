@@ -1165,6 +1165,130 @@ Note for the next image build: `karotz/kernel/Containerfile` pins
 Pin the package (`gcc-arm-none-eabi=<version>`) when the flash kernel is
 built, and keep the zImage's sha256 with the release.
 
+### Linux 6.1 for the Karotz: the USB hub's wrong reads, read in the code (2026-11-24)
+
+`karotz/kernel/REVIEW-6.1.md` 1.1, closed by reading: tinyconfig's `SLOB`
+leaves the tail of each small kmalloc'd USB buffer (hub status, hub
+descriptor, device descriptor: 2 to 18 bytes) in a cache line it shares
+with SLOB's own free-list words; the ARM920T invalidates that line when the
+buffer is mapped for the device and never at unmap (`proc-arm920.S`), so any
+allocation in the page between the map and the read brings the stale line
+back and the CPU reads what was there before the transfer: zeros ("hub
+doesn't have any ports", "bus-powered"), old bytes ("bad descriptor"). The
+old scheme's 64-byte buffer is two whole lines, which is why
+`usbcore.old_scheme_first=1` cured that one read only. 2.6.32 had SLAB.
+QEMU cannot show it (no OHCI in the mini2440 model). The BIOS, read with
+its spare stripped, writes UPLLCON = 0x00038022 at power-on (FLASH-PLAN
+§1), so the UPLL was never the cause; 6.1 cannot change it anyway.
+
+In the branch: `CONFIG_SLUB=y` (kmalloc classes are multiples of 32, each
+buffer in lines of its own; zImage 2,502,688 -> 2,530,672 bytes); the board
+file writes UPLLCON as 2.6.32 did when it reads anything else and logs the
+clock registers ("rabbitv3: clocks MPLLCON ... UPLLCON 00038022 ..."), and
+puts the OHCI in USBRESET before a restart as 2.6.32's `ohci_shutdown` did
+(a reboot notifier, so a kexec runs it too); `karotz/kexec/usb-measure`
+reads the clock, GPIO and OHCI registers, the USB tree and the hub lines
+under either kernel; the key's `autorun` runs it under 2.6.32 before the
+jump (`usb-2632.txt`) and under 6.1 (`usb-61.txt`). The two workarounds
+(old scheme, the power patch) stay in until the rabbit has spoken.
+
+**Needs Gengar** (by kexec, nothing on the flash). The kexec kernel of the
+branch, `EXTRA="/k/karotz-6.1-debug.config /k/karotz-6.1-realnand.config
+/k/karotz-6.1-kexec.config"` (the kexec fragment is in the image since
+2026-11-24), on the key with `make-key.sh`; `echo cold > <key>/kexec/label.txt`
+after a run from the mains, `warm` otherwise; `touch <key>/kexec/go-os`. Then:
+
+    karotz/kexec/ramoops.py <key>/kexec/log/N-ramoops.bin | grep -E "rabbitv3: (clocks|upll|usb)|hub 1-1|descriptor|bus power"
+    cat <key>/kexec/log/N-2.6.32-to-os-6.1/usb-2632.txt <key>/kexec/log/N-os-6.1/usb-61.txt
+
+Expected with SLUB: no "doesn't have any ports", no "bad descriptor", the
+hub's four ports and both devices (`ports behind 1-1: 4, devices: 2`) on
+every boot, cold or warm. Then the A/B without the old scheme: the same
+build with `/k/karotz-6.1-hubtest.config` added (built-in command line
+emptied), five boots; the control is the 2026-11-24 kernel, which read the
+descriptor empty one boot in two with the old scheme off. If both pass,
+`CONFIG_CMDLINE` and `usb-bus-power-rabbitv3.patch` can go. For the
+warm-restart wedge under 2.6.32 after a 6.1 run: `usb-2632.txt` after a
+6.1 run that ended in `reboot -f` (os-prelude's 15 minutes) against one
+from the mains: HcRhPort1 0x00000103 and the hub in the tree both times is
+the notifier doing its job; 0x00000100 and no 1-1 is the wedge, with the
+registers to compare.
+
+### FLASH-PLAN step 0 in QEMU: the Karotz's own BIOS boots its NAND, and restores (2026-11-25)
+
+`karotz/kernel/qemu-mini2440/bios-boot.sh` runs QEMU's mini2440 with no
+`-kernel`: the machine copies the first 256 KiB of the NAND (Gengar's mtd0,
+the BIOS v1.16) to 0x33f80000 and jumps, as the rabbit does. The NAND is
+Gengar's, rebuilt by `karotz-flash.py`. Three things in `direct-boot.py`
+for it: the loader reads 2 KiB pages (it read 512-byte ones), the head
+button GPF0 reads released (the model's inputs read 0, which is pressed,
+and the BIOS would restore at every boot) unless `MINI2440_HEAD_HELD=<ms>`,
+and NFSTAT reports RnB_TransDetect (bit 2, the bit the BIOS polls after
+each page; the model gave bit 0 only and the BIOS sat after its banner).
+The monitor on a socket saves the MiB at 0x32000000 (ramoops) when the
+time is up, read by `karotz/kexec/ramoops.py`.
+
+    karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> [seconds]
+    # 2026-11-25 00:10 (the witness, the rabbit's own 2.6.32 in mtd1): the
+    #   banner, "FCLK=405MHz", forty dots, "Read chip id = ecda", "Set boot
+    #   params = initrd=0x31800000,0x00500000 root=/dev/ram rw init=/linuxrc
+    #   quiet mem=65536K devfs=udev  k_nbclick=0", "Load Kernel...", "Load
+    #   Ramdisk...", "Uncompressing Linux... done, booting the kernel." PASS.
+    #   2.6.32 then prints on tty0 (its VT), nothing more on the serial port.
+    RESTORE=40000 karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 720
+    # 2026-11-25: 'B' printed while the head is held, "Loading default
+    #   partitions...", "Now coping partition 3 to 1", "Ram copied to
+    #   partition 2", "Now erasing partition 6"; in the image after: mtd1 ==
+    #   mtd3 and mtd2 == mtd4 (both false before), mtd6 erased. PASS.
+    #   (300 s was too short: the erase of 234 MiB was at page 54656 of
+    #   119808 when the run ended, 00:17.)
+
+QEMU's own clock model confirms the BIOS's UPLL write on the way:
+"S3C: ... UCLK=57" at reset, "UCLK=48" after the BIOS's first writes.
+Not shown by this: the nose's colours (no SPI LED model), how long the
+300-count takes on the rabbit, and the 2011 rescue system booting after
+the restore (it is 2.6.x, console on tty0): the witness on Gengar remains
+Clara's call (FLASH-PLAN step 0).
+
+### FLASH-PLAN step 1 in QEMU: the flash kernel from the BIOS (2026-11-25)
+
+The flash kernel is `karotz-6.1.config` alone (no EXTRA): no kexec, no
+debug, the NAND driver, ramoops reserved and registered by the board file
+(1 MiB at 0x32000000, `RabbitV3_reserve`), `panic=10` built in, the serial
+console and `usbcore.old_scheme_first=1` in `CONFIG_CMDLINE`. `bios-boot.sh`
+writes it over mtd1 in the image (`KERNEL=`) and the BIOS boots it with its
+own line, the ramdisk at 0x31800000 by `initrd=` and ATAG:
+
+    mkdir -p /tmp/kf && podman run --rm -e OUT=/out -v /tmp/kf:/out:Z karotz-kernel61
+    # 2026-11-25: 2,530,336 bytes (SLUB, pstore, HZ=200), 600 KiB left; GCC 16.1.0
+    KERNEL=/tmp/kf/zImage karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 240
+    # 2026-11-25 00:12, without console= : "Load Kernel...", "Load Ramdisk...",
+    #   then the NAND traffic of a YAFFS mount for minutes and not one line: 6.1
+    #   enabled no console (the BIOS names none; 2.6.32 took its VT). FAIL, the
+    #   reason the built-in line now names ttySAC0.
+    # 2026-11-25 00:40, with console= (zImage 2,530,712 bytes, sha256
+    #   c19b624c...): "Linux version 6.1.192", "rabbitv3: clocks MPLLCON
+    #   0007f021 UPLLCON 00038022 CLKCON 0007fff0 CLKSLOW 00000004 CLKDIVN
+    #   00000007 MISCCR 00000330" (the BIOS's UPLL, as read in its code),
+    #   "console [ramoops-1] enabled", "pstore: Registered ramoops as
+    #   persistent store backend", "ramoops: using 0x100000@0x32000000",
+    #   "console [ttySAC0] enabled"; then "Kernel command line:
+    #   usbcore.old_scheme_first=1 console=ttySAC0,115200" -- the BIOS's own
+    #   line is NOT there, "Memory: 8552K/16384K" -- nor its mem=65536K, and
+    #   "VFS: Unable to mount root fs on unknown-block(0,255)": no initrd,
+    #   no root=. FAIL, and the finding of the night: **6.1 does not take
+    #   what this BIOS passes at 0x30000100** (kexec's --atags it took).
+    #   NOT DONE: read what the BIOS writes there (a legacy param_struct,
+    #   which 2.6.32 converted with CONFIG_DEPRECATED_PARAM_STRUCT, is the
+    #   first thing to check: `pmemsave 0x30000100 0x1000` through
+    #   bios-boot.sh's monitor before the jump, and 2.6.32's .config), then
+    #   the option or the board hook that makes 6.1 read it. Until then the
+    #   flash kernel cannot boot from the BIOS; by kexec it is unaffected.
+
+Not done tonight either: the restore's long run (720 s) for mtd6's erase to
+finish, the step-2 ramdisk and the step-3 installer (design notes in
+FLASH-PLAN.md), and every "needs Gengar" above.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of

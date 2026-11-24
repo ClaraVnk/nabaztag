@@ -27,7 +27,13 @@ which checks the reading below.
 
 ### At power-on
 
-1. Clocks (FCLK 405 MHz), NAND identified ("Read chip id"), boot parameters
+1. Clocks: UPLLCON written first, (56, 2, 2) = 0x00038022, 48 MHz for the
+   USB (0x33f845b8, the call into the writer at 0x33f80df8; the same value
+   2.6.32 writes at its map_io), then CLKDIVN (13, 12) and MPLLCON (127,
+   2, 1) = 405 MHz (0x33f845c8-0x33f845dc; read 2026-11-24 on the image
+   with its spare stripped, 2048 of every 2112 bytes). The power-wheel
+   loop writes the UPLL again (0x33f84b58) before it slows the clocks.
+   NAND identified ("Read chip id"), boot parameters
    read from the last page of its own partition (the `bootpara` block at
    mtd0 offset 0x3f800: `AUTORUN`, `machine` 1912, `runAddr` 0x30200000,
    `initrdA` 0x31800000, `initrdL` 0x500000, `memsize`, `devfs`, `ostore`,
@@ -149,6 +155,16 @@ and dropped links on others). It is the way back if the bootloader itself
 is lost, and the last one to try: the pinout to find, the SDRAM init to
 script, hours per attempt.
 
+### What the main loop reads (for the emulator)
+
+The head button is GPFDAT bit 0 (0x33f84968: `ands r5, r3, #1`; released =
+1, the normal count of 40 dots; pressed = 0, the 300-count with the nose
+blinking, then the restore). The power wheel is GPCDAT bit 2 (0x33f84914,
+0x33f849b4: set = the wheel off, the BIOS slows the clocks and waits). A
+GPIO model whose inputs read 0 holds the head pressed and the wheel on:
+QEMU's does, which `direct-boot.py` corrects (GPF0 released unless
+`MINI2440_HEAD_HELD=<ms>`).
+
 ## 2. Verdict
 
 **Yes, there is a way back today, and it does not need a key or the kernel
@@ -168,14 +184,34 @@ before one of the two has been done once on Gengar, as the witness.
   300-count window lasts, and whether the 2011 rescue system boots and runs
   the key's `autorun` on this rabbit (its `linuxrc` is the factory one, so
   `autorun.sig` is needed beside the script: `karotz/measure-key` already
-  ships it).
+  ships it). **Run in QEMU on 2026-11-25** (`bios-boot.sh`, RUNBOOK): the
+  BIOS, from Gengar's own mtd0, boots the NAND to "booting the kernel",
+  and with the head held restores mtd3 over mtd1, mtd4 over mtd2 and
+  erases mtd6, checked in the image. What the rabbit adds is the nose,
+  the timing and the rescue system itself.
 - 6.1 has only run on Gengar through kexec: an initramfs (`rdinit=/init`),
   our command line, the ramoops memory carved out. From the BIOS it will
   get a gzipped cramfs on `/dev/ram0`, `root=/dev/ram rw init=/linuxrc`,
   `initrd=` by address, `ATAG_INITRD`, and whatever `CONFIG_CMDLINE` adds.
   `real-boot.sh` proved that path in QEMU on 2026-11-23, with
   `ramdisk_size=8192` added to the line; the BIOS adds nothing, so the
-  kernel's `CONFIG_BLK_DEV_RAM_SIZE=5120` must carry the 5 MiB alone.
+  kernel's `CONFIG_BLK_DEV_RAM_SIZE=5120` must carry the 5 MiB alone
+  (2.6.32's value too). **The BIOS path itself ran in QEMU on 2026-11-25**
+  (`KERNEL=` in `bios-boot.sh`): see the RUNBOOK for how far; the first
+  run showed that the BIOS's line names no console and 6.1 enables none,
+  hence `console=ttySAC0` in `CONFIG_CMDLINE`.
+  **Open (2026-11-25 00:40):** booted by the BIOS, 6.1 sees neither the
+  BIOS's command line nor its `mem=`, nor the initrd ("Kernel command
+  line:" is the built-in one alone, "Memory: .../16384K", then the panic
+  on the root device), while kexec's `--atags` were taken. What the BIOS
+  writes at 0x30000100 is to be read (a 2.4-style param_struct would need
+  `CONFIG_DEPRECATED_PARAM_STRUCT`, which converts it; 2.6.32's config to
+  check first). Step 1 is not done until the BIOS-booted 6.1 reaches
+  linuxrc in QEMU.
+- The USB hub's wrong reads under 6.1 are explained (REVIEW-6.1.md 1.1,
+  2026-11-24: SLOB's cache-line sharing on an ARM920T) and the kernel
+  built with SLUB; the proof is Gengar's, with `karotz/kexec/usb-measure`.
+  The UPLL is not a question any more: the BIOS writes 56/2/2 at power-on.
 - The kernel that ran is the debug/kexec one (no size limit). The flash
   kernel must fit 3,145,728 bytes; the last size measured is 2,492,976
   before the three drivers, the DMA driver and the pstore options.
@@ -195,7 +231,10 @@ with its RUNBOOK entry, in the same PR as its proof.
 
 ### Step 0: the way back, witnessed
 
-Two tools, both without a flash write:
+Two tools, both without a flash write. The first is done (2026-11-25,
+`qemu-mini2440/bios-boot.sh`: the BIOS boots Gengar's NAND, and restores
+with the head held; the serial download is not done); the second is
+Clara's.
 
 - **The bootloader in QEMU.** `mini2440` boots from NAND when no `-kernel`
   is given (hw/mini2440.c:271-284: the first 256 KiB to 0x33f80000). With
@@ -217,17 +256,20 @@ Two tools, both without a flash write:
 
 ### Step 1: the flash kernel
 
-`karotz-6.1.config` without the kexec and debug additions, plus the board
-file reserving 1 MiB at 0x32000000 for ramoops as a platform device (no
-`mem=` games on top of the BIOS's `mem=65536K`), `CONFIG_CMDLINE` with
-`panic=10` beside `usbcore.old_scheme_first=1`, `size.sh` under 3,145,728
-bytes. Proof: `real-boot.sh` with the BIOS's exact line (no `ramdisk_size`)
-on Gengar's NAND image, to `linuxrc` and the services; then on Gengar
-through the key, **without the flash**: `kexec` with the key's
+`karotz-6.1.config` alone (the kexec and debug additions are EXTRA
+fragments), the board file reserving 1 MiB at 0x32000000 for ramoops and
+registering the device (no `mem=` games on top of the BIOS's
+`mem=65536K`), `CONFIG_PANIC_TIMEOUT=10`, `CONFIG_CMDLINE` with
+`usbcore.old_scheme_first=1 console=ttySAC0,115200`,
+`CONFIG_CONSOLE_LOGLEVEL_QUIET=7` so the BIOS's `quiet` keeps the boot log
+for ramoops, SLUB, `size.sh` under 3,145,728 bytes (2,530,336 on
+2026-11-25). Proof in QEMU: `bios-boot.sh` with `KERNEL=`, the BIOS's own
+chain and line on Gengar's NAND image (RUNBOOK, 2026-11-25); then on
+Gengar through the key, **without the flash**: `kexec` with the key's
 `rootfs.img.gz` as the initrd and `root=/dev/ram rw init=/linuxrc` on the
-line (a non-cpio initrd goes to `/dev/ram0`), which is the BIOS's path with
-kexec in the BIOS's place. The Terrier connection, ears, belly and voice as
-on 2026-11-24.
+line (a non-cpio initrd goes to `/dev/ram0`), which is the BIOS's path
+with kexec in the BIOS's place. The Terrier connection, ears, belly and
+voice as on 2026-11-24, and `usb-measure`'s two files.
 
 ### Step 2: one ramdisk for both kernels
 
@@ -238,6 +280,16 @@ read-only with `/usr/etc` and `/usr/terrier` in RAM when the kernel is 6.x
 kernel swap alone, the ramdisk stays. Proof: `kexec-proof.sh` (2.6.32 on
 it) and `real-boot.sh` (6.1 on it) in QEMU; on Gengar `go-2632` and the
 step-1 run, both on this ramdisk.
+
+Design notes (2026-11-25, not built): the ramdisk is `rootfs.img.gz`
+from `karotz/lapinlibre`'s build, its `linuxrc` the place for the three
+changes (`uname -r` decides: `6.*` mounts `/usr` read-only and binds
+`/usr/etc` and `/usr/terrier` from RAM, as `make-key.sh` does today for
+the kexec key; the mdev rules and the `spidev0.1` alias are unconditional,
+2.6.32 never sees `sd*` nor `spidev0.0`). The proof is `bios-boot.sh`
+twice on the same image with the new mtd2 written (as `KERNEL=` writes
+mtd1): the rabbit's 2.6.32 in mtd1, then the flash 6.1, both to
+`[START]`; and `kexec-proof.sh` unchanged.
 
 ### Step 3: the write, boot-time, verified
 
@@ -256,6 +308,24 @@ emulator on nandsim (its ten checks reduced to the kernel, the ramdisk, the
 log, the read-back, and `/usr` untouched: settings, Wi-Fi, key, client all
 still there without being "kept"), then QEMU booting the written image
 through the BIOS (step 0's tool); on Gengar the key, the nose, the Terrier.
+
+Design notes (2026-11-25, not built): the key's `autorun` for this step
+is `karotz/kexec/autorun`'s structure with the install in place of the
+kexec: (1) preflight, `md5sum -c` of `zImage-6.1`, `rootfs.img.gz`,
+`zImage-2632` on the key and `check_fits` against `/proc/mtd`; (2) a copy
+of `/usr/etc/conf` to the key (never needed by this step, kept anyway);
+(3) `flash_erase /dev/mtd1 0 0; nandwrite -pm /dev/mtd1 zImage-6.1`, then
+`nanddump -l <size> /dev/mtd1 | cmp - zImage-6.1`; the same for mtd2 only
+when the key's `rootfs.img.gz` differs from the running one (step 2's
+ramdisk is the same for both kernels, so usually not); (4) a mismatch is
+written again once, a second mismatch writes `zImage-2632` back and sets
+the nose red, the log on the key; (5) `sync`, `reboot`. `go-back` is the
+same script with `zImage-2632` as the kernel to write. `/usr` is not
+touched, not even remounted. Proof: `firmware-arm/emulator/karotz/ota`'s
+nandsim emulator with its checks reduced to the kernel, the log, the
+read-back and `/usr` untouched; then `bios-boot.sh` on the image the
+emulator wrote (its mtd1 and mtd2 copied in by `karotz-flash.py`'s
+layout), to `[START]`; then the first `go-back` in QEMU the same way.
 
 ### Step 4: the first week
 

@@ -25,6 +25,10 @@ case "$(uname -r)" in
     # 21:37 could say why /usr (YAFFS, mtdblock6) was not mounted.
     cp $D/dmesg.txt $D/dmesg-boot.txt; cat /proc/mtd > $D/mtd.txt 2>&1
     grep -i yaffs /proc/filesystems >> $D/mtd.txt 2>&1; sync
+    # The USB host, its clocks and the hub as 6.1 sees them, against the
+    # same read under 2.6.32 before the jump (usb-2632.txt): the hub
+    # question of REVIEW-6.1.md 1.1. Once the hub has had its say (20 s).
+    ( sleep 20; sh $K/kexec/usb-measure $D/usb-61.txt; sync ) > /dev/null 2>&1 &
     # Every LED order the daemons get, for 10 minutes, on the key (Clara,
     # 2026-11-24: the belly stays blue under 6.1, dark under 2.6.32; a
     # recorder in /tmp was lost with the reboot). Once D-Bus is up.
@@ -87,7 +91,7 @@ fi
 OOPS=$((0x32000000 / 4096))
 if dd if=/dev/mem bs=4096 skip=$OOPS count=256 2> /dev/null | grep -q DBGC; then
     mkdir -p $K/kexec/log
-    dd if=/dev/mem bs=4096 skip=$OOPS count=256 of=$K/kexec/log/$(ls $K/kexec/log | wc -l)-ramoops.bin 2> /dev/null
+    dd if=/dev/mem bs=4096 skip=$OOPS count=256 of="$K/kexec/log/$(ls $K/kexec/log | wc -l)-ramoops.bin" 2> /dev/null
     dd if=/dev/zero of=/dev/mem bs=4096 seek=$OOPS count=256 conv=notrunc 2> /dev/null
     sync
 fi
@@ -110,6 +114,9 @@ mkdir -p $D
 { date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
 a=$((0x56000000)); while [ $a -le $((0x560000DC)) ]; do
     printf '%08X %s\n' $a "$(devmem $a 32 2>&1)"; a=$((a + 4)); done > $D/gpio-2632.txt
+# The USB host and the hub under 2.6.32, cold or warm (the label is what
+# Clara writes in kexec/label.txt before the boot: "cold" after the mains).
+sh $K/kexec/usb-measure $D/usb-2632.txt "$(cat $K/kexec/label.txt 2> /dev/null)"
 # kexec/append.txt, when there: more of the command line, one try at a time
 # (initcall_blacklist=... to find the driver 6.1 stops in, 2026-11-23).
 EXTRA=$(cat $K/kexec/append.txt 2> /dev/null | tr -d '\r\n')

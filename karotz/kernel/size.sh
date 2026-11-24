@@ -17,6 +17,10 @@ done
 make -s -j"$(nproc)" zImage 2>&1 | grep -vE '^\s*$' | grep -v "warning: -z norelro" | tail -20
 z=$(stat -c %s arch/arm/boot/zImage)
 echo "== zImage: $z bytes (mtd1 holds 3145728: $(( (3145728 - z) / 1024 )) KiB left)"
+# The compiler and the image's hash, to record with a release (the Alpine
+# toolchain moved from GCC 15.1.0 to 16.1.0 between 2026-11-22 and 11-24).
+echo "== $(arm-none-eabi-gcc --version | head -1)"
+echo "== sha256 $(sha256sum arch/arm/boot/zImage | cut -d" " -f1)"
 if [ "$z" -le 3145728 ]; then echo "FITS"; else echo "TOO BIG"; fi
 # OUT: where to copy the zImage (a mounted directory), for the emulator, with
 # vmlinux and System.map for syscalls-audit.py.
