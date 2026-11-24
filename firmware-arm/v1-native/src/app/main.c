@@ -102,7 +102,13 @@ void main(void)
       update_confirm();
       /* Once the Terrier has answered: each ear two holes, one motor at a
        * time (two at once restarted Lazare, 2026-11-24). */
+#ifndef NO_EAR_DEMO
       if(ear_demo == 0) { ear_demo = 1; ear_move(0, 2); }
+#else
+      /* NO_EAR_DEMO: a rabbit whose motor restarts it (Lazare's right ear,
+       * a hardware fault, 2026-11-24) is never sent turning on its own. */
+      ear_demo = 2;
+#endif
     }
     if(ear_demo == 1 && !ears_busy()) { ear_demo = 2; ear_move(1, 2); }
   }

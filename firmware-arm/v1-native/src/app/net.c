@@ -16,7 +16,9 @@
  */
 #include "board.h"
 
+#ifndef SERVER_NAME
 #define SERVER_NAME     "p.nabaztag.com"
+#endif
 #define POLL_PATH       "/vl/FR/p3.jsp?sn="
 #define FW_PATH         "/vl/v1/fw?sn="          /* ours: the image for this board (DESIGN.md 8) */
 #define REQ_POLL        1

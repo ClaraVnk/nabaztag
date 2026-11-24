@@ -21,7 +21,12 @@
 #define STR_(x)         #x
 #define STR(x)          STR_(x)
 #define FW_VERSION      STR(APP_VERSION)
-#define SSID            "Terrier"       /* phase 1: a constant; phase 2 reads the configuration page */
+/* The network and the server, set at build time for a real rabbit
+ * (APP_DEFS='-DSSID=\"<name>\" -DSERVER_NAME=\"<host>\"'); the defaults are
+ * the emulator's. Phase 2's configuration page (frame 15) will replace them. */
+#ifndef SSID
+#define SSID            "Terrier"
+#endif
 
 /* --- the two boards (Makefile: DEV, BOARD_ID, FLASH_END, WRITE_BLOCK) ---- */
 /* PIC18LF6525 (Lazare, 1.4b): 48 KB, 8-byte write blocks (DS39612 6.5: eight
@@ -92,10 +97,16 @@ struct app_hdr {
 #define nop()           __asm__("nop")
 
 /* --- the serial flash layout, by page number (DESIGN.md 4.3) ------------- */
-#define PG_CONFIG       0               /* configuration, two copies: 0 and 1 */
-#define PG_STATE_A      2               /* the loader's state record, two copies */
-#define PG_STATE_B      3
-#define PG_LOG          4               /* ring log, pages 4-15 */
+/* Pages 0-3 are never written: page 0 is where Violet's own firmware keeps
+ * its configuration (network, server), and a rabbit put back on Violet's
+ * firmware must find it. Our first trial on Lazare (2026-11-24) wrote its
+ * boot counter there and Violet came back unconfigured (measured on the
+ * emulator after: Violet 1.4b writes page 0 and, at each boot, the program
+ * it downloads at pages 1936-2067). */
+#define PG_CONFIG       4               /* configuration, two copies: 4 and 5 */
+#define PG_STATE_A      6               /* the loader's state record, two copies */
+#define PG_STATE_B      7
+#define PG_LOG          8               /* ring log, pages 8-15 */
 #define PG_SLOT_A       16              /* image slot A: header page, then the image */
 #define PG_SLOT_B       208             /* image slot B */
 #define SLOT_PAGES      192
