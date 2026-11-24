@@ -179,6 +179,7 @@ void sim_run_events(void)
       case SIM_EV_SERVER_DROP:
       case SIM_EV_SERVER_CLOSE:
       case SIM_EV_SERVER_VANISH:
+      case SIM_EV_STALL:
       case SIM_EV_EXPECT_XMPP:
       case SIM_EV_ARP:
       case SIM_EV_RFID:       break;   /* no network, no body, in this binary */

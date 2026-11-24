@@ -1,0 +1,11 @@
+# A lossy link with the Wi-Fi still up (Pinkyblack on a mesh, 2026-11-24:
+# answers up to 9.6 s late, 6 % lost, the session redialled 82 times a day).
+# For 15 s nothing passes either way; the bytecode's tcp.mtl resent every
+# second and gave up after ten. With a backoff the session must survive:
+# xmpp-tls-proof.sh counts the XMPP sessions the Terrier saw.
+ap 02:00:5e:10:00:01 Terrier 6 open -52
+tick 50
+stop 200000
+at 20000  expect RUN
+at 100000 stall 15000
+at 190000 expect RUN

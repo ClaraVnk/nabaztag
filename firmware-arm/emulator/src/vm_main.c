@@ -111,6 +111,7 @@ void sim_run_events(void)
       case SIM_EV_SERVER_DROP:  gw_server_drop(); break;
       case SIM_EV_SERVER_CLOSE: gw_server_close(1); break;
       case SIM_EV_SERVER_VANISH: gw_server_vanish(); break;
+      case SIM_EV_STALL:         gw_stall((uint32_t)e->arg); break;
       case SIM_EV_EXPECT_REASSOC:
         if(sim.run_entries >= e->arg)
           sim_log("ok   reached RUN %d time%s, at least %d expected",
