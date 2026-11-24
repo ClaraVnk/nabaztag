@@ -1,0 +1,22 @@
+# --- karotz/kexec os-prelude: Terrier OS under 6.1, traced (make-key.sh) ---
+# Every command into the kernel's log, which ramoops keeps; fd 3, since
+# linuxrc's tmpfs mount over /dev hides /dev/kmsg.
+mount -t devtmpfs d /dev 2> /dev/null
+exec 3> /dev/kmsg
+exec >&3 2>&1
+set -x
+# A warm restart after 5 minutes: RAM survives for the next 2.6.32 to save
+# (the first try, 2026-11-24, left nothing and its unplug wiped the log).
+(sleep 300; sync; reboot -f) &
+# Every process's state and where it waits in the kernel, every 20 s
+# (2026-11-24: linuxrc stopped at its tmpfs /dev mount and the USB hub's
+# devices never came).
+(set +x
+ while :; do
+     sleep 20
+     for d in /proc/[0-9]*; do
+         read -r st < $d/stat
+         echo "ps ${d#/proc/} $st $(cat $d/wchan 2> /dev/null)" | cut -c1-120
+     done
+ done) >&3 2>&1 &
+# --- end of the prelude ---

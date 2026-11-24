@@ -16,6 +16,8 @@ python3 "$HERE/mkcpio.py" "$KEY/kexec/measure.cpio.gz" "$TREE" "$HERE/measure-in
 # /init with /usr mounted read-only (6.1's YAFFS writing not yet proven).
 sed 's#^mount -t yaffs /dev/mtdblock6 /usr$#mount -t yaffs -o ro /dev/mtdblock6 /usr#' "$TREE/linuxrc" > "$KEY/kexec/linuxrc-ro"
 grep -q "mount -t yaffs -o ro /dev/mtdblock6 /usr" "$KEY/kexec/linuxrc-ro" || { echo "linuxrc: /usr mount line not found"; exit 1; }
+# Traced: os-prelude, right after the #! line.
+sed -i.bak "1r $HERE/os-prelude" "$KEY/kexec/linuxrc-ro" && rm -f "$KEY/kexec/linuxrc-ro.bak"
 # 6.1 names the key sda (usb-storage), 2.6.32 uba (ub): mdev's rule for
 # both, in a copy of the ramdisk. 6.1 has no uevent helper either, so the
 # key is mounted by linuxrc's second `mdev -s`, as at power-on.
