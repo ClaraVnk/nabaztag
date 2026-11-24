@@ -1072,6 +1072,29 @@ forever. To see it fail, build the image with run.sh's STEPS minus
 `scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
 rabbit runs it, the AP set to WPA2 only is the workaround.
 
+### Setting up a Nabaztag v1's Wi-Fi from a Raspberry Pi
+
+`firmware-arm/v1-setup/v1-setup.sh` (README there): a Pi on Ethernet with a
+USB Wi-Fi dongle joins the rabbit's ad hoc setup cell (`nabaztagXX`, head
+held at power-on, belly blinking blue) with its BSSID pinned and the address
+192.168.0.2, sets the server (`b.htm?a=<host>&b=<port>`, not a field of the
+page) then the network (open or WEP, DHCP or fixed addresses) with "Update
+and start". Phones and Macs cannot join an ad hoc cell; the Pi's own Wi-Fi
+is borrowed and put back.
+
+```sh
+./firmware-arm/v1-setup/v1-setup.sh find
+./firmware-arm/v1-setup/v1-setup.sh set --ssid "<open network>"   # server: terrier.cyberloutre.fr:80
+```
+
+2026-11-24, Lazare (1.4b): its configuration had been wiped by a trial of
+the native firmware (`firmware-arm/v1-native`, which then wrote the serial
+flash where Violet keeps it); the same steps by hand from the Pi
+(EW-7811Un, rtl8192cu) restored it: server `terrier.cyberloutre.fr:80`,
+network open, DHCP, "Starting...". The first join carried no traffic until
+the dongle was plugged in again. The native firmware must keep Violet's
+configuration pages, or save and restore them, before it is tried again.
+
 ### A Nabaztag v1's serial log on a Raspberry Pi
 
 `firmware-arm/v1-serial/` (README there): two jumpers from the v1's header J3
