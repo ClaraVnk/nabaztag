@@ -49,6 +49,7 @@ void    prism_tick(void);
 
 void    spi_select(void);                 /* chip selects changed */
 uint8_t spi_transfer(uint8_t out);
+void    spi_flash_chip(int db081);        /* 1: AT45DB081B (264-byte pages) */
 void    spi_latch(void);                  /* TLC5922 XLAT rising */
 int     flash_load(const char *path);
 int     flash_save(void);

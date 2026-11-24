@@ -181,6 +181,7 @@ void pic18_reset(struct pic18 *pic)
   pic->pc = 0;
   pic->sp = 0;
   pic->cycles = 0;
+  pic->wdt_clear = 0;
   pic->halted = 0;
   pic->halt_reason = NULL;
   /* Ports are inputs after a reset. */
@@ -244,7 +245,7 @@ unsigned pic18_step(struct pic18 *pic)
   case 0x0:
     if(op == 0x0000) break;                                   /* NOP */
     if(op == 0x0003) { pic->halted = 1; pic->halt_reason = "SLEEP"; break; }
-    if(op == 0x0004) break;                                   /* CLRWDT */
+    if(op == 0x0004) { pic->wdt_clear = pic->cycles; break; } /* CLRWDT */
     if(op == 0x0005) { push(pic, pic->pc); break; }           /* PUSH */
     if(op == 0x0006) { pop(pic); break; }                     /* POP */
     if(op == 0x0007) {                                        /* DAW */

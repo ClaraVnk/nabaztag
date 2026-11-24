@@ -68,6 +68,7 @@ struct pic18 {
   uint8_t  sp;                       /* 0 = empty, as STKPTR */
   uint8_t  shadow_w, shadow_status, shadow_bsr;
   uint64_t cycles;                   /* instruction cycles, Fosc/4 */
+  uint64_t wdt_clear;                /* cycles at the last CLRWDT or reset */
   int      halted;                   /* SLEEP, RESET or an unknown opcode */
   const char *halt_reason;
   const struct pic18_board *board;

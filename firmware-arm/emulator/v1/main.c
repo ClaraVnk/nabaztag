@@ -91,6 +91,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--trace-pins")) B.trace_pins = 1;
     else if(!strcmp(argv[i], "--trace-bus")) B.trace_bus = 1;
     else if(!strcmp(argv[i], "--hot")) want_hot = 1;
+    else if(!strcmp(argv[i], "--flash-chip") && i + 1 < argc) spi_flash_chip(!strcmp(argv[++i], "081"));
     else if(!strcmp(argv[i], "--warren") && i + 1 < argc) warren = argv[++i];
     else if(!strcmp(argv[i], "--ssid") && i + 1 < argc) snprintf(prism_ssid, sizeof(prism_ssid), "%s", argv[++i]);
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
@@ -118,9 +119,23 @@ int main(int argc, char **argv)
   ears_init(3, 3);
   gw_init(warren);
   uint64_t end = (uint64_t)(seconds * (double)CYCLES_HZ);
+  /* The watchdog (DS39612: a 4 ms nominal period times the CONFIG2H
+   * postscaler). The 1.4b firmware of Clara's rabbit has it on in its
+   * configuration (CONFIG2H 0F: 1:128, ~512 ms), the 2.0b dump off (1E):
+   * Lazare restarted at every ear order (2026-11-24), the ears turn for
+   * seconds. Without it the emulator could not show that. */
+  int wdt_cfg = B.pic.config[3] & 1;
+  uint64_t wdt_period = (uint64_t)(CYCLES_HZ / 1000) * 4u << ((B.pic.config[3] >> 1) & 0xF);
+  unsigned wdt_resets = 0;
   while(B.pic.cycles < end && !B.pic.halted) {
     if(want_hot) hot[B.pic.pc / 2]++;
     board_step();
+    if((wdt_cfg || (B.pic.ram[0xFD1] & 1)) && B.pic.cycles - B.pic.wdt_clear > wdt_period) {
+      board_log("watchdog: no CLRWDT for %llu ms, at pc %05X: reset #%u",
+                (unsigned long long)(wdt_period * 1000 / CYCLES_HZ), B.pic.pc, ++wdt_resets);
+      B.pic.pc = 0; B.pic.sp = 0; B.pic.wdt_clear = B.pic.cycles;
+      for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) B.pic.ram[a] = 0xFF;
+    }
     if((B.pic.cycles & 0x3FF) < 2) { prism_tick(); prism_rx_pump(); gw_poll(); ears_poll(); button_poll(); }
   }
   if(B.pic.halted) board_log("halted at %05X: %s", B.pic.pc, B.pic.halt_reason);
