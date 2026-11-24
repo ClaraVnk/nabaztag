@@ -24,8 +24,10 @@ set -x
 # Wi-Fi. Measured here: whether a second probe (authorized 0 then 1)
 # brings its devices back. Up to three tries, each logged.
 (set +x
- mkdir -p /tmp/sysfs && mount -t sysfs s /tmp/sysfs 2> /dev/null
- U=/tmp/sysfs/bus/usb/devices
+ U=/sys/bus/usb/devices
+ # linuxrc mounts /sys a moment later (a sysfs of our own under /tmp was
+ # hidden by its tmpfs, 2026-11-24): wait for it.
+ while [ ! -d $U ]; do sleep 1; done
  for try in 1 2 3; do
      sleep 8
      kids=$(ls -d $U/1-1.[0-9]* 2> /dev/null | wc -l)
