@@ -28,11 +28,21 @@ set -x
  # linuxrc mounts /sys a moment later (a sysfs of our own under /tmp was
  # hidden by its tmpfs, 2026-11-24): wait for it.
  while [ ! -d $U ]; do sleep 1; done
- for try in 1 2 3; do
+ # A hub whose descriptor reads as garbage ("bad descriptor, ignoring
+ # hub", 2026-11-24 16:4x) stays so through three re-probes: then the
+ # whole controller is unbound and bound again, which enumerates the bus
+ # from its root, up to twice.
+ O=/sys/bus/platform/drivers/s3c2410-ohci
+ for try in 1 2 3 4 5; do
      sleep 8
      kids=$(ls -d $U/1-1.[0-9]* 2> /dev/null | wc -l)
      echo "hubfix: try $try, $kids device(s) behind 1-1"
      [ "$kids" -gt 0 ] && break
+     if [ $try -ge 3 ] && [ -e $O/s3c2410-ohci ]; then
+         echo "hubfix: controller unbind, bind"
+         echo s3c2410-ohci > $O/unbind; sleep 2; echo s3c2410-ohci > $O/bind
+         continue
+     fi
      [ -e $U/1-1/authorized ] || { echo "hubfix: no 1-1"; continue; }
      echo 0 > $U/1-1/authorized; sleep 1; echo 1 > $U/1-1/authorized
  done
