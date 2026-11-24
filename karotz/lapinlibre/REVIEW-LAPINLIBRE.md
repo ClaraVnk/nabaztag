@@ -102,7 +102,7 @@ testing switch; the install's default is what matters (not read here).
 
 ### 2.1 inetd stops the web API for ten minutes after 60 connections in one (fixed, patch 0001)
 
-`etc/inetd.conf:3` (made by `image/tools/image.py:213`): `nowait.60`.
+`etc/inetd.conf:3` (made by image/tools/image.py:213): `nowait.60`.
 BusyBox inetd counts a service's connections and, past the count within a
 minute, **refuses the next and pauses the service for ten minutes**
 (inetd.c `RETRYTIME`). Measured in a container (`test-inetd-rate.sh`,
