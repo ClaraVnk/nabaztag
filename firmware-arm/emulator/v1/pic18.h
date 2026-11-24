@@ -73,6 +73,20 @@ struct pic18 {
   const char *halt_reason;
   const struct pic18_board *board;
   void    *ctx;
+  /* Flash self-write (DS39646C ch. 6, DS39612C ch. 6): 64 holding latches
+   * mapped to TBLPTR[5:0], written to the 64-byte row by EECON1 (board.c).
+   * Violet's firmware has no TBLWT, so this is inert for it; it exists to
+   * prove end to end that a loader WOULD need these (v1-icsp/VM-ESCAPE.md). */
+  uint8_t  flash_latch[64];
+  uint32_t flash_row;                /* 64-byte-aligned target of the latches */
+  /* vm-audit (VM-ESCAPE.md): the destination of every indirect byte store
+   * (MOVFF through an FSR) made from a PC inside the VM-interpreter band, to
+   * measure that the downloaded program's writes stay in its arena. */
+  int      audit_on;
+  uint16_t audit_lo, audit_hi;       /* the VM-interpreter PC band */
+  uint16_t audit_min, audit_max;     /* destination addresses seen */
+  unsigned audit_stores;             /* how many */
+  unsigned audit_escapes;            /* how many outside 0xA70-0xCFF */
 };
 
 void     pic18_reset(struct pic18 *pic);

@@ -186,6 +186,8 @@ void pic18_reset(struct pic18 *pic)
   pic->halt_reason = NULL;
   /* Ports are inputs after a reset. */
   for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) pic->ram[a] = 0xFF;
+  memset(pic->flash_latch, 0xFF, sizeof(pic->flash_latch));
+  pic->flash_row = 0;
 }
 
 static int hexbyte(const char *s)
@@ -262,7 +264,7 @@ unsigned pic18_step(struct pic18 *pic)
       int mode = op & 3;
       if(mode == 3) p++;
       if(op < 0x000C) pic->ram[SFR_TABLAT] = tblread(pic, p);
-      else fprintf(stderr, "pic18: TBLWT at %05X ignored (ptr %06X)\n", at, p);
+      else { pic->flash_latch[p & 0x3F] = pic->ram[SFR_TABLAT]; pic->flash_row = p & ~0x3Fu; }
       if(mode == 1) p++;
       if(mode == 2) p--;
       pic->ram[SFR_TBLPTRL] = (uint8_t)p;
@@ -382,12 +384,26 @@ unsigned pic18_step(struct pic18 *pic)
     break;
 
   case 0xC: {                                                         /* MOVFF */
-    uint16_t src = op & 0x0FFF, dst;
+    uint16_t src = op & 0x0FFF, dst, da;
     op2 = fetch(pic, pic->pc);
     pic->pc += 2;
     dst = op2 & 0x0FFF;
     v = rd(pic, effective(pic, src));
-    wr(pic, effective(pic, dst), v);
+    da = effective(pic, dst);
+    /* vm-audit: a store the VM program steers lands here (every arena write
+     * is a MOVFF through an FSR). Record where, to measure the bound. */
+    if(pic->audit_on && is_indirect(dst) && da != 0xFFFF &&
+       at >= pic->audit_lo && at <= pic->audit_hi) {
+      if(!pic->audit_stores || da < pic->audit_min) pic->audit_min = da;
+      if(!pic->audit_stores || da > pic->audit_max) pic->audit_max = da;
+      pic->audit_stores++;
+      if(da < 0x0A70u || da > 0x0CFFu) {
+        pic->audit_escapes++;
+        if(pic->audit_escapes <= 20)
+          fprintf(stderr, "vm-audit: ESCAPE store pc=%05X dst=%03X v=%02X\n", at, da, v);
+      }
+    }
+    wr(pic, da, v);
     cyc = 2;
     break;
   }

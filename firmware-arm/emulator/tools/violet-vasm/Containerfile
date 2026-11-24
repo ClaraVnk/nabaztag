@@ -18,6 +18,7 @@ RUN apk add --no-cache openjdk17-jdk patch
 COPY firmware-arm/vendor/violet-platform/java/Vasm.java firmware-arm/vendor/violet-platform/java/VasmException.java /src/net/violet/platform/vasm/
 COPY firmware-arm/emulator/tools/violet-vasm/stubs/ /src/
 COPY firmware-arm/vendor/violet-platform/vasm/ /out/net/violet/platform/vasm/
+COPY firmware-arm/emulator/tools/violet-vasm/escape.vasm /out/net/violet/platform/vasm/escape.vasm
 COPY firmware-arm/emulator/tools/violet-vasm/patches/ /patches/
 COPY firmware-arm/emulator/tools/violet-vasm/still.awk /still.awk
 RUN cd /out/net/violet/platform/vasm && cp Nabaztag_wait.vasm Nabaztag_wait_terrier.vasm && \
