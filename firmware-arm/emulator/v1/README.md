@@ -91,6 +91,12 @@ path, DNS asked once per power-on.
   reported as `sd=8603`, a 3-second press as `sd=0004`, and two v1 of one
   owner in "amoureux" follow each other.
 
+`../tools/v1-native-proof.sh`: our own firmware for the v1
+(`../../v1-native`, SDCC) on Lazare's board, built and run here: joins,
+DHCP, DNS, polls `../tools/v1_native_warren.py` every 10 s, moves the ears,
+writes its configuration page in the serial flash; PASS/FAIL with the
+image's flash and RAM use.
+
 ## The 1.4b firmware and the watchdog
 
 Lazare's firmware (`../../v1-icsp/dumps/violet-v1-1.4b.hex`, a PIC18LF6525)
