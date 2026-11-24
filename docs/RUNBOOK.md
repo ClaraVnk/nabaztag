@@ -656,6 +656,36 @@ models the flash self-write (TBLWT holding latches + the EECON1 55h/AAh
 unlock, `pic18.c`/`board.c`), which `firmware-arm/emulator/tools/selfwrite_stub.py` exercises as the
 control. A loader still needs ICSP (a PICkit) to install the first time.
 
+**A native firmware for the v1, phase 1** (`firmware-arm/v1-native`, its
+`DESIGN.md`: architecture, memory map, the serial flash layout, what phase 2
+needs): our own C firmware for the PIC18LF6525, SDCC 4.5.0 + gputils 1.5.2
+built from pinned sources in `v1-native/Containerfile` (Alpine; no
+distribution packages them). Lazare's CONFIG bytes verbatim (watchdog on,
+brown-out on), no interrupt, one loop. Emulator only, nothing flashed:
+
+```sh
+cd firmware-arm/emulator && tools/v1-native-proof.sh     # dev VM, ~3 min, PASS/FAIL
+# builds the toolchain image (15 min the first time, cached after), the
+# firmware (out/nabv1native.hex + sizes), the emulator image
+# nabaztag-v1-native, runs the image on Lazare's board (--flash-chip 081)
+# for 40 s against tools/v1_native_warren.py (answers 7F 03 .. 01 FF 0A),
+# then 4 s more on the same serial flash file.
+# 2026-11-24: PASS. flash 22 920 / 49 152 bytes (46 %), RAM 1 015 / 3 968
+# (25 %). Boot 2 ms, AT45DB081B recognised and page 0 written (boot #1,
+# then #2 on the second run), card MAC read, station fw logged, joined at
+# 579 ms, DHCP 614 ms, DNS 1 102 ms, first poll 1 592 ms
+# (GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000, Host: added),
+# answer parsed (HTTP/1.0 200 OK, 7F, frame 03 len 1 = interval 1, FF),
+# then a poll every 10 s (4 in 40 s), each ear 2 holes one after the other
+# (880 and 869 ms), the 512 ms watchdog never fired, no unknown opcode.
+# LEDs: bottom red at boot, blue card ok, green link, + middle green lease,
+# + middle-left green DNS, + top green poll answered.
+# Measured on Violet's 1.4b for it (--trace-pins --trace-bus): the serial
+# flash's /CS is RB4 (RB3 never moves); before the card's COR write Violet
+# pulls RG0 and RG3 low at 3 ms and RF4 low at 284 ms -- copied as is,
+# unnamed until the schematic is read (DESIGN.md, risks).
+```
+
 ### The Karotz (Nabaztag v3)
 
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
