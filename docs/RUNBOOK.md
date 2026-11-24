@@ -442,7 +442,21 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # the Terrier's own handler (its tools/v1_warren.py): program taken, ears
 # 5/10 then 2/3 and stopped, a hand -> sd=8603, a 3 s press -> sd=0004,
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
+V1_FW=1.4b tools/v1-proof.sh --terrier <terrier checkout>
+# the same on Clara's own firmware (Lazare, firmware-arm/v1-icsp/dumps,
+# a PIC18LF6525 on an AT45DB081B: --hex ... --flash-chip 081).
+# 2026-11-24: "PROOF terrier: program taken, ears stop, hand and long
+# press reported, amoureux follow", the ears one after the other
+# (terrier#476).
 ```
+
+The 1.4b firmware keeps the PIC's brown-out reset and its watchdog on
+(CONFIG2L 0A, CONFIG2H 0F; 2.0b has both off). Two ear motors started in
+the same step dipped the supply and restarted Lazare at every two-ear
+order (2026-11-24, one ear alone did not): the Terrier's program starts
+them one at a time. The emulator models the watchdog, not the supply; on
+the 161 flash model the 1.4b firmware lost the program it had just written
+and never polled again, hence `--flash-chip 081`.
 
 Violet's own v1 programs (`firmware-arm/vendor/violet-platform`, MIT) put
 together by Violet's own assembler, and served as Violet's server did, from
@@ -462,7 +476,10 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 ```
 
 A real v1's firmware, read over ICSP with a PICkit (read only):
-`firmware-arm/v1-icsp/README.md`; its serial log on a Raspberry Pi:
+`firmware-arm/v1-icsp/README.md`, `firmware-arm/v1-icsp/read.sh <out.hex>
+[PIC18LF6525|PIC18LF6627]` (MPLAB X 6.20 on the Mac: 6.30 dropped the
+PICkit 3; 2026-11-24, Lazare's 1.4b in `firmware-arm/v1-icsp/dumps`); its
+serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
 
 ### The Karotz (Nabaztag v3)
