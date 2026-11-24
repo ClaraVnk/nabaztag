@@ -548,6 +548,14 @@ station firmware into the card's RAM at every boot (Intersil's, not free,
 about 64 KB from the serial flash): not pursued. Lazare runs its original
 firmware again (read back, 0 bytes differ).
 
+**The card itself (FD0B, same day): component 0x800C, hardware 1.0.0**
+(EEPROM `05 0B 0C 00 01 00`). 0x800C is among the NIC ids Intersil's
+Prism 2.5 station images list (`sf010409.hex`; primary `pk010004.hex`), so
+the card could take station 1.7.4 with its matching primary in its own
+flash, on a PC with a PCMCIA slot (hostap's `prism2_srec -f`, which checks
+compatibility; never the primary alone). The v1's card is a removable
+PCMCIA card (BenQ 802.11b). Not done.
+
 What could be improved in the v1's firmware, 1.4b and 2.0b, with the
 evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
 

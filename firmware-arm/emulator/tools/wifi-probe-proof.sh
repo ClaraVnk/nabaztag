@@ -35,11 +35,13 @@ run() {   # run NAME HEXDIR HEXFILE
     --hex "/d/$3" --flash-chip 081 --port80 "$PORT" --seconds "$SECS" --trace-net \
     > "$OUT/$1.log" 2>&1 || true
 }
+python3 ../v1-icsp/wifi-probe.py "$DUMPS/violet-v1-1.4b.hex" "$OUT/probe-nic.hex" FD0B
 run witness "$DUMPS" violet-v1-1.4b.hex
 run probe "$OUT" probe.hex
+run nic "$OUT" probe-nic.hex
 
 fail=0
-for n in witness probe; do
+for n in witness probe nic; do
   polls=$(grep -c 'the rabbit opened' "$OUT/$n.log" || true)
   dogs=$(grep -c 'watchdog' "$OUT/$n.log" || true)
   ee=$(grep 'eeprom:' "$OUT/$n.log" | sed -E 's/^\[ *([0-9]+) ms\] eeprom: //' | tr '\n' ' ')
@@ -52,6 +54,13 @@ if [ "$got" = 05201F010107 ]; then
   echo "probe: station identity kept (05 20 1F 01 01 07: station 1.7.1)"
 else
   echo "FAIL: the probe kept '$got', not 05201F010107"; fail=1
+fi
+# The card's own identity (FD0B), as prism.c sets it: 0x8013, 1.1.0.
+got=$(grep -oE 'eeprom: \[00[0-5]\] <- [0-9A-F]{2}' "$OUT/nic.log" | awk '{print $NF}' | tr -d '\n')
+if [ "$got" = 050B13010100 ]; then
+  echo "nic: card identity kept (05 0B 13 01 01 00: component 0x8013, 1.1.0)"
+else
+  echo "FAIL: the FD0B probe kept '$got', not 050B13010100"; fail=1
 fi
 if grep -q 'eeprom:' "$OUT/witness.log"; then
   echo "FAIL: the witness wrote its EEPROM"; fail=1
