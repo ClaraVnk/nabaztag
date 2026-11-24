@@ -20,6 +20,13 @@ case "$(uname -r)" in
     mkdir -p $D
     { date; cat /proc/cmdline; cat /proc/mounts; ls -la /etc/; } > $D/state-0.txt 2>&1
     dmesg > $D/dmesg.txt 2>&1; sync
+    # Every LED order the daemons get, for 10 minutes, on the key (Clara,
+    # 2026-11-24: the belly stays blue under 6.1, dark under 2.6.32; a
+    # recorder in /tmp was lost with the reboot). Once D-Bus is up.
+    ( sleep 20
+      timeout 600 dbus-monitor --system "type=method_call,interface=com.mindscape.karotz.KarotzInterface,eavesdrop=true" 2>&1 |
+          while IFS= read -r l; do echo "$(date +%H:%M:%S) $l"; done > $D/ledmon.txt
+      sync ) > /dev/null 2>&1 &
     # At 60 s, the LED and the sound by hand (2026-11-24: under 6.1 the
     # Terrier's orders reached the daemons, the belly stayed red and nothing
     # played): the devices the daemons open, a green LED through the local
