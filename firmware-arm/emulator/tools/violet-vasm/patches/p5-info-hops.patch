@@ -1,0 +1,26 @@
+--- a/Nabaztag_wait.vasm
++++ b/Nabaztag_wait.vasm
+@@ -615,7 +615,7 @@
+ 
+ ; gestion des leds d'information
+ @info
+-
++	clr	r7	; Terrier 2026-11-24: hops over pairs of type 14, eight at most
+ 	sec	r0,r1
+ 	ldr	r0,/infot
+ 	sub	r1,r0
+@@ -639,7 +639,13 @@
+ 
+ 	ld	r1,_respiretype_
+ 	cmp	rtype,r1
+-	beq	@infoinc
++	bne	@info1
++	inc	r7	; Terrier 2026-11-24: eight pairs of type 14 looped here with no
++	ld	r1,8	; WAIT, and the rabbit stopped polling; after eight hops, no belly
++	cmp	r7,r1
++	blo	@infoinc
++	bra	@inforst
++@info1
+ 
+ 	dec	rtype
+ 	inc	r0

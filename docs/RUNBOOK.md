@@ -498,6 +498,46 @@ firmware-arm/emulator/tools/violet-vasm/one-motor-proof.sh   # repo root, dev VM
 # click with a message waiting sends sd=0003, the 1.4b watchdog never fires.
 # Still both motors at once, in both programs: the acquisition turn
 # (@motorturn) at boot and after a hand.
+# 2026-11-24, with p2-acquisition-one-motor.patch: PASS again, the homing
+# turn at boot and the acquisition turn after the hand now start the right
+# motor the millisecond the left one stops too (Violet's: together), on
+# both firmwares; the Terrier's frame is 33860 bytes.
+```
+
+The review of Violet's program (`firmware-arm/emulator/tools/violet-vasm/REVIEW.md`, 2026-11-24:
+findings by value, what was measured, what the Terrier should know) and its
+three other patches, each a hang of Violet's program the Terrier can run into,
+against Violet's frame as the control, on both firmwares:
+
+```sh
+firmware-arm/emulator/tools/violet-vasm/review-proof.sh   # repo root, dev VM, ~15 min
+# 2026-11-24: PASS. "stall" (--stall 1: ear 1's motor runs, its wheel does
+# not turn, as Lazare's right ear; a hand of 9 holes on ear 0 at 70 s):
+# Violet's frame starts ear 1 in the acquisition turn and never stops it,
+# no hand report; p3-acquisition-timeout.patch stops it 40 s later and
+# reports the hand with that ear at 0 (2.0b: the turn from 76.8 s, ear 0
+# done at 85.3 s, ear 1 stopped at 124.2 s, sd=8700 on poll 11; the
+# firmware's second is about 1.18 s on the emulator's clock, so 40 show
+# as 47).
+# "click" (a message waiting, a click at 60 s, an order L5 R10 from 96 s):
+# both send sd=0003; Violet's frame never moves its ears again (stuck in
+# @sendwaitloop waiting for a message program that never comes);
+# p4-click-timeout.patch goes back to @startwait 40 s after the click,
+# homes the ears again and takes the order (5 and 10 holes). "stall0" (ear
+# 0 stalled from boot): Violet's homing deadline lives in r10, which the
+# right ear's target overwrites (@reset5); the patched homing (target in
+# r13) stops the stalled left motor 40 s after it started. "all14" (eight pairs (14, 1)): Violet's
+# frame polls twice in 90 s and never again (the program spins in @info,
+# the firmware stops polling, the 1.4b watchdog does not fire);
+# p5-info-hops.patch keeps it polling. The 1.4b watchdog never fired in
+# any run. The emulator's --stall EAR was added for this proof.
+# Other runs of the review, Violet's frame on 2.0b (violet_warren.py
+# --source and --down added for them): source 14 = 255 and nothing moves
+# in 720 s, the first spontaneous animation at 718 s in a 1400 s run (the
+# countdown is 11,776 turns of the wait loop, 59 ms each: 11.5 minutes
+# after the ears last moved); the server away for
+# polls 6-12 (72-144 s): the firmware re-joins the Wi-Fi at 105 s and 162 s,
+# keeps the program, polls on, and takes the next order.
 ```
 
 A real v1's firmware, read over ICSP with a PICkit (read only):
