@@ -68,15 +68,15 @@ leaves the rabbit without Wi-Fi until the next power cut.
 
 **Read the same evening (2026-11-24, 23:00), the cause is candidate 1,
 and it is in the allocator, not the HCD.** tinyconfig sets `CONFIG_SLOB=y`
-(`kernel/configs/tiny.config`); 2.6.32's rabbitv3 config had `SLAB`.
-SLOB's kmalloc (`mm/slob.c:478-510`) puts a 32-byte size header before
+(kernel/configs/tiny.config); 2.6.32's rabbitv3 config had `SLAB`.
+SLOB's kmalloc (mm/slob.c:478-510) puts a 32-byte size header before
 each object and does not round the object up: a 2-byte `usb_get_status`
 buffer, the 4-byte `hub->status`, the 8-byte `hub->buffer`, the 15-byte
 `hub->descriptor` (kzalloc) and the 18-byte device descriptor
 (`hub.c:1448-1461`, `message.c:1117,1201`) each end in the middle of a
 32-byte cache line whose rest is free, and SLOB writes its free-list words
 there (`set_slob`, `slob.c:146`) at every allocation in that page. The
-ARM920T's DMA maintenance (`arch/arm/mm/proc-arm920.S:235-246,304-306`)
+ARM920T's DMA maintenance (arch/arm/mm/proc-arm920.S:235-246,304-306)
 invalidates the buffer's lines when it is mapped for the device and does
 nothing at unmap: anything that touches the line between the map and the
 completion pulls it back into the cache, stale, and the CPU then reads
