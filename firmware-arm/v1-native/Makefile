@@ -3,7 +3,7 @@
 #   podman build -t v1native-toolchain -f Containerfile .
 #   podman run --rm -v "$PWD":/src:Z -w /src v1native-toolchain make
 #   -> out/18f6525/loader.hex      the boot block, linked at 0 (CONFIG bytes in it)
-#      out/18f6525/app-30.hex      the application, linked from 0x3000
+#      out/18f6525/app-30.hex      the application, linked from 0x2000
 #      out/18f6525/full.hex        loader + application + the test key in the
 #                                  data EEPROM: what ICSP would program, what
 #                                  the emulator runs
@@ -14,6 +14,8 @@
 #   make DEV=18f6627               the 2.0b board (PIC18F6627, 96 KB)
 #   make app image APP_VERSION=31  another application version (the update proof)
 #   make app image APP_VERSION=32 APP_TAG=32-broken APP_DEFS=-DAPP_BROKEN
+#   make shatest                  out/18f6525/shatest.hex: the SHA-256 and HMAC
+#                                 test vectors on the PIC (v1-sha-proof.sh)
 #
 # --obanksel=2 and the peephole optimiser are what shrink SDCC's output most;
 # no interrupt, no recursion, the default stack.
@@ -38,10 +40,12 @@ CC      = sdcc -mpic16 -p$(DEV) --use-non-free
 CFLAGS  = --obanksel=2 --optimize-cmp --optimize-df --denable-peeps -Isrc \
           -DBOARD_ID=$(BOARD_ID) -DFLASH_END=$(FLASH_END) -DWRITE_BLOCK=$(WRITE_BLOCK)
 COMMON  = src/common/uart.c src/common/flash.c src/common/state.c
-LSRC    = src/loader/loader.c src/loader/sha256.c $(COMMON)
+LSRC    = src/loader/loader.c src/loader/config.c $(COMMON)
+TSRC    = src/loader/shatest.c src/loader/config.c src/common/uart.c
 ASRC    = $(wildcard src/app/*.c) $(COMMON)
-APP_BASE = 0x3000
-LOBJ    = $(patsubst src/%.c,$(O)/obj-loader/%.o,$(LSRC))
+APP_BASE = 0x2000
+LOBJ    = $(patsubst src/%.c,$(O)/obj-loader/%.o,$(LSRC)) $(O)/obj-loader/loader/sha256_asm.o
+TOBJ    = $(patsubst src/%.c,$(O)/obj-shatest/%.o,$(TSRC)) $(O)/obj-shatest/loader/sha256_asm.o
 AOBJ    = $(patsubst src/%.c,$(O)/obj-app-$(APP_TAG)/%.o,$(ASRC)) $(O)/obj-app-$(APP_TAG)/app/entry.o
 LOADER  = $(O)/loader.hex
 APP     = $(O)/app-$(APP_TAG).hex
@@ -50,6 +54,7 @@ IMG     = $(O)/app-$(APP_TAG).img
 all: loader app full image size
 
 loader: $(LOADER)
+shatest: $(O)/shatest.hex
 app: $(APP)
 full: $(O)/full.hex
 image: $(IMG)
@@ -57,6 +62,19 @@ image: $(IMG)
 $(O)/obj-loader/%.o: src/%.c src/board.h src/loader/sha256.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -DLOADER -c $< -o $@
+
+# The hash in assembly (gpasm; the C API in sha256.h).
+$(O)/obj-loader/loader/sha256_asm.o: src/loader/sha256.asm
+	@mkdir -p $(dir $@)
+	gpasm -p$(DEV) -c -o $@ $<
+
+$(O)/obj-shatest/loader/sha256_asm.o: src/loader/sha256.asm
+	@mkdir -p $(dir $@)
+	gpasm -p$(DEV) -c -D SHA_TEST=1 -o $@ $<
+
+$(O)/obj-shatest/%.o: src/%.c src/board.h src/loader/sha256.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -DLOADER -DSHA_TEST -c $< -o $@
 
 $(O)/obj-app-$(APP_TAG)/%.o: src/%.c src/board.h
 	@mkdir -p $(dir $@)
@@ -66,8 +84,12 @@ $(O)/obj-app-$(APP_TAG)/app/entry.o: src/app/entry.asm
 	@mkdir -p $(dir $@)
 	gpasm -p$(DEV) -c -D APP_BASE=$(APP_BASE) -o $@ $<
 
+# crt0: no data initialisation (loader.c relies on none); crt0iz is 150 B more.
 $(LOADER): $(LOBJ) loader-$(DEV).lkr
-	$(CC) $(CFLAGS) -Wl,-s,loader-$(DEV).lkr -Wl,-m -o $@ $(LOBJ)
+	$(CC) $(CFLAGS) --use-crt=crt0.o -Wl,-s,loader-$(DEV).lkr -Wl,-m -o $@ $(LOBJ)
+
+$(O)/shatest.hex: $(TOBJ) loader-$(DEV).lkr
+	$(CC) $(CFLAGS) -Wl,-s,loader-$(DEV).lkr -Wl,-m -o $@ $(TOBJ)
 
 $(APP): $(AOBJ) app-$(DEV).lkr
 	$(CC) $(CFLAGS) --ivt-loc=$(APP_BASE) -Wl,-s,app-$(DEV).lkr -Wl,-m -o $@ $(AOBJ)
@@ -85,17 +107,7 @@ size: $(LOADER) $(APP)
 	@echo "loader:"; python3 size.py $(LOADER) $(O)/loader.map
 	@echo "app-$(APP_TAG):"; python3 size.py $(APP) $(O)/app-$(APP_TAG).map
 
-# The loader's SHA-256 on the host against Python's hmac (needs a C compiler
-# and python3 on the host, not the container): the two sigma bugs of the
-# first build were found here, not on the PIC (2026-11-24).
-host-check: tools/sha256-host.c src/loader/sha256.c
-	@mkdir -p out
-	cc -Wall -Wno-unused-function -I src -o out/sha256-host tools/sha256-host.c
-	@out/sha256-host > out/sha256-host.txt
-	@python3 -c 'import hmac,hashlib; k=bytes(range(32)); print(hmac.new(k,b"abc",hashlib.sha256).hexdigest()); print(hmac.new(k,bytes((i*7+3)&255 for i in range(1000)),hashlib.sha256).hexdigest())' > out/sha256-py.txt
-	@cmp out/sha256-host.txt out/sha256-py.txt && echo "sha256: the loader's HMAC-SHA-256 matches Python's"
-
 clean:
 	rm -rf out
 
-.PHONY: all loader app full image size host-check clean
+.PHONY: all loader shatest app full image size clean

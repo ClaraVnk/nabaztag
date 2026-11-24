@@ -1,4 +1,4 @@
-// Linker script for the application on a PIC18LF6525: from 0x3000, behind
+// Linker script for the application on a PIC18LF6525: from 0x2000, behind
 // the loader (loader-18f6525.lkr); gputils' 18f6525_g.lkr with banks 2-5
 // merged into one 1 KB bank, so that the frame buffer (net.c, 340 bytes) and
 // the update's page buffer (528) can be one array; a PIC18 bank is 256 bytes
@@ -6,8 +6,8 @@
 // 96 bytes of RAM) are left for a later need.
 LIBPATH .
 
-CODEPAGE   NAME=boot       START=0x0               END=0x2FFF         PROTECTED
-CODEPAGE   NAME=page       START=0x3000            END=0xBFFF
+CODEPAGE   NAME=boot       START=0x0               END=0x1FFF         PROTECTED
+CODEPAGE   NAME=page       START=0x2000            END=0xBFFF
 CODEPAGE   NAME=idlocs     START=0x300000          END=0x200007       PROTECTED
 CODEPAGE   NAME=config     START=0x300000          END=0x30000D       PROTECTED
 CODEPAGE   NAME=devid      START=0x3FFFFE          END=0x3FFFFF       PROTECTED

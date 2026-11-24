@@ -120,8 +120,3 @@ void slot_next(__data uint8_t *buf, uint8_t n)
     if(cur_byte == flash_page_size) { cur_byte = 0; cur_page++; }
   }
 }
-
-void slot_write_page(uint8_t slot, uint16_t index, __data const uint8_t *buf, uint16_t n)
-{
-  flash_write(slot_page(slot) + index, buf, n);
-}

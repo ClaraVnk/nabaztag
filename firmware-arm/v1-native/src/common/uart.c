@@ -31,7 +31,6 @@ static void hex_nibble(uint8_t v)
 }
 
 void log_hex8(uint8_t v) { hex_nibble(v >> 4); hex_nibble(v); }
-void log_hex16(uint16_t v) { log_hex8((uint8_t)(v >> 8)); log_hex8((uint8_t)v); }
 
 void log_nl(void) { uart_putc('\r'); uart_putc('\n'); }
 void log_line(const __code char *s) { log_s(s); log_nl(); }
