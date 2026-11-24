@@ -5,9 +5,9 @@ mount -t devtmpfs d /dev 2> /dev/null
 exec 3> /dev/kmsg
 exec >&3 2>&1
 set -x
-# A warm restart after 5 minutes: RAM survives for the next 2.6.32 to save
+# A warm restart after 15 minutes (5 until 2026-11-24, time to send it commands): RAM survives for the next 2.6.32 to save
 # (the first try, 2026-11-24, left nothing and its unplug wiped the log).
-(sleep 300; sync; reboot -f) &
+(sleep 900; sync; reboot -f) &
 # Every process's state and where it waits in the kernel, every 20 s
 # (2026-11-24: linuxrc stopped at its tmpfs /dev mount and the USB hub's
 # devices never came).

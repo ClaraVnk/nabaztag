@@ -20,7 +20,7 @@ case "$(uname -r)" in
     mkdir -p $D
     { date; cat /proc/cmdline; cat /proc/mounts; ls -la /etc/; } > $D/state-0.txt 2>&1
     dmesg > $D/dmesg.txt 2>&1; sync
-    ( for i in $(seq 1 20); do
+    ( for i in $(seq 1 40); do
         sleep 30
         { date; uptime; echo; ps; echo; ifconfig -a; iwconfig 2> /dev/null; echo; cat /proc/mounts
           echo; logread 2> /dev/null | tail -150
