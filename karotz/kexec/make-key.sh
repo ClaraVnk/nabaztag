@@ -12,8 +12,20 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 KEXEC=$1 ZIMAGE=$2 TREE=$3 KEY=$4
 mkdir -p "$KEY/kexec"
 python3 "$HERE/mkcpio.py" "$KEY/kexec/measure.cpio.gz" "$TREE" "$HERE/measure-init"
+# The rabbit's own system for kexec/go-os: its ramdisk whole, its linuxrc as
+# /init with /usr mounted read-only (6.1's YAFFS writing not yet proven).
+sed 's#^mount -t yaffs /dev/mtdblock6 /usr$#mount -t yaffs -o ro /dev/mtdblock6 /usr#' "$TREE/linuxrc" > "$KEY/kexec/linuxrc-ro"
+grep -q "mount -t yaffs -o ro /dev/mtdblock6 /usr" "$KEY/kexec/linuxrc-ro" || { echo "linuxrc: /usr mount line not found"; exit 1; }
+# 6.1 names the key sda (usb-storage), 2.6.32 uba (ub): mdev's rule for
+# both, in a copy of the ramdisk. 6.1 has no uevent helper either, so the
+# key is mounted by linuxrc's second `mdev -s`, as at power-on.
+OS=$(mktemp -d)
+cp -a "$TREE/." "$OS/"
+printf '%s\n' 'sd[a-z][0-9]*    0:0 0660 */karotz/scripts/usbkey.sh' >> "$OS/karotz/etc/mdev.conf"
+python3 "$HERE/mkcpio.py" --all "$KEY/kexec/terrieros.cpio.gz" "$OS" "$KEY/kexec/linuxrc-ro"
+rm -rf "$OS"
 cp "$KEXEC" "$KEY/kexec/kexec"
 cp "$ZIMAGE" "$KEY/kexec/zImage-6.1"
 [ -e "$KEY/autorun.install" ] || cp "$KEY/autorun" "$KEY/autorun.install"
 cp "$HERE/autorun" "$KEY/autorun"
-echo "ready: touch $KEY/kexec/go to start 6.1 at the next boot"
+echo "ready: touch $KEY/kexec/go (the measure) or $KEY/kexec/go-os (Terrier OS) to start 6.1 at the next boot"
