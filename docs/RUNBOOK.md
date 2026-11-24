@@ -1093,10 +1093,18 @@ What it took, each measured on Gengar on 2026-11-24:
   (`config failed, hub doesn't have any ports! (err -19)`): authorizing
   `1-1` again brings its devices back.
 
-Result: Gengar under 6.1 joins the Terrier (TLS 1.3 PSK in 180 ms, its key
-confirmed), its ears obey; the belly stays red and nothing is heard though
-`/dev/spidev0.1`, `/dev/audio` and `/dev/dsp` exist and take writes. Open:
-the GPIO comparison (`gpio-2632.txt` against `gpio-61.txt`).
+- the LEDs and the sound, found by comparing every GPIO register under
+  2.6.32 and under 6.1 (`gpio-2632.txt`, `gpio-61.txt`): GPG2, the LED
+  driver's chip select, stayed nSS0 (6.1's SPI core asks for "cs" GPIOs
+  under `spi0` from index 0; the table said `s3c2410-spi.0`, index 1), and
+  GPE4, the I2S data to the codec, stayed a GPIO output at 0 (2.6.32's I2S
+  driver switched it, 6.1's does not). Chip select 0 under `spi0`, GPE4 as
+  I2SSDO, and Terrier OS's mdev names the device `spidev0.1`.
+
+Result, 2026-11-24 15:14: Gengar under 6.1 joins the Terrier (TLS 1.3 PSK
+in 180 ms, its key confirmed), and its ears, its belly and its voice obey
+the Terrier's orders: everything the Terrier asks of a Karotz works on 6.1,
+from the key, nothing written to the flash.
 
 
 ### Terrier OS's setup network, without the radio
