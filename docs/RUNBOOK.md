@@ -1062,6 +1062,42 @@ the bootloader imposes its own line) and `usb-bus-power-rabbitv3.patch`
 with nothing on the key's command line: the USB key at once, `wlan0` up,
 no device configured by hand (2026-11-24).
 
+### Terrier OS on Linux 6.1, from the key (`kexec/go-os`)
+
+The rabbit's own system under 6.1, nothing written to its flash:
+`make-key.sh` also builds `terrieros.cpio.gz`, the ramdisk whole with its
+`linuxrc` as `/init`, /usr (YAFFS) mounted read-only and `/usr/etc` and
+`/usr/terrier` copied to RAM over it (udhcpc writes `resolv.conf`, the
+Terrier client its `client.log`), an mdev rule for the key as 6.1 names it
+(`sda`), and `os-prelude` after the `#!` line: every command into the
+kernel's log (fd 3), each process's state every 20 s, a hub re-probe when
+the internal hub reads as portless, and a warm restart after 15 minutes so
+the log survives for the next 2.6.32 to save. Under 6.1 the key's autorun
+writes `<key>/kexec/log/N-os-6.1/` (the state every 30 s, the client's own
+log, `devtest.txt` at 60 s, `gpio-61.txt`); the 2.6.32 side leaves
+`gpio-2632.txt` beside `before.txt`.
+
+    touch <key>/kexec/go-os ; echo printk.devkmsg=on > <key>/kexec/append.txt
+    karotz/kexec/ramoops.py <key>/kexec/log/N-ramoops.bin
+
+What it took, each measured on Gengar on 2026-11-24:
+- `CONFIG_COMPAT_32BIT_TIME`: Terrier OS's uClibc programs call nanosleep,
+  clock_gettime; without it `sleep 300` returned at once and nothing waited;
+- `CONFIG_CFG80211_WEXT`: `network.sh` tells association by `iwconfig`;
+  without it the setup network opened with an address in hand;
+- `CONFIG_FILE_LOCKING`: LapinLibre's API takes its lock with `flock`;
+  without it every ears/LEDs order answered "busy";
+- `s3c24xx-dma-tx-status.patch`: closing `/dev/dsp` faulted on a NULL
+  `s3cchan->at` (the driver left Linux in 6.3, no upstream fix);
+- the internal hub reads as portless one boot in two
+  (`config failed, hub doesn't have any ports! (err -19)`): authorizing
+  `1-1` again brings its devices back.
+
+Result: Gengar under 6.1 joins the Terrier (TLS 1.3 PSK in 180 ms, its key
+confirmed), its ears obey; the belly stays red and nothing is heard though
+`/dev/spidev0.1`, `/dev/audio` and `/dev/dsp` exist and take writes. Open:
+the GPIO comparison (`gpio-2632.txt` against `gpio-61.txt`).
+
 
 ### Terrier OS's setup network, without the radio
 
