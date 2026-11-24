@@ -45,6 +45,10 @@ RUN cd /linux && patch -p1 < /k/spidev-karotz.patch && patch -p1 < /k/spi-s3c24x
 # The NAND controller enabled before the chip is read: 6.1 scanned first,
 # which worked only behind a bootloader that had left it on (2026-11-22).
 RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
+# The internal hub's devices, powered by the board, not refused for want of
+# bus power (Gengar, 2026-11-24).
+COPY usb-bus-power-rabbitv3.patch /k/
+RUN cd /linux && patch -p1 < /k/usb-bus-power-rabbitv3.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
