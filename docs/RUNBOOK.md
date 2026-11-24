@@ -779,7 +779,7 @@ tools/v1-audio-proof.sh                                  # PASS
 The same firmware against the Terrier's real code, not the stand-in
 server: `firmware-arm/emulator/tools/v1-native-terrier-proof.sh --terrier
 <Terrier checkout>` (its `tools/v1_warren.py --native`, the shipped
-`nabv1`/`v1native` handlers; the throwaway `keys/test-rabbit.key`).
+`nabv1`/`v1native` handlers; the throwaway keys/test-rabbit.key).
 2026-11-25: "PASS: v30 polled the Terrier, was offered v31, fetched it
 signed for its key, installed it; v31 polls".
 
