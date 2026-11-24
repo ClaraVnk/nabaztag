@@ -88,7 +88,7 @@ partition 6". It copies the rescue kernel and ramdisk over mtd1 and mtd2 and
 
 The same function runs without a serial port. In the main loop, after the
 autoboot delay (0x33f84968-0x33f84ac4): while the head button (GPF0, low
-when pressed: LapinLibre `drivers/char/rabbit_button.c:83`, our
+when pressed: LapinLibre drivers/char/rabbit_button.c:83, our
 `rabbitv3-chardevs.c:107`) reads *released*, a dot is printed and after 40
 of them the kernel is loaded. While it reads *pressed*, a second counter
 runs from 300 with the nose alternating between two colours (values
@@ -294,7 +294,7 @@ with `/usr/etc/conf` copied to the key first.
   capture (banner, dots, menu, parameters).
 - sweetlilmre/LapinLibre: docs/system.md (partition table, the boot),
   kernel/src/arch/arm/mach-s3c2440/mach-rabbitv3.c,
-  drivers/char/rabbit_button.c, `rabbit_poweron.c`, the key's `autorun`
+  drivers/char/rabbit_button.c, rabbit_poweron.c, the key's `autorun`
   and `install-lib.sh`, `image/core/rootfs/linuxrc`.
 - rofra/karotz-openkarotz-firmware `firmware/linuxrc` (the factory boot).
 - ywandy/qemu-mini2440 hw/mini2440.c (NAND boot).
