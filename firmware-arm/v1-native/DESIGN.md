@@ -30,7 +30,7 @@ are the emulator's, with the PIC's cycle count as its clock):
   github.com/trcwm/Newbaztag `firmware/new/src`): a C firmware for the
   PIC18F6627 built with XC8, a serial command protocol (LEDs, motors,
   timer, homing) and no network -- his card was dead and he meant an ESP
-  module. What it gave: the pin list (`doc/components.md`), the TLC5922 data
+  module. What it gave: the pin list (`../vendor/newbaztag/doc/components.md`), the TLC5922 data
   order (first word shifted = top LED's red), the MSSP setting (CKE 1, CKP 0),
   the timers as hole counters (T0CON 0xA8, T3CON 0x87), the OKI register
   table and its 6 MHz clock from CCP1, ADCON1 0x0E / CMCON 7 copied from the
@@ -153,7 +153,7 @@ the loader exists; today's link at 0 is only phase 1's.
 | Measured today (udata + the 256-byte stack, `size.py` from the map) | 1 015 | 1 |
 | of which the frame buffer | 340 | 1 |
 | SDCC's stack (its default; nothing recurses, 128 would do) | 256 | 1 |
-| WPA2: PTK, the replay counter, AES round keys (`v1/wpa/README.md`, branch emu/v1-wpa-cost) | ~450 | 2 |
+| WPA2: PTK, the replay counter, AES round keys (the WPA2 study on the branch emu/v1-wpa-cost) | ~450 | 2 |
 | Audio: one serial flash page as the OKI FIFO's source | 264 | 2 |
 | Loader: a 64-byte row, a SHA-256 state | ~200 | 2 |
 | Left | ~2 000 | |
@@ -224,7 +224,7 @@ listed; frame 03's value (the poll interval) is logged, not yet honoured:
    HMAC-SHA-256 with a per-rabbit key written at ICSP time, copied into
    the PIC row by row, "complete" flag last, fallback to slot A. The
    emulator's core already has `TBLWT` and the `EECON1` write path
-   (`emulator/v1/board.c`).
+   (`../emulator/v1/board.c`).
 4. **WPA2** after the card is reflashed to station 1.7.4 (`../v1-icsp/
    prism-fw.sh`): host-side CCMP and the 4-way handshake, PMK from the
    Terrier's page (computed off-rabbit), ~6 KB and 450 B of RAM per the

@@ -93,7 +93,7 @@ path, DNS asked once per power-on.
 
 `../tools/v1-native-proof.sh`: our own firmware for the v1
 (`../../v1-native`, SDCC) on Lazare's board, built and run here: joins,
-DHCP, DNS, polls `tools/v1_native_warren.py` every 10 s, moves the ears,
+DHCP, DNS, polls `../tools/v1_native_warren.py` every 10 s, moves the ears,
 writes its configuration page in the serial flash; PASS/FAIL with the
 image's flash and RAM use.
 
