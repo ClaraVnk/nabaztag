@@ -509,6 +509,15 @@ findings by value, what was measured, what the Terrier should know) and its
 three other patches, each a hang of Violet's program the Terrier can run into,
 against Violet's frame as the control, on both firmwares:
 
+The same program without Antoine Schmitt's clip (TaiChiPop, the 26 KB of
+animations it plays only when "moves by itself" is on, off by default on the
+Terrier): `still.awk`, built as `Nabaztag_wait_terrier_still.vasm`.
+`firmware-arm/emulator/tools/violet-vasm/still-proof.sh` (2026-11-24, PASS
+on 2.0b and 1.4b): 3,589 bytes instead of 33,860; from the program's
+download to the next poll 12.4 s instead of 18.1 s (the poll interval is
+11.8 s of it); ears L5 R10, a click (sd=0003) and a hand (sd=8xxx) as with
+the full frame.
+
 ```sh
 firmware-arm/emulator/tools/violet-vasm/review-proof.sh   # repo root, dev VM, ~15 min
 # 2026-11-24: PASS. "stall" (--stall 1: ear 1's motor runs, its wheel does

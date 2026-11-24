@@ -19,13 +19,16 @@ COPY firmware-arm/vendor/violet-platform/java/Vasm.java firmware-arm/vendor/viol
 COPY firmware-arm/emulator/tools/violet-vasm/stubs/ /src/
 COPY firmware-arm/vendor/violet-platform/vasm/ /out/net/violet/platform/vasm/
 COPY firmware-arm/emulator/tools/violet-vasm/patches/ /patches/
+COPY firmware-arm/emulator/tools/violet-vasm/still.awk /still.awk
 RUN cd /out/net/violet/platform/vasm && cp Nabaztag_wait.vasm Nabaztag_wait_terrier.vasm && \
     for p in /patches/*.patch; do patch --binary Nabaztag_wait_terrier.vasm < "$p"; done && \
     grep -q "one motor starts at a time" Nabaztag_wait_terrier.vasm && \
     grep -q "the homing turn too" Nabaztag_wait_terrier.vasm && \
     grep -q "40 s, then 0" Nabaztag_wait_terrier.vasm && \
     grep -q "not here for ever" Nabaztag_wait_terrier.vasm && \
-    grep -q "after eight hops, no belly" Nabaztag_wait_terrier.vasm
+    grep -q "after eight hops, no belly" Nabaztag_wait_terrier.vasm && \
+    LC_ALL=C awk -f /still.awk Nabaztag_wait_terrier.vasm > Nabaztag_wait_terrier_still.vasm && \
+    grep -q "^@data" Nabaztag_wait_terrier_still.vasm && ! grep -q "TaiChiPop" Nabaztag_wait_terrier_still.vasm
 RUN cd /src && javac -encoding ISO-8859-1 -nowarn -d /out $(find . -name '*.java') 2>&1 | grep -v '^Note:' || true; \
     test -f /out/net/violet/platform/vasm/Dump.class
 ENTRYPOINT ["java", "-cp", "/out", "net.violet.platform.vasm.Dump"]
