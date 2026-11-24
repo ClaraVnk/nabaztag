@@ -776,6 +776,13 @@ tools/v1-native-proof.sh                                 # PASS, numbers above
 tools/v1-audio-proof.sh                                  # PASS
 ```
 
+The same firmware against the Terrier's real code, not the stand-in
+server: `firmware-arm/emulator/tools/v1-native-terrier-proof.sh --terrier
+<Terrier checkout>` (its `tools/v1_warren.py --native`, the shipped
+`nabv1`/`v1native` handlers; the throwaway `keys/test-rabbit.key`).
+2026-11-25: "PASS: v30 polled the Terrier, was offered v31, fetched it
+signed for its key, installed it; v31 polls".
+
 What the Terrier must serve for an update (not changed in that repository):
 `GET /vl/v1/fw?sn=<MAC>&v=<fw>&b=<0x25|0x27>` with the `app-N.img` that
 `mkimage.py image --key <that rabbit's key>` produced for that board, and a
