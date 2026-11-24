@@ -1,0 +1,19 @@
+s3c24xx_dma_tx_status() summed the running transfer through s3cchan->at
+even when nothing was running: the sound card's sync_stop asks for the
+status after the transfer has ended, s3cchan->at is NULL and txd->at
+(offset 0x48) faults. Gengar under 6.1, 2026-11-24: karotz-player closing
+/dev/dsp, "Unable to handle kernel NULL pointer dereference at virtual
+address 00000048", PC at s3c24xx_dma_tx_status+0xa4. The driver left the
+kernel in 6.3 with the S3C24xx; no upstream fix exists for 6.1. Nothing
+running: nothing left to count.
+--- a/drivers/dma/s3c24xx-dma.c
++++ b/drivers/dma/s3c24xx-dma.c
+@@ -784,7 +784,7 @@ static enum dma_status s3c24xx_dma_tx_status(struct dma_chan *chan,
+
+ 		list_for_each_entry(dsg, &txd->dsg_list, node)
+ 			bytes += dsg->len;
+-	} else {
++	} else if (s3cchan->at && s3cchan->phy) {
+ 		/*
+ 		 * Currently running, so sum over the pending sg's and
+ 		 * the currently active one.

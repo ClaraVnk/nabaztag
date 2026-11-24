@@ -49,6 +49,10 @@ RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
 # bus power (Gengar, 2026-11-24).
 COPY usb-bus-power-rabbitv3.patch /k/
 RUN cd /linux && patch -p1 < /k/usb-bus-power-rabbitv3.patch
+# The DMA status after a transfer has ended (s3c24xx-dma-tx-status.patch): the
+# sound card's stop crashed the kernel on Gengar, 2026-11-24.
+COPY s3c24xx-dma-tx-status.patch /k/
+RUN cd /linux && patch -p1 < /k/s3c24xx-dma-tx-status.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
