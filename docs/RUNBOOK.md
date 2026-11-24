@@ -1208,13 +1208,15 @@ encoders' trigger, left as the bootloader set it as 2.6.32 did.
 Terrier OS ships it (the web API, the start-up, the daemons' D-Bus chain).
 What our build changes is in `karotz/lapinlibre/patches/` (its README names
 each), applied by the `Containerfile` on `LL_COMMIT` as one dated commit, so
-the tree and `git describe` are the same from one build to the next. Two
-proofs, both without a rabbit:
+the tree and `git describe` are the same from one build to the next. Three
+proofs, all without a rabbit:
 
     karotz/lapinlibre/test-patches.sh
-    # 2026-11-24: "PASS: 3 patches apply to 19ea8d7, image.py compiles, LL_BUILD_VERSION taken"
+    # 2026-11-24: "PASS: 4 patches apply to 19ea8d7, image.py compiles, LL_BUILD_VERSION taken"
     karotz/lapinlibre/test-inetd-rate.sh        # on the dev VM (podman)
     # 2026-11-24: nowait.600: 61 of 61 answered; nowait.60: 59 of 61; PASS
+    karotz/lapinlibre/test-web-local.sh         # patch 0004, LapinLibre's own inetd.sh
+    # 2026-11-24: "PASS: drawn password -> 1 allow rule (127.0.0.1); owner's password -> 5 (the local network); the login kept in both"
 
 The second is the measure behind patch 0001: BusyBox inetd refuses the
 connection past its count and pauses the service for ten minutes, and the
