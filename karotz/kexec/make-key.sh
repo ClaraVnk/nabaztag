@@ -32,6 +32,9 @@ sed -i.bak "1r $HERE/os-prelude" "$KEY/kexec/linuxrc-ro" && rm -f "$KEY/kexec/li
 OS=$(mktemp -d)
 cp -a "$TREE/." "$OS/"
 printf '%s\n' 'sd[a-z][0-9]*    0:0 0660 */karotz/scripts/usbkey.sh' >> "$OS/karotz/etc/mdev.conf"
+# The LED driver is chip select 0 under 6.1 (mach-rabbitv3.c), 1 under
+# 2.6.32: the device keeps the name Terrier OS's led-daemon opens.
+printf '%s\n' 'spidev0.0    0:0 0660 =spidev0.1' >> "$OS/karotz/etc/mdev.conf"
 python3 "$HERE/mkcpio.py" --all "$KEY/kexec/terrieros.cpio.gz" "$OS" "$KEY/kexec/linuxrc-ro"
 rm -rf "$OS"
 cp "$KEXEC" "$KEY/kexec/kexec"

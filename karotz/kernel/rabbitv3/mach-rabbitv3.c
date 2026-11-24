@@ -110,7 +110,7 @@ static struct map_desc RabbitV3_iodesc[] __initdata = {
 
 /* SPI0 and its one device, the LED driver, on chip select 1 (GPG2). */
 #define RABBITV3_SPI_BUS	0
-#define RABBITV3_SPI_LED_CS	1
+#define RABBITV3_SPI_LED_CS	0	/* 1 on 2.6.32: see the CS lookup below */
 #define RABBITV3_SPI_LED_HZ	10000000	/* 10 MHz */
 #define RABBITV3_SPI_NUM_CS	2
 
@@ -199,8 +199,15 @@ static struct s3c2410_spi_info RabbitV3_spi0_info = {
 	.bus_num	= RABBITV3_SPI_BUS,
 };
 
+/* The LED driver's chip select, GPG2. 6.1's SPI core asks for "cs" GPIOs
+ * in the controller's name (spi0, not the platform device's) and from
+ * index 0 up to as many as the table has: under "s3c2410-spi.0" at index 1,
+ * it found none, GPG2 stayed nSS0 and the LED driver was never selected
+ * (GPIO registers read on Gengar, 2026-11-24: GPGCON GPG2 11 under 6.1,
+ * 01 under 2.6.32). Chip select 0 now; Terrier OS's mdev names the device
+ * spidev0.1 as its led-daemon expects (karotz/kexec make-key.sh). */
 static struct gpiod_lookup_table RabbitV3_spi0_gpio_table = {
-	.dev_id = "s3c2410-spi.0",
+	.dev_id = "spi0",
 	.table = {
 		GPIO_LOOKUP_IDX("GPIOG", 2, "cs", RABBITV3_SPI_LED_CS, GPIO_ACTIVE_LOW),
 		{ },
@@ -388,11 +395,18 @@ static void __init RabbitV3_gpio_setup(void)
 
 	pr_info("rabbitv3: gpio C D\n");
 	s3c_gpio_cfgall_range(S3C2410_GPE(0), 4, S3C_GPIO_SFN(2), S3C_GPIO_PULL_NONE);
-	s3c_gpio_cfgpin(S3C2410_GPE(4), S3C_GPIO_OUTPUT);
+	/* GPE4 is I2SSDO, the data to the UDA1341. 2.6.32's I2S driver switched
+	 * it there around each transfer; 6.1's touches no pin, and as an output
+	 * at 0 the codec heard nothing: /dev/audio took every write and Gengar
+	 * stayed silent (2026-11-24). */
+	s3c_gpio_cfgpin(S3C2410_GPE(4), S3C_GPIO_SFN(2));
 	s3c_gpio_cfgpin_range(S3C2410_GPE(11), 3, S3C_GPIO_SFN(2));
 
 	pr_info("rabbitv3: gpio E\n");
-	s3c_gpio_cfgall_range(S3C2410_GPG(2), 2, S3C_GPIO_SFN(3), S3C_GPIO_PULL_NONE);
+	/* GPG2 is the LED driver's chip select, a GPIO the SPI core drives
+	 * (above); GPG3 an input, as 2.6.32 leaves it (its camera pin). */
+	s3c_gpio_cfgall_range(S3C2410_GPG(2), 1, S3C_GPIO_OUTPUT, S3C_GPIO_PULL_NONE);
+	s3c_gpio_cfgall_range(S3C2410_GPG(3), 1, S3C_GPIO_INPUT, S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(S3C2410_GPG(7), S3C_GPIO_SFN(3));
 	s3c_gpio_setpull(S3C2410_GPG(7), S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(S3C2410_GPG(9), S3C_GPIO_OUTPUT);
