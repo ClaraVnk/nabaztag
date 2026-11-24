@@ -1055,8 +1055,12 @@ A/B runs. `usbcore.old_scheme_first=1` enumerates the hub every time; 6.1
 then refuses its devices ("insufficient available bus power", the hub
 claims to be bus-powered, the board powers them): the measure writes
 `bConfigurationValue` itself, and the key, the Wi-Fi (`wlan0` up) and the
-restart by 6.1's own watchdog all work. For Terrier OS on 6.1: that
-command-line option, and a boot rule configuring the hub's devices.
+restart by 6.1's own watchdog all work. Both now in the kernel:
+`usbcore.old_scheme_first=1` built in (`CONFIG_CMDLINE`, `CMDLINE_EXTEND`:
+the bootloader imposes its own line) and `usb-bus-power-rabbitv3.patch`
+(on RABBITV3 a configuration is not refused for bus current). On Gengar
+with nothing on the key's command line: the USB key at once, `wlan0` up,
+no device configured by hand (2026-11-24).
 
 
 ### Terrier OS's setup network, without the radio
