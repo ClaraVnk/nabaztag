@@ -60,6 +60,7 @@ Read in the process, against what the sources said:
 | | |
 |---|---|
 | `--hex FILE` | the firmware (`make hex`) |
+| `--flash-chip 081` | an AT45DB081B (264-byte pages, 9-bit addresses) for the serial flash, as on Clara's 1.4b rabbit (`../../v1-icsp/dumps/violet-v1-1.4b.hex`); the default is the 2.0b board's AT45DB161. On the 161 the 1.4b firmware lost the program it had just written and never polled again |
 | `--seconds N` | virtual time to run; the clock is the PIC's cycle count, so a run is reproducible |
 | `--warren HOST`, `--port80 PORT` | where the rabbit's TCP connections go |
 | `--mac 0019db00beef` | the card's address, which is the rabbit's `sn` |
@@ -80,3 +81,22 @@ Read in the process, against what the sources said:
   its id), the ears go to 5/10 then 2/3 and stop, a hand on the right ear is
   reported as `sd=8603`, a 3-second press as `sd=0004`, and two v1 of one
   owner in "amoureux" follow each other.
+
+## The 1.4b firmware and the watchdog
+
+Lazare's firmware (`../../v1-icsp/dumps/violet-v1-1.4b.hex`, a PIC18LF6525)
+runs with `--hex` and `--flash-chip 081`. Its configuration keeps the
+watchdog on (CONFIG2H 0F, ~512 ms) and the brown-out reset on (CONFIG2L 0A);
+the 2.0b dump has both off. The emulator now resets the PIC when the
+watchdog is on and no CLRWDT came in its period, and logs it: the 1.4b
+firmware never let it expire, ears turning included. The brown-out is
+electrical and not modelled: on the rabbit, two ear motors started in the
+same step restarted it (2026-11-24); the Terrier's program now starts one
+at a time, and the emulator shows the left ear starting 2 ms after the
+right one stops:
+
+```sh
+podman run --rm --network host -v firmware-arm/v1-icsp/dumps:/d:ro,Z nabaztag-v1 \
+    --warren 127.0.0.1 --port80 28080 --hex /d/violet-v1-1.4b.hex --flash-chip 081 --seconds 120
+```
+

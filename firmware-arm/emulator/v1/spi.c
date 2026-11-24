@@ -12,6 +12,16 @@
 #include "board.h"
 
 /* --- AT45DB161: 4096 pages of 528 bytes ---------------------------------- */
+/* Or an AT45DB081B, 4096 pages of 264 bytes addressed on 9 bits: the flash
+ * of Clara's 1.4b rabbit (Lazare, photo 2026-11-24). The 1.4b firmware wrote
+ * its program on 9-bit pages; read back on the 161's 10, it found what it
+ * had not written and never polled again (`--flash-chip 081`). */
+static unsigned page_size = 528, page_shift = 10;
+static uint8_t  status_ready = 0xAC;                   /* ready, density 1011 */
+void spi_flash_chip(int db081)
+{
+  if(db081) { page_size = 264; page_shift = 9; status_ready = 0xA4; }  /* density 1001 */
+}
 
 #define PAGES      4096
 #define PAGE_SIZE  528
@@ -82,12 +92,12 @@ static void flash_end(void)
   unsigned page = fc.page;
   if(!fc.active || fc.n == 0) { fc.active = 0; return; }
   switch(fc.op) {
-    case 0x53: memcpy(buf[0], mem[page], PAGE_SIZE); break;
-    case 0x55: memcpy(buf[1], mem[page], PAGE_SIZE); break;
-    case 0x83: case 0x88: case 0x82: memcpy(mem[page], buf[0], PAGE_SIZE); dirty = 1; break;
-    case 0x86: case 0x89: case 0x85: memcpy(mem[page], buf[1], PAGE_SIZE); dirty = 1; break;
-    case 0x81: memset(mem[page], 0xFF, PAGE_SIZE); dirty = 1; break;
-    case 0x50: memset(mem[page & ~7u], 0xFF, PAGE_SIZE * 8); dirty = 1; break;
+    case 0x53: memcpy(buf[0], mem[page], page_size); break;
+    case 0x55: memcpy(buf[1], mem[page], page_size); break;
+    case 0x83: case 0x88: case 0x82: memcpy(mem[page], buf[0], page_size); dirty = 1; break;
+    case 0x86: case 0x89: case 0x85: memcpy(mem[page], buf[1], page_size); dirty = 1; break;
+    case 0x81: memset(mem[page], 0xFF, page_size); dirty = 1; break;
+    case 0x50: for(unsigned k = 0; k < 8; k++) memset(mem[(page & ~7u) + k], 0xFF, page_size); dirty = 1; break;
     case 0x58: case 0x59: break;
   }
   if(B.trace_bus && fc.op != 0x57 && fc.op != 0xD7)
@@ -110,27 +120,27 @@ static uint8_t flash_byte(uint8_t in)
   if(fc.n <= na) {
     fc.addr = (fc.addr << 8) | in;
     fc.n++;
-    if(fc.n == na + 1) { fc.page = (fc.addr >> 10) & 0xFFF; fc.byte = fc.addr & 0x3FF; }
+    if(fc.n == na + 1) { fc.page = (fc.addr >> page_shift) & 0xFFF; fc.byte = fc.addr & ((1u << page_shift) - 1); }
     return 0xFF;
   }
   if(fc.n <= na + nd) { fc.n++; return 0xFF; }
   fc.n++;
   switch(fc.op) {
-    case 0x57: case 0xD7: out = 0xAC; break;            /* ready, density 1011 */
+    case 0x57: case 0xD7: out = status_ready; break;
     case 0x52: case 0xD2:
       out = mem[fc.page][fc.byte];
-      fc.byte = (fc.byte + 1) % PAGE_SIZE;
+      fc.byte = (fc.byte + 1) % page_size;
       break;
     case 0x68: case 0xE8:                               /* continuous array read */
       out = mem[fc.page][fc.byte];
-      if(++fc.byte == PAGE_SIZE) { fc.byte = 0; fc.page = (fc.page + 1) % PAGES; }
+      if(++fc.byte == page_size) { fc.byte = 0; fc.page = (fc.page + 1) % PAGES; }
       break;
-    case 0x54: case 0xD4: out = buf[0][fc.byte]; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
-    case 0x56: case 0xD6: out = buf[1][fc.byte]; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
-    case 0x84: buf[0][fc.byte] = in; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
-    case 0x87: buf[1][fc.byte] = in; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
-    case 0x82: buf[0][fc.byte] = in; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
-    case 0x85: buf[1][fc.byte] = in; fc.byte = (fc.byte + 1) % PAGE_SIZE; break;
+    case 0x54: case 0xD4: out = buf[0][fc.byte]; fc.byte = (fc.byte + 1) % page_size; break;
+    case 0x56: case 0xD6: out = buf[1][fc.byte]; fc.byte = (fc.byte + 1) % page_size; break;
+    case 0x84: buf[0][fc.byte] = in; fc.byte = (fc.byte + 1) % page_size; break;
+    case 0x87: buf[1][fc.byte] = in; fc.byte = (fc.byte + 1) % page_size; break;
+    case 0x82: buf[0][fc.byte] = in; fc.byte = (fc.byte + 1) % page_size; break;
+    case 0x85: buf[1][fc.byte] = in; fc.byte = (fc.byte + 1) % page_size; break;
     default:
       if(fc.n == na + nd + 2) board_log("flash: opcode %02X is not modelled", fc.op);
       break;
