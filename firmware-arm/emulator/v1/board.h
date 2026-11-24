@@ -32,6 +32,9 @@ struct board {
   unsigned line_len;
   uint8_t  eeprom[1024];               /* data EEPROM, erased = FF (board_init) */
   int      ee_unlock;                  /* 1 after 55h on EECON2, 2 after AAh */
+  int      trace_flash;                /* log every PIC flash erase and write */
+  int      trace_oki;                  /* log the OKI's registers with every byte of a burst */
+  unsigned flash_erases, flash_writes; /* PIC flash rows erased, blocks written */
   /* adc: what each channel reads (10 bits) */
   uint16_t adc[16];
 };

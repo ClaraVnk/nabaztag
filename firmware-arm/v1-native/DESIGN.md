@@ -1,4 +1,4 @@
-# A native firmware for the Nabaztag v1 (2005) -- design, phase 1
+# A native firmware for the Nabaztag v1 (2005) -- design, phases 1 and 2
 
 Violet's v1 firmware is a PIC18 interpreter for Violet's VM. It cannot be
 updated over the network (`../v1-icsp/VM-ESCAPE.md`), and on Clara's rabbit
@@ -6,15 +6,17 @@ updated over the network (`../v1-icsp/VM-ESCAPE.md`), and on Clara's rabbit
 2.5 card with station firmware 1.4.2) it has 94 bytes free
 (`../v1-icsp/IMPROVEMENTS.md`). This is its replacement, written in C and
 flashed over ICSP with a PICkit 3 (done four times on 2026-11-24, the
-original restored each time). Phase 1 is the skeleton end to end, proven in
-the emulator only: no rabbit, no PICkit, no write to any PIC.
+original restored each time). Phase 1 is the skeleton end to end, phase 2
+the loader that makes the firmware updatable over the network (section 7)
+and the first size pass (section 2); both proven in the emulator only: no
+rabbit, no PICkit, no write to any PIC.
 
 What runs (2026-11-24, `../emulator/tools/v1-native-proof.sh`, the numbers
 are the emulator's, with the PIC's cycle count as its clock):
 
 | Step | Measured |
 |---|---|
-| Image | 22 920 bytes of 49 152 (46 %), RAM 1 015 bytes of 3 968 (25 %) |
+| Image | phase 1: 22 920 bytes of 49 152 (46 %), RAM 1 015 bytes. Phase 2: loader 12 014 B (0x0000-0x2FFF), application 27 670 B from 0x3000 (sizes below, section 2), RAM 1 470 / 1 793 B |
 | Boot to the card associated | 579 ms (200 ms of it the two waits copied from Violet's pin sequence, below) |
 | DHCP lease | 614 ms |
 | DNS answer | 1 102 ms (the hop's ARP first, then the query) |
@@ -23,6 +25,8 @@ are the emulator's, with the PIC's cycle count as its clock):
 | Ears | each moved 2 holes after the first answer, one motor at a time, the emulator's sensors counted |
 | Watchdog (512 ms, on) | never fired |
 | Serial flash | AT45DB081B recognised by its density bits, page 0 written and read back, the boot counter at 2 on the second run |
+| Loader (phase 2) | slot A seeded in 10.1 s, an update downloaded in 1.3 s, verified in 9.9 s, 3 472 blocks written and read back in 0.8 s, the new image polling 14 s after its download; twelve power cuts, a bad key, a corrupt row, a corrupt slot and a crashing image all end on a polling rabbit (section 7.5) |
+| Audio (phase 2) | the OKI start sequence, the 29 toggles and the 12 000 data bytes identical to Violet's for the same tone; the bursts split where the file sits in the serial flash (ours 226, Violet's 188) (`../emulator/tools/v1-audio-proof.sh`) |
 
 ## 1. Prior art, read first
 
@@ -78,10 +82,37 @@ interrupt; static locals are smaller on this port). Measured on this code:
 22 920 bytes with the peephole optimiser, 24 284 without it;
 `--fommit-frame-pointer` changes nothing. What is big: every function that
 touches a 32-bit value (TCP's sequence numbers: `tcp_rx` 1.2 KB, `net_poll`
-1.3 KB), and the port's banked access to RAM. Levers if room runs short,
-in order: the log strings and their calls (about 1.5 KB), the 32-bit
-arithmetic in TCP (sequence numbers can be kept as 16-bit deltas on one
-connection), the DHCP option walk written as a table.
+1.3 KB), and the port's banked access to RAM.
+
+**The size pass of phase 2** (2026-11-24), measured on the linker maps:
+
+| Lever | Effect |
+|---|---|
+| `log_dec` by repeated subtraction instead of `/ 10` and `% 10` | the 16-bit divide and modulo library routines (330 B) are no longer linked; `log_dec` itself 214 B, in the application only (the loader logs in hex) |
+| the serial flash address without a 32-bit shift (`flash_addr`) | the 32-bit shift routine gone; 186 B for the function |
+| the CONFIG words and the loader's own code out of the application | the application carries no boot code; one `goto __startup` at 0x3000 (`src/app/entry.asm`) |
+| shorter log strings | about 150 B |
+| the port's 32-bit code, learnt on SHA-256 | one 32-bit operation per statement on static words: an add is 8 instructions; a compound expression keeps its temporaries in RAM (the round written as one expression: 2.7 KB; four-byte helpers with pointer arguments: 4.3 KB for the file; the final form: `compress` 2.4 KB, the file 3.9 KB). Indexing a 32-bit array by a byte calls a 314-byte multiply: an 8-bit offset on a byte pointer does not |
+
+The application is 27 670 B in phase 2 against 22 920 in phase 1; of the
+difference, `update.c` is 1.3 KB, the shared state record 0.9 KB, the slot
+stream 0.5 KB, the OKI 1.3 KB, the frame 10 and the image request in
+`net.c` 0.4 KB, the application's copy of the UART and flash drivers the
+rest; the levers above gave back about 0.9 KB. Not done: TCP's
+sequence numbers as 16-bit deltas (`tcp_rx` 1.3 KB, `net_poll` 1.4 KB,
+`tcp_send` 0.6 KB today; perhaps 0.5 KB to gain), the DHCP option walk as a
+table, and the application calling the loader's UART, SPI and flash
+routines through a jump table instead of carrying its own copy (about
+1.5 KB; it binds the two images' ABIs together, so later).
+
+**The loader is 12 014 B**, not the 4 KB the phase-1 plan reserved: with
+SDCC's pic16 output, HMAC-SHA-256 is 3.9 KB, the serial flash and slot
+driver 1.3 KB, the state record 0.9 KB, the UART log 0.5 KB, the loader's
+own logic 2.6 KB, the C start-up and the constants the rest. An 8 KB block
+would need the SHA-256 round in assembly (about 1 KB there) and a leaner
+log; the 6525's hardware write protection covers 0x0000-0x07FF in any
+case (section 7.2), and what the loader protects itself with is that it
+never writes below 0x3000.
 
 The PIC's own linker script is `18f6525-native.lkr`: gputils' with banks
 2-5 merged, because gplink places an array inside one 256-byte bank and the
@@ -136,27 +167,27 @@ Design choices:
 
 ### 4.1 PIC flash, 48 KB (0x0000-0xBFFF)
 
-| Range | Size | Phase 1 | Later |
+| Range | Size | Phase 2 | Later |
 |---|---|---|---|
-| 0x0000-0x0FFF | 4 KB | the application starts at 0 | **the loader**: reset vector, AT45 read, HMAC-SHA-256, 64-byte row write, a UART line; write-protected by WRTB (the 18F6525's boot block is 0x0000-0x07FF: the loader should fit 2 KB, or protection covers only its first half) |
-| 0x1000-0xBFFF | 44 KB | the application (22 920 bytes used today, linked from 0) | WPA2 (~6 KB: CCMP + 4-way handshake, PMK computed off-rabbit), OKI audio (~1.5 KB), the Prism flashing path (~2 KB), a program layer of our own (open), a Violet-VM compatibility layer if ever wanted (~20 KB: not planned) |
+| 0x0000-0x2FFF | 12 KB | **the loader** (section 7): 12 014 B used, with the CONFIG words; the reset vector, the AT45 and slot driver, HMAC-SHA-256, the 8-byte block write, the state record, a UART log in hex. WRTB can protect 0x0000-0x07FF on the 6525 (left off until the loader has run on the rabbit) | an assembly SHA-256 round would bring it under 8 KB |
+| 0x3000-0xBFFF | 36 KB | the application, 27 670 B, linked from 0x3000 (`--ivt-loc`, `entry.asm`): phase 1 plus the update path, the state record, the OKI | WPA2 (~6 KB: CCMP + 4-way handshake, PMK computed off-rabbit), the Prism flashing path (~2 KB), a program layer of our own (open) |
 
-Left after phase 1 for all of that: about 22 KB, the 4 KB of the loader
-reserved. Enough for WPA2, audio, the Prism flashing path and the loader
-(about 14 KB together), not for a Violet-VM layer on top. The application must be linked from 0x1000 when
-the loader exists; today's link at 0 is only phase 1's.
+A Violet-VM compatibility layer (~20 KB) does not fit and is not planned.
+WPA2 and the Prism flashing path fit in what is left only if the size
+levers above are taken (the 16-bit TCP, the jump table); on the 2.0b
+board's 96 KB none of this is tight. Left today: about 9 KB.
 
 ### 4.2 PIC RAM, 3 968 bytes
 
 | Use | Bytes | Phase |
 |---|---|---|
-| Measured today (udata + the 256-byte stack, `size.py` from the map) | 1 015 | 1 |
+| Application, measured (udata + the 256-byte stack, `size.py` from the map) | 1 793 | 2 |
 | of which the frame buffer | 340 | 1 |
+| of which the update's page buffer (528: a 161 page) and header | 592 | 2 |
 | SDCC's stack (its default; nothing recurses, 128 would do) | 256 | 1 |
-| WPA2: PTK, the replay counter, AES round keys (the WPA2 study on the branch emu/v1-wpa-cost) | ~450 | 2 |
-| Audio: one serial flash page as the OKI FIFO's source | 264 | 2 |
-| Loader: a 64-byte row, a SHA-256 state | ~200 | 2 |
-| Left | ~2 000 | |
+| Loader, measured (its own RAM; the application starts over it): a 528-byte page, the SHA-256 state and key pads | 1 470 | 2 |
+| WPA2: PTK, the replay counter, AES round keys (the WPA2 study on the branch emu/v1-wpa-cost) | ~450 | 3 |
+| Left for the application | ~1 700 | |
 
 ### 4.3 Serial flash (AT45DB081B on Lazare, AT45DB161 on 2.0b boards)
 
@@ -171,17 +202,17 @@ and nothing needs a sector erase.
 
 | Pages | 081B | 161 | Region | Phase |
 |---|---|---|---|---|
-| 0-1 | 528 B | 1 056 B | **Configuration**, two copies (A/B with a sequence number, the newer wins; a write cut by the brown-out loses one copy, not the configuration): magic `NAB1`, format, boot counter today; then server name, language, SSID, WEP key or **WPA2 PMK (32 B)**, the flags (opt-ins). The loader's per-rabbit HMAC key is *not* here (the serial flash is readable by anyone with the board): it goes in the PIC's data EEPROM, see risks | **1** (page 0 only) |
-| 2-15 | 3.7 KB | 7.4 KB | **Ring log**: 32-byte records (tick, event, 24 bytes of detail), 115 / 231 records, read back over the serial port or sent with a poll | 2 |
-| 16-207 | 50.7 KB | 101.4 KB | **Image slot A** (known-good): a header page (length, version, HMAC-SHA-256, a "complete" flag written last) and the PIC image; 48 KB of PIC18LF6525 flash fits in 187 pages of 264 B, and a PIC18F6627's 96 KB in 187 pages of 528 B: the same slot serves both boards | 2 (loader) |
-| 208-399 | 50.7 KB | 101.4 KB | **Image slot B** (next): the loader copies B into the PIC only once its HMAC checks, keeps A as the fallback, and the first boot of a new image that does not confirm itself within N boots goes back to A | 2 (loader) |
+| 0-1 | 528 B | 1 056 B | **Configuration**, two copies (A/B with a sequence number, the newer wins; a write cut by the brown-out loses one copy, not the configuration): magic `NAB1`, format, boot counter today; then server name, language, SSID, WEP key or **WPA2 PMK (32 B)**, the flags (opt-ins). The loader's per-rabbit HMAC key is *not* here (the serial flash is readable by anyone with the board): it is in the PIC's data EEPROM (section 7) | **1** (page 0 only) |
+| 2-3 | 528 B | 1 056 B | **The loader's state record**, two copies (section 7.1): active slot, boot counter, confirmed flag, the version to skip | **2** |
+| 4-15 | 3.2 KB | 6.3 KB | **Ring log**: 32-byte records (tick, event, 24 bytes of detail), 99 / 198 records, read back over the serial port or sent with a poll | 3 |
+| 16-207 | 50.7 KB | 101.4 KB | **Image slot A**: a header page (`struct app_hdr`, the HMAC at 16, pending at 12, complete at 48, written last) and the image packed on the following pages; 36 KB of PIC18LF6525 application fits in 140 pages of 264 B, a PIC18F6627's 84 KB in 163 pages of 528 B: the same slot serves both boards. Seeded from the PIC at the first boot | **2** |
+| 208-399 | 50.7 KB | 101.4 KB | **Image slot B**: the application downloads into whichever slot is not active; the loader installs a pending slot once its HMAC checks and keeps the other as the fallback | **2** |
 | 400-911 | 135 KB | 270 KB | **Prism station firmware** (sf010704: ~171 KB as S-records, under 100 KB as the binary the card's download command takes: primary + secondary images with their PDR fix-ups, per `prism2_srec`) for flashing the card from the rabbit | 3 |
 | 912-975 | 16.9 KB | 33.8 KB | **Program layer**: a small interpreted layer of our own, non-critical behaviour fetched from the Terrier (animations, ear choreographies, LED scripts); or Violet's frame 05 if compatibility is ever wanted (33 KB fits on the 161 only) | 3 (open) |
-| 976-4095 | 823 KB | 1 647 KB | **Sounds and animations**: OKI ADPCM at 16 kHz is 8 KB/s, so 103 s on the 081B and 206 s on the 161; a directory page every 64 pages | 2 (audio) |
+| 976-4095 | 823 KB | 1 647 KB | **Sounds**: a directory page at 976 (`struct snd_dir`: `SND1`, count, autoplay, then first page and data length per sound), the Audi files from 977 with their 16-byte header at byte 0 of a page; OKI ADPCM at 16 kHz is 8 KB/s, so 103 s on the 081B and 206 s on the 161 | **2** (played; written by the proof, not yet by the application) |
 
-Phase 1 needs only page 0 (and proves the driver: read, write with erase,
-read back, across runs with the emulator's `--flash FILE`). The ring log,
-the slots and the rest are reserved, not written.
+Phase 1 needs only page 0; phase 2 writes the state record and the slots,
+and plays from the sound region. The ring log is reserved, not written.
 
 ## 5. The network path, as the card sees it
 
@@ -205,38 +236,205 @@ parsed as Violet's frames (`7F`, then type + 3-byte length each, `FF`) and
 listed; frame 03's value (the poll interval) is logged, not yet honoured:
 10 s is phase 1's interval.
 
-## 6. What phase 2 needs
+## 6. What phase 2 did, what is left
 
-1. **Audio**: the OKI ML2870A path is read (IMPROVEMENTS.md section 3:
-   CCP1 PWM at 6 MHz on RC2, the init table, 0x35 rate, 0x29/0x33 start,
-   register 0x01 bursts of 64, FIFO status in 0x06), the emulator logs the
-   registers; a sound fetched over the poll's connection is written to the
-   serial flash page by page (the RX reader streams, the page buffer is
-   264 bytes), then played. The nibble order and the ADPCM table are still
-   to be settled on the real rabbit (IMPROVEMENTS.md #1): two test files.
-2. **A protocol with the Terrier**: keep `p3.jsp` so the Terrier needs
-   nothing new for the first firmware, and add our own answer frames (the
-   Terrier can tell `v=30`): a frame for "play sound N from URL", "ears to
-   L/R", "LEDs", "sleep until", "config: server, SSID, key", "update:
-   image at URL, HMAC", so that Violet's VM is not reimplemented. The
-   Terrier side is `nabv1.py` (private repo, read only here).
-3. **The loader** (section 4): Naboot-style, image in slot B over HTTP,
-   HMAC-SHA-256 with a per-rabbit key written at ICSP time, copied into
-   the PIC row by row, "complete" flag last, fallback to slot A. The
-   emulator's core already has `TBLWT` and the `EECON1` write path
-   (`../emulator/v1/board.c`).
-4. **WPA2** after the card is reflashed to station 1.7.4 (`../v1-icsp/
+Done in phase 2 (2026-11-24, `../emulator/tools/v1-loader-proof.sh`):
+
+- **The loader** (section 7): a permanent boot block at 0x0000-0x0FFF, two
+  image slots in the serial flash, HMAC-SHA-256 under a per-rabbit key,
+  the copy row by row with the PIC's self-write sequence, read-back, the
+  fallback to the other slot, the boot counter for an image that never
+  confirms itself. The application is linked from 0x1000.
+- **The update path in the application** (`src/app/update.c`): our frame
+  10 in the poll's answer, `GET /vl/v1/fw`, the image streamed into the
+  other slot a page at a time, the header page last, then `reset`.
+- **The OKI path** (`src/app/oki.c`, `../emulator/tools/v1-audio-proof.sh`):
+  Violet's boot table (22 register writes, measured on its bus log), its
+  start sequence (45, 35 rate, 29, 33), bursts of up to 64 bytes into
+  register 01 with 29 toggled around each, 33/29 to 0 at the end; an Audi
+  file played from the serial flash's sound region behind a directory
+  page. The data bytes reach the chip exactly as Violet's do (compared
+  byte for byte, 12 000 of them); `OKI_SWAP_NIBBLES` swaps them for the
+  test on the real rabbit.
+- **Size** (section 2): the log's decimal routine without the division
+  library, the flash address without 32-bit shifts, the configuration bits
+  out of the application; the loader measured.
+- The emulator learnt what the proofs needed (`../emulator/v1`): the
+  6525's 8-byte write blocks and 48 KB (`--pic 6525`), the write aimed at
+  TBLPTR as the datasheet says, a RESET instruction that resets, the data
+  EEPROM read path and its content from the hex, the PIC's flash kept
+  across runs (`--pic-flash`) so that a run cut short is a power cut.
+
+Left, in the order the Terrier's users would feel it:
+
+1. **Audio, the rest**: a sound fetched from the Terrier (frame 13,
+   section 8) into the sound region, as the image is; the volume
+   registers (0x63, 0x39) from a setting; the nibble order and the ADPCM
+   table on the real rabbit (IMPROVEMENTS.md #1): two builds, one with
+   `OKI_SWAP_NIBBLES`, the 440/880 Hz tone of `v1-audi.py`.
+2. **WPA2** after the card is reflashed to station 1.7.4 (`../v1-icsp/
    prism-fw.sh`): host-side CCMP and the 4-way handshake, PMK from the
    Terrier's page (computed off-rabbit), ~6 KB and 450 B of RAM per the
-   WPA2 study; the card must do the station firmware's part (1.7.x can
-   send raw 802.11 and receive with encryption off).
-5. **Configuration page and a serial console**: server, SSID, key, language
+   WPA2 study; the card must do the station firmware's part.
+3. **Configuration page and a serial console**: server, SSID, key, language
    written over J3 (and later from the Terrier), the two-copy page.
-6. **The poll interval from frame 03**, the ring log, button handling (a
-   click, a double click, a long press reported in `sd=` as Violet's did,
-   `nabv1.py parse_sd`).
+4. **The rest of the protocol** (section 8): ears, LEDs, sounds by frames
+   of our own; the poll interval from frame 03; the ring log; the button
+   (a click, a double click, a long press in `sd=`, `nabv1.py parse_sd`).
 
-## 7. Risks, and what the emulator could not establish
+## 7. The loader
+
+Naboot's question on the tag (`../docs/OTA-ANTIBRICK.md`) was "where can a
+second image live?": nowhere, so the window of a power cut stays open
+there. The v1 has a 1 MB serial flash next to a 48 KB PIC: the second image
+lives in it, and the PIC's own flash is only ever a *copy* of a slot whose
+HMAC was checked. Everything the loader does follows from that.
+
+### 7.1 Where things are
+
+| | |
+|---|---|
+| Loader | PIC flash 0x0000-0x0FFF, linked at 0 with the CONFIG words (`loader-18f6525.lkr`); the application is linked from 0x1000 (`app-18f6525.lkr`, `--ivt-loc=0x1000`). `make` gives both, `full.hex` for the PICkit and the emulator, `app-N.img` for the Terrier (`mkimage.py`) |
+| Key | 32 bytes in the PIC's data EEPROM at 0x000, programmed with the firmware over ICSP (`mkimage.py full` puts it at 0xF00000 in the hex). All 0xFF = no key: the application runs, no image is ever installed. The Terrier keeps the same key per rabbit and signs with it; the application never reads it |
+| Slot A, slot B | serial flash pages 16-207 and 208-399 (section 4.3): page 0 of a slot is its header, the image follows packed on 264-byte pages (528 on the 161). 44 KB of PIC18LF6525 image fits in 171 pages |
+| Slot header (64 B) | `struct app_hdr` (board.h): `NBV1`, format 1, board (0x25 = 6525, 0x27 = 6627), version, length (a multiple of 64), *pending* (1: install me) at 12; the HMAC at 16; `complete` = 0xA5 at 48, written last |
+| Application header | the same first 16 bytes at 0x1040 in the PIC, so that the loader can seed a slot from the PIC and `mkimage.py` can patch the length after the link |
+| State record (16 B) | pages 2 and 3, `struct lstate`: active slot, tries, flags (confirmed), skip_ver, a sequence number and a checksum: two copies, the newer valid one wins, a write goes to the other page. A write cut by the power loses one copy, never the record |
+| HMAC | HMAC-SHA-256(key, header[0..11] ‖ image). SHA-256 written for the PIC (`src/loader/sha256.c`: a 16-word schedule ring, byte-wise rotations, the watchdog cleared per block) |
+
+### 7.2 At power-on
+
+1. UART, SPI, the serial flash's density; the key from the EEPROM; the state.
+2. **A pending slot**: for the slot that is not active, if its header says
+   pending and complete, and its version is not `skip_ver`: check the
+   header (magic, format, board, length within 64..44 KB and a multiple of
+   64), then the HMAC over the whole slot. Good: copy it into the PIC
+   (7.3), read the PIC back against the slot, record it as active with
+   `tries` 0 and the confirmed flag off. Bad: record its version in
+   `skip_ver` so that the HMAC is not recomputed at every boot. One state
+   write either way.
+3. **The PIC must hold the active slot**: if there is no active slot yet
+   (first boot after ICSP) and there is a key and an application, the
+   application in the PIC is written to slot A with the HMAC the key gives
+   it ("seeded"), so that a fallback exists from the first update on.
+   Otherwise the PIC is compared byte for byte with the active slot; a
+   difference (a power cut during a copy, a corrupted row) means the copy
+   is done again, and if that slot cannot be installed (its header or HMAC
+   broken too), the other slot is installed instead.
+4. **The boot counter**: an image that has not confirmed itself gets
+   `LS_MAX_TRIES` (5) boots; the sixth falls back to the other slot and
+   records the version in `skip_ver`. The application confirms by writing
+   the state with the flag once the Terrier has answered a poll.
+5. `STKPTR = 0`, `goto 0x1000`. No application (0xFFFF at 0x1000): a log
+   line and a loop that feeds the watchdog.
+
+The loader writes PIC rows from 0x1000 up only, by construction; WRTB in
+CONFIG6H can protect 0x0000-0x07FF on the 6525 against the application on
+top (left off until the loader has run on the rabbit, as the firmware must
+stay readable and replaceable over ICSP; the 6627's BBSIZ can cover the
+whole 4 KB).
+
+### 7.3 The copy
+
+Per 64-byte row from the slot's byte stream: erase the row (TBLPTR at the
+row, EECON1 = EEPGD|FREE|WREN, 55h/AAh on EECON2, WR), then each write block
+(8 bytes on the 6525, DS39612 section 6.5; 64 on the 6627, DS39646): TBLPTR
+at block-1, `TBLWT+*` for each byte so that the pointer stays inside the
+block, EECON1 = EEPGD|WREN, 55h/AAh, WR; the watchdog cleared after every
+block, the CPU stalled by the part during the write (about 2 ms per block
+on the real chip: a 23 KB image is some 6 s of writes on the 6525, under a
+second on the 6627; the emulator's writes are instant). The slot's bytes
+come 64 at a time across page boundaries (`slot_seek`/`slot_next`).
+
+### 7.4 The application's side (`src/app/update.c`)
+
+The poll's answer may carry our frame 10 (section 8). A version above ours
+and not `skip_ver` is fetched as soon as the poll's connection is closed:
+`GET /vl/v1/fw?sn=<MAC>&v=<ours>&b=<board>`, same TCP client, the body sent
+to `update_byte()` instead of the frame parser. The first 64 bytes are the
+header (checked: magic, format, board, length); the target slot's header
+page is blanked, then the image bytes fill a page buffer written to the
+slot page by page; when `length` bytes are in and the server has closed,
+the header is written with *pending* = 1 and the complete mark, and the
+application executes `reset`. A download cut anywhere leaves a slot without
+a complete header, which the loader ignores, and the next poll offers the
+version again. The target is the slot the loader is not running from, so
+the running image is never overwritten by a download.
+
+### 7.5 What the emulator proved (`../emulator/tools/v1-loader-proof.sh`)
+
+Lazare's board in the emulator (`--pic 6525 --flash-chip 081`), the PIC's
+cycle count as the clock, the application 27 712 B (v30 to v33 differ by
+their version only, v33 by a loop that never feeds the watchdog):
+
+| Run | What happened | Measured |
+|---|---|---|
+| 1. first boot | no state, a key: slot A seeded from the PIC, then the application polls | HMAC + 105 page writes in 10.0 s; slot A's HMAC equals Python's `hmac` over the same 12 + 27 712 bytes (the C SHA-256 checked against the standard, `tools/sha256-host.c`); no PIC flash write |
+| 2. a good update | frame 10 offers v31 at 2.0 s; downloaded into B; reset; the loader checks, copies, reads back, runs v31; v31 polls and confirms | download 27 712 B in 1.39 s; HMAC check 9.9 s; 433 rows erased, 3 464 blocks of 8 written and read back in 0.81 s; v31's banner 11.1 s after the reset, its first poll answered 1.6 s later, the state confirmed |
+| 3. a bad signature | v32 signed with another key: downloaded, pending; the loader refuses it | "bad hmac" after 9.9 s, `skip_ver` = 32, v31 runs on, no PIC flash write; the application does not fetch v32 again although every poll offers it |
+| 4. twelve power cuts | the run cut at random points, a third each during the download, the HMAC check, the copy and the state write; then a restart | every restart ends on v31 polling: a cut before the header page is written leaves no pending slot and the next poll offers v31 again; a cut in the HMAC check or the copy finds the slot pending and installs it again (a half-written PIC is simply overwritten); a cut after the state write finds the PIC equal to B |
+| 5. a corrupt row | a byte of the application flipped in the PIC's flash | "PIC differs from B", B copied again, v31 polls |
+| 5. a corrupt slot | the same, and a byte of slot B's image flipped | B fails its HMAC; "fall back to A", A copied, v30 polls |
+| 6. a broken image | v33 never clears the watchdog | installed, then a watchdog reset every 512 ms; the loader counts five boots, "never confirmed", `skip_ver` = 33, falls back to A, v30 polls |
+
+Nothing was written to the PIC's flash in runs 1 and 3 (the emulator counts
+every erase and block write). The seed and each HMAC check cost about 10 s
+of the PIC's time for 27 KB (SDCC's 32-bit code: 150 000 cycles per
+64-byte block; a 44 KB image would take 16 s), the copy under a second
+here and an estimated 7 s on the part (DS39612's 2 ms per block).
+
+### 7.6 What it could not establish
+
+- **The 6525's write block.** DS39612 gives 8 holding latches and 8-byte
+  write blocks for the PIC18F6525/6621/8525/8621; the emulator models that
+  under `--pic 6525`. The first update on Lazare should be read back over
+  ICSP once, whole, and compared with the slot: that is the proof of the
+  sequence on the real part.
+- **Write time.** The part's ~2 ms per block and ~2 ms per row erase are
+  the datasheet's; the watchdog (512 ms) is cleared per block, with a
+  margin of two orders of magnitude, but the figure is not measured.
+- **Flash endurance.** 10 000 cycles per row on the PIC: one update is one
+  cycle per row; the serial flash takes 10 000 to 100 000 per page, the
+  state pages take one write per boot while an image is unconfirmed, and
+  one per update after that.
+- **A brown-out during a row write** leaves a row the part may have half
+  programmed; the read-back against the slot catches it at the next boot
+  (that is the "PIC differs" path), which the proof forces by corrupting a
+  row.
+- **Ed25519** was not attempted: a 255-bit field multiplication on an
+  8-bit core with no hardware multiply beyond 8x8 is tens of kilobytes of
+  code or minutes per signature in portable C; the key here is a shared
+  secret the Terrier holds per rabbit, which is what the adoption already
+  gives a tag's owner. The weakness is the one noted in section 9: anyone
+  with a PICkit on J2 reads the EEPROM, and can flash anything anyway.
+
+## 8. The protocol with the Terrier beyond the poll (design)
+
+The Terrier keeps answering `p3.jsp` as it does for Violet's firmware
+(`nabv1.py`): `7F`, frames `<type><len:3>`, `FF 0A`. It can tell this
+firmware by `v=` (30 and above, `fw_at_least`) and append frames of our
+own, which Violet's firmware would never see. The application ignores
+types it does not know (it already skips them by length), so the Terrier
+may add frames freely. Frames 03 (poll interval) and 04/05/06 keep their
+meaning; ours start at 0x10:
+
+| Frame | Body | What the rabbit does |
+|---|---|---|
+| 10 update | version (2, big-endian) | fetches `/vl/v1/fw` when newer than its own and not refused before (7.4). **Implemented.** The Terrier must serve `GET /vl/v1/fw?sn=&v=&b=` with the `app-N.img` made by `mkimage.py image --key <this rabbit's key>` for the board `b=` asks (0x25 or 0x27), `Content-Length` set, and keep one key per rabbit (32 bytes, generated at ICSP time with the owner, entered on the rabbit's page). The Terrier side is the private repository and is not changed here |
+| 11 ears | left, right (2 x 1 byte, 0-16 holes from the top) | moves one ear then the other, as `ears.c` does; reports the position with the next poll in `sd=` as Violet's program did (`parse_sd`) |
+| 12 leds | 5 LEDs x 1 byte (bits: R, G, B), a duration (1) | sets the TLC5922; the diagnostic LEDs (section 3) resume after the duration |
+| 13 sound | index (1), length (3) | `GET /vl/v1/snd?sn=&i=` into the sound region (pages 976+), then plays it through the OKI (section 6, left); the directory page at the region's start |
+| 14 sleep | until (2: minutes) | stops polling for that long, LEDs off, the night |
+| 15 config | server name, SSID, key, language, flags (TLV) | written to the configuration page (both copies); takes effect at the next boot |
+| 16 confirm | none | the Terrier saw this version: the application confirms the loader's state now instead of at the first answered poll (optional; the first poll already does it) |
+
+The request keeps Violet's shape (`sn`, `v`, `st`, `tc`, `sd`) so that the
+Terrier's existing parsing, adoption and rate limit apply unchanged; `b=`
+(the board) is only on `/vl/v1/fw`. Nothing of this needs the Terrier for
+the loader's proofs: `../emulator/tools/v1_native_warren.py --offer N
+--image FILE` plays its part.
+
+## 9. Risks, and what the emulator could not establish
 
 - **The card's other pins.** The emulator models the bus (PORTE, PORTD,
   RF5-7, RG4) and the COR write and nothing else: the card's reset line,

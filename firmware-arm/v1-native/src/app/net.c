@@ -18,6 +18,9 @@
 
 #define SERVER_NAME     "p.nabaztag.com"
 #define POLL_PATH       "/vl/FR/p3.jsp?sn="
+#define FW_PATH         "/vl/v1/fw?sn="          /* ours: the image for this board (DESIGN.md 8) */
+#define REQ_POLL        1
+#define REQ_IMAGE       2
 #define POLL_INTERVAL   MS_TO_TICKS(10000)
 #define RETRY           MS_TO_TICKS(3000)
 #define TX_SIZE         340
@@ -339,6 +342,9 @@ static struct {
   uint32_t flen;
   uint8_t  line[24];
   uint8_t  linelen;
+  uint8_t  kind;                                    /* REQ_POLL or REQ_IMAGE */
+  uint8_t  ok;                                      /* the status line said 2xx */
+  uint16_t word;                                    /* frame 10's two bytes */
 } t;
 
 static void tcp_send(uint8_t flags, uint8_t with_request)
@@ -351,10 +357,10 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
   if(flags & TCP_SYN) { put8(2); put8(4); put16(1400); }   /* MSS */
   if(with_request) {
     uint8_t i;
-    puts_code("GET " POLL_PATH);
+    puts_code(t.kind == REQ_IMAGE ? "GET " FW_PATH : "GET " POLL_PATH);
     for(i = 0; i < 6; i++) put_hex_upper(our_mac[i]);
-    puts_code("&v=" FW_VERSION "&st=00&tc=00000000 HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: "
-              SERVER_NAME "\r\n\r\n");
+    puts_code(t.kind == REQ_IMAGE ? "&v=" FW_VERSION "&b=" STR(BOARD_ID) : "&v=" FW_VERSION "&st=00&tc=00000000");
+    puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: " SERVER_NAME "\r\n\r\n");
     t.unacked = txp - tp_at - 20;
   }
   ip_send(16);
@@ -365,10 +371,13 @@ static void tcp_close(const __code char *why)
   t.st = T_CLOSED;
   log_s("http: "); log_line(why);
   timer = ticks();
+  if(t.kind == REQ_IMAGE) update_end(0);
 }
 
-static void http_open(void)
+static void http_open(uint8_t kind)
 {
+  t.kind = kind; t.ok = 0;
+  if(kind == REQ_IMAGE) update_begin();
   t.lport = 0x1000 | (ticks() & 0x0FFF);
   t.snd_nxt = ((uint32_t)ticks() << 16) | (uint16_t)(our_mac[5] << 8) | our_mac[4];
   t.unacked = 0; t.body = 0; t.http = 0; t.crlf = 0; t.frame = 0; t.linelen = 0;
@@ -388,6 +397,7 @@ static void http_byte(uint8_t c)
       log_s("http: ");
       for(i = 0; i < t.linelen; i++) uart_putc((char)t.line[i]);
       log_nl();
+      t.ok = t.linelen > 9 && t.line[9] == '2';
       t.http = 1; t.crlf = 2;
     } else if(c != '\r' && t.linelen < sizeof(t.line)) t.line[t.linelen++] = c;
     return;
@@ -399,10 +409,11 @@ static void http_byte(uint8_t c)
     return;
   }
   t.body++;
+  if(t.kind == REQ_IMAGE) { if(t.ok) update_byte(c); return; }
   switch(t.frame) {
     case 0:
       if(c == 0x7F) { log_line("answer: 7F"); t.frame = 1; }
-      else { log_s("answer: not 7F but "); log_hex8(c); log_nl(); t.frame = 6; }
+      else { log_s("answer: "); log_hex8(c); log_nl(); t.frame = 6; }
       break;
     case 1:
       if(c == 0xFF) { log_line("answer: FF end"); t.frame = 6; break; }
@@ -416,7 +427,11 @@ static void http_byte(uint8_t c)
       }
       break;
     case 5:
-      if(t.ftype == 3 && t.flen == 1) { log_s("frame 03: poll interval "); log_dec(c); log_nl(); }
+      if(t.ftype == 3 && t.flen == 1) { log_s("poll interval "); log_dec(c); log_nl(); }
+      if(t.ftype == 0x10) {                         /* ours: the image version the Terrier holds */
+        if(t.flen == 2) t.word = (uint16_t)c << 8;
+        else if(t.flen == 1) update_offer(t.word | c);
+      }
       if(--t.flen == 0) t.frame = 1;
       break;
     default: break;
@@ -458,8 +473,11 @@ static void tcp_rx(uint16_t len)
     t.snd_nxt++;
     t.st = T_FIN_WAIT;
     tries = 0;
-    polls_answered++;
-    log_s("poll "); log_dec(polls_answered); log_s(" done, body "); log_dec(t.body); log_line(" B");
+    if(t.kind == REQ_IMAGE) update_end(1);
+    else {
+      polls_answered++;
+      log_s("poll "); log_dec(polls_answered); log_s(" done, "); log_dec(t.body); log_line(" B");
+    }
   } else if(len > hl) tcp_send(TCP_ACK, 0);
 }
 
@@ -533,7 +551,7 @@ void net_poll(void)
   switch(state) {
     case NET_DHCP:
       if(age >= RETRY) {
-        if(++tries > 20) { log_line("dhcp: giving up, link reset"); state = NET_DOWN; prism_join(SSID); return; }
+        if(++tries > 20) { log_line("dhcp: give up"); state = NET_DOWN; prism_join(SSID); return; }
         log_line("dhcp: discover");
         dhcp_send(1, 0, 0);
         timer = ticks();
@@ -542,7 +560,7 @@ void net_poll(void)
     case NET_DNS:
       if(age >= RETRY) {
         if(!have_hop) { arp_send(1, bcast_mac, hop_ip, bcast_mac); timer = ticks() - RETRY + MS_TO_TICKS(500); return; }
-        if(++tries > 20) { log_line("dns: no answer, back to dhcp"); state = NET_DOWN; return; }
+        if(++tries > 20) { log_line("dns: none, dhcp again"); state = NET_DOWN; return; }
         log_line("dns: query");
         dns_send();
         timer = ticks();
@@ -550,15 +568,20 @@ void net_poll(void)
       break;
     case NET_READY:
       if(t.st == T_CLOSED) {
+        if(update_wanted() && have_hop) {           /* the image, right after the poll that offered it */
+          log_line("http: image");
+          http_open(REQ_IMAGE);
+          return;
+        }
         if(age < POLL_INTERVAL) return;
         if(!have_hop) { arp_send(1, bcast_mac, hop_ip, bcast_mac); timer = ticks() - POLL_INTERVAL + MS_TO_TICKS(500); return; }
         if(++tries > 3) {                           /* the server is not there: ask the name again */
-          log_line("http: three failures, resolving again");
+          log_line("http: resolve again");
           state = NET_DNS; tries = 0; copy4(hop_ip, dns_ip); have_hop = 0; timer = ticks() - RETRY;
           return;
         }
         log_s("http: connect "); log_ip(server_ip); log_nl();
-        http_open();
+        http_open(REQ_POLL);
       } else if(t.st == T_SYN_SENT) {
         if(age >= RETRY) { t.snd_nxt--; tcp_send(TCP_SYN, 0); t.snd_nxt++; timer = ticks(); log_line("http: syn again"); }
       } else if(t.st == T_OPEN) {

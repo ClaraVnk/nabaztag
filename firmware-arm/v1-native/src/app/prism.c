@@ -209,7 +209,7 @@ uint8_t prism_init(void)
     log_s("card: station fw "); log_dec(w[2]); uart_putc('.'); log_dec(w[3]);
     uart_putc('.'); log_dec(w[1]); log_nl();
   }
-  if(cmd(CMD_ALLOC, TX_BUF_BYTES) || wait_event(EV_ALLOC)) { log_line("card: no tx buffer"); return 3; }
+  if(cmd(CMD_ALLOC, TX_BUF_BYTES) || wait_event(EV_ALLOC)) { log_line("card: no txbuf"); return 3; }
   txfid = rd16(R_ALLOCFID);
   wr16(R_EVACK, EV_ALLOC);
   return 0;
@@ -326,5 +326,5 @@ void prism_tx(__data const uint8_t *frame, uint16_t len)
   for(n = 0; n + 1 < len; n += 2) bap_wr(0, (uint16_t)frame[n] | ((uint16_t)frame[n + 1] << 8));
   if(n < len) bap_wr(0, frame[n]);
   if(cmd(CMD_TX_RECLAIM, txfid)) { log_line("card: tx cmd"); return; }
-  if(wait_event(EV_TX | EV_TXEXC)) log_line("card: tx never completed");
+  if(wait_event(EV_TX | EV_TXEXC)) log_line("card: tx lost");
 }

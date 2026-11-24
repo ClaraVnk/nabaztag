@@ -1,0 +1,31 @@
+// Linker script for the application on a PIC18F6627 (the 2.0b board, 96 KB): from 0x3000, behind
+// the loader (loader-18f6627.lkr); gputils' 18f6627_g.lkr with banks 2-5
+// merged into one 1 KB bank, so that the frame buffer (net.c, 340 bytes) and
+// the update's page buffer (528) can be one array; a PIC18 bank is 256 bytes
+// and gplink places an object only inside one bank. 0xF00-0xF5F (the last
+// 96 bytes of RAM) are left for a later need.
+LIBPATH .
+
+CODEPAGE   NAME=boot       START=0x0               END=0x2FFF         PROTECTED
+CODEPAGE   NAME=page       START=0x3000            END=0x17FFF
+CODEPAGE   NAME=idlocs     START=0x300000          END=0x200007       PROTECTED
+CODEPAGE   NAME=config     START=0x300000          END=0x30000D       PROTECTED
+CODEPAGE   NAME=devid      START=0x3FFFFE          END=0x3FFFFF       PROTECTED
+CODEPAGE   NAME=eedata     START=0xF00000          END=0xF003FF       PROTECTED
+
+ACCESSBANK NAME=accessram  START=0x0               END=0x5F
+ACCESSBANK NAME=accesssfr  START=0xF60             END=0x2FFF         PROTECTED
+DATABANK   NAME=gpr0       START=0x60              END=0xFF
+DATABANK   NAME=gpr1       START=0x100             END=0x1FF
+DATABANK   NAME=big        START=0x200             END=0x5FF
+DATABANK   NAME=gpr6       START=0x600             END=0x6FF
+DATABANK   NAME=gpr7       START=0x700             END=0x7FF
+DATABANK   NAME=gpr8       START=0x800             END=0x8FF
+DATABANK   NAME=gpr9       START=0x900             END=0x9FF
+DATABANK   NAME=gpr10      START=0xA00             END=0xAFF
+DATABANK   NAME=gpr11      START=0xB00             END=0xBFF
+DATABANK   NAME=gpr12      START=0xC00             END=0xCFF
+DATABANK   NAME=gpr13      START=0xD00             END=0xDFF
+DATABANK   NAME=gpr14      START=0xE00             END=0xEFF
+
+SECTION    NAME=CONFIG     ROM=config

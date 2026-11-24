@@ -79,6 +79,20 @@ struct pic18 {
    * prove end to end that a loader WOULD need these (v1-icsp/VM-ESCAPE.md). */
   uint8_t  flash_latch[64];
   uint32_t flash_row;                /* 64-byte-aligned target of the latches */
+  /* The data EEPROM's initial content, from the hex's 0xF00000 records (what
+   * a PICkit programs at ICSP time: the v1 loader's per-rabbit key); the
+   * board keeps the live copy. */
+  uint8_t  eeprom[1024];
+  /* The RESET instruction (0x00FF) asks for a reset instead of halting the
+   * core (2026-11-24, the v1 loader: the application reboots into it after
+   * writing an image); the board performs it and counts them. */
+  int      reset_req;
+  unsigned resets;
+  /* The part's flash geometry: a PIC18F6627 (DS39646) writes 64-byte blocks
+   * from 64 holding latches; a PIC18F6525 (DS39612) has 8 latches and writes
+   * 8-byte blocks, 48 KB in all. --pic 6525 sets both. */
+  unsigned write_block;
+  uint32_t flash_end;
   /* vm-audit (VM-ESCAPE.md): the destination of every indirect byte store
    * (MOVFF through an FSR) made from a PC inside the VM-interpreter band, to
    * measure that the downloaded program's writes stay in its arena. */

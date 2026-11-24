@@ -153,6 +153,7 @@ static uint8_t flash_byte(uint8_t in)
 static int oki_on, oki_n;
 static uint8_t oki_reg, oki_first;
 static unsigned long oki_bytes;
+static char oki_hex[2 * 64 + 1];       /* the burst's bytes, for --trace-oki */
 
 /* One chip select = one register, then its bytes: a register write is two
  * bytes, the ADPCM data (register 01, the FIFO) and the MIDI score (03) are a
@@ -163,14 +164,16 @@ static uint8_t oki_byte(uint8_t in)
 {
   if(oki_n++ == 0) { oki_reg = in; return 0; }
   if(oki_n == 2) oki_first = in;
+  if(oki_n <= 65) snprintf(oki_hex + 2 * (oki_n - 2), 3, "%02X", in);
   oki_bytes++;
   return 0;
 }
 
 static void oki_release(void)
 {
-  if(!B.trace_bus || oki_n < 2) return;
+  if(!(B.trace_bus || B.trace_oki) || oki_n < 2) return;
   if(oki_n == 2) board_log("oki: reg %02X <- %02X", oki_reg, oki_first);
+  else if(B.trace_oki) board_log("oki: reg %02X <- %d bytes %s", oki_reg, oki_n - 1, oki_hex);
   else board_log("oki: reg %02X <- %d bytes (%02X ...)", oki_reg, oki_n - 1, oki_first);
 }
 
