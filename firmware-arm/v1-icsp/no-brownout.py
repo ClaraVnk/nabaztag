@@ -24,7 +24,7 @@ def records(path):
             yield line, None, None
             continue
         b = bytes.fromhex(line[1:])
-        n, addr, kind = b[0], (b[1] << 8) | b[2], b[3]
+        addr, kind = (b[1] << 8) | b[2], b[3]
         if kind == 4:
             base = ((b[4] << 8) | b[5]) << 16
         yield line, (base + addr if kind == 0 else None), b
