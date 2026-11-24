@@ -1319,11 +1319,11 @@ Deco that declines its authentication, status 37: `a4 r3/25`). Mode
 "orange after a restart" rabbits and the Nabazprout proposal:
 `firmware-arm/docs/WARM-REBOOT-FREEZE.md`.
 
-From the repository root, builds on the dev VM (one heavy job at a time):
+From the repository root, builds on the dev VM (one heavy job at a time; the lock's path is the VM's own, absolute: `$HOME` would be read on the Mac):
 
 ```sh
-REMOTE_LOCK="-o $HOME/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.4 --remote <dev-vm> --runtime podman   # control
-REMOTE_LOCK="-o $HOME/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.5 --remote <dev-vm> --runtime podman
+REMOTE_LOCK="-o /home/<you>/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.4 --remote <dev-vm> --runtime podman   # control
+REMOTE_LOCK="-o /home/<you>/heavy.lock" firmware-arm/build.sh --mode naboot-1.2.1.5 --remote <dev-vm> --runtime podman
 # on the dev VM, repository copied there, both bin/naboot-1.2.1.{4,5}/Nab.{elf,bin} beside:
 flock -o ~/heavy.lock podman build -f firmware-arm/emulator/Containerfile -t emu-1215 \
   --build-arg MOD_STEPS=$(python3 firmware-arm/emulator/tools/emu-steps.py naboot-1.2.1.5) .
