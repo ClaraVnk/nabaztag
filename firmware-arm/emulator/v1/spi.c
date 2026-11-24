@@ -151,15 +151,27 @@ static uint8_t flash_byte(uint8_t in)
 /* --- OKI ML2870A: register pairs, and a FIFO of ADPCM -------------------- */
 
 static int oki_on, oki_n;
-static uint8_t oki_reg;
+static uint8_t oki_reg, oki_first;
 static unsigned long oki_bytes;
 
+/* One chip select = one register, then its bytes: a register write is two
+ * bytes, the ADPCM data (register 01, the FIFO) and the MIDI score (03) are a
+ * register byte followed by a burst of 64 (2.0b 0x28FE / 1.4b 0x21EC). Logged
+ * by burst, not by pair, since 2026-11-24: pairing turned a burst into
+ * fictitious register writes. */
 static uint8_t oki_byte(uint8_t in)
 {
-  if(oki_n++ % 2 == 0) { oki_reg = in; return 0; }
-  if(B.trace_bus) board_log("oki: reg %02X <- %02X", oki_reg, in);
+  if(oki_n++ == 0) { oki_reg = in; return 0; }
+  if(oki_n == 2) oki_first = in;
   oki_bytes++;
   return 0;
+}
+
+static void oki_release(void)
+{
+  if(!B.trace_bus || oki_n < 2) return;
+  if(oki_n == 2) board_log("oki: reg %02X <- %02X", oki_reg, oki_first);
+  else board_log("oki: reg %02X <- %d bytes (%02X ...)", oki_reg, oki_n - 1, oki_first);
 }
 
 /* --- TLC5922: 16 outputs, a shift register, XLAT ------------------------- */
@@ -205,7 +217,7 @@ void spi_select(void)
   if(f && !sel_flash) flash_begin();
   if(!f && sel_flash) flash_end();
   if(o && !sel_oki) oki_n = 0;
-  if(o != sel_oki && B.trace_bus) board_log("oki: %s", o ? "selected" : "released");
+  if(!o && sel_oki) oki_release();
   sel_flash = f;
   sel_oki = o;
   oki_on = o;
