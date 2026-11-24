@@ -533,11 +533,20 @@ ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F/tmp/probe.hex     # write, verify
 # release the PICkit (unplug its USB), let the rabbit boot ~30 s, then:
 ./read.sh /tmp/after.hex PIC18LF6525
 ./wifi-probe.py --read /tmp/after.hex                # station firmware X.Y.Z
+ipecmd.sh -P18LF6525 -TPPK3 -E                       # erase all: -M leaves the EEPROM bytes
 ipecmd.sh -P18LF6525 -TPPK3 -M -Y -Fdumps/violet-v1-1.4b.hex   # the original back, verified
 ```
 
-The original goes back with the full erase of `-M`, EEPROM included (it was
-blank as read), and `-Y` checks every byte written.
+`-M` alone skipped the EEPROM's FF bytes and its verify failed on the
+probe's (2026-11-24): erase first, then the original reads back identical,
+EEPROM included.
+
+**Result on Lazare (2026-11-24): station firmware 1.4.2** (EEPROM `05 20 1F
+02 01 04`, component 0x1F). Host-side WPA2 needs 1.7.0 or later: not with
+this card's firmware, whatever the PIC. The one way left would load a newer
+station firmware into the card's RAM at every boot (Intersil's, not free,
+about 64 KB from the serial flash): not pursued. Lazare runs its original
+firmware again (read back, 0 bytes differ).
 
 What could be improved in the v1's firmware, 1.4b and 2.0b, with the
 evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
