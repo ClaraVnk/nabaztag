@@ -16,7 +16,7 @@ what could not be established is said so. Ranked by what Terrier OS 1.0.0
 
 `usb-bus-power-rabbitv3.patch` lets every configuration through whatever
 its current. The 2.6.32 kernel has **the same rule** (its
-`drivers/usb/core/generic.c:100`, `bMaxPower * 2 > udev->bus_mA`) and the
+drivers/usb/core/generic.c:100, `bMaxPower * 2 > udev->bus_mA`) and the
 same budget for a bus-powered hub (`hub.c:1102-1114`, 100 mA a port), and
 under it the rt73 and the key behind the TI TUSB2046 hub (0451:2046) were
 never refused. Gengar's 2.6.32 dmesg (measure of 2026-11-23, lines
@@ -80,7 +80,7 @@ right.
 
 What differs is the **animation**. The Terrier client never asks for a
 static yellow: e-mail is `leds?color=FFFF00&pulse=1&color2=000000&speed=600`
-(`terrier/karotz/src/rabbit.c:145`, `ok.c:96`), which LapinLibre turns into
+(terrier/karotz/src/rabbit.c:145, `ok.c:96`), which LapinLibre turns into
 led-daemon's `pulse(id, FFFF00, 000000, 600, -1)` (`web.sh:814`), and
 led-daemon steps its pulses and fades with a **30 ms glib timeout**
 (`g_timeout_add_full(..., 30, ...)` at 0x1a3c and 0x1cfc). Under 6.1 that
