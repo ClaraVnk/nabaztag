@@ -13,12 +13,12 @@ boot takes it away, so the question is what remains then.
 
 ## 1. What the bootloader does
 
-Source: `measure/mtd0.bin` from Gengar's measure key (2026-11-23,
+Source: measure/mtd0.bin from Gengar's measure key (2026-11-23,
 `karotz/measure-key`), 256 KiB, the "bootloader" partition. Strings and a
 disassembly (`arm-none-eabi-objdump -D -b binary -marm
 --adjust-vma=0x33f80000`); the base 0x33f80000 is where its literal pool
 points, and where QEMU's mini2440 copies the first 256 KiB of a NAND and
-jumps when it boots from NAND (`hw/mini2440.c:271-279` of the fork pinned in
+jumps when it boots from NAND (hw/mini2440.c:271-279 of the fork pinned in
 `qemu-mini2440/Containerfile`). The banner reads "Rabbit V3 - (BIOS v1.16)
 PRAGMATEC/Point Core" (offset 0xb3f8). oneearedrabbit's root guide
 (github.com/oneearedrabbit/karotz, "Hardware root") has a serial capture of
@@ -102,11 +102,11 @@ measure README warns about ("a held head at power-on is the factory
 reset"), now read in the code. It does not depend on mtd1 or mtd2.
 
 "Locked" is not enforced. LapinLibre's documentation calls mtd0, mtd3 and
-mtd4 locked (`docs/system.md`, the partition table). The board file masks
+mtd4 locked (docs/system.md, the partition table). The board file masks
 `MTD_POWERUP_LOCK` on them (LapinLibre
-`kernel/src/arch/arm/mach-s3c2440/mach-rabbitv3.c:157,173,179`, ours
-`rabbitv3/mach-rabbitv3.c:127,143,149`), which is 0x2000 "always locked
-after reset", not `MTD_WRITEABLE` 0x400 (`include/mtd/mtd-abi.h:41,44` of
+kernel/src/arch/arm/mach-s3c2440/mach-rabbitv3.c:157,173,179, ours
+rabbitv3/mach-rabbitv3.c:127,143,149), which is 0x2000 "always locked
+after reset", not `MTD_WRITEABLE` 0x400 (include/mtd/mtd-abi.h:41,44 of
 2.6.32). Root can write `/dev/mtd0`, `/dev/mtd3` and `/dev/mtd4` on both
 kernels. Nothing in this plan writes them; a write to mtd0 would leave only
 JTAG.
@@ -142,7 +142,7 @@ read from the code only.
 
 J1 (2x4) is on the board; its pinout is not known. OpenOCD has the ARM920T
 target and an `s3c2440` NAND driver (`src/flash/nand/s3c2440.c`,
-`tcl/board/mini2440.cfg`), and our station bit-bangs JTAG from a Raspberry
+tcl/board/mini2440.cfg), and our station bit-bangs JTAG from a Raspberry
 Pi (`firmware-arm/jtag/`, linuxgpiod). Reports on the driver are mixed
 (a U-Boot written in 853 s on one board; "very experimental", erase errors
 and dropped links on others). It is the way back if the bootloader itself
@@ -198,7 +198,7 @@ with its RUNBOOK entry, in the same PR as its proof.
 Two tools, both without a flash write:
 
 - **The bootloader in QEMU.** `mini2440` boots from NAND when no `-kernel`
-  is given (`hw/mini2440.c:271-284`: the first 256 KiB to 0x33f80000). With
+  is given (hw/mini2440.c:271-284: the first 256 KiB to 0x33f80000). With
   Gengar's NAND image from `karotz-flash.py`, the serial console must show
   the banner, the forty dots, "Load Kernel...", then Linux: the whole chain
   as the rabbit runs it, the BIOS included. QEMU's loader reads 512-byte
@@ -282,7 +282,7 @@ with `/usr/etc/conf` copied to the key first.
 
 ## 5. Sources
 
-- Gengar's measure, 2026-11-23: `measure/log.txt` (`/proc/mtd`,
+- Gengar's measure, 2026-11-23: measure/log.txt (`/proc/mtd`,
   `/proc/cmdline`), `dmesg.txt`, `mtd0.bin` to `mtd7.bin`, `mtd5-raw.bin`,
   `mtd6-raw.bin`, `oobdump-mtd5.txt`, `oobdump-mtd6.txt`; the earlier
   measure of the same rabbit for the comparison of mtd3 and mtd4.
@@ -292,13 +292,13 @@ with `/usr/etc/conf` copied to the key first.
   0x3f800.
 - github.com/oneearedrabbit/karotz, README "Hardware root": the serial
   capture (banner, dots, menu, parameters).
-- sweetlilmre/LapinLibre: `docs/system.md` (partition table, the boot),
-  `kernel/src/arch/arm/mach-s3c2440/mach-rabbitv3.c`,
-  `drivers/char/rabbit_button.c`, `rabbit_poweron.c`, the key's `autorun`
+- sweetlilmre/LapinLibre: docs/system.md (partition table, the boot),
+  kernel/src/arch/arm/mach-s3c2440/mach-rabbitv3.c,
+  drivers/char/rabbit_button.c, `rabbit_poweron.c`, the key's `autorun`
   and `install-lib.sh`, `image/core/rootfs/linuxrc`.
 - rofra/karotz-openkarotz-firmware `firmware/linuxrc` (the factory boot).
-- ywandy/qemu-mini2440 `hw/mini2440.c` (NAND boot).
-- OpenOCD `src/flash/nand/s3c2440.c`, `tcl/board/mini2440.cfg`; user
+- ywandy/qemu-mini2440 hw/mini2440.c (NAND boot).
+- OpenOCD `src/flash/nand/s3c2440.c`, tcl/board/mini2440.cfg; user
   reports on the sparkfun forum and the openocd-development list.
 - This repository: `docs/RUNBOOK.md` ("Linux 6.1 for the Karotz", "Terrier
   OS on Linux 6.1, from the key"), `karotz/kexec/`, `karotz/kernel/`,
