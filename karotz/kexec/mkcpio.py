@@ -53,9 +53,20 @@ for sub in subs:
             r = os.path.relpath(p, tree)
             if os.path.islink(p):
                 ent(r, stat.S_IFLNK | 0o777, os.readlink(p).encode())
-            else:
-                mode = (os.stat(p).st_mode & 0o777) if whole else 0o755
-                ent(r, stat.S_IFREG | mode, open(p, "rb").read())
+                continue
+            st = os.stat(p)
+            # A device node, a FIFO or a socket in the tree (a ramdisk's /dev
+            # unpacked as root): copied as what it is. Read as a file, a FIFO
+            # or /dev/zero never ends and a tty blocks (test-mkcpio.sh).
+            if stat.S_ISCHR(st.st_mode) or stat.S_ISBLK(st.st_mode):
+                ent(r, stat.S_IFMT(st.st_mode) | (st.st_mode & 0o777),
+                    rdev=(os.major(st.st_rdev), os.minor(st.st_rdev)))
+                continue
+            if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
+                ent(r, stat.S_IFMT(st.st_mode) | (st.st_mode & 0o777))
+                continue
+            mode = (st.st_mode & 0o777) if whole else 0o755
+            ent(r, stat.S_IFREG | mode, open(p, "rb").read())
 ent("init", stat.S_IFREG | 0o755, open(init, "rb").read())
 for spec in sys.argv[4:]:
     name, path = spec.split("=", 1)
