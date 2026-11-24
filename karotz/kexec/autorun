@@ -30,7 +30,12 @@ case "$(uname -r)" in
         echo "== leds"; wget -q -O- "http://127.0.0.1/cgi-bin/leds?color=00FF00&pulse=0&nomemory=1" 2>&1
         echo; echo "== audio"; head -c 8000 /dev/urandom > /dev/audio; echo "rc=$?"
         echo "== dsp"; head -c 16000 /dev/urandom > /dev/dsp; echo "rc=$?"
-        dmesg | grep -iE "spi|oss|audio|uda|snd|iis" | tail -20; } > $D/devtest.txt 2>&1; sync ) &
+        dmesg | grep -iE "spi|oss|audio|uda|snd|iis" | tail -20
+        # The GPIO registers under 6.1, against gpio-2632.txt (the same read
+        # under 2.6.32 before the jump): the LEDs and the sound work there.
+        a=$((0x56000000)); while [ $a -le $((0x560000DC)) ]; do
+            printf '%08X %s\n' $a "$(devmem $a 32 2>&1)"; a=$((a + 4)); done > $D/gpio-61.txt
+      } > $D/devtest.txt 2>&1; sync ) &
     ( for i in $(seq 1 40); do
         sleep 30
         { date; uptime; echo; ps; echo; ifconfig -a; iwconfig 2> /dev/null; echo; cat /proc/mounts
@@ -91,6 +96,8 @@ mkdir -p $K/kexec/log
 D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32-to-$NAME
 mkdir -p $D
 { date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
+a=$((0x56000000)); while [ $a -le $((0x560000DC)) ]; do
+    printf '%08X %s\n' $a "$(devmem $a 32 2>&1)"; a=$((a + 4)); done > $D/gpio-2632.txt
 # kexec/append.txt, when there: more of the command line, one try at a time
 # (initcall_blacklist=... to find the driver 6.1 stops in, 2026-11-23).
 EXTRA=$(cat $K/kexec/append.txt 2> /dev/null | tr -d '\r\n')
