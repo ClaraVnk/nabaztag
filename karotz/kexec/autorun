@@ -20,6 +20,17 @@ case "$(uname -r)" in
     mkdir -p $D
     { date; cat /proc/cmdline; cat /proc/mounts; ls -la /etc/; } > $D/state-0.txt 2>&1
     dmesg > $D/dmesg.txt 2>&1; sync
+    # At 60 s, the LED and the sound by hand (2026-11-24: under 6.1 the
+    # Terrier's orders reached the daemons, the belly stayed red and nothing
+    # played): the devices the daemons open, a green LED through the local
+    # API (led-daemon: /dev/spidev0.1), a second of noise on /dev/audio
+    # (multimedia-daemon).
+    ( sleep 60
+      { date; ls -l /dev/spidev* /dev/audio* /dev/dsp* /dev/mixer* /dev/snd 2>&1
+        echo "== leds"; wget -q -O- "http://127.0.0.1/cgi-bin/leds?color=00FF00&pulse=0&nomemory=1" 2>&1
+        echo; echo "== audio"; head -c 8000 /dev/urandom > /dev/audio; echo "rc=$?"
+        echo "== dsp"; head -c 16000 /dev/urandom > /dev/dsp; echo "rc=$?"
+        dmesg | grep -iE "spi|oss|audio|uda|snd|iis" | tail -20; } > $D/devtest.txt 2>&1; sync ) &
     ( for i in $(seq 1 40); do
         sleep 30
         { date; uptime; echo; ps; echo; ifconfig -a; iwconfig 2> /dev/null; echo; cat /proc/mounts
