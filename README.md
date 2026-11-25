@@ -258,9 +258,9 @@ was built on and is tested on, every day, on real hardware.
   - **Our own firmware** (`firmware-arm/v1-native/`, in C for its PIC18):
     written once with a PICkit over ICSP, the rabbit opened
     (`firmware-arm/v1-icsp/`). Since 25 November 2026 a real v1 (Lazare)
-    polls the Terrier on it. It moves its ears, lights its LEDs, plays the
-    Terrier's sounds, sleeps, reports the head button and ears turned by
-    hand, and takes its Wi-Fi network and server from the Terrier. A
+    polls the Terrier on it. The ears, the LEDs, the Terrier's sounds, sleep,
+    the head button, ears turned by hand, and its Wi-Fi network and server
+    set from the Terrier are proven in the emulator, on Lazare next. A
     Raspberry Pi station that writes and sets it up without a PICkit is
     next, then WPA2.
 
