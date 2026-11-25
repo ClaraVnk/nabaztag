@@ -1,0 +1,37 @@
+--- a/Nabaztag_wait.vasm
++++ b/Nabaztag_wait.vasm
+@@ -1176,7 +1176,25 @@
+ 	ld	rcount1,0
+ 	ld	rcmax1,0
+ 	ld	rflag,0
++	sec	r0,r13	; Terrier 2026-11-24: an ear that does not turn (Lazare's
++	add	r13,40	; right one) kept this turn going for ever; 40 s, then 0
+ @m0t0	wait	1
++	sec	r0,r1
++	cmp	r1,r13
++	bne	@m0t0a
++	bsr	@motorstop
++	ld	r0,rflag
++	and	r0,1
++	bne	@m0t0b
++	ld	rstart0,rpmax0	; start + 17 - pmax - 2 = 0 for an unfinished ear
++	sub	rstart0,15
++@m0t0b	ld	r0,rflag
++	and	r0,2
++	bne	@motor2x
++	ld	rstart1,rpmax1
++	sub	rstart1,15
++	bra	@motor2x
++@m0t0a
+ 	ld	r0,rflag
+ 	and	r0,1
+ 	bne	@motor1
+@@ -1237,6 +1255,8 @@
+ 	cmp	rflag,r0
+ 	bne	@m0t0
+ 	
++; Terrier 2026-11-24: also from the 40 s deadline
++@motor2x
+ 	add	rstart0,_holes_
+ 	sub	rstart0,rpmax0
+ 	sub	rstart0,2

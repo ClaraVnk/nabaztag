@@ -442,7 +442,26 @@ tools/v1-proof.sh --terrier <terrier checkout>
 # the Terrier's own handler (its tools/v1_warren.py): program taken, ears
 # 5/10 then 2/3 and stopped, a hand -> sd=8603, a 3 s press -> sd=0004,
 # two v1 in "amoureux" following each other. V1_PORT overrides 28080.
+V1_FW=1.4b tools/v1-proof.sh --terrier <terrier checkout>
+# the same on Clara's own firmware (Lazare, firmware-arm/v1-icsp/dumps,
+# a PIC18LF6525 on an AT45DB081B: --hex ... --flash-chip 081).
+# 2026-11-24: "PROOF terrier: program taken, ears stop, hand and long
+# press reported, amoureux follow", the ears one after the other
+# (terrier#476).
 ```
+
+The 1.4b firmware keeps the PIC's brown-out reset and its watchdog on
+(CONFIG2L 0A, CONFIG2H 0F; 2.0b has both off). On Lazare (2026-11-24) the
+left ear alone moves, the right one alone restarts the rabbit: with the
+brown-out reset turned off (`no-brownout.py`, written over ICSP and
+verified) it no longer restarted, and the right ear still did not turn,
+in silence -- its motor or its bridge draws current without turning, a
+fault of that rabbit, not of the firmware. The original was written back
+(verified against the dump): the reset cuts a stalled motor. The
+Terrier's program starts the motors one at a time all the same (the
+smaller peak). The emulator models the watchdog, not the supply; on
+the 161 flash model the 1.4b firmware lost the program it had just written
+and never polled again, hence `--flash-chip 081`.
 
 Violet's own v1 programs (`firmware-arm/vendor/violet-platform`, MIT) put
 together by Violet's own assembler, and served as Violet's server did, from
@@ -461,9 +480,315 @@ podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 28081 --s
 # real 1.4b at every ear order.
 ```
 
+The Terrier's copy of that program, `Nabaztag_wait_terrier.vasm`
+(`firmware-arm/emulator/tools/violet-vasm/patches/one-motor-at-a-time.patch`, applied when the
+image builds: in `@moveears` the right ear waits while `/dir0` says the left
+one turns), against Violet's as the control, on both firmwares:
+
+```sh
+firmware-arm/emulator/tools/violet-vasm/one-motor-proof.sh   # repo root, dev VM, ~90 s
+# 2026-11-24: PASS. On an order (L5 R10, then L2 R6) Violet's frame starts
+# both motors in the same millisecond (2.0b: left 48635 ms, right 48636;
+# 1.4b: 48293, 48294); the Terrier's starts the right one the millisecond
+# the left one stops (2.0b: left 48635-51980, right 51980-56682; 1.4b: left
+# 48555-51767, right 51768-57170), on both orders. st=01 after the program,
+# a hand on the right ear reported (sd=9007 on 2.0b, 8E0F on 1.4b, both
+# frames alike; the value moves with the second the hand comes, 8204/9004/
+# 9010 on Violet's own, so the script checks the report, not its value), a
+# click with a message waiting sends sd=0003, the 1.4b watchdog never fires.
+# Still both motors at once, in both programs: the acquisition turn
+# (@motorturn) at boot and after a hand.
+# 2026-11-24, with p2-acquisition-one-motor.patch: PASS again, the homing
+# turn at boot and the acquisition turn after the hand now start the right
+# motor the millisecond the left one stops too (Violet's: together), on
+# both firmwares; the Terrier's frame is 33860 bytes.
+```
+
+The review of Violet's program (`firmware-arm/emulator/tools/violet-vasm/REVIEW.md`, 2026-11-24:
+findings by value, what was measured, what the Terrier should know) and its
+three other patches, each a hang of Violet's program the Terrier can run into,
+against Violet's frame as the control, on both firmwares:
+
+The same program without Antoine Schmitt's clip (TaiChiPop, the 26 KB of
+animations it plays only when "moves by itself" is on, off by default on the
+Terrier): `still.awk`, built as `Nabaztag_wait_terrier_still.vasm`.
+`firmware-arm/emulator/tools/violet-vasm/still-proof.sh` (2026-11-24, PASS
+on 2.0b and 1.4b): 3,589 bytes instead of 33,860; from the program's
+download to the next poll 12.4 s instead of 18.1 s (the poll interval is
+11.8 s of it); ears L5 R10, a click (sd=0003) and a hand (sd=8xxx) as with
+the full frame.
+
+```sh
+firmware-arm/emulator/tools/violet-vasm/review-proof.sh   # repo root, dev VM, ~15 min
+# 2026-11-24: PASS. "stall" (--stall 1: ear 1's motor runs, its wheel does
+# not turn, as Lazare's right ear; a hand of 9 holes on ear 0 at 70 s):
+# Violet's frame starts ear 1 in the acquisition turn and never stops it,
+# no hand report; p3-acquisition-timeout.patch stops it 40 s later and
+# reports the hand with that ear at 0 (2.0b: the turn from 76.8 s, ear 0
+# done at 85.3 s, ear 1 stopped at 124.2 s, sd=8700 on poll 11; the
+# firmware's second is about 1.18 s on the emulator's clock, so 40 show
+# as 47).
+# "click" (a message waiting, a click at 60 s, an order L5 R10 from 96 s):
+# both send sd=0003; Violet's frame never moves its ears again (stuck in
+# @sendwaitloop waiting for a message program that never comes);
+# p4-click-timeout.patch goes back to @startwait 40 s after the click,
+# homes the ears again and takes the order (5 and 10 holes). "stall0" (ear
+# 0 stalled from boot): Violet's homing deadline lives in r10, which the
+# right ear's target overwrites (@reset5); the patched homing (target in
+# r13) stops the stalled left motor 40 s after it started. "all14" (eight pairs (14, 1)): Violet's
+# frame polls twice in 90 s and never again (the program spins in @info,
+# the firmware stops polling, the 1.4b watchdog does not fire);
+# p5-info-hops.patch keeps it polling. The 1.4b watchdog never fired in
+# any run. The emulator's --stall EAR was added for this proof.
+# Other runs of the review, Violet's frame on 2.0b (violet_warren.py
+# --source and --down added for them): source 14 = 255 and nothing moves
+# in 720 s, the first spontaneous animation at 718 s in a 1400 s run (the
+# countdown is 11,776 turns of the wait loop, 59 ms each: 11.5 minutes
+# after the ears last moved); the server away for
+# polls 6-12 (72-144 s): the firmware re-joins the Wi-Fi at 105 s and 162 s,
+# keeps the program, polls on, and takes the next order.
+```
+
 A real v1's firmware, read over ICSP with a PICkit (read only):
-`firmware-arm/v1-icsp/README.md`; its serial log on a Raspberry Pi:
+`firmware-arm/v1-icsp/README.md`, `firmware-arm/v1-icsp/read.sh <out.hex>
+[PIC18LF6525|PIC18LF6627]` (MPLAB X 6.20 on the Mac: 6.30 dropped the
+PICkit 3; 2026-11-24, Lazare's 1.4b in `firmware-arm/v1-icsp/dumps`);
+`no-brownout.py <in.hex> <out.hex>` clears CONFIG2L's BOREN alone, written
+with `ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F<out.hex>` and back with the
+dump the same way (check the hex is there first: a missing file writes
+nothing); its
+serial log on a Raspberry Pi:
 `firmware-arm/v1-serial/README.md`.
+
+**The Wi-Fi card's station firmware** (does WPA2 have a chance on the v1:
+1.7.0 or later): `firmware-arm/v1-icsp/wifi-probe.py` adds 88 bytes to the
+1.4b dump that read the card's station identity (RID FD20) just before the
+firmware enables it, and keep it in the PIC's unused data EEPROM (Lazare
+writes no serial text, so not the serial port). Proven on the emulator
+first, witness included:
+
+```sh
+firmware-arm/emulator/tools/wifi-probe-proof.sh    # PASS: 05 20 1F 01 01 07 kept, polls as the dump
+# 2026-11-24: witness 10 polls, no EEPROM write; probe 10 polls, EEPROM
+# 05 20 1F 01 01 07 00 00 (emulated card 1.7.1); no watchdog in either
+```
+
+Then on the rabbit, the PICkit on J2 as for the dump, its own adapter on:
+
+```sh
+cd firmware-arm/v1-icsp
+./wifi-probe.py dumps/violet-v1-1.4b.hex /tmp/probe.hex && ls -l /tmp/probe.hex
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F/tmp/probe.hex     # write, verify
+# release the PICkit (unplug its USB), let the rabbit boot ~30 s, then:
+./read.sh /tmp/after.hex PIC18LF6525
+./wifi-probe.py --read /tmp/after.hex                # station firmware X.Y.Z
+ipecmd.sh -P18LF6525 -TPPK3 -E                       # erase all: -M leaves the EEPROM bytes
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -Fdumps/violet-v1-1.4b.hex   # the original back, verified
+```
+
+`-M` alone skipped the EEPROM's FF bytes and its verify failed on the
+probe's (2026-11-24): erase first, then the original reads back identical,
+EEPROM included.
+
+**Result on Lazare (2026-11-24): station firmware 1.4.2** (EEPROM `05 20 1F
+02 01 04`, component 0x1F). Host-side WPA2 needs 1.7.0 or later: not with
+this card's firmware, whatever the PIC. The one way left would load a newer
+station firmware into the card's RAM at every boot (Intersil's, not free,
+about 64 KB from the serial flash): not pursued. Lazare runs its original
+firmware again (read back, 0 bytes differ).
+
+**The card itself (FD0B, same day): component 0x800C, hardware 1.0.0**
+(EEPROM `05 0B 0C 00 01 00`). 0x800C is among the NIC ids Intersil's
+Prism 2.5 station images list (`sf010409.hex`; primary `pk010004.hex`), so
+the card could take station 1.7.4 with its matching primary in its own
+flash, on a PC with a PCMCIA slot (hostap's `prism2_srec -f`, which checks
+compatibility; never the primary alone). The v1's card is a removable
+PCMCIA card (BenQ 802.11b). Not done.
+
+The matching Intersil files (primary 1.1.1, station 1.7.4 for flash and for
+RAM), not kept here (Intersil's, no licence to redistribute), are fetched
+from two mirrors and checked against their hashes:
+`firmware-arm/v1-icsp/prism-fw.sh [DIR]` (default `~/.nabaztag/prism-fw`).
+Both list NIC 0x800C variant 0 in their own compatibility records. First
+try on a PC with a 16-bit PCMCIA slot: the RAM image (`prism2_srec -r`),
+gone at power off; the flash (`-f`, primary and station together) only
+after.
+
+What could be improved in the v1's firmware, 1.4b and 2.0b, with the
+evidence: `firmware-arm/v1-icsp/IMPROVEMENTS.md` (2026-11-24). Its tools:
+
+```sh
+cd firmware-arm/v1-icsp
+./pic18dis.py dis dumps/violet-v1-1.4b.hex 2170 21D0   # a listing (byte addresses)
+./pic18dis.py funcs dumps/violet-v1-1.4b.hex           # call targets, sizes, callers
+./pic18dis.py strings dumps/violet-v1-1.4b.hex
+./pic18dis.py dead dumps/violet-v1-1.4b.hex            # code no path from the vectors reaches
+./pic18dis.py diff dumps/violet-v1-1.4b.hex ../vendor/newbaztag/firmware/original/nabaztag.hex
+# 132 functions identical, 89 changed by a few instructions, the rest listed
+cd ../emulator
+tools/v1-study.sh both /tmp/v1-study          # on the dev VM: the network broken under
+                                              # the firmware (server gone, AP gone, no DNS)
+                                              # and the OKI registers for a sound at
+                                              # 8/16/32 kHz; V1_PORT (28090) and +1
+tools/v1-study.sh both /tmp/v1-study sound    # the sound part alone
+tools/violet-vasm/v1-audi.py 16000 1.5 a.audi [--low-first]   # a test tone for a real rabbit
+```
+
+Can the downloaded program escape Violet's VM and run native PIC code (the
+question under "a loader without a PICkit"): `firmware-arm/v1-icsp/VM-ESCAPE.md`
+(2026-11-24). **No, on neither firmware.** Measured 2026-11-24/25 on the dev VM:
+
+```sh
+cd /tmp/vmesc                                  # a copy of firmware-arm, not local
+flock ~/heavy.lock env V1_PORT=28140 sh firmware-arm/emulator/tools/vm-escape-proof.sh
+# == 1. static: TBLWT=0 EECON=0 in 1.4b and 2.0b (no native flash-write gadget)
+# == 2. 2.0b: vm-audit 6405 stores, destinations A73..CFE, outside arena: 0
+#       1.4b: vm-audit 6492 stores, destinations A70..CFE, outside arena: 0
+# == 3. control: native code DID write flash row 00100 on the same emulator
+# PASS
+```
+
+The hostile program (`firmware-arm/emulator/tools/violet-vasm/escape.vasm`) drives every VM store and
+load at its largest index; `nabv1 --vm-audit LO HI` records where each lands.
+All stay in the VM arena (registers 0xA70-0xA7F, data 0xB00-0xBFF, call stack
+0xC00-0xCFF): never an SFR, the hardware stack or EECON1. The emulator now
+models the flash self-write (TBLWT holding latches + the EECON1 55h/AAh
+unlock, `pic18.c`/`board.c`), which `firmware-arm/emulator/tools/selfwrite_stub.py` exercises as the
+control. A loader still needs ICSP (a PICkit) to install the first time.
+
+**A native firmware for the v1, phase 1** (`firmware-arm/v1-native`, its
+`DESIGN.md`: architecture, memory map, the serial flash layout, what phase 2
+needs): our own C firmware for the PIC18LF6525, SDCC 4.5.0 + gputils 1.5.2
+built from pinned sources in `v1-native/Containerfile` (Alpine; no
+distribution packages them). Lazare's CONFIG bytes verbatim (watchdog on,
+brown-out on), no interrupt, one loop. Emulator only, nothing flashed:
+
+```sh
+cd firmware-arm/emulator && tools/v1-native-proof.sh     # dev VM, ~3 min, PASS/FAIL
+# builds the toolchain image (15 min the first time, cached after), the
+# firmware (out/nabv1native.hex + sizes), the emulator image
+# nabaztag-v1-native, runs the image on Lazare's board (--flash-chip 081)
+# for 40 s against tools/v1_native_warren.py (answers 7F 03 .. 01 FF 0A),
+# then 4 s more on the same serial flash file.
+# 2026-11-24: PASS. flash 22 920 / 49 152 bytes (46 %), RAM 1 015 / 3 968
+# (25 %). Boot 2 ms, AT45DB081B recognised and page 0 written (boot #1,
+# then #2 on the second run), card MAC read, station fw logged, joined at
+# 579 ms, DHCP 614 ms, DNS 1 102 ms, first poll 1 592 ms
+# (GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000, Host: added),
+# answer parsed (HTTP/1.0 200 OK, 7F, frame 03 len 1 = interval 1, FF),
+# then a poll every 10 s (4 in 40 s), each ear 2 holes one after the other
+# (880 and 869 ms), the 512 ms watchdog never fired, no unknown opcode.
+# LEDs: bottom red at boot, blue card ok, green link, + middle green lease,
+# + middle-left green DNS, + top green poll answered.
+# Measured on Violet's 1.4b for it (--trace-pins --trace-bus): the serial
+# flash's /CS is RB4 (RB3 never moves); before the card's COR write Violet
+# pulls RG0 and RG3 low at 3 ms and RF4 low at 284 ms -- copied as is,
+# unnamed until the schematic is read (DESIGN.md, risks).
+# Since phase 2 the hex is out/18f6525/full.hex (loader + application + the
+# test key) and the first boot spends ~10 s seeding slot A before the
+# application starts; the proof's budgets were raised accordingly.
+# 2026-11-25: PASS on the loader with the hash in assembly, the application
+# at 0x2000: first poll at 7.3 s (the 5.7 s seed first); loader 8 144 B,
+# application 27 278 B (RAM 1 408 / 1 794).
+```
+
+**The v1 loader, phase 2** (`firmware-arm/v1-native`, DESIGN.md section 7;
+2026-11-24): a permanent boot block at 0x0000-0x2FFF (12 KB with SDCC: the
+HMAC-SHA-256 alone was 4 KB of its output; 0x0000-0x1FFF and 8 144 B since
+2026-11-25, below), the application linked from 0x3000 (0x2000 since
+2026-11-25), two image slots in the
+serial flash (pages 16 and 208), a per-rabbit key in the PIC's data EEPROM
+(written at ICSP time, `mkimage.py full`), HMAC-SHA-256 over header and
+image, the copy in the part's 8-byte blocks with the 55h/AAh sequence, a
+read-back, a two-copy state record (pages 2-3), fallback to the other slot
+and a five-boot limit for an image that never reaches the Terrier. The
+application fetches an offered image (frame 10 in the poll's answer, then
+`GET /vl/v1/fw`) into the other slot and executes `reset`. Emulator only.
+
+```sh
+cd firmware-arm/emulator && tools/v1-loader-proof.sh     # dev VM or a Mac with podman, ~12 min, PASS/FAIL
+# 2026-11-24: PASS. Builds loader + app-30/31/32/33 (32 signed with
+# keys/wrong.key, 33 with -DAPP_BROKEN) and the 2.0b board's pair, the
+# emulator image, then six runs on Lazare's board (--pic 6525 --flash-chip
+# 081 --pic-flash):
+#   1. first boot: slot A seeded from the PIC in 10.0 s (HMAC of 27 712 B),
+#      the same HMAC as Python's hmac module over the same bytes;
+#   2. v31 offered at 2.0 s, downloaded (27 712 B in 1.4 s) into B, reset,
+#      HMAC checked in 9.9 s, 433 rows erased and 3 464 blocks of 8 written
+#      and read back in 0.8 s, v31 polling at 16.1 s and confirmed;
+#   3. v32 signed with another key: "bad hmac", refused, v31 runs on, no PIC
+#      flash write, the refused version not fetched again (skip_ver);
+#   4. twelve power cuts (V1_CUTS, V1_SEED), a third each during the
+#      download, the HMAC check, the copy and state write: every restart
+#      came back on v31 and polled (a cut before the header page is
+#      written: the next poll fetches again; during the check or the copy:
+#      the pending slot is installed again; after the state write: the PIC
+#      equals B);
+#   5. a byte of the PIC's application flipped: "PIC differs", reinstalled
+#      from B; the same with a byte of slot B flipped too: B fails its HMAC,
+#      A installed, v30 polls;
+#   6. v33 never feeds the watchdog: installed, five watchdog boots, then
+#      "never confirmed", back to A, v30 polls.
+# tools/sha256-host.c (gone with the C hash on 2026-11-25): the loader's
+# SHA-256 compiled on the host against Python (the two sigma bugs of the
+# first build were found there).
+# 2026-11-25: PASS again with the hash in assembly and the application at
+# 0x2000 (27 328 B, 427 rows): slot A seeded in 5.7 s, the update's HMAC
+# checked in 5.4 s, 427 rows and 3 416 blocks written and read back in
+# 0.74 s, v31's banner 6.5 s after the reset; the rest as above.
+tools/v1-audio-proof.sh                                  # ~4 min, PASS/FAIL
+# 2026-11-24: PASS. Violet's 1.4b and our firmware play the same 16 kHz
+# Audi tone; the OKI start sequence (45 <- 01, 35 <- 06, 29 <- 01, 33 <- 01),
+# the 29 toggles around each burst and the 12 000 data bytes are identical
+# (our bursts split at our serial flash page ends: 226 of them to Violet's
+# 188); we add 33/29 <- 00 at the end (Violet's stopADPCM, which the
+# emulator's silent IRQ never triggers). Nibble order and table: on the
+# real rabbit only (OKI_SWAP_NIBBLES).
+tools/v1-native-proof.sh                                 # phase 1's proof on the new layout
+# 2026-11-24: PASS; first poll at 11.6 s (the 10 s seed first). loader
+# 12 014 B, application 27 670 B (RAM 1 470 / 1 793).
+```
+
+**The loader's hash in assembly, the loader under 8 KB** (2026-11-25,
+`firmware-arm/v1-native/src/loader/sha256.asm`, DESIGN.md section 2 for
+the measurements of each lever): SHA-256 and HMAC-SHA-256 in PIC18
+assembly behind the unchanged C API (`sha256.h`, SDCC's calling
+convention), SDCC's `crt0`, the loader's loops in 64-byte rows, a smaller
+state record; loader 12 014 → 8 144 B (8 106 on the 6627), the
+application moved from 0x3000 to 0x2000 (40 KB for it, 13.7 KB free), the
+seed and the check of a 27 KB image 5.7 s instead of 10. The hash is
+checked on the emulated PIC against Python (hashlib, hmac), not on the
+host any more (tools/sha256-host.c is gone with the C hash). Emulator
+only.
+
+```sh
+cd firmware-arm/emulator && tools/v1-sha-proof.sh        # dev VM or a Mac with podman, ~1 min, PASS/FAIL
+# builds the loader and the test image (make shatest: src/loader/shatest.c,
+# linked like the loader, the watchdog on) for both boards, runs the image
+# for 300 PIC seconds on Lazare's board, compares every `sha`/`hmac` line
+# of its UART with Python's: SHA-256 of "", "abc", the 448-bit message, a
+# 1000-byte pattern, the million 'a'; HMAC-SHA-256 of RFC 4231's cases 1-5
+# and of the pattern under a 32-byte key.
+# 2026-11-25: PASS, 11 digests equal; the million 'a' in 188 s:
+# 12 034 us per 64-byte block (the C hash: 150 000 cycles, 25 ms).
+tools/v1-loader-proof.sh                                 # PASS, numbers above
+tools/v1-native-proof.sh                                 # PASS, numbers above
+tools/v1-audio-proof.sh                                  # PASS
+```
+
+The same firmware against the Terrier's real code, not the stand-in
+server: `firmware-arm/emulator/tools/v1-native-terrier-proof.sh --terrier
+<Terrier checkout>` (its `tools/v1_warren.py --native`, the shipped
+`nabv1`/`v1native` handlers; the throwaway keys/test-rabbit.key).
+2026-11-25: "PASS: v30 polled the Terrier, was offered v31, fetched it
+signed for its key, installed it; v31 polls".
+
+What the Terrier must serve for an update (not changed in that repository):
+`GET /vl/v1/fw?sn=<MAC>&v=<fw>&b=<0x25|0x27>` with the `app-N.img` that
+`mkimage.py image --key <that rabbit's key>` produced for that board, and a
+frame `10` (two bytes, the version) in the poll's answer when it is newer
+than `v=`; one 32-byte key per rabbit, the same one the PICkit put in the
+EEPROM. DESIGN.md section 8 has the rest of the frames (design only).
 
 ### The Karotz (Nabaztag v3)
 
@@ -746,6 +1071,29 @@ line behind his MikroTik (issue #163, 2026-11-21): W0 a0 e20, scanning
 forever. To see it fail, build the image with run.sh's STEPS minus
 `scan_prefers_rsn`. `naboot-1.2.1.2` is 1.2.1.1 plus this step; until a
 rabbit runs it, the AP set to WPA2 only is the workaround.
+
+### Setting up a Nabaztag v1's Wi-Fi from a Raspberry Pi
+
+`firmware-arm/v1-setup/v1-setup.sh` (README there): a Pi on Ethernet with a
+USB Wi-Fi dongle joins the rabbit's ad hoc setup cell (`nabaztagXX`, head
+held at power-on, belly blinking blue) with its BSSID pinned and the address
+192.168.0.2, sets the server (`b.htm?a=<host>&b=<port>`, not a field of the
+page) then the network (open or WEP, DHCP or fixed addresses) with "Update
+and start". Phones and Macs cannot join an ad hoc cell; the Pi's own Wi-Fi
+is borrowed and put back.
+
+```sh
+./firmware-arm/v1-setup/v1-setup.sh find
+./firmware-arm/v1-setup/v1-setup.sh set --ssid "<open network>"   # server: terrier.cyberloutre.fr:80
+```
+
+2026-11-24, Lazare (1.4b): its configuration had been wiped by a trial of
+the native firmware (`firmware-arm/v1-native`, which then wrote the serial
+flash where Violet keeps it); the same steps by hand from the Pi
+(EW-7811Un, rtl8192cu) restored it: server `terrier.cyberloutre.fr:80`,
+network open, DHCP, "Starting...". The first join carried no traffic until
+the dongle was plugged in again. The native firmware must keep Violet's
+configuration pages, or save and restore them, before it is tried again.
 
 ### A Nabaztag v1's serial log on a Raspberry Pi
 
@@ -1326,6 +1674,29 @@ Not done tonight either: the restore's long run (720 s) for mtd6's erase to
 finish, the step-2 ramdisk and the step-3 installer (design notes in
 FLASH-PLAN.md), and every "needs Gengar" above.
 
+### Terrier OS's patches to LapinLibre (review of 2026-11-24)
+
+`karotz/lapinlibre/REVIEW-LAPINLIBRE.md` is the review of LapinLibre as
+Terrier OS ships it (the web API, the start-up, the daemons' D-Bus chain).
+What our build changes is in `karotz/lapinlibre/patches/` (its README names
+each), applied by the `Containerfile` on `LL_COMMIT` as one dated commit, so
+the tree and `git describe` are the same from one build to the next. Three
+proofs, all without a rabbit:
+
+    karotz/lapinlibre/test-patches.sh
+    # 2026-11-24: "PASS: 4 patches apply to 19ea8d7, image.py compiles, LL_BUILD_VERSION taken"
+    karotz/lapinlibre/test-inetd-rate.sh        # on the dev VM (podman)
+    # 2026-11-24: nowait.600: 61 of 61 answered; nowait.60: 59 of 61; PASS
+    karotz/lapinlibre/test-web-local.sh         # patch 0004, LapinLibre's own inetd.sh
+    # 2026-11-24: "PASS: drawn password -> 1 allow rule (127.0.0.1); owner's password -> 5 (the local network); the login kept in both"
+
+The second is the measure behind patch 0001: BusyBox inetd refuses the
+connection past its count and pauses the service for ten minutes, and the
+Terrier client on the rabbit opens one connection per LED or ear order.
+`karotz/lapinlibre/VERSION` (1.0.0) is the number the build stamps
+(`LL_BUILD_VERSION`, patch 0002); the LapinLibre commit it came from is on
+the rabbit in `/karotz/etc/lapinlibre-base`.
+
 ### Terrier OS's setup network, without the radio
 
 `karotz/lapinlibre/test-hotspot.sh` (usage in its header) runs the pieces of
@@ -1347,3 +1718,63 @@ tool below; `make-img.sh` writes both). The Karotz guide's screenshots come
 from `karotz/lapinlibre/imager-shots/` (Imager 2.0.12 on Xvfb, steps in
 `shots.sh`): repository URL, device, system, Wi-Fi; Ubuntu by exception,
 removed after use.
+
+**Before a second try on Lazare (2026-11-25).** The first (2026-11-24) stuck
+at blue (the card never associated) and wiped Violet's configuration: the
+native firmware wrote its boot counter at serial-flash page 0, where Violet
+keeps its settings (`v1-setup.sh` restored them). Now: pages 0-3 never
+written (the configuration at 4-5, the loader's state at 6-7, the log at
+8-15; `v1-loader-proof.sh` checks pages 0-3 stay blank); the card set up
+with Violet's own RID values and order, read off the emulator's RID trace
+(`card: RID ... <- n bytes: ...`, FC03 0, FC06 3, FC07 1514, FC84 0x0F,
+FCB0 1 Mb/s, FCB3/FCB4 0x0F); SSID and server set at build time
+(`APP_DEFS='-DSSID=\"<name>\" -DSERVER_NAME=\"<host>\" -DNO_EAR_DEMO'`).
+On the dev VM: v1-native-proof, v1-loader-proof and v1-audio-proof PASS (the
+two last with shared `:z` mounts; SELinux refused `:Z` between containers).
+
+**Why it stays at blue: the card report (2026-11-25).** The second try
+(Violet's RID values, page 0 spared) stayed at blue too, and Violet's
+firmware came back with no reconfiguration. The native firmware now writes,
+30 s after a join that brought no link, what the card says into the PIC's
+data EEPROM from 0x40 (join result, info frames seen, last LinkStatus,
+FD40 port status, FD4D channel, FD42 BSSID, FD43 quality, FD41 SSID); after
+the next try, `./read.sh lazare-after.hex 18LF6525` then
+`./card-report.py lazare-after.hex` in `firmware-arm/v1-icsp`.
+`v1-native-proof.sh` runs a third boot with no access point
+(`--link-down 0.1 0`) and decodes the report from the emulator's
+`eeprom:` lines. The first run read stale BAP bytes for RIDs the card did
+not hold (the SSID record as the BSSID): `rid_read` now reads only the
+words a record's length counts.
+
+**The card never initialised: one-cycle strobes (2026-11-25).** Lazare's
+card report: init failed at step 1, the INITIALIZE command, registers read
+0001/0100/8000. Violet's 1.4b holds every card strobe (/IORD, /IOWR, /OE,
+/WE) for eight NOPs (0x376E-0x37FE in `gpdasm -p p18f6525` of the dump);
+ours held one. The v1 emulator now answers a read only 4 cycles after the
+strobe falls and drops a shorter write, logging `card: ... strobe too
+short`: the previous firmware (the control) then fails exactly as Lazare
+did (`card: init failed 7f`), the fixed one and Violet's pass, and
+`v1-native-proof.sh` fails on any short strobe. The report also keeps
+prism_init's step (join result 0x80 + n) and the card's registers around
+INITIALIZE (EEPROM 0x64).
+
+**Lazare on the native firmware reaches the Terrier (2026-11-25).** After
+the strobes (above), every step read back from the EEPROM with
+`firmware-arm/v1-icsp/card-report.py` (the card report at 0x40, the boot
+count and reset cause at 0x7C, the network report every 40 s at 0x80: frames,
+DHCP, DNS, TCP, HTTP, the card's events, the transmit status, the access
+point's BSSID and SSID, our MAC). Lazare associated, sent, and heard nothing,
+not even a broadcast; UniFi showed 42 packets up and 0 down. The cause: the
+DHCP discover asked for a broadcast reply (flags 0x8000), and the access
+point sends broadcasts at an OFDM rate the 802.11b Prism 2.5 cannot decode.
+Violet asks for none (flags 0, client id 61, host name 12): so does the
+native firmware now. `--bcast-deaf` makes the emulator's gateway drop a
+reply asked as a broadcast (the control, the flag set, fails "no DHCP
+lease"); `v1-native-proof.sh` runs with it. The emulator also checks the
+IPv4 and UDP/TCP checksums now (a real router drops a bad one in silence).
+`firmware-arm/emulator/tools/v1-tx-compare.sh` sets Violet's 1.4b and the
+native firmware side by side: the TX descriptor, the first DHCP discover,
+every card register written and the commands in order. Also as Violet:
+tx_control 0000, INTEN 0000 after INITIALIZE, no WEPFLAGS write, no FD20
+read; and `st=00` on the first poll of a start only (the Terrier counts a
+start at each one).

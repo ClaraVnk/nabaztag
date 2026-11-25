@@ -8,6 +8,10 @@
 #
 # Run from firmware-arm/emulator. --terrier is a checkout of the (private)
 # Terrier; its tools/v1_warren.py serves the shipped handler on SQLite.
+#
+# V1_FW=1.4b runs Lazare's firmware (../v1-icsp/dumps/violet-v1-1.4b.hex) on
+# its AT45DB081B instead of Newbaztag's 2.0b: the same proofs, on the other
+# firmware a real v1 runs (2026-11-24).
 set -eu
 cd "$(dirname "$0")/.."
 TERRIER=
@@ -17,7 +21,12 @@ PORT=${V1_PORT:-28080}
 fail() { echo "FAIL: $*"; exit 1; }
 
 podman build -q -t nabaztag-v1 -f v1/Containerfile .. >/dev/null
-emu() { podman run --rm --network host nabaztag-v1 --warren 127.0.0.1 --port80 $PORT "$@"; }
+FW=
+if [ "${V1_FW:-}" = 1.4b ]; then
+  FW="-v $(cd ../v1-icsp/dumps && pwd):/d:ro,z"   # z, shared: two v1 at once read it
+  FWARGS="--hex /d/violet-v1-1.4b.hex --flash-chip 081"
+fi
+emu() { podman run --rm --network host $FW nabaztag-v1 --warren 127.0.0.1 --port80 $PORT ${FWARGS:-} "$@"; }
 
 if [ -z "$TERRIER" ]; then
   python3 v1/capture.py $PORT > "$OUT/capture.log" 2>&1 &

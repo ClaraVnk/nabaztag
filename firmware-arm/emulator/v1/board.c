@@ -50,6 +50,14 @@ static uint8_t pins(int p)
 
 #define PIN(p, b)  ((pins(p) >> (b)) & 1)
 
+#define CARD_SETTLE 4      /* instruction cycles a strobe is held before the card answers */
+
+static void strobe_short(const char *what)
+{
+  if(B.short_strobes++ < 8)
+    board_log("card: %s strobe too short, the card ignores it (pc %05X)", what, B.pic.pc);
+}
+
 static void pins_changed(int p, uint8_t before, uint8_t after)
 {
   uint8_t fell = before & ~after, rose = ~before & after;
@@ -59,12 +67,27 @@ static void pins_changed(int p, uint8_t before, uint8_t after)
 
   if(p == PF && ((fell | rose) & 0x0F))
     board_log("motor pins RF3..0: %X -> %X (pc %05X)", before & 0x0F, after & 0x0F, B.pic.pc);
+  /* The card answers only a strobe held long enough: Violet's firmware
+   * holds each for eight NOPs (0x376E-0x37FE, 0.8 us at 10 MIPS); ours held
+   * one and Lazare's card never took its INITIALIZE (2026-11-25), while the
+   * emulator answered at once. A read's data now shows on PORTD only
+   * CARD_SETTLE cycles after the fall, and a write strobe shorter than that
+   * is dropped, both said. */
   if(p == PF) {
-    if(fell & 0x80) B.in[PD] = prism_io_read(B.lat[PE]);       /* /IORD */
-    if(fell & 0x20) B.in[PD] = prism_attr_read(B.lat[PE]);     /* /OE   */
-    if(rose & 0x40) prism_attr_write(B.lat[PE], B.lat[PD]);    /* /WE   */
+    if(fell & 0x80) { B.strobe_at[0] = B.pic.cycles; B.read_value = prism_io_read(B.lat[PE]); B.read_pending = 1; B.in[PD] = 0xFF; }
+    if(fell & 0x20) { B.strobe_at[0] = B.pic.cycles; B.read_value = prism_attr_read(B.lat[PE]); B.read_pending = 1; B.in[PD] = 0xFF; }
+    if(fell & 0x40) B.strobe_at[2] = B.pic.cycles;
+    if((rose & 0xA0) && B.read_pending) { strobe_short("read"); B.read_pending = 0; }
+    if(rose & 0x40) {
+      if(B.pic.cycles - B.strobe_at[2] >= CARD_SETTLE) prism_attr_write(B.lat[PE], B.lat[PD]);
+      else strobe_short("attribute write");
+    }
   }
-  if(p == PG && (rose & 0x10)) prism_io_write(B.lat[PE], B.lat[PD]);  /* /IOWR */
+  if(p == PG && (fell & 0x10)) B.strobe_at[3] = B.pic.cycles;
+  if(p == PG && (rose & 0x10)) {
+    if(B.pic.cycles - B.strobe_at[3] >= CARD_SETTLE) prism_io_write(B.lat[PE], B.lat[PD]);
+    else strobe_short("write");
+  }
   if(p == PB && (rose & 0x20)) spi_latch();                    /* XLAT */
   if((p == PB && ((fell | rose) & 0x18)) || (p == PA && ((fell | rose) & 0x04)))
     spi_select();
@@ -169,6 +192,55 @@ static void sfr_write(struct pic18 *pic, uint16_t a, uint8_t v)
     case SFR_TMR3H: B.tmr3 = (uint16_t)((B.tmr3 & 0x00FF) | (v << 8)); return;
     case SFR_TMR2: B.tmr2 = v; return;
     case SFR_TXREG1: uart_tx(v); return;
+    /* The data EEPROM (1 KB, DS39612 section 7), for the Wi-Fi card probe
+     * (v1-icsp/wifi-probe.py, 2026-11-24): a write takes WREN, then 55h and
+     * AAh on EECON2 right before WR, as the datasheet demands; it lands at
+     * once (the real one takes ~4 ms) and is logged. Neither Violet
+     * firmware touches it. */
+    case SFR_EECON2:
+      B.ee_unlock = (v == 0x55) ? 1 : (B.ee_unlock == 1 && v == 0xAA) ? 2 : 0;
+      return;
+    case SFR_EECON1:
+      if((v & 0x01) && !(v & 0xC0)) {       /* RD: a data EEPROM byte, at once */
+        unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];
+        pic->ram[SFR_EEDATA] = B.eeprom[at];
+        v &= (uint8_t)~0x01;
+        pic->ram[SFR_EECON1] = v;
+      }
+      if(v & 0x02) {                        /* WR: start a write */
+        /* The row or block written is the one TBLPTR points at when WR is
+         * set (DS39612 6.5, DS39646 6.5), not the last TBLWT's: a loader
+         * that leaves the pointer in the next row writes the wrong one on
+         * the real part, and now here too (2026-11-24). */
+        uint32_t tbl = (uint32_t)(pic->ram[SFR_TBLPTRL] | (pic->ram[SFR_TBLPTRH] << 8) |
+                                  ((pic->ram[SFR_TBLPTRU] & 0x3F) << 16));
+        unsigned wb = pic->write_block;
+        if(!((v & 0x04) && B.ee_unlock == 2)) {
+          board_log("nvm: write refused (WREN %d, unlock %d)", !!(v & 0x04), B.ee_unlock);
+        } else if(v & 0x80) {               /* EEPGD: program (flash) memory */
+          uint32_t row = tbl & ~0x3Fu, blk = tbl & ~(uint32_t)(wb - 1);
+          if(row + 64 > pic->flash_end) {
+            board_log("flash: write past end at %06X", row);
+          } else if(v & 0x10) {             /* FREE: erase the 64-byte row */
+            for(int i = 0; i < 64; i++) pic->flash[row + i] = 0xFF;
+            B.flash_erases++;
+            if(B.trace_flash) board_log("flash: erase row %05X", row);
+          } else {                          /* write the holding latches */
+            for(unsigned i = 0; i < wb; i++) pic->flash[blk + i] = pic->flash_latch[i];
+            memset(pic->flash_latch, 0xFF, sizeof(pic->flash_latch));
+            B.flash_writes++;
+            if(B.trace_flash || B.flash_writes <= 2)
+              board_log("flash: write %s %05X (latch[0]=%02X)", wb == 64 ? "row" : "block", blk, pic->flash[blk]);
+          }
+        } else if(!(v & 0x40)) {            /* data EEPROM (EEPGD=0, CFGS=0) */
+          unsigned at = ((pic->ram[SFR_EEADRH] & 3u) << 8) | pic->ram[SFR_EEADR];
+          B.eeprom[at] = pic->ram[SFR_EEDATA];
+          board_log("eeprom: [%03X] <- %02X", at, B.eeprom[at]);
+        }
+        pic->ram[SFR_EECON1] = v & (uint8_t)~0x02;
+      }
+      B.ee_unlock = 0;
+      return;
     case SFR_SSPBUF:
       pic->ram[SFR_SSPBUF] = spi_transfer(v);
       pic->ram[SFR_SSPSTAT] |= 1;          /* BF */
@@ -192,6 +264,7 @@ static const struct pic18_board board_ops = { sfr_read, sfr_write };
 void board_init(void)
 {
   memset(&B, 0, sizeof(B));
+  memset(B.eeprom, 0xFF, sizeof(B.eeprom));
   B.pic.board = &board_ops;
   for(int i = 0; i < 16; i++) B.adc[i] = 512;
   /* Inputs at rest: button released (pulled up), flash ready, OKI IRQ idle,
@@ -216,4 +289,7 @@ void board_step(void)
 {
   unsigned cyc = pic18_step(&B.pic);
   timers(cyc);
+  if(B.read_pending) {
+    if(B.pic.cycles - B.strobe_at[0] >= CARD_SETTLE) { B.in[PD] = B.read_value; B.read_pending = 0; }
+  }
 }

@@ -22,6 +22,12 @@ struct board {
   uint8_t lat[NPORTS], tris[NPORTS], in[NPORTS];
   int     trace_pins;
   int     trace_bus;
+  /* the card's strobes: when a read (0), /WE (2), /IOWR (3) fell, and the
+   * read data not yet valid */
+  uint64_t strobe_at[4];
+  int      read_pending;
+  uint8_t  read_value;
+  unsigned short_strobes;
   /* timers */
   uint16_t tmr0, tmr1, tmr3;
   uint8_t  tmr2;
@@ -30,6 +36,11 @@ struct board {
   /* uart */
   char     line[256];
   unsigned line_len;
+  uint8_t  eeprom[1024];               /* data EEPROM, erased = FF (board_init) */
+  int      ee_unlock;                  /* 1 after 55h on EECON2, 2 after AAh */
+  int      trace_flash;                /* log every PIC flash erase and write */
+  int      trace_oki;                  /* log the OKI's registers with every byte of a burst */
+  unsigned flash_erases, flash_writes; /* PIC flash rows erased, blocks written */
   /* adc: what each channel reads (10 bits) */
   uint16_t adc[16];
 };
@@ -49,6 +60,7 @@ void    prism_tick(void);
 
 void    spi_select(void);                 /* chip selects changed */
 uint8_t spi_transfer(uint8_t out);
+void    spi_flash_chip(int db081);        /* 1: AT45DB081B (264-byte pages) */
 void    spi_latch(void);                  /* TLC5922 XLAT rising */
 int     flash_load(const char *path);
 int     flash_save(void);
