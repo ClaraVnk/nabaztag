@@ -9,13 +9,15 @@
 #   karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> [seconds]
 #
 # As it is, the NAND is the rabbit's: its 2.6.32 kernel and ramdisk boot
-# to Terrier OS's linuxrc ("[START]"), the witness. Two variables change
+# to Terrier OS's linuxrc ("[START]"), the witness. Three variables change
 # the run:
 #
 #   KERNEL=<zImage>  step 1: that kernel written over mtd1 in the image (the
 #                    6.1 flash kernel, karotz-6.1.config alone), the BIOS
 #                    boots it with its own line: initrd=0x31800000,0x00500000
 #                    root=/dev/ram rw init=/linuxrc quiet mem=65536K ...
+#   RAMDISK=<file>   step 2: that ramdisk (Terrier OS's rootfs.img.gz, the
+#                    one both kernels boot) written over mtd2
 #   RESTORE=<ms>     step 0: the head button held that long at power-on, the
 #                    BIOS's "restore default partitions" (mtd3 -> mtd1,
 #                    mtd4 -> mtd2, mtd6 erased), checked in the image after.
@@ -30,22 +32,26 @@ M=$(cd "${2:?the measure/ directory from the key}" && pwd)
 SECS=${3:-300}
 HERE=$(cd "$(dirname "$0")" && pwd)
 CID=$(python3 "$HERE/karotz-flash.py" "$M" "$DIR/bios-nand.bin" | tail -1)
-if [ -n "${KERNEL:-}" ]; then
-	python3 - "$DIR/bios-nand.bin" "$KERNEL" "$CID" <<'PY'
+# A file written over a partition of the image, as nandwrite -p would:
+# mtd1 for KERNEL=, mtd2 for RAMDISK=.
+write_part() {
+	python3 - "$DIR/bios-nand.bin" "$1" "$CID" "$2" "$3" "$4" <<'PY'
 import sys
-img, kernel, cid = sys.argv[1], sys.argv[2], int(sys.argv[3], 16)
+img, path, cid = sys.argv[1], sys.argv[2], int(sys.argv[3], 16)
+name, start, size = sys.argv[4], int(sys.argv[5], 16), int(sys.argv[6], 16)
 page, oob = {0x71: (512, 16), 0xDA: (2048, 64)}[cid]
-start, size = 0x40000, 3 * 1024 * 1024          # mtd1, "Kernel"
-data = open(kernel, "rb").read()
-assert len(data) <= size, f"{kernel}: {len(data)} bytes, mtd1 holds {size}"
-print(f"mtd1 <- {kernel}: {len(data)} bytes ({size - len(data)} left)")
+data = open(path, "rb").read()
+assert len(data) <= size, f"{path}: {len(data)} bytes, {name} holds {size}"
+print(f"{name} <- {path}: {len(data)} bytes ({size - len(data)} left)")
 data += b"\xff" * (size - len(data))
 with open(img, "r+b") as f:
     for i in range(size // page):
         f.seek((start // page + i) * (page + oob))
         f.write(data[i * page:(i + 1) * page] + b"\xff" * oob)
 PY
-fi
+}
+[ -z "${KERNEL:-}" ] || write_part "$KERNEL" mtd1 0x40000 0x300000      # "Kernel", 3 MiB
+[ -z "${RAMDISK:-}" ] || write_part "$RAMDISK" mtd2 0x340000 0x500000   # "Ramdisk", 5 MiB
 LOG="$DIR/bios-boot.log"
 # stdin closed: a byte on the serial port would stop the autoboot. The
 # monitor on a socket: when the time is up, the MiB at 0x32000000 (ramoops,

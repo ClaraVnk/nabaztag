@@ -291,6 +291,18 @@ twice on the same image with the new mtd2 written (as `KERNEL=` writes
 mtd1): the rabbit's 2.6.32 in mtd1, then the flash 6.1, both to
 `[START]`; and `kexec-proof.sh` unchanged.
 
+Done in QEMU (2026-11-25): the fork's branch `terrier-os-61-ramdisk`
+(linuxrc: `uname -r` 6.* mounts `/usr` read-only and binds `/usr/etc` and
+`/usr/terrier` from RAM; mdev: `sd*` and `spidev0.0 -> spidev0.1`), built,
+its `rootfs.img.gz` written over mtd2 and the flash 6.1 over mtd1 by
+`RAMDISK= KERNEL= bios-boot.sh`: Gengar's BIOS boots both, `/linuxrc` and
+`init` run, `/usr` is read-only (sshd.sh's `chmod 700 /usr/karotz/.ssh`
+says so, harmless: `authorized_keys` is a link into `/usr/etc/conf`). The
+2.6.32 side does not show in QEMU (its console is the VT): on Gengar, a
+test key built from `terrier-os-61-kexec` (the same ramdisk with the
+kexec-capable 2.6.32) installed, run under 2.6.32, then `go-os` with the
+flash 6.1 and the key's `rootfs.img.gz` as the initrd.
+
 ### Step 3: the write, boot-time, verified
 
 A reduced `autorun` on the key, LapinLibre's install with steps 5 to 7 left
