@@ -1,0 +1,93 @@
+#!/bin/busybox sh
+# The 6.1 kernel's first boot on a real Karotz, started by kexec from
+# Terrier OS's 2.6.32 (karotz/kexec/autorun): a measure, nothing written to
+# the flash. /usr is mounted read-only (6.1's YAFFS has only been proven
+# reading, 2026-11-23), what the kernel sees is written to the USB key under
+# kexec/log/, and the rabbit waits for the mains: power-cycled, it boots its
+# own 2.6.32 again. Every line also goes to the console, for QEMU.
+# The nose says how far it got, for a rabbit with no console (2026-11-23:
+# the first try left the key empty and the nose red, which 2.6.32 had set):
+# blue = 6.1 runs this, green = the key was written, purple = no key.
+B=/bin/busybox
+$B mkdir -p /proc /sys /dev /tmp /usr /key
+$B mount -t proc p /proc
+$B mount -t sysfs s /sys
+# 6.1 has devtmpfs; the 2.6.32 control may not: mdev fills /dev then.
+$B mount -t devtmpfs d /dev 2> /dev/null || $B mdev -s
+$B mount -t tmpfs t /tmp
+O=/tmp/m
+$B mkdir -p $O
+say() { $B echo "MEASURE $*"; $B echo "$*" >> $O/summary.txt; }
+nose() { $B killall led 2> /dev/null; /karotz/bin/led -l "$1" -p "$1" > /dev/null 2>&1 & }
+nose 0000FF
+say "uname $($B uname -a)"
+$B cat /proc/cmdline > $O/cmdline.txt
+$B cat /proc/mtd > $O/mtd.txt
+$B cat /proc/cpuinfo > $O/cpuinfo.txt
+say "mtd partitions $($B grep -c mtd /proc/mtd)"
+# /usr, read only: what Terrier OS's linuxrc mounts read-write.
+if $B mount -t yaffs -o ro /dev/mtdblock6 /usr 2>> $O/summary.txt; then
+    say "usr mounted ro: $($B ls /usr | $B tr '\n' ' ')"
+    say "usr VERSION $($B cat /usr/VERSION 2> /dev/null)"
+else
+    say "usr NOT mounted"
+fi
+# The key: the USB host and usb-storage, then FAT.
+i=0
+# sda under 6.1 (usb-storage); uba under 2.6.32 (its ub driver).
+while [ $i -lt 30 ] && [ ! -e /dev/sda1 ] && [ ! -e /dev/sda ] && [ ! -e /dev/uba1 ]; do
+    $B sleep 1; i=$((i + 1)); $B mdev -s 2> /dev/null
+    # 6.1 refused the hub's devices for want of bus power (Gengar, 2026-11-24:
+    # "rejected 1 configuration due to insufficient available bus power"):
+    # the board powers them itself, so each unconfigured one is set by hand.
+    for c in /sys/bus/usb/devices/*/bConfigurationValue; do
+        [ -w "$c" ] && [ -z "$($B cat $c 2> /dev/null)" ] && echo 1 > $c 2> /dev/null && say "usb: configured $c by hand"
+    done
+done
+say "usb disk after ${i}s: $($B ls /dev/sd* /dev/ub* 2> /dev/null | $B tr '\n' ' ')"
+KEY=
+for d in /dev/sda1 /dev/sda /dev/uba1 /dev/uba; do
+    [ -e $d ] && $B mount -t vfat $d /key 2>> $O/summary.txt && KEY=/key && break
+done
+say "key ${KEY:-NOT mounted}"
+# The Wi-Fi dongle (rt73usb) and a scan, no association.
+$B sleep 5
+$B ifconfig -a > $O/ifconfig.txt 2>&1
+if $B ifconfig wlan0 up 2>> $O/summary.txt; then
+    say "wlan0 up"
+    if [ -x /usr/sbin/iwlist ]; then
+        LD_LIBRARY_PATH=/usr/lib:/lib /usr/sbin/iwlist wlan0 scan > $O/scan.txt 2>&1
+        say "scan: $($B grep -c ESSID $O/scan.txt) networks"
+    fi
+else
+    say "wlan0 NOT up"
+fi
+$B ls /sys/bus/usb/devices > $O/usb.txt 2>&1
+$B dmesg > $O/dmesg.txt
+if [ -n "$KEY" ]; then
+    n=$($B ls $KEY/kexec/log 2> /dev/null | $B wc -l)
+    D=$KEY/kexec/log/$n-$($B uname -r | $B cut -d- -f1)
+    $B mkdir -p $D && $B cp $O/* $D/ && $B sync
+    $B umount $KEY
+    say "written to the key: kexec/log/$n-6.1"
+    nose 00FF00
+else
+    nose FF00FF
+fi
+$B umount /usr 2> /dev/null
+# The log in RAM, written last, just before the restart: KXLOG, its length,
+# the summary and dmesg's end, at 0x33E00000 (below the bootloader). 6.1's
+# /dev/mem writes only inside its own memory (mem=62M refused it, QEMU
+# 2026-11-23), so this overwrites whatever 6.1 kept there: it no longer
+# matters. The 2.6.32 autorun saves it to the key after the restart.
+RAM=$((0x33E00000 / 4096))
+{ $B cat $O/summary.txt; $B echo ---; $B tail -c 60000 $O/dmesg.txt; } > /tmp/ramlog.txt
+{ $B echo "KXLOG $($B wc -c < /tmp/ramlog.txt)"; $B cat /tmp/ramlog.txt; } > /tmp/ramlog
+$B dd if=/tmp/ramlog of=/dev/mem bs=4096 seek=$RAM conv=notrunc 2> /dev/null && $B sync
+say "ram: $($B dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | $B head -c 12)"
+say "done: restarting"
+$B cat $O/summary.txt > /dev/console 2> /dev/null
+# The restart is the sign that 6.1 got this far (2026-11-23: the nose stayed
+# red with USB off, and 6.1's own SPI was never proven on the board).
+$B reboot -f
+exec $B sh

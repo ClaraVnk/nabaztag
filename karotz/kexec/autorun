@@ -1,0 +1,164 @@
+#!/bin/bash
+# Gengar, 6.1 on hardware: Terrier OS's linuxrc runs this from the USB key
+# at boot, under the 2.6.32 kernel built with CONFIG_KEXEC (karotz/kexec).
+# Only when kexec/go is on the key, and once (go is removed first): 6.1 is
+# loaded with the measure initramfs (measure-init, built by make-key.sh) and
+# started. kexec/go-2632 instead starts the rabbit's own 2.6.32 (the key's
+# zImage, the one installed) the same way: the control, a kernel known to
+# run on this board and light its nose (2026-11-23: 6.1 left no trace). Nothing is written to the flash; power-cycled, the rabbit boots
+# its own 2.6.32. Without kexec/go the boot carries on as usual.
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+K=/mnt/usbkey
+# Under 6.1 running the rabbit's own Terrier OS (kexec/go-os): what it does,
+# every 30 s for 10 minutes, on the key -- the kernel's log, the processes,
+# the network, the system log. In the background: the boot carries on.
+# First of all: the /dev/mem reads below would find 6.1's own live ramoops
+# and wipe it.
+case "$(uname -r)" in
+6.*)
+    D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-os-6.1
+    mkdir -p $D
+    { date; cat /proc/cmdline; cat /proc/mounts; ls -la /etc/; } > $D/state-0.txt 2>&1
+    dmesg > $D/dmesg.txt 2>&1
+    # The boot's own kernel log, kept apart: dmesg.txt is rewritten every 30 s
+    # and os-prelude's ps lines filled the ring before the run of 2026-11-24
+    # 21:37 could say why /usr (YAFFS, mtdblock6) was not mounted.
+    cp $D/dmesg.txt $D/dmesg-boot.txt; cat /proc/mtd > $D/mtd.txt 2>&1
+    grep -i yaffs /proc/filesystems >> $D/mtd.txt 2>&1; sync
+    # The USB host, its clocks and the hub as 6.1 sees them, against the
+    # same read under 2.6.32 before the jump (usb-2632.txt): the hub
+    # question of REVIEW-6.1.md 1.1. Once the hub has had its say (20 s).
+    ( sleep 20; sh $K/kexec/usb-measure $D/usb-61.txt; sync ) > /dev/null 2>&1 &
+    # Every LED order the daemons get, for 10 minutes, on the key (Clara,
+    # 2026-11-24: the belly stays blue under 6.1, dark under 2.6.32; a
+    # recorder in /tmp was lost with the reboot). Once D-Bus is up.
+    ( sleep 20
+      timeout 600 dbus-monitor --system "type=method_call,interface=com.mindscape.karotz.KarotzInterface,eavesdrop=true" 2>&1 |
+          while IFS= read -r l; do echo "$(date +%H:%M:%S) $l"; done > $D/ledmon.txt
+      sync ) > /dev/null 2>&1 &
+    # At 60 s, the LED and the sound by hand (2026-11-24: under 6.1 the
+    # Terrier's orders reached the daemons, the belly stayed red and nothing
+    # played): the devices the daemons open, a green LED through the local
+    # API (led-daemon: /dev/spidev0.1), a second of noise on /dev/audio
+    # (multimedia-daemon).
+    ( sleep 60
+      { date; ls -l /dev/spidev* /dev/audio* /dev/dsp* /dev/mixer* /dev/snd 2>&1
+        echo "== leds"; wget -q -O- "http://127.0.0.1/cgi-bin/leds?color=00FF00&pulse=0&nomemory=1" 2>&1
+        echo; echo "== audio"; head -c 8000 /dev/urandom > /dev/audio; echo "rc=$?"
+        echo "== dsp"; head -c 16000 /dev/urandom > /dev/dsp; echo "rc=$?"
+        dmesg | grep -iE "spi|oss|audio|uda|snd|iis" | tail -20
+        # The GPIO registers under 6.1, against gpio-2632.txt (the same read
+        # under 2.6.32 before the jump): the LEDs and the sound work there.
+        a=$((0x56000000)); while [ $a -le $((0x560000DC)) ]; do
+            printf '%08X %s\n' $a "$(devmem $a 32 2>&1)"; a=$((a + 4)); done > $D/gpio-61.txt
+      } > $D/devtest.txt 2>&1; sync ) &
+    ( for i in $(seq 1 40); do
+        sleep 30
+        { date; uptime; echo; ps; echo; ifconfig -a; iwconfig 2> /dev/null; echo; cat /proc/mounts
+          echo; logread 2> /dev/null | tail -150
+          # The client and the clock (2026-11-24: the client ran under 6.1,
+          # never reached the Terrier, and the date stayed in 1970).
+          echo "== resolv.conf"; cat /etc/resolv.conf
+          # LapinLibre's API lock (web.sh web_lock): every request answered
+          # "busy" within a second under 6.1, not after its 5 s wait.
+          echo "== lock"; ls -l /var/lock/ 2>&1 | head -5
+          ( exec 9>> /var/lock/lapinlibre-web.lock && flock -n -x 9; echo "flock -n: $?" ) 2>&1
+          ( exec 9>> /var/lock/lapinlibre-web.lock && timeout 2 flock -x 9; echo "timeout flock: $?" ) 2>&1
+          timeout 1 sleep 3; echo "timeout sleep: $? (143 or 124 expected)"
+          echo "== ntp"; nslookup pool.ntp.org 2>&1 | tail -3
+          for d in /usr/etc/conf/terrier /usr/terrier; do
+              [ -f $d/client.log ] && { echo "== $d/client.log"; tail -40 $d/client.log; }
+          done; } > $D/state-$i.txt 2>&1
+        dmesg > $D/dmesg.txt 2>&1
+        sync
+      done ) > /dev/null 2>&1 &
+    exit 0 ;;
+esac
+# What a 6.1 measure left in RAM before it restarted the rabbit (measure-init):
+# saved to the key, then wiped, at every boot that finds it.
+RAM=$((0x33E00000 / 4096))
+if dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | head -c 6 | grep -q KXLOG; then
+    mkdir -p $K/kexec/log
+    R=$K/kexec/log/$(ls $K/kexec/log | wc -l)-ram
+    n=$(dd if=/dev/mem bs=4096 skip=$RAM count=1 2> /dev/null | head -1 | cut -d' ' -f2)
+    dd if=/dev/mem bs=4096 skip=$RAM count=16 2> /dev/null | head -c $((n + 20)) > $R.txt
+    dd if=/dev/zero of=/dev/mem bs=4096 seek=$RAM count=1 conv=notrunc 2> /dev/null
+    sync
+fi
+# What 6.1's ramoops kept of its console (1 MiB at 0x32000000, "DBGC"
+# zones) when the watchdog armed below restarted the board: saved raw to the
+# key, its first page wiped (karotz/kexec/ramoops.py reads it).
+OOPS=$((0x32000000 / 4096))
+if dd if=/dev/mem bs=4096 skip=$OOPS count=256 2> /dev/null | grep -q DBGC; then
+    mkdir -p $K/kexec/log
+    dd if=/dev/mem bs=4096 skip=$OOPS count=256 of="$K/kexec/log/$(ls $K/kexec/log | wc -l)-ramoops.bin" 2> /dev/null
+    dd if=/dev/zero of=/dev/mem bs=4096 seek=$OOPS count=256 conv=notrunc 2> /dev/null
+    sync
+fi
+INITRD=$K/kexec/measure.cpio.gz
+if [ -e $K/kexec/go-2632 ]; then
+    rm -f $K/kexec/go-2632; KERNEL=$K/zImage; NAME=2.6.32-control
+elif [ -e $K/kexec/go-os ]; then
+    # The rabbit's own Terrier OS on 6.1, its /usr read-only (make-key.sh):
+    # nothing written to the flash, 6.1's YAFFS writing not yet proven.
+    # A number in go-os is how many boots in a row (the hub A/B needs
+    # five, 2026-11-25: one go-os gave one run and four plain 2.6.32).
+    N=$(cat $K/kexec/go-os 2>/dev/null); N=${N:-1}
+    if [ "$N" -gt 1 ] 2>/dev/null; then echo $((N - 1)) > $K/kexec/go-os; else rm -f $K/kexec/go-os; fi
+    KERNEL=$K/kexec/zImage-6.1; NAME=os-6.1
+    INITRD=$K/kexec/terrieros.cpio.gz
+elif [ -e $K/kexec/go-flash ]; then
+    # FLASH-PLAN step 1 on the rabbit, without the flash (2026-11-25): the
+    # flash 6.1 kernel (karotz-6.1.config alone) on the very ramdisk the
+    # key's install wrote to mtd2 (rootfs.img.gz, the one both kernels boot,
+    # step 2), with the BIOS's line: what the BIOS will do, kexec in its place.
+    rm -f $K/kexec/go-flash; KERNEL=$K/kexec/zImage-6.1-flash; NAME=flash-6.1
+    INITRD=$K/rootfs.img.gz
+    APPEND="root=/dev/ram rw init=/linuxrc mem=65536K devfs=udev k_nbclick=0 panic=10"
+elif [ -e $K/kexec/go ]; then
+    rm -f $K/kexec/go; KERNEL=$K/kexec/zImage-6.1; NAME=6.1
+else
+    exit 0
+fi
+mkdir -p $K/kexec/log
+D=$K/kexec/log/$(ls $K/kexec/log | wc -l)-2.6.32-to-$NAME
+mkdir -p $D
+{ date; uname -a; cat /proc/cmdline; ls -la /proc/atags; free; } > $D/before.txt 2>&1
+a=$((0x56000000)); while [ $a -le $((0x560000DC)) ]; do
+    printf '%08X %s\n' $a "$(devmem $a 32 2>&1)"; a=$((a + 4)); done > $D/gpio-2632.txt
+# The USB host and the hub under 2.6.32, cold or warm (the label is what
+# Clara writes in kexec/label.txt before the boot: "cold" after the mains).
+sh $K/kexec/usb-measure $D/usb-2632.txt "$(cat $K/kexec/label.txt 2> /dev/null)"
+# kexec/append.txt, when there: more of the command line, one try at a time
+# (initcall_blacklist=... to find the driver 6.1 stops in, 2026-11-23).
+EXTRA=$(cat $K/kexec/append.txt 2> /dev/null | tr -d '\r\n')
+echo "extra: $EXTRA" >> $D/before.txt
+# Everything the jump needs in RAM: the key is put away before it.
+cp $K/kexec/kexec /tmp/ && cp $INITRD /tmp/initrd-next.gz && cp $KERNEL /tmp/zImage-next || exit 0
+# Not the bootloader's command line: its initrd=0x31800000,... would win
+# over the initramfs kexec places (Gengar's dmesg, 2026-11-22); the board
+# file names the partitions. real-boot.sh's, with the measure's /init;
+# panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
+# The memory around 0x32000000 is left out (two mem=) for ramoops.
+APPEND=${APPEND:-"console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10"}
+/tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/initrd-next.gz \
+    --append="$APPEND $EXTRA" >> $D/before.txt 2>&1
+rc=$?
+echo "kexec -l rc=$rc" >> $D/before.txt
+sync
+[ $rc = 0 ] || exit 0
+# The board's own watchdog, armed now (~30 s): 6.1 that stops anywhere is
+# restarted, RAM kept, and the ramoops above saves its console. Not through
+# /dev/watchdog: kexec -e shuts the drivers down and s3c2410_wdt's shutdown
+# stops it (Gengar, 2026-11-23: no restart, no log). The driver is unbound
+# first (its remove stops it too), then the registers are set by hand:
+# WTCNT 61788 ticks of PCLK 67.5 MHz / 256 / 128, WTCON prescaler 255,
+# enable, /128, reset. 6.1 must not stop it: append.txt blacklists its
+# s3c2410wdt_driver_init; clk_ignore_unused keeps its clock running.
+echo s3c2410-wdt > /sys/bus/platform/drivers/s3c2410-wdt/unbind 2>> $D/before.txt
+devmem 0x53000004 32 61788 && devmem 0x53000008 32 61788 && devmem 0x53000000 32 0xFF39
+echo "WTCON $(devmem 0x53000000 32) WTCNT $(devmem 0x53000008 32)" >> $D/before.txt
+mount -o remount,ro /usr 2>> $D/before.txt
+mount -o remount,ro $K 2>> $D/before.txt
+sync
+/tmp/kexec -e

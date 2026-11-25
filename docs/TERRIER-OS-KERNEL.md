@@ -116,3 +116,8 @@ the same PR. Emulator first; a real Karotz (Gengar) only confirms.
   (button, power-on, ears) on 6.1, same /dev nodes, bytes and ioctls; ears
   on the Samsung PWM by name, encoder handlers threaded (pwm_config sleeps
   in 6.1). Probed in QEMU; the ears themselves need Gengar.
+- 2026-11-24: before step 8 writes 6.1 into a flash, the way back and the
+  install are studied in `karotz/kernel/FLASH-PLAN.md`: the bootloader's
+  own restore from the rescue partitions (head held at power-on, /usr
+  erased) and its serial menu, read in Gengar's bootloader; the install in
+  five steps, boot-time from a key, read back, 2.6.32 kept on the key.

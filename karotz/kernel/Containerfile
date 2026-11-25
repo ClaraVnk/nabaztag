@@ -45,8 +45,18 @@ RUN cd /linux && patch -p1 < /k/spidev-karotz.patch && patch -p1 < /k/spi-s3c24x
 # The NAND controller enabled before the chip is read: 6.1 scanned first,
 # which worked only behind a bootloader that had left it on (2026-11-22).
 RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
+# No bus-power patch (2026-11-25): with SLUB, five boots of Gengar without
+# it found the hub's devices every time; its refusals were the stale reads
+# of SLOB too (usb-bus-power-rabbitv3.patch until then).
+# The DMA status after a transfer has ended (s3c24xx-dma-tx-status.patch): the
+# sound card's stop crashed the kernel on Gengar, 2026-11-24.
+COPY s3c24xx-dma-tx-status.patch /k/
+RUN cd /linux && patch -p1 < /k/s3c24xx-dma-tx-status.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
-COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config size.sh /k/
+# The kexec and hub-test fragments too (the kexec one was mounted by hand
+# until 2026-11-24: EXTRA names them as /k/...).
+COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config \
+     karotz-6.1-kexec.config size.sh /k/
 CMD ["sh", "/k/size.sh"]
