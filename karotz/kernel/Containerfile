@@ -56,5 +56,8 @@ RUN cd /linux && patch -p1 < /k/s3c24xx-dma-tx-status.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
-COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config size.sh /k/
+# The kexec and hub-test fragments too (the kexec one was mounted by hand
+# until 2026-11-24: EXTRA names them as /k/...).
+COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config \
+     karotz-6.1-kexec.config karotz-6.1-hubtest.config size.sh /k/
 CMD ["sh", "/k/size.sh"]

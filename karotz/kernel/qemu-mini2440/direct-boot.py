@@ -153,3 +153,66 @@ if "QEMU_ARM920_PIPELINE" not in h:
         h = "#include <stdlib.h>\n" + h
     hp.write_text(h)
 
+
+# The bootloader's own boot (FLASH-PLAN step 0, 2026-11-24): with no -kernel,
+# the machine copies the NAND's first 256 KiB to 0x33f80000 and jumps there,
+# which is what the Karotz does with its BIOS. Its loader read 512-byte
+# pages with 16 bytes of spare; Gengar's chip (MINI2440_NAND_CID=0xDA) has
+# 2 KiB pages and 64 bytes, so the copy was every fourth page's quarter.
+s = p.read_text()
+l_old = "\tfor (page = 0; page < (size / 512); page++, src += 512 + 16, dst += 512) {\n\t\tif (nand_readraw(nand, nand_offset + src, buffer, 512)) {\n\t\t\tcpu_physical_memory_write(s3c_base_offset + dst, buffer, 512);\n"
+if "bios page size" not in s:
+    assert s.count(l_old) == 1, "mini2440_load_from_nand's loop"
+    s = s.replace("\tuint8_t buffer[512];\n\tuint32_t src = 0;\n",
+                  "\tuint8_t buffer[2048];\n\tuint32_t src = 0;\n"
+                  "\t/* bios page size: the chip's, 2 KiB + 64 for MINI2440_NAND_CID=0xDA */\n"
+                  "\tint ps = (getenv(\"MINI2440_NAND_CID\") && strtol(getenv(\"MINI2440_NAND_CID\"), NULL, 0) == 0xDA) ? 2048 : 512;\n", 1)
+    s = s.replace(l_old,
+                  "\tfor (page = 0; page < (size / ps); page++, src += ps + ps / 32, dst += ps) {\n"
+                  "\t\tif (nand_readraw(nand, nand_offset + src, buffer, ps)) {\n"
+                  "\t\t\tcpu_physical_memory_write(s3c_base_offset + dst, buffer, ps);\n", 1)
+    p.write_text(s)
+
+# The head button, GPF0, low when pressed. The GPIO model's inputs read 0
+# until something drives them, so the BIOS saw the head held at every boot
+# and would have restored the factory partitions each time. Released at
+# power-up; MINI2440_HEAD_HELD=<ms> holds it that long, for the BIOS's
+# "restore default partitions" (FLASH-PLAN §1: 300 counts with the head
+# held, then released).
+s = p.read_text()
+h_old = "    mini2440_reset(mini);\n\n    if (kernel_filename"
+if "MINI2440_HEAD_HELD" not in s:
+    assert s.count(h_old) == 1, "the init's reset call"
+    s = s.replace(h_old, """    mini2440_reset(mini);
+
+    {
+        const char *held = getenv("MINI2440_HEAD_HELD");
+        qemu_set_irq(s3c_gpio_in_get(mini->cpu->io)[S3C_GPF(0)], held ? 0 : 1);
+        if (held) {
+            QEMUTimer *t = qemu_new_timer(rt_clock, mini2440_head_release, mini);
+            mini2440_printf("head button held for %s ms\\n", held);
+            qemu_mod_timer(t, qemu_get_clock(rt_clock) + atoi(held));
+        }
+    }
+
+    if (kernel_filename""", 1)
+    s = s.replace("static int mini2440_direct;\n",
+                  "static int mini2440_direct;\n\n"
+                  "static void mini2440_head_release(void *opaque)\n{\n"
+                  "    struct mini2440_board_s *mini = opaque;\n"
+                  "    qemu_set_irq(s3c_gpio_in_get(mini->cpu->io)[S3C_GPF(0)], 1);\n"
+                  "    mini2440_printf(\"head button released\\n\");\n}\n", 1)
+    p.write_text(s)
+
+# The BIOS reads a page and then waits for NFSTAT bit 2, RnB_TransDetect
+# (the chip's ready line has risen since the bit was cleared), not bit 0
+# (ready now) as Linux does; the model only ever gave bit 0, and the BIOS
+# sat at 0x33f82394 after its banner (2026-11-24, bios-boot.sh). Nothing is
+# ever busy here, so a ready chip has always had its transition.
+nf = p.parent / "s3c2440_nand.c"
+t = nf.read_text()
+nf_old = "    case S3C_NFSTAT:\n        nand_getpins(s->nand, &rb);\n        return rb;\n"
+if "RnB_TransDetect" not in t:
+    assert t.count(nf_old) == 1, "NFSTAT read"
+    t = t.replace(nf_old, "    case S3C_NFSTAT:\n        nand_getpins(s->nand, &rb);\n        return rb | (rb ? 4 : 0);  /* RnB_TransDetect, the bit the BIOS polls */\n")
+    nf.write_text(t)
