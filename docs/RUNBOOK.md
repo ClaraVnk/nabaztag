@@ -1813,6 +1813,19 @@ tx_control 0000, INTEN 0000 after INITIALIZE, no WEPFLAGS write, no FD20
 read; and `st=00` on the first poll of a start only (the Terrier counts a
 start at each one).
 
+**Everything a v1 does, on the native firmware (2026-11-25).** Frames 11
+(ears), 12 (the five LEDs, for some seconds), 13 (a sound: GET
+`/vl/v1/snd?sn=&i=` into the serial flash, then played), 14 (asleep for some
+minutes), 15 (the server and the SSID, taken at the next boot); `sd=` reports
+the head button (0003 click, 0001 double, 0004 long) and an ear turned by
+hand (8R0L); the volume wheel is read. An ear whose move restarted the rabbit
+is marked in the EEPROM and never driven again (Lazare's right motor). The
+sound reuses the update's 528-byte page (the PIC's 4 KB of RAM). On the dev
+VM, `firmware-arm/emulator/tools/v1-native-proof.sh` runs them all against
+`v1_native_warren.py` (`--ears 3 5 --leds ... --sound ... --asleep 1
+--config ...`, a click, a long press, a hand on ear 0): PASS. What is left
+on Lazare and after: `firmware-arm/v1-native/ROADMAP.md`.
+
 ### A network with several access points: the next one after a refusal (Naboot 1.2.1.5)
 
 2026-11-24. `apply-mods.py bss_fallback`: the bootloader keeps every scanned

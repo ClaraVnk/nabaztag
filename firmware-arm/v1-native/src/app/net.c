@@ -23,6 +23,8 @@
 #define FW_PATH         "/vl/v1/fw?sn="          /* ours: the image for this board (DESIGN.md 8) */
 #define REQ_POLL        1
 #define REQ_IMAGE       2
+#define REQ_SOUND       3                       /* frame 13's sound (sound.c) */
+#define SND_PATH        "/vl/v1/snd?sn="
 #define POLL_INTERVAL   MS_TO_TICKS(10000)
 #define RETRY           MS_TO_TICKS(3000)
 #define TX_SIZE         340
@@ -264,7 +266,7 @@ static void dhcp_rx(uint16_t len)
 
 static void dns_send(void)
 {
-  const __code char *s = SERVER_NAME;
+  __data const char *s = net_server;
   uint16_t at;
   dns_id = ticks() ^ 0x5A00;
   dns_port = 0xC000 | (ticks() & 0x0FFF);
@@ -307,7 +309,7 @@ static void dns_rx(void)
     rdlen = rx_be16();
     if(type == 1 && rdlen == 4) {
       rx_bytes(server_ip, 4);
-      log_s("dns: " SERVER_NAME " -> "); log_ip(server_ip); log_nl();
+      log_s("dns: "); log_str(net_server); log_s(" -> "); log_ip(server_ip); log_nl();
       state = NET_READY;
       choose_hop();
       timer = ticks() - POLL_INTERVAL; tries = 0;
@@ -357,6 +359,7 @@ static struct {
   uint8_t  kind;                                    /* REQ_POLL or REQ_IMAGE */
   uint8_t  ok;                                      /* the status line said 2xx */
   uint16_t word;                                    /* frame 10's two bytes */
+  uint16_t sd;                                      /* the sd= this poll carried */
 } t;
 
 static void tcp_send(uint8_t flags, uint8_t with_request)
@@ -369,14 +372,23 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
   if(flags & TCP_SYN) { put8(2); put8(4); put16(1400); }   /* MSS */
   if(with_request) {
     uint8_t i;
-    puts_code(t.kind == REQ_IMAGE ? "GET " FW_PATH : "GET " POLL_PATH);
+    puts_code(t.kind == REQ_IMAGE ? "GET " FW_PATH : t.kind == REQ_SOUND ? "GET " SND_PATH : "GET " POLL_PATH);
     for(i = 0; i < 6; i++) put_hex_upper(our_mac[i]);
+    if(t.kind == REQ_SOUND) { puts_code("&i="); put_hex_upper(sound_index()); }
     /* st=00 on the first poll after a start only, as Violet: the Terrier
      * counts a start at each st=00, and Lazare's first native polls showed
      * one every ten seconds (2026-11-25). */
     if(t.kind == REQ_IMAGE) puts_code("&v=" FW_VERSION "&b=" STR(BOARD_ID));
-    else puts_code(polls_answered ? "&v=" FW_VERSION "&st=01&tc=00000000" : "&v=" FW_VERSION "&st=00&tc=00000000");
-    puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: " SERVER_NAME "\r\n\r\n");
+    else if(t.kind == REQ_SOUND) {}
+    else {
+      puts_code(polls_answered ? "&v=" FW_VERSION "&st=01&tc=00000000" : "&v=" FW_VERSION "&st=00&tc=00000000");
+      /* the button or the ears by hand (input.c), as Violet's sd= */
+      t.sd = input_sd();
+      if(t.sd) { puts_code("&sd="); put_hex_upper((uint8_t)(t.sd >> 8)); put_hex_upper((uint8_t)t.sd); }
+    }
+    puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: ");
+    { __data const char *h = net_server; while(*h) put8((uint8_t)*h++); }
+    puts_code("\r\n\r\n");
     t.unacked = txp - tp_at - 20;
   }
   ip_send(16);
@@ -391,12 +403,14 @@ static void tcp_close(const __code char *why)
   log_s("http: "); log_line(why);
   timer = ticks();
   if(t.kind == REQ_IMAGE) update_end(0);
+  if(t.kind == REQ_SOUND) sound_end(0);
 }
 
 static void http_open(uint8_t kind)
 {
   t.kind = kind; t.ok = 0;
   if(kind == REQ_IMAGE) update_begin();
+  if(kind == REQ_SOUND) sound_begin();
   t.lport = 0x1000 | (ticks() & 0x0FFF);
   t.snd_nxt = ((uint32_t)ticks() << 16) | (uint16_t)(our_mac[5] << 8) | our_mac[4];
   t.unacked = 0; t.body = 0; t.http = 0; t.crlf = 0; t.frame = 0; t.linelen = 0;
@@ -429,6 +443,7 @@ static void http_byte(uint8_t c)
   }
   t.body++;
   if(t.kind == REQ_IMAGE) { if(t.ok) update_byte(c); return; }
+  if(t.kind == REQ_SOUND) { if(t.ok) sound_byte(c); return; }
   switch(t.frame) {
     case 0:
       if(c == 0x7F) { log_line("answer: 7F"); t.frame = 1; }
@@ -447,6 +462,29 @@ static void http_byte(uint8_t c)
       break;
     case 5:
       if(t.ftype == 3 && t.flen == 1) { log_s("poll interval "); log_dec(c); log_nl(); }
+      if(t.ftype == 0x12 && t.flen <= 6) {          /* ours: five LEDs, then seconds */
+        t.line[6 - t.flen] = c;
+        if(t.flen == 1) leds_order(t.line, c);
+      }
+      if(t.ftype == 0x13 && t.flen <= 4) {          /* ours: a sound's index, then its length (3) */
+        t.line[4 - t.flen] = c;
+        if(t.flen == 1) sound_offer(t.line[0], ((uint32_t)t.line[1] << 16) | ((uint16_t)t.line[2] << 8) | c);
+      }
+      if(t.ftype == 0x14 && t.flen <= 2) {          /* ours: asleep for this many minutes (2) */
+        t.line[2 - t.flen] = c;
+        if(t.flen == 1) {
+          uint16_t mins = ((uint16_t)t.line[0] << 8) | c;
+          uint8_t dark[5] = { 0, 0, 0, 0, 0 };
+          /* the LEDs off for that long, at most 4 minutes; the Terrier
+           * says it again at each poll of the night */
+          leds_order(dark, mins ? (mins > 4 ? 240 : (uint8_t)(mins * 60)) : 1);
+        }
+      }
+      if(t.ftype == 0x15) config_frame_byte(c, t.flen == 1);   /* ours: settings, TLV */
+      if(t.ftype == 0x11) {                         /* ours: the ears' places, left then right */
+        if(t.flen == 2) t.word = c;
+        else if(t.flen == 1) ears_goto((uint8_t)t.word, c);
+      }
       if(t.ftype == 0x10) {                         /* ours: the image version the Terrier holds */
         if(t.flen == 2) t.word = (uint16_t)c << 8;
         else if(t.flen == 1) update_offer(t.word | c);
@@ -494,8 +532,10 @@ static void tcp_rx(uint16_t len)
     t.st = T_FIN_WAIT;
     tries = 0;
     if(t.kind == REQ_IMAGE) update_end(1);
+    else if(t.kind == REQ_SOUND) sound_end(1);
     else {
       polls_answered++;
+      if(t.sd) input_sent(t.sd);
       log_s("poll "); log_dec(polls_answered); log_s(" done, "); log_dec(t.body); log_line(" B");
     }
   } else if(len > hl) tcp_send(TCP_ACK, 0);
@@ -613,7 +653,7 @@ void net_poll(void)
   switch(state) {
     case NET_DHCP:
       if(age >= RETRY) {
-        if(++tries > 20) { log_line("dhcp: give up"); state = NET_DOWN; prism_join(SSID); return; }
+        if(++tries > 20) { log_line("dhcp: give up"); state = NET_DOWN; prism_join(net_ssid); return; }
         log_line("dhcp: discover");
         dhcp_send(1, 0, 0);
         timer = ticks();
@@ -633,6 +673,11 @@ void net_poll(void)
         if(update_wanted() && have_hop) {           /* the image, right after the poll that offered it */
           log_line("http: image");
           http_open(REQ_IMAGE);
+          return;
+        }
+        if(sound_wanted() && have_hop) {            /* frame 13's sound, right after its poll */
+          log_line("http: sound");
+          http_open(REQ_SOUND);
           return;
         }
         if(age < POLL_INTERVAL) return;

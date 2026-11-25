@@ -27,6 +27,9 @@
 #ifndef SSID
 #define SSID            "Terrier"
 #endif
+#ifndef SERVER_NAME
+#define SERVER_NAME "p.nabaztag.com"   /* the build's server; frame 15 sets another */
+#endif
 
 /* --- the two boards (Makefile: DEV, BOARD_ID, FLASH_END, WRITE_BLOCK) ---- */
 /* PIC18LF6525 (Lazare, 1.4b): 48 KB, 8-byte write blocks (DS39612 6.5: eight
@@ -142,6 +145,7 @@ void uart_init(void);
 void uart_putc(char c);
 void log_s(const __code char *s);        /* string from flash */
 void log_hex8(uint8_t v);
+void log_str(__data const char *s);
 void log_nl(void);
 void log_line(const __code char *s);     /* s then newline */
 
@@ -195,16 +199,53 @@ void    leds_set(uint16_t onoff);        /* bit 15 top R, 14 top B, 13 top G ...
 void    ears_init(void);
 void    ears_poll(void);
 void    ear_move(uint8_t ear, int8_t holes);
+void    ears_goto(uint8_t left, uint8_t right);  /* frame 11: each ear to a place, 0-16 holes */
+/* EEPROM 0x7A: the ear being driven (bit 0 ear 0, bit 1 ear 1), set before
+ * the motor starts and cleared when it stops; 0x7B: the ears found to have
+ * restarted the rabbit (a set bit at the start), never driven again until
+ * the next ICSP write erases the EEPROM. Lazare's right ear restarts it
+ * (2026-11-24): with frame 11 in every answer it would have looped. */
+#define EE_EAR_MOVING   0x7A
+#define EE_EAR_DEAD     0x7B
+/* frame 12 (main.c): the five LEDs (bit 0 R, 1 G, 2 B; top first) for
+ * `seconds`, then the network's LEDs again */
+void    leds_order(__data const uint8_t *five, uint8_t seconds);
+/* main.c: the network and server in use (the configuration page, else the
+ * build's), and frame 15's bytes (last: the frame's last byte) */
+extern __data char net_ssid[33], net_server[48];
+void    config_frame_byte(uint8_t c, uint8_t last);
+/* frame 13 (sound.c): a sound fetched into the serial flash, then played */
+extern __data uint8_t xfer_page[528];   /* update.c: an image's page, or a sound's */
+void    sound_offer(uint8_t index, uint32_t length);
+uint8_t sound_wanted(void);
+uint8_t sound_index(void);
+void    sound_begin(void);
+void    sound_byte(uint8_t c);
+void    sound_end(uint8_t complete);
+/* input.c: the head button and the ears by hand into sd=, the volume wheel */
+void     input_init(void);
+void     input_poll(void);
+void     input_ears(uint8_t right, uint8_t left);
+uint16_t input_sd(void);
+void     input_sent(uint16_t v);
+uint8_t  input_volume(void);
+#define EAR_HOLES   17
+/* Ear 0 counts on T0CKI, ear 1 on T13CKI; which is the left one is still to
+ * be confirmed on Lazare (its right ear's motor is dead, 2026-11-24): the
+ * one that stalls is the right one. */
+#define EAR_RIGHT   0
+#define EAR_LEFT    1
 uint8_t ears_busy(void);
 
 /* --- app/prism.c: the card */
 extern __data uint8_t our_mac[6];
 uint8_t prism_init(void);                /* 0 ok */
-uint8_t prism_join(const __code char *ssid);
+uint8_t prism_join(__data const char *ssid);
 void    prism_poll(void);                /* events: info frames, received frames */
 uint8_t prism_link(void);                /* 1 associated */
 void    prism_report(uint8_t join_result);  /* the card's view into the EEPROM, once */
 void    ee_put(uint8_t a, uint8_t v);       /* the data EEPROM, for the reports */
+uint8_t ee_get(uint8_t a);
 void    ee_words(uint8_t a, __data const uint16_t *w, uint8_t n);
 extern uint16_t rx_frames, rx_bad, tx_frames, tx_exc, rx_status_last, rx_events, rx_bap_fail, ev_seen, tx_lost, tx_status_last, tx_cmd_status;
 void    prism_report_link(uint8_t at);  /* BSSID, port status, SSID, our MAC into the EEPROM */
