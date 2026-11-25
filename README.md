@@ -4,7 +4,7 @@
   <img src="images/home-assistant.png" alt="Home Assistant" height="48">
 </p>
 
-<h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
+<h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Terrier OS&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
 
 <p align="center">
   <strong>Bring the Wi-Fi rabbits back to life — Nabaztag, Nabaztag:tag and Karotz: new firmware, a new warren, Home Assistant.</strong><br>
