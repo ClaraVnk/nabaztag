@@ -1633,6 +1633,25 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
+### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
+
+`karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,
+on nandsim with an installed rabbit's mtd1 and mtd2, from the repository
+root on the dev VM:
+
+    flock -o ~/heavy.lock firmware-arm/emulator/karotz/ota/flash-proof.sh
+    # 2026-11-25: kernel (6.1 written, read back identical), kernel-fault1
+    #   ("once more", then identical), kernel-fault2 (6.1 twice differing,
+    #   "2.6.32 written back and read back", exit 2); each time the ramdisk
+    #   and /usr untouched, the settings on the key, go-back and a bad
+    #   MD5SUMS checked. "PASS flash-proof: write, read-back, retry, way
+    #   back, preflight"
+
+The first run failed every check for a reason of the emulator: the script
+was not in the guest's initramfs (`run.sh` now adds `/ota/flash-kernel` when
+it is mounted). The second found a real bug: `nanddump -l` reads whole
+pages, so the read-back now asks for the length rounded up to the page.
+
 ### FLASH-PLAN step 0 in QEMU: the Karotz's own BIOS boots its NAND, and restores (2026-11-25)
 
 `karotz/kernel/qemu-mini2440/bios-boot.sh` runs QEMU's mini2440 with no
