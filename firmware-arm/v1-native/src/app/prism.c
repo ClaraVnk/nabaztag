@@ -247,7 +247,7 @@ uint8_t prism_init(void)
   return 0;
 }
 
-uint8_t prism_join(const __code char *ssid)
+uint8_t prism_join(__data const char *ssid)
 {
   uint16_t w[17];
   uint8_t n = 0, i;
@@ -291,6 +291,12 @@ uint8_t prism_link(void) { return linked; }
  *   58 FD41 current SSID: length then 8 bytes
  *   64 CMD, EVSTAT, SWSUPPORT0 before INITIALIZE; CMD, EVSTAT, STATUS after
  *   (2 bytes each). Join result 0x80 + n: prism_init failed at step n. */
+uint8_t ee_get(uint8_t a)
+{
+  EEADRH = 0; EEADR = a; EECON1 = 0x01;   /* the data EEPROM, RD */
+  return EEDATA;
+}
+
 void ee_put(uint8_t a, uint8_t v)
 {
   EEADRH = 0; EEADR = a; EEDATA = v;

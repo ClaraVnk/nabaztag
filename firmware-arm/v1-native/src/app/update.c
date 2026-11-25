@@ -20,7 +20,10 @@ static uint8_t  target;                 /* the slot to write */
 static uint16_t offered;                /* the version the Terrier has; 0 none */
 static uint8_t  fetching, phase;        /* phase: 0 header, 1 image, 2 all in, 3 given up */
 static uint8_t  hdr[HDR_SIZE];
-static uint8_t  page[528];
+/* the page being received: an image here, a sound in sound.c (never both
+ * at once; one buffer, the RAM is 4 KB) */
+__data uint8_t xfer_page[528];
+#define page xfer_page
 static uint16_t fill, idx;
 static uint32_t got;
 static uint8_t  confirmed;

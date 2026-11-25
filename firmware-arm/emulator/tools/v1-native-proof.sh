@@ -24,13 +24,19 @@ grep -E '^(loader|app-30):$|^(flash|ram) ' "$OUT/build.log" | tr '\n' ' ' | tee 
 podman build -q -t nabaztag-v1-native -f v1/Containerfile .. >/dev/null
 
 mkdir -p "$OUT/fw"
+# Frame 13's sound: a 16 kHz tone in Violet's Audi container, served by the
+# warren at GET /vl/v1/snd (tools/ is mounted at /t).
+python3 tools/violet-vasm/v1-audi.py 16000 0.5 tools/proof.audi > /dev/null
+trap 'rm -f tools/proof.audi' EXIT
 cp "$NATIVE/out/18f6525/full.hex" "$OUT/fw/"
 # The warren in a container on the host network, like the emulator (on a
 # Mac that network is the podman machine's).
 podman run --rm --network host --name "v1warren-$PORT" -v "$PWD/tools":/t:ro,Z \
-  docker.io/library/python:3.13-alpine python3 -u /t/v1_native_warren.py "$PORT" > "$OUT/warren.log" 2>&1 &
+  docker.io/library/python:3.13-alpine python3 -u /t/v1_native_warren.py "$PORT" --ears 3 5 \
+  --leds 1,2,4,3,7,2 --sound /t/proof.audi --asleep 1 --config p.nabaztag.com Terrier \
+  > "$OUT/warren.log" 2>&1 &
 WARREN=$!
-trap 'kill $WARREN 2>/dev/null; podman rm -f "v1warren-$PORT" >/dev/null 2>&1' EXIT
+trap 'kill $WARREN 2>/dev/null; podman rm -f "v1warren-$PORT" >/dev/null 2>&1; rm -f tools/proof.audi' EXIT
 sleep 2
 
 emu() {
@@ -43,7 +49,9 @@ emu() {
 # --bcast-deaf: the access point's broadcasts never reach the card, as
 # Lazare's 802.11b card under a UniFi AP (2026-11-25): DHCP must not ask for
 # a broadcast reply.
-emu --seconds 135 --bcast-deaf > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
+# A click at 60 s, a long press at 75 s, the right ear (0) turned 4 holes
+# by hand at 95 s: the button and the ears by hand go to sd=.
+emu --seconds 135 --bcast-deaf --press 60 0.2 --press 75 2 --hand 0 4 95 > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
 emu --seconds 6 > "$OUT/run2.log" 2>&1 || true
 # No access point at all (Lazare at blue, 2026-11-24/25): after 30 s the
 # firmware writes what the card says into the EEPROM, for card-report.py.
@@ -72,8 +80,26 @@ need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=01&tc=00000000
 need "$L" 'uart: http: HTTP/1.0 200 OK' "the answer's status line was not read"
 need "$L" 'uart: poll interval 1' "the answer's frame 03 was not parsed"
 need "$L" 'uart: poll 3 done' "fewer than three polls answered"
-need "$L" 'uart: ear 0 done in' "ear 0 did not move"
-need "$L" 'uart: ear 1 done in' "ear 1 did not move"
+need "$L" 'uart: ear 0 done at' "ear 0 did not move"
+need "$L" 'uart: ear 1 done at' "ear 1 did not move"
+# Frame 11 with every answer, left 3 and right 5 (ear 1 left, ear 0 right):
+# after the demo's two holes each, both end where the Terrier keeps them.
+need "$L" 'uart: ear 0 done at 5' "frame 11 did not take the right ear (0) to 5"
+need "$L" 'uart: ear 1 done at 3' "frame 11 did not take the left ear (1) to 3"
+# Frame 12: the LEDs as ordered (top R, then G, B, R+G, R+G+B), then back.
+need "$L" 'uart: leds: ordered 855e' "frame 12 did not light the LEDs as ordered"
+# Frame 13: the sound fetched over HTTP into the flash, then played.
+need "$OUT/warren.log" 'GET /vl/v1/snd?sn=0019DB00BEEF&i=01 HTTP/1.0' "frame 13 did not fetch the sound"
+need "$L" 'uart: sound: in, playing' "the fetched sound was not played"
+need "$L" 'uart: oki: done' "the OKI did not finish the fetched sound"
+# Frame 14: asleep, the LEDs off; frame 15: the settings, taken at the next boot.
+need "$L" 'uart: leds: ordered 0000' "frame 14 did not put the LEDs out"
+need "$L" 'uart: config: set, network Terrier, server p.nabaztag.com (next boot)' "frame 15 was not written"
+need "$OUT/run2.log" 'uart: config: network Terrier, server p.nabaztag.com' "the next boot did not take frame 15's settings"
+# The button and the ears by hand, as Violet's sd=.
+need "$OUT/warren.log" '&sd=0003 HTTP' "a click was not reported (sd=0003)"
+need "$OUT/warren.log" '&sd=0004 HTTP' "a long press was not reported (sd=0004)"
+need "$OUT/warren.log" '&sd=8903 HTTP' "the ears turned by hand were not reported (sd=8903: right 9, left 3)"
 need "$L" 'ear 1: motor stopped' "the emulator did not see ear 1 stop"
 grep -q 'watchdog:' "$L" && fail "the watchdog fired"
 grep -q 'halted' "$L" && fail "the PIC halted"

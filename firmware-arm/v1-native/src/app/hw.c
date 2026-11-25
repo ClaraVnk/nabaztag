@@ -78,3 +78,8 @@ void leds_set(uint16_t onoff)
   spi_xfer((uint8_t)onoff);
   leds_latch();
 }
+
+/* A string in RAM (the network and server of the configuration page); in
+ * the application only: in common/uart.c it overflowed the loader's 8 KB
+ * (2026-11-25). */
+void log_str(__data const char *s) { while(*s) uart_putc(*s++); }
