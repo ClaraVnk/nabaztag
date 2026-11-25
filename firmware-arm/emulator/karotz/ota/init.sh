@@ -42,6 +42,70 @@ rm -f /sbin/reboot
 printf '#!/bin/sh\ntouch /var/tmp/reboot-asked\n' > /sbin/reboot
 chmod 755 /sbin/reboot
 
+# ota=kernel* (flash-proof.sh): FLASH-PLAN step 3, karotz/kexec/flash-kernel
+# (mounted at /ota/flash-kernel) writing a kernel into mtd1 from the key, on
+# a flash that already holds an installed rabbit's mtd1 (the key's 2.6.32)
+# and mtd2 (its ramdisk). kernel-fault1: the first read-back is spoiled
+# (written again, then fine); kernel-fault2: every read-back of the new
+# kernel is spoiled (2.6.32 written back). Then go-back writes 2.6.32.
+case " $(cat /proc/cmdline) " in *" ota=kernel"*)
+    K=/mnt/usbkey; F=$K/flash
+    FAULT=$(sed -n 's/.* ota=kernel-fault\([12]\).*/\1/p' /proc/cmdline)
+    echo "OTA: kernel write, fault ${FAULT:-none}"
+    nandwrite -q -p /dev/mtd1 $K/zImage; nandwrite -q -p /dev/mtd2 $K/rootfs.img.gz
+    r=$(wc -c < $K/rootfs.img.gz)
+    mkdir -p $F && cp $K/zImage $F/zImage-2632
+    # The new kernel's bytes do not matter here, only that they are not the
+    # old ones and are written and read back whole.
+    head -c 2500000 /dev/urandom > $F/zImage-6.1
+    ( cd $F && md5sum zImage-6.1 zImage-2632 > MD5SUMS )
+    if [ -n "$FAULT" ]; then
+        # nanddump spoiled: one byte changed in what it reads, the first
+        # time (fault 1) or each time the 6.1 image is read (fault 2).
+        WHERE=$(command -v nanddump); REAL=$WHERE.real
+        rm -f "$WHERE.tmp"; cp "$WHERE" "$REAL" && rm -f "$WHERE"
+        printf '#!/bin/sh\n%s "$@"\nout=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && out=$2; shift; done\nn=$(cat /var/tmp/spoil 2>/dev/null || echo 0)\nif [ "$n" -gt 0 ] && [ -n "$out" ] && ! head -c $(wc -c < /mnt/usbkey/flash/zImage-2632) "$out" | cmp -s - /mnt/usbkey/flash/zImage-2632; then printf "\\377" | dd of="$out" bs=1 seek=1000 conv=notrunc 2>/dev/null; [ "$n" = 9 ] || echo $((n - 1)) > /var/tmp/spoil; fi\n' "$REAL" > "$WHERE"
+        chmod 755 "$WHERE"
+        [ "$FAULT" = 1 ] && echo 1 > /var/tmp/spoil || echo 9 > /var/tmp/spoil
+    fi
+    check() { if eval "$2"; then echo "OTA-PASS $1"; else echo "OTA-FAIL $1"; fi; }
+    nanddump.real -q -l $r -f /var/tmp/mtd2-before.bin /dev/mtd2 2>/dev/null || nanddump -q -l $r -f /var/tmp/mtd2-before.bin /dev/mtd2
+    touch $F/go-write
+    KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
+    echo "OTA: flash-kernel returned $rc; its log:"; cat $F/log.txt
+    rm -f /var/tmp/spoil
+    z6=$(wc -c < $F/zImage-6.1); z2=$(wc -c < $F/zImage-2632)
+    D=$(command -v nanddump.real || command -v nanddump)
+    pages() { echo $(( ($1 + 2047) / 2048 * 2048 )); }      # nanddump reads whole pages
+    $D -q -l $(pages $z6) -f /var/tmp/mtd1.bin /dev/mtd1
+    $D -q -l $r -f /var/tmp/mtd2.bin /dev/mtd2
+    if [ "$FAULT" = 2 ]; then
+        check "it gave up on 6.1 and said so" "[ $rc = 2 ] && grep -q 'FAILED: 6.1' $F/log.txt"
+        check "2.6.32 is back in mtd1" "head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
+    else
+        check "it wrote 6.1" "[ $rc = 0 ] && grep -q 'DONE: 6.1' $F/log.txt"
+        check "6.1 is in mtd1" "head -c $z6 /var/tmp/mtd1.bin | cmp -s - $F/zImage-6.1"
+        [ "$FAULT" = 1 ] && check "a spoiled read-back was written once more" "grep -q 'once more' $F/log.txt"
+    fi
+    check "the ramdisk (mtd2) was not touched" "cmp -s /var/tmp/mtd2.bin /var/tmp/mtd2-before.bin"
+    check "/usr was not touched: key, settings, client" "grep -q THE-ADOPTION-KEY /usr/etc/conf/terrier/key && grep -q lang=fr /usr/etc/conf/voice.conf && grep -q A-NEWER-CLIENT /usr/etc/conf/terrier/terrier-karotz"
+    check "the settings were copied to the key" "grep -q THE-ADOPTION-KEY $F/conf-backup/terrier/key"
+    check "the triggers are gone" "[ ! -e $F/go-write ] && [ ! -e $F/go-back ]"
+    # The way back: go-back writes 2.6.32.
+    touch $F/go-back
+    KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
+    $D -q -l $(pages $z2) -f /var/tmp/mtd1.bin /dev/mtd1
+    check "go-back wrote 2.6.32" "[ $rc = 0 ] && head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
+    # A bad MD5SUMS stops before anything is written.
+    echo "00000000000000000000000000000000  zImage-6.1" > $F/MD5SUMS; touch $F/go-write
+    KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
+    $D -q -l $(pages $z2) -f /var/tmp/mtd1.bin /dev/mtd1
+    check "a bad MD5SUMS writes nothing" "[ $rc = 1 ] && head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
+    echo "OTA-RESULT"
+    /bin/busybox poweroff -f
+    sleep 600 ;;                      # poweroff returns before QEMU stops: nothing after it runs
+esac
+
 # ota=package (run.sh OTA_MODE): no stick. The update from the rabbit's page
 # puts the package where installs keep things, the client's own folder, and
 # shows it to the install where it reads the stick (KEY=/mnt/usbkey).

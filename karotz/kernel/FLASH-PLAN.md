@@ -348,6 +348,26 @@ read-back and `/usr` untouched; then `bios-boot.sh` on the image the
 emulator wrote (its mtd1 and mtd2 copied in by `karotz-flash.py`'s
 layout), to `[START]`; then the first `go-back` in QEMU the same way.
 
+**Built and proven in the emulator (2026-11-25).** `karotz/kexec/flash-kernel`
+writes the kernel only (step 2's ramdisk serves both kernels, so mtd2 is left
+alone): the key's `flash/` holds `zImage-6.1`, `zImage-2632`, `MD5SUMS` and a
+trigger, `go-write` or `go-back`, removed before anything is written. It
+checks the sums, the sizes and the partition's name ("Kernel"), copies
+`/usr/etc/conf` to the key, erases and writes mtd1, and reads it back with
+`nanddump` rounded up to whole pages (the 6.1 zImage, 2,530,392 bytes, is not
+a multiple of 2 KiB: an unrounded read came back short and could never
+compare). A differing read-back is written once more; a second one writes
+2.6.32 back (exit 2), and nothing that reads back is exit 3. Its log is
+`log.txt` in the key's `flash` folder (on the key, not in this repository). `firmware-arm/emulator/karotz/ota/flash-proof.sh`
+runs it in QEMU on nandsim, three ways: a clean write, a first read-back
+spoiled (written again), every 6.1 read-back spoiled (2.6.32 back); each
+time mtd2 and `/usr` untouched, the settings on the key, `go-back` writing
+2.6.32, a bad `MD5SUMS` writing nothing. PASS.
+
+Not done yet: the nose (red on a failure: the log on the key says it), the
+read-back once more from the running 6.1, and `bios-boot.sh` booting an
+image this script wrote. The first write on Gengar waits for Clara's go.
+
 ### Step 4: the first week
 
 6.1 in the flash with `/usr` read-only and its two directories in RAM:

@@ -1,0 +1,82 @@
+#!/bin/sh
+# FLASH-PLAN step 3: the Karotz's kernel partition (mtd1) written from the
+# key, at boot, nothing else touched, read back and compared.
+#
+#   <key>/flash/zImage-6.1    the kernel to write (karotz-6.1.config alone)
+#   <key>/flash/zImage-2632   the rabbit's own 2.6.32, for the way back
+#   <key>/flash/MD5SUMS       md5sum of both, checked before anything
+#   <key>/flash/go-write      write zImage-6.1 at this boot (then removed)
+#   <key>/flash/go-back       write zImage-2632 instead (then removed)
+#
+# Called by the key's autorun under either kernel. Its log goes to
+# <key>/flash/log.txt. /usr is never touched, not even remounted: the
+# 2026-11-21 failure was /usr emptied under running daemons, and a kernel
+# write has no reason to go there. The ramdisk (mtd2) stays: since step 2
+# both kernels boot the same one. /usr/etc/conf is copied to the key first
+# all the same (the adoption key and the settings), never needed by this.
+#
+# A read-back that differs is written once more; a second one that differs
+# writes zImage-2632 back, read back too, and the log says so. Then sync
+# and reboot (FLASH_NO_REBOOT=1: not, for the emulator's checks).
+K=${KEY:-/mnt/usbkey}
+F=$K/flash
+LOG=$F/log.txt
+MTD=${FLASH_MTD:-/dev/mtd1}
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+
+if [ -e "$F/go-back" ]; then IMG=$F/zImage-2632; WHAT=2.6.32
+elif [ -e "$F/go-write" ]; then IMG=$F/zImage-6.1; WHAT=6.1
+else exit 0
+fi
+rm -f "$F/go-write" "$F/go-back"
+log "start: $WHAT into $MTD, under $(uname -r)"
+
+# --- preflight: both images whole, and each fits the partition ---------
+( cd "$F" && md5sum -c MD5SUMS ) >> "$LOG" 2>&1 || { log "STOP: MD5SUMS do not hold, nothing written"; sync; exit 1; }
+name=$(basename "$MTD")
+size=$(awk -v d="$name:" '$1 == d { print $2 }' /proc/mtd)
+[ -n "$size" ] || { log "STOP: $MTD not in /proc/mtd, nothing written"; sync; exit 1; }
+size=$((0x$size))
+for z in "$F/zImage-6.1" "$F/zImage-2632"; do
+    n=$(wc -c < "$z")
+    [ "$n" -le "$size" ] || { log "STOP: $(basename "$z") is $n bytes, $MTD holds $size; nothing written"; sync; exit 1; }
+done
+# The partition's name, as the board names it (the emulator's nandsim
+# names none: FLASH_MTD_NAME= there).
+want=${FLASH_MTD_NAME-Kernel}
+[ -z "$want" ] || awk -v d="$name:" '$1 == d' /proc/mtd | grep -q "\"$want\"" \
+    || { log "STOP: $MTD is not the \"$want\" partition; nothing written"; sync; exit 1; }
+
+# --- the rabbit's settings to the key, kept anyway ----------------------
+mkdir -p "$F/conf-backup" && cp -a /usr/etc/conf/. "$F/conf-backup/" 2> /dev/null
+log "settings copied to the key ($(ls "$F/conf-backup" | wc -l) entries)"
+
+# --- write, read back, compare ------------------------------------------
+write_and_check() {
+    img=$1; n=$(wc -c < "$img")
+    flash_erase -q "$MTD" 0 0 >> "$LOG" 2>&1 || { log "flash_erase failed"; return 1; }
+    nandwrite -q -p -m "$MTD" "$img" >> "$LOG" 2>&1 || { log "nandwrite failed"; return 1; }
+    rm -f /tmp/flash-rb.bin
+    # nanddump reads whole pages: a length that is not a multiple of one
+    # (the 6.1 zImage, 2,530,392 bytes) came back short and never compared.
+    ws=$(cat "/sys/class/mtd/$(basename "$MTD")/writesize" 2> /dev/null || echo 2048)
+    nanddump -q -l $(( (n + ws - 1) / ws * ws )) -f /tmp/flash-rb.bin "$MTD" >> "$LOG" 2>&1 || { log "nanddump failed"; return 1; }
+    head -c "$n" /tmp/flash-rb.bin | cmp -s - "$img" || { log "read-back differs from $(basename "$img")"; return 1; }
+    log "read back: $(basename "$img"), $n bytes, identical"
+    return 0
+}
+
+if write_and_check "$IMG" || { log "once more"; write_and_check "$IMG"; }; then
+    log "DONE: $WHAT is in $MTD"
+    rc=0
+elif [ "$IMG" != "$F/zImage-2632" ] && write_and_check "$F/zImage-2632"; then
+    log "FAILED: $WHAT did not read back twice; 2.6.32 written back and read back"
+    rc=2
+else
+    log "FAILED: nothing that reads back is in $MTD; the head button's restore is the way back (FLASH-PLAN step 0)"
+    rc=3
+fi
+rm -f /tmp/flash-rb.bin
+sync
+[ "${FLASH_NO_REBOOT:-0}" = 1 ] || reboot
+exit $rc
