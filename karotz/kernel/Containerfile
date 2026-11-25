@@ -45,13 +45,9 @@ RUN cd /linux && patch -p1 < /k/spidev-karotz.patch && patch -p1 < /k/spi-s3c24x
 # The NAND controller enabled before the chip is read: 6.1 scanned first,
 # which worked only behind a bootloader that had left it on (2026-11-22).
 RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
-# The internal hub's devices, powered by the board, not refused for want of
-# bus power (Gengar, 2026-11-24). Under test since SLUB fixed the hub
-# (2026-11-25): USB_POWER_PATCH=0 builds without it, for five boots of
-# Gengar; it goes if they all find the hub's devices.
-ARG USB_POWER_PATCH=1
-COPY usb-bus-power-rabbitv3.patch /k/
-RUN [ "$USB_POWER_PATCH" = 0 ] || (cd /linux && patch -p1 < /k/usb-bus-power-rabbitv3.patch)
+# No bus-power patch (2026-11-25): with SLUB, five boots of Gengar without
+# it found the hub's devices every time; its refusals were the stale reads
+# of SLOB too (usb-bus-power-rabbitv3.patch until then).
 # The DMA status after a transfer has ended (s3c24xx-dma-tx-status.patch): the
 # sound card's stop crashed the kernel on Gengar, 2026-11-24.
 COPY s3c24xx-dma-tx-status.patch /k/

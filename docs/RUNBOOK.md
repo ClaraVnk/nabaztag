@@ -1225,9 +1225,10 @@ counts down; empty means once).
 **The A/B, 2026-11-25: old_scheme_first goes.** Five boots without it, the
 hub's four ports and both devices each time, no descriptor error, the
 Wi-Fi up and the client started: `CONFIG_CMDLINE` is the console alone.
-The power patch next: the kernel built with `--build-arg
-USB_POWER_PATCH=0`, the same five boots (`echo 5 > <key>/kexec/go-os`); it
-goes if the hub's devices are there every time.
+The power patch next: the kernel built without it, the same five boots
+(`echo 5 > <key>/kexec/go-os`): the hub's four ports and both devices each
+time, no error, the Wi-Fi up. `usb-bus-power-rabbitv3.patch` is gone: the
+6.1 kernel has no USB workaround left.
 
 **First SLUB run on Gengar (2026-11-25): no USB at all.** The board
 file's ramoops (from 2026-11-24) and the kexec line's `ramoops.*` made the
