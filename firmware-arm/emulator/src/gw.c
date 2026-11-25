@@ -139,6 +139,9 @@ static uint16_t checksum(const uint8_t *data, uint32_t length, uint32_t seed)
   return (uint16_t)~sum;
 }
 
+static int bcast_deaf;
+void gw_set_bcast_deaf(int on) { bcast_deaf = on; }
+
 /* --- sending to the rabbit -------------------------------------------- */
 
 #define GW_FRAME_MAX 1600
@@ -288,6 +291,14 @@ static void handle_dhcp(const uint8_t *udp_payload, uint32_t length)
             message_type);
     return;
   }
+  /* An access point sending broadcasts at an OFDM rate an 802.11b card
+   * cannot decode (gw_set_bcast_deaf): a reply asked for as a broadcast
+   * (BOOTP flags bit 15) never reaches the rabbit. Lazare's Prism 2.5 under
+   * a UniFi AP, 2026-11-25: our discovers asked for it, Violet's did not. */
+  if(bcast_deaf && (udp_payload[10] & 0x80)) {
+    sim_log("gw: DHCP reply asked as a broadcast, which this 802.11b card never hears");
+    return;
+  }
 
   memset(out, 0, sizeof(out));
   out[0] = 2;                             /* a reply */
@@ -365,6 +376,12 @@ void gw_dhcp_rogue(uint32_t rogue)
 }
 
 /* --- DNS -------------------------------------------------------------- */
+
+/* A resolver that does not answer (the gateway that drops its DNS, the
+ * v2's issue; for the v1, 2026-11-24: does Violet's firmware ask again, and
+ * does it ever re-resolve once it has an address). */
+static int gw_dns_mute;
+void gw_set_dns_mute(int on) { gw_dns_mute = on; }
 
 /**
  * @brief Answer an A query with the gateway's own address.
@@ -807,6 +824,10 @@ static void handle_udp(uint32_t src, uint32_t dst, const uint8_t *udp,
             rd16(udp + 4), length);
 
   if(dport == 67) { handle_dhcp(udp + 8, udp_length - 8u); return; }
+  if(dport == 53 && gw_dns_mute) {
+    sim_log("gw: DNS query swallowed (--dns-mute)");
+    return;
+  }
   if(dport == 53) { handle_dns(src, sport, udp + 8, udp_length - 8u); return; }
 
   sim_log("gw: a UDP datagram for %s:%u, %u bytes — nothing listens there",

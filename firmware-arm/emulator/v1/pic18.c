@@ -181,10 +181,15 @@ void pic18_reset(struct pic18 *pic)
   pic->pc = 0;
   pic->sp = 0;
   pic->cycles = 0;
+  pic->wdt_clear = 0;
   pic->halted = 0;
   pic->halt_reason = NULL;
   /* Ports are inputs after a reset. */
   for(uint16_t a = SFR_TRISA; a <= SFR_TRISG; a++) pic->ram[a] = 0xFF;
+  memset(pic->flash_latch, 0xFF, sizeof(pic->flash_latch));
+  pic->flash_row = 0;
+  pic->reset_req = 0;
+  if(!pic->write_block) { pic->write_block = 64; pic->flash_end = PIC_FLASH_SIZE; }
 }
 
 static int hexbyte(const char *s)
@@ -203,6 +208,7 @@ int pic18_load_hex(struct pic18 *pic, const char *path)
   if(!f) return -1;
   memset(pic->flash, 0xFF, sizeof(pic->flash));
   memset(pic->config, 0xFF, sizeof(pic->config));
+  memset(pic->eeprom, 0xFF, sizeof(pic->eeprom));
   while(fgets(line, sizeof(line), f)) {
     int len, type;
     uint32_t addr;
@@ -218,6 +224,7 @@ int pic18_load_hex(struct pic18 *pic, const char *path)
       int b = hexbyte(line + 9 + 2 * i);
       if(at < PIC_FLASH_SIZE) { pic->flash[at] = (uint8_t)b; n++; }
       else if(at >= 0x300000 && at < 0x300010) pic->config[at - 0x300000] = (uint8_t)b;
+      else if(at >= 0xF00000 && at < 0xF00400) pic->eeprom[at - 0xF00000] = (uint8_t)b;
     }
   }
   fclose(f);
@@ -244,7 +251,7 @@ unsigned pic18_step(struct pic18 *pic)
   case 0x0:
     if(op == 0x0000) break;                                   /* NOP */
     if(op == 0x0003) { pic->halted = 1; pic->halt_reason = "SLEEP"; break; }
-    if(op == 0x0004) break;                                   /* CLRWDT */
+    if(op == 0x0004) { pic->wdt_clear = pic->cycles; break; } /* CLRWDT */
     if(op == 0x0005) { push(pic, pic->pc); break; }           /* PUSH */
     if(op == 0x0006) { pop(pic); break; }                     /* POP */
     if(op == 0x0007) {                                        /* DAW */
@@ -261,7 +268,7 @@ unsigned pic18_step(struct pic18 *pic)
       int mode = op & 3;
       if(mode == 3) p++;
       if(op < 0x000C) pic->ram[SFR_TABLAT] = tblread(pic, p);
-      else fprintf(stderr, "pic18: TBLWT at %05X ignored (ptr %06X)\n", at, p);
+      else { pic->flash_latch[p & (pic->write_block - 1)] = pic->ram[SFR_TABLAT]; pic->flash_row = p & ~(pic->write_block - 1); }
       if(mode == 1) p++;
       if(mode == 2) p--;
       pic->ram[SFR_TBLPTRL] = (uint8_t)p;
@@ -283,7 +290,7 @@ unsigned pic18_step(struct pic18 *pic)
       cyc = 2;
       break;
     }
-    if(op == 0x00FF) { pic->halted = 1; pic->halt_reason = "RESET instruction"; break; }
+    if(op == 0x00FF) { pic->reset_req = 1; break; }         /* RESET: the board does it */
     if((op & 0xFFF0) == 0x0100) { BSR = op & 0x0F; break; }   /* MOVLB */
     if((op & 0xFE00) == 0x0200) {                             /* MULWF */
       a = effective(pic, faddr(pic, op));
@@ -381,12 +388,26 @@ unsigned pic18_step(struct pic18 *pic)
     break;
 
   case 0xC: {                                                         /* MOVFF */
-    uint16_t src = op & 0x0FFF, dst;
+    uint16_t src = op & 0x0FFF, dst, da;
     op2 = fetch(pic, pic->pc);
     pic->pc += 2;
     dst = op2 & 0x0FFF;
     v = rd(pic, effective(pic, src));
-    wr(pic, effective(pic, dst), v);
+    da = effective(pic, dst);
+    /* vm-audit: a store the VM program steers lands here (every arena write
+     * is a MOVFF through an FSR). Record where, to measure the bound. */
+    if(pic->audit_on && is_indirect(dst) && da != 0xFFFF &&
+       at >= pic->audit_lo && at <= pic->audit_hi) {
+      if(!pic->audit_stores || da < pic->audit_min) pic->audit_min = da;
+      if(!pic->audit_stores || da > pic->audit_max) pic->audit_max = da;
+      pic->audit_stores++;
+      if(da < 0x0A70u || da > 0x0CFFu) {
+        pic->audit_escapes++;
+        if(pic->audit_escapes <= 20)
+          fprintf(stderr, "vm-audit: ESCAPE store pc=%05X dst=%03X v=%02X\n", at, da, v);
+      }
+    }
+    wr(pic, da, v);
     cyc = 2;
     break;
   }

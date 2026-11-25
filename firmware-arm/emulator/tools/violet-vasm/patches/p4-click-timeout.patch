@@ -1,0 +1,24 @@
+--- a/Nabaztag_wait.vasm
++++ b/Nabaztag_wait.vasm
+@@ -812,10 +812,18 @@
+ 	rts
+ 
+ @sendwaitloop
+-        ld      r0,0
+-	inputrst	r0
++	sec	r0,r11	; Terrier 2026-11-24: the server answers the click (sd=0003)
++@swl1	ld	r0,0	; with the message program; if none came in 40 s (no
++	inputrst	r0	; message on the server), back to waiting, not here for ever
+ 	bsr	@sendwait
+-	bra	@sendwaitloop
++	sec	r0,r1
++	sub	r1,r11
++	ld	r2,40
++	cmp	r1,r2
++	blo	@swl1
++	ld	r0,0
++	input	r0,@clicm
++	rtij	@startwait
+ 
+ @sendwait
+ 	clr	r0

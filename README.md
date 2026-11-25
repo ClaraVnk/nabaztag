@@ -62,13 +62,16 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 
 ### ✨ Highlights
 
-- 🐰 **Naboot 1.2.1.2 — it joins a Livebox 4 and a MikroTik**: the WPA2
-  handshake replies declare their true length (a Livebox 4 drops the rest),
-  and an access point offering WPA and WPA2 together is taken for WPA2.
-  On top of 1.2.1.0: a reset sends the rabbit back to the Terrier, a head
-  press lets you change the server without unplugging, a captive setup
-  page, a purple blink when there is no server, and a diagnostic line the
-  config page and the Terrier can read.
+- 🐰 **Naboot 1.2.1.4 — config mode without unplugging**: three short
+  presses of the head open it, on its server or offline, and it closes by
+  itself after ten minutes with nobody on the setup page. On the Terrier,
+  the rabbit hears its head and its tags while asleep (a double click wakes
+  it), and a Restart button reloads its software without unplugging.
+  On top of 1.2.1.2: the WPA2 handshake replies declare their true length
+  (a Livebox 4 drops the rest), and an access point offering WPA and WPA2
+  together is taken for WPA2. And 1.2.1.0's: a reset sends the rabbit back
+  to the Terrier, a head press lets you change the server, a captive setup
+  page, a purple blink when there is no server, and a diagnostic line.
 - 🔒 **Since 1.2.0.1 — HTTPS on the rabbit itself**: it boots for the very
   first time over HTTPS (ISRG Root X2 built in), its key exchange included
   (1.2.0.1 gives it the 18 s a real ARM7 needs, and the boot URL says how it
@@ -171,12 +174,12 @@ flashed — see [The Home Assistant add-on (legacy)](#the-home-assistant-add-on-
 Put your rabbit on the public warren —
 **[Le Terrier](https://terrier.cyberloutre.fr/)** — in four steps:
 
-1. **Download Naboot 1.2.1.2** — the illustrated 5-minute flashing guide is
+1. **Download Naboot 1.2.1.4** — the illustrated 5-minute flashing guide is
    at <https://terrier.cyberloutre.fr/naboot>. The image is reproducible: it
-   is mode `naboot-1.2.1.2` of `firmware-arm/apply-mods.py`, Ed25519-signed,
-   118 344 of 126 976 bytes of flash. The signed file is also in
+   is mode `naboot-1.2.1.4` of `firmware-arm/apply-mods.py`, Ed25519-signed,
+   118 768 of 126 976 bytes of flash. The signed file is also in
    [`firmware-arm/releases/`](firmware-arm/releases/)
-   (`naboot-1.2.1.2.signed.sim`, with its sha256 and which way in from each
+   (`naboot-1.2.1.4.signed.sim`, with its sha256 and which way in from each
    starting firmware); every earlier release is in `firmware-arm/releases/archive/`.
 2. **Flash it from your phone** via the rabbit's config-mode page: unplug, hold
    the head button while plugging the power back in (belly turns **blue**), join
@@ -191,8 +194,9 @@ Put your rabbit on the public warren —
    minute, unplug it, wait ten seconds, plug it back in, once.
    This is the only manual flash — from here on, updates are pushed from the
    warren's page and the rabbit installs them and restarts on its own.
-3. **Point it at Le Terrier.** After it reboots, re-enter config mode (head
-   button while plugging in → belly **blue** again) and reopen
+3. **Point it at Le Terrier.** After it reboots, re-enter config mode (three
+   short presses on the head, or head button while plugging in → belly
+   **blue** again; it closes by itself after ten minutes with nobody on the page) and reopen
    `http://192.168.0.1` — it now shows *Naboot's* setup page. Enter your home
    Wi-Fi, then under **Advanced → Server** set **Boot URL host** to
    **`terrier.cyberloutre.fr/vl`** and tap *Connect rabbit*. The field holds
@@ -547,9 +551,10 @@ So if you turn WPA3 off on that network (or a router update switches a
 WPA2/WPA3 transition network to WPA2 only), the rabbit stays **orange** and
 never connects. To unlock it:
 
-1. Put the rabbit in config mode (hold the head button while plugging it in,
-   release when the light turns blue — not more than 7 s, or it enters the
-   factory test mode).
+1. Put the rabbit in config mode (three short presses on the head on
+   1.2.1.3 and later; or hold the head button while plugging it in, release
+   when the light turns blue — not more than 7 s, or it enters the factory
+   test mode).
 2. Join its Wi-Fi, open its setup page and **save the Wi-Fi settings again**
    (same network name and password are fine).
 

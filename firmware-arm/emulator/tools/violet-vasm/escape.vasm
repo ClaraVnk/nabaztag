@@ -1,0 +1,22 @@
+; VM-ESCAPE.md proof program (2026-11-24): drive every store and load the
+; Violet VM has, each at the largest index it can carry, so the emulator's
+; --vm-audit can measure that the downloaded program's writes never leave the
+; VM arena: registers 0xA70-0xA7F, data 0xB00-0xBFF, call stack 0xC00-0xCFF.
+;
+; It uses no network opcode (no SEND, DOWNLOAD, TRAME), so only its own
+; handlers run; it never stops, so the audit collects many samples per
+; quantum. Assembled by Violet's own assembler (Dump escape.vasm).
+	ld	r0,170		; 0xAA, a marker byte
+	ld	r1,255		; the largest 8-bit index a register can hold
+	ld	r2,255
+@top	str	r0,255		; STR r,i   : data[0xB00 + 255]            <- r0
+	str	r0,r1		; STR r,r   : data[0xB00 + val(r1)]        <- r0
+	str	r0,255,r1	; STR r,i,r : data[0xB00 + val(r1) + 255]  <- r0
+	ldr	r3,255		; LDR r,i   : r3 <- data[0xB00 + 255]
+	ldr	r3,r1		; LDR r,r   : r3 <- data[0xB00 + val(r1)]
+	ldr	r3,255,r1	; LDR r,i,r
+	bsr	@sub		; VM call: push the return address on the 0xC00 stack
+	wait	1		; yield to the firmware
+	bra	@top
+@sub	rts
+	END

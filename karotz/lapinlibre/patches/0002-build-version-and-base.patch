@@ -1,0 +1,36 @@
+diff --git a/image/tools/image.py b/image/tools/image.py
+index 10247c6..8211437 100644
+--- a/image/tools/image.py
++++ b/image/tools/image.py
+@@ -75,6 +75,13 @@ def git_describe():
+         return "unversioned"
+ 
+ 
++def build_version():
++    """The version the key and the rabbit show: LL_BUILD_VERSION when the build sets it (Terrier
++    OS numbers its own releases; the LapinLibre base stays in karotz/etc/lapinlibre-base), else
++    git_describe()."""
++    return os.environ.get("LL_BUILD_VERSION") or git_describe()
++
++
+ def source_epoch():
+     """The timestamp for the files the build makes: SOURCE_DATE_EPOCH, else the commit's time."""
+     if os.environ.get("SOURCE_DATE_EPOCH"):
+@@ -338,6 +345,8 @@ def make_core(config, epoch, version, changes):
+             changes.append(f"{label}: {change}")
+     # /etc links into /usr, so the build stamp lives in the rootfs's own etc.
+     rootfs.put_file("karotz/etc/lapinlibre-build", f"{version}\n".encode())
++    # The LapinLibre commit the build came from, whatever the version says (provenance).
++    rootfs.put_file("karotz/etc/lapinlibre-base", f"{git_describe()}\n".encode())
+     return rootfs, usr
+ 
+ 
+@@ -346,7 +355,7 @@ def build(out):
+         raise ImageError("LAPIN_KERNEL is gone: the image has the system build's kernel, Linux 2.6.32")
+     config = load_config()
+     epoch = source_epoch()
+-    version = git_describe()
++    version = build_version()
+     changes = []
+ 
+     # The system build's kernel, Linux 2.6.32: its userland needs it (its headers), and BusyBox 1.37's mdev

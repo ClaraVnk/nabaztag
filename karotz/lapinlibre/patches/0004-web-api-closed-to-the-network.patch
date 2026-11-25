@@ -1,0 +1,45 @@
+diff --git a/image/core/rootfs/karotz/scripts/inetd.sh b/image/core/rootfs/karotz/scripts/inetd.sh
+index d68b1e9..cfb0435 100644
+--- a/image/core/rootfs/karotz/scripts/inetd.sh
++++ b/image/core/rootfs/karotz/scripts/inetd.sh
+@@ -21,6 +21,7 @@ HTTPD_FIXED=/karotz/etc/httpd.conf
+ PASSWORD=/usr/etc/conf/web_password
+ HASH=/usr/etc/conf/web_password.hash
+ WEB_USER=admin
++LOCAL_ONLY=/usr/etc/conf/web_local_only
+ 
+ log() {
+     logger -t inetd.sh "$*" 2> /dev/null
+@@ -78,7 +79,10 @@ web_conf() {
+                 echo "D:*"
+                 exit 0
+             fi
+-            for range in 127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16; do
++            # Terrier OS: the client's drawn password only (applysettings.sh): the rabbit itself.
++            ranges="127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16"
++            [ -e $LOCAL_ONLY ] && ranges=127.0.0.1
++            for range in $ranges; do
+                 echo "A:$range"
+             done
+             echo "D:*"
+diff --git a/image/usbkey/applysettings.sh b/image/usbkey/applysettings.sh
+index 0fa0c93..16d5b56 100644
+--- a/image/usbkey/applysettings.sh
++++ b/image/usbkey/applysettings.sh
+@@ -162,6 +162,16 @@ else
+     rm -f "${CONF}/web_password" "${CONF}/web_password.new" "${CONF}/web_password.hash"
+     LOG "Settings: no web password"
+ fi
++# Terrier OS: a drawn password is the client's alone, which runs on the rabbit itself: then the web
++# API answers the rabbit only (inetd.sh), nothing on the network can reach it. A password the owner
++# chose is the owner's way in from the network: the API stays open to it, with the login (Terrier
++# OS review, 2026-11-24, Clara: "fermé par défaut").
++if [ -n "${WEB_PASSWORD_DRAWN}" ]; then
++    : > "${CONF}/web_local_only" || ERROR "can't close the web API to the network"
++    LOG "Settings: web API for the rabbit itself only"
++else
++    rm -f "${CONF}/web_local_only"
++fi
+ # The music player's network password (S40lapinlibre reads it at each start). None given: mpd
+ # answers the rabbit itself only.
+ if [ -n "${MPD_PASSWORD}" ]; then
