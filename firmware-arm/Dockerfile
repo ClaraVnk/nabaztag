@@ -85,7 +85,7 @@ COPY boot-mods/ /build/boot-mods/
 #   minimal = opcode + crypto only — bootloader HTML and httpflash stay
 #             byte-identical to vanilla wpa2. This is the rescue/parachute
 #             build: closest possible to what's already known to flash
-#             cleanly on Kevin's rabbit, but still ships verifySig so
+#             cleanly on the maintainer's rabbit, but still ships verifySig so
 #             future OTAs can verify .sim signatures.
 ARG MODE=full
 ENV NAB_MODE=$MODE
