@@ -73,7 +73,7 @@ void main(void)
   sound_boot();
 
   r = prism_init();
-  if(r) { log_s("card: init error "); log_dec(r); log_nl(); }
+  if(r) { join_r = 0x80 | r; log_s("card: init error "); log_dec(r); log_nl(); }
   else {
     show(LED_BOT_B);
     r = prism_join(SSID);

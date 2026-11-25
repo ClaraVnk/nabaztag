@@ -21,6 +21,7 @@
 #define R_OFFSET0  0x1C
 #define R_RXFID    0x20
 #define R_ALLOCFID 0x22
+#define R_SWSUPPORT0 0x28
 #define R_EVSTAT   0x30
 #define R_EVACK    0x34
 #define R_DATA0    0x36
@@ -62,8 +63,16 @@ static uint16_t txfid;
 static uint8_t  linked;
 static uint8_t  info_count;             /* info frames since the join (telemetry) */
 static uint16_t info_last, link_last;   /* the last info type, the last LinkStatus */
+/* prism_init's view, for the report: the card's registers before and after
+ * INITIALIZE (Lazare 2026-11-25: the init itself failed, nothing more). */
+static uint16_t init_diag[6];
 
 /* --- the bus ------------------------------------------------------------ */
+
+/* Each strobe held eight instruction cycles, as Violet's firmware holds them
+ * (eight NOPs, 0x376E-0x37FE in 1.4b): with one, Lazare's card never took an
+ * INITIALIZE and read back 0001/0100/8000 (2026-11-25). */
+#define hold() do { nop(); nop(); nop(); nop(); nop(); nop(); nop(); nop(); } while(0)
 
 static uint8_t rd8(uint8_t a)
 {
@@ -71,7 +80,7 @@ static uint8_t rd8(uint8_t a)
   CARD_DATA_TRIS = 0xFF;
   CARD_ADDR = a;
   CARD_IORD = 0;
-  nop();
+  hold();
   v = CARD_DATA_IN;
   CARD_IORD = 1;
   return v;
@@ -83,7 +92,7 @@ static void wr8(uint8_t a, uint8_t v)
   CARD_DATA_OUT = v;
   CARD_DATA_TRIS = 0;
   CARD_IOWR = 0;
-  nop();
+  hold();
   CARD_IOWR = 1;
 }
 
@@ -105,7 +114,7 @@ static void attr_wr8(uint8_t a, uint8_t v)
   CARD_DATA_OUT = v;
   CARD_DATA_TRIS = 0;
   CARD_WE = 0;
-  nop();
+  hold();
   CARD_WE = 1;
 }
 
@@ -209,7 +218,9 @@ uint8_t prism_init(void)
   bus_init();
   attr_wr8(0xE0, 0x01);                   /* COR: I/O mode, as Violet's firmware */
   delay_ms(50);                           /* (Violet: 0.2 s to INITIALIZE) */
+  init_diag[0] = rd16(R_CMD); init_diag[1] = rd16(R_EVSTAT); init_diag[2] = rd16(R_SWSUPPORT0);
   r = cmd(CMD_INIT, 0);
+  init_diag[3] = rd16(R_CMD); init_diag[4] = rd16(R_EVSTAT); init_diag[5] = rd16(R_STATUS);
   if(r) { log_s("card: init failed "); log_hex8(r); log_nl(); return 1; }
   if(rid_read(RID_MAC, w, 3)) { log_line("card: no MAC"); return 2; }
   our_mac[0] = (uint8_t)w[0]; our_mac[1] = (uint8_t)(w[0] >> 8);
@@ -268,7 +279,9 @@ uint8_t prism_link(void) { return linked; }
  *   42 join result, info frames seen, last info type (2), last LinkStatus (2)
  *   48 FD40 port status (2)     4A FD4D current channel (2)
  *   4C FD42 current BSSID (6)   52 FD43 comms quality, signal, noise (6)
- *   58 FD41 current SSID: length then 8 bytes */
+ *   58 FD41 current SSID: length then 8 bytes
+ *   64 CMD, EVSTAT, SWSUPPORT0 before INITIALIZE; CMD, EVSTAT, STATUS after
+ *   (2 bytes each). Join result 0x80 + n: prism_init failed at step n. */
 static void ee_put(uint8_t a, uint8_t v)
 {
   EEADRH = 0; EEADR = a; EEDATA = v;
@@ -296,6 +309,7 @@ void prism_report(uint8_t join_result)
   rid_read(0xFD42, w, 3); ee_words(0x4C, w, 3);
   rid_read(0xFD43, w, 3); ee_words(0x52, w, 3);
   rid_read(0xFD41, w, 5); ee_words(0x58, w, 5);
+  ee_words(0x64, init_diag, 6);
   log_line("card: report in EEPROM 0x40");
 }
 

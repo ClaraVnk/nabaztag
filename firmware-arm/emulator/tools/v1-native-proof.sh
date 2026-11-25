@@ -82,4 +82,6 @@ need "$OUT/run3.log" 'uart: card: report in EEPROM 0x40' "no card report without
 python3 ../v1-icsp/card-report.py --log "$OUT/run3.log" | tee "$OUT/card-report.txt"
 grep -q "0 info frame(s)" "$OUT/card-report.txt" || fail "the card report is not the one of a card that never heard a link"
 ! grep -q 'card: report' "$L" || fail "a card report on a run that associated"
+# The card ignores a strobe held too short (Lazare, 2026-11-25): none here.
+! grep -q 'strobe too short' "$L" "$OUT/run3.log" || fail "a card strobe too short for the real card"
 echo "PASS v1-native card report"

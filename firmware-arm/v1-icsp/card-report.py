@@ -44,6 +44,9 @@ def from_log(path):
     return mem
 
 
+INIT_STEP = {1: "INITIALIZE command", 2: "reading the MAC", 3: "allocating the transmit buffer"}
+
+
 def report(mem):
     b = lambda a: mem.get(a, 0xFF)
     w = lambda a: b(a) | (b(a + 1) << 8)
@@ -54,6 +57,13 @@ def report(mem):
     n = min(b(0x58), 8)
     ssid = bytes(b(0x5A + i) for i in range(n)).decode("latin-1")
     q = [w(0x52 + 2 * i) for i in range(3)]
+    regs = "  card registers: before INITIALIZE CMD %04X EVSTAT %04X SWSUPPORT0 %04X; after CMD %04X EVSTAT %04X STATUS %04X" % tuple(w(0x64 + 2 * i) for i in range(6))
+    if b(0x42) >= 0x80 and b(0x42) != 0xFF:
+        return "\n".join([
+            "card report, format %d" % b(0x41),
+            "  the card never came up: init failed at step %d (%s)" % (b(0x42) & 0x7F, INIT_STEP.get(b(0x42) & 0x7F, "?")),
+            regs,
+        ])
     if b(0x4C) == 0xFF and w(0x4A) == 0xFFFF:   # the card held no record
         return "\n".join([
             "card report, format %d" % b(0x41),
