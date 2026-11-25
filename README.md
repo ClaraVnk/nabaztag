@@ -155,4 +155,4 @@ licensed [CC BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5).
 
 ## License
 
-[Apache License 2.0](LICENSE) — the same license as Home Assistant.
+[Apache License 2.0](LICENSE)
