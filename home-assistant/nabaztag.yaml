@@ -196,7 +196,7 @@ automation:
   - alias: "Nabaztag - welcome on arrival"
     trigger:
       - platform: state
-        entity_id: person.kevin
+        entity_id: person.you   # your own person entity
         to: "home"
     action:
       - service: rest_command.nabaztag_jingle
