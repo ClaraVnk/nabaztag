@@ -1214,6 +1214,14 @@ from the mains: HcRhPort1 0x00000103 and the hub in the tree both times is
 the notifier doing its job; 0x00000100 and no 1-1 is the wedge, with the
 registers to compare.
 
+**SLUB on Gengar (2026-11-25): the hub fixed, cold and warm.** With the
+duplicate ramoops gone (below): the hub's four ports and both devices, no
+descriptor error, the client "idle, ready", from the mains (cold) and after
+6.1's own restart (warm, 2.6.32 seeing the hub too). The A/B without
+`usbcore.old_scheme_first` (`karotz-6.1-hubtest.config`): `echo 5 >
+<key>/kexec/go-os` runs 6.1 at five boots in a row (a number in go-os
+counts down; empty means once).
+
 **First SLUB run on Gengar (2026-11-25): no USB at all.** The board
 file's ramoops (from 2026-11-24) and the kexec line's `ramoops.*` made the
 same device twice; the duplicate failed inside `platform_add_devices`,
