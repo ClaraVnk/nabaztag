@@ -1214,6 +1214,14 @@ from the mains: HcRhPort1 0x00000103 and the hub in the tree both times is
 the notifier doing its job; 0x00000100 and no 1-1 is the wedge, with the
 registers to compare.
 
+**First SLUB run on Gengar (2026-11-25): no USB at all.** The board
+file's ramoops (from 2026-11-24) and the kexec line's `ramoops.*` made the
+same device twice; the duplicate failed inside `platform_add_devices`,
+which then unregistered every device before it, the USB host, the NAND
+and the LEDs too (60 warnings in the saved console, `hubfix: no 1-1`).
+The board now registers ramoops apart, and the key's line no longer
+carries `ramoops.*` (the board's region is the same 1 MiB at 0x32000000).
+
 ### FLASH-PLAN step 0 in QEMU: the Karotz's own BIOS boots its NAND, and restores (2026-11-25)
 
 `karotz/kernel/qemu-mini2440/bios-boot.sh` runs QEMU's mini2440 with no

@@ -129,7 +129,7 @@ cp $K/kexec/kexec /tmp/ && cp $INITRD /tmp/initrd-next.gz && cp $KERNEL /tmp/zIm
 # panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
 # The memory around 0x32000000 is left out (two mem=) for ramoops.
 /tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/initrd-next.gz \
-    --append="console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ramoops.mem_address=0x32000000 ramoops.mem_size=0x100000 ramoops.console_size=0xC0000 ramoops.record_size=0x10000 ramoops.ecc=0 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
+    --append="console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
 rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync
