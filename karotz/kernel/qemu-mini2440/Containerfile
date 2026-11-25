@@ -8,7 +8,7 @@
 #   podman build -t qemu-mini2440 -f karotz/kernel/qemu-mini2440/Containerfile karotz/kernel/qemu-mini2440
 # Rocky, not Alpine: this 2009 C expects glibc (headers it includes by
 # implication; musl's struct timeval stops cmd.c), and GCC 11 is kinder to it.
-FROM docker.io/rockylinux/rockylinux:9
+FROM docker.io/rockylinux/rockylinux:10
 RUN dnf -y -q install gcc make git zlib-devel perl diffutils which python3 && dnf clean all
 ARG REPO=https://github.com/ywandy/qemu-mini2440
 ARG COMMIT=fc11033ea299516964cf5b85390b90d3b61d390a
