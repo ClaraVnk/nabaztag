@@ -22,6 +22,12 @@ struct board {
   uint8_t lat[NPORTS], tris[NPORTS], in[NPORTS];
   int     trace_pins;
   int     trace_bus;
+  /* the card's strobes: when a read (0), /WE (2), /IOWR (3) fell, and the
+   * read data not yet valid */
+  uint64_t strobe_at[4];
+  int      read_pending;
+  uint8_t  read_value;
+  unsigned short_strobes;
   /* timers */
   uint16_t tmr0, tmr1, tmr3;
   uint8_t  tmr2;

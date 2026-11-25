@@ -1400,3 +1400,15 @@ the next try, `./read.sh lazare-after.hex 18LF6525` then
 `eeprom:` lines. The first run read stale BAP bytes for RIDs the card did
 not hold (the SSID record as the BSSID): `rid_read` now reads only the
 words a record's length counts.
+
+**The card never initialised: one-cycle strobes (2026-11-25).** Lazare's
+card report: init failed at step 1, the INITIALIZE command, registers read
+0001/0100/8000. Violet's 1.4b holds every card strobe (/IORD, /IOWR, /OE,
+/WE) for eight NOPs (0x376E-0x37FE in `gpdasm -p p18f6525` of the dump);
+ours held one. The v1 emulator now answers a read only 4 cycles after the
+strobe falls and drops a shorter write, logging `card: ... strobe too
+short`: the previous firmware (the control) then fails exactly as Lazare
+did (`card: init failed 7f`), the fixed one and Violet's pass, and
+`v1-native-proof.sh` fails on any short strobe. The report also keeps
+prism_init's step (join result 0x80 + n) and the card's registers around
+INITIALIZE (EEPROM 0x64).
