@@ -92,7 +92,7 @@ Fixed in the branch: `CONFIG_SLUB=y` (`karotz-6.1.config`): SLUB's kmalloc
 classes on ARM start at `ARCH_KMALLOC_MINALIGN` (32) and are multiples of
 it, so every USB buffer owns its lines, as under 2.6.32's SLAB. The two
 workarounds stay in until Gengar has shown the hub enumerating on every
-boot without them; `karotz-6.1-hubtest.config` builds the kexec kernel
+boot without them; `karotz-6.1-hubtest.config` (removed after the A/B, 2026-11-25) built the kexec kernel
 with the built-in command line emptied (old scheme off) for that A/B,
 and `karotz/kexec/usb-measure` records the registers, the USB tree and the
 hub lines under both kernels (RUNBOOK). Needs Gengar.

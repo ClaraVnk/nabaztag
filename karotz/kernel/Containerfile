@@ -46,9 +46,12 @@ RUN cd /linux && patch -p1 < /k/spidev-karotz.patch && patch -p1 < /k/spi-s3c24x
 # which worked only behind a bootloader that had left it on (2026-11-22).
 RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
 # The internal hub's devices, powered by the board, not refused for want of
-# bus power (Gengar, 2026-11-24).
+# bus power (Gengar, 2026-11-24). Under test since SLUB fixed the hub
+# (2026-11-25): USB_POWER_PATCH=0 builds without it, for five boots of
+# Gengar; it goes if they all find the hub's devices.
+ARG USB_POWER_PATCH=1
 COPY usb-bus-power-rabbitv3.patch /k/
-RUN cd /linux && patch -p1 < /k/usb-bus-power-rabbitv3.patch
+RUN [ "$USB_POWER_PATCH" = 0 ] || (cd /linux && patch -p1 < /k/usb-bus-power-rabbitv3.patch)
 # The DMA status after a transfer has ended (s3c24xx-dma-tx-status.patch): the
 # sound card's stop crashed the kernel on Gengar, 2026-11-24.
 COPY s3c24xx-dma-tx-status.patch /k/
@@ -59,5 +62,5 @@ RUN sh /k/rabbitv3/hook.sh /linux
 # The kexec and hub-test fragments too (the kexec one was mounted by hand
 # until 2026-11-24: EXTRA names them as /k/...).
 COPY karotz-6.1.config karotz-6.1-debug.config karotz-6.1-realnand.config \
-     karotz-6.1-kexec.config karotz-6.1-hubtest.config size.sh /k/
+     karotz-6.1-kexec.config size.sh /k/
 CMD ["sh", "/k/size.sh"]
