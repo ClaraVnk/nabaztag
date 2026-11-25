@@ -6,7 +6,7 @@
 # reaches the rabbit, which runs LapinLibre's own Buildroot system.
 FROM docker.io/library/ubuntu:24.04
 ARG LL_REPO=https://github.com/ClaraVnk/LapinLibre.git
-ARG LL_COMMIT=19ea8d7
+ARG LL_COMMIT=bd2339a
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \
  && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
  && cd /ll && bash scripts/host-prereqs.sh --install \
@@ -31,7 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # (the lapinlibre-base provenance line) from one build to the next.
 # test-patches.sh checks they apply before a build is started.
 COPY patches/ /patches/
-RUN cd /ll && for p in /patches/*.patch; do git apply --index "$p"; done \
+# Applied to the work tree, then everything added: host-prereqs.sh above
+# touches inetd.sh and applysettings.sh, and `git apply --index` refused
+# them ("does not match index", the first build with patches, 2026-11-25).
+RUN cd /ll && for p in /patches/*.patch; do git apply "$p"; done && git add -A \
  && GIT_AUTHOR_DATE=2026-11-24T00:00:00Z GIT_COMMITTER_DATE=2026-11-24T00:00:00Z \
     git -c user.name="Terrier OS" -c user.email=build@example.com commit -q -m "Terrier OS patches" \
  && git describe --tags --match "v[0-9]*" --abbrev=12
