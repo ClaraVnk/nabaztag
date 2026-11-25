@@ -504,6 +504,12 @@ int sim_load(const char *path)
         }
       } else if(!strcmp(tok[2], "server-vanish")) {
         e->kind = SIM_EV_SERVER_VANISH;
+      } else if(!strcmp(tok[2], "stall") && n >= 4) {
+        /* A lossy link: nothing passes either way for that long, the Wi-Fi
+           still associated (Pinkyblack on a mesh, 2026-11-24: probes lost,
+           answers up to 9.6 s late, the session redialled 82 times). */
+        e->kind = SIM_EV_STALL;
+        e->arg = (int)strtol(tok[3], NULL, 10);
       } else if(!strcmp(tok[2], "expect-reassoc") && n >= 4) {
         e->kind = SIM_EV_EXPECT_REASSOC;
         e->arg = (int)strtol(tok[3], NULL, 10);

@@ -189,6 +189,9 @@ python3 "$HERE/patch_triple_press.py" "$BC/sources"
 # instead of waiting for someone to unplug it (2026-11-23).
 echo "==> patch_reload.py  (RB: restart and load the runtime served now)"
 python3 "$HERE/patch_reload.py" "$BC/sources/main.mtl"
+
+echo "==> patch_tcp_backoff.py  (TCP resends back off, given up after 90 s: a lossy link keeps its session)"
+python3 "$HERE/patch_tcp_backoff.py" "$BC/sources/tcp.mtl"
 if [ "${EARS_REARM:-1}" = 1 ]; then
   echo "==> patch_ears_rearm.py  (an ear turned by hand is noticed after a lost session)"
   python3 "$HERE/patch_ears_rearm.py" "$BC/sources/main.mtl"

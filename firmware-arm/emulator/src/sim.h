@@ -81,6 +81,7 @@ enum {
   SIM_EV_AP_RESTART,    /* AP restarts: broadcast deauth, forgets all */
   SIM_EV_AP_FORGET,     /* AP forgets the station and says nothing   */
   SIM_EV_SERVER_VANISH, /* the warren's sockets die with no FIN      */
+  SIM_EV_STALL,         /* the link carries nothing for arg ms     */
   SIM_EV_EXPECT_REASSOC,/* assert the rabbit has reached RUN >= n times */
   SIM_EV_EXPECT_XMPP,   /* assert >= n connections opened to port 5222 */
   SIM_EV_DROP_EAPOL,    /* swallow the next N EAPOL frames      */

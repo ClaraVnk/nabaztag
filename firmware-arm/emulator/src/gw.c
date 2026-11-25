@@ -80,6 +80,19 @@ void gw_set_port443(uint16_t port) { gw_port443_to = port; }
 /* Per-packet logging, off unless --trace-net. Every IP packet and UDP
  * datagram at once is far too much to read when the question is "did it
  * reach its warren", and exactly what you want when the answer is no. */
+uint32_t sim_now(void) __attribute__((weak));
+static uint32_t gw_stall_until;
+static uint32_t gw_stalled_frames;
+
+void gw_stall(uint32_t ms)
+{
+  if(!sim_now) return;
+  gw_stall_until = sim_now() + ms;
+  gw_stalled_frames = 0;
+  sim_log("gw: the link stalls for %u ms -- nothing passes either way", ms);
+}
+static int gw_stalled(void);
+
 static int gw_trace;
 
 void gw_set_trace(int on) { gw_trace = on; }
@@ -842,6 +855,7 @@ void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length)
   const uint8_t *packet;
   uint32_t packet_length;
 
+  if(gw_stalled()) { gw_stalled_frames++; return; }
   if(length < LLC_SNAP_LENGTH) return;
   if(memcmp(llc_frame, llc_snap, sizeof(llc_snap)) != 0) {
     gw_stats.unknown_ethertype++;
@@ -890,6 +904,8 @@ void gw_from_rabbit(const uint8_t *llc_frame, uint32_t length)
 void gw_poll(void)
 {
   uint8_t buffer[GW_MSS];
+
+  if(gw_stalled()) return;
 
   for(int i = 0; i < GW_MAX_CONNECTIONS; i++) {
     struct gw_conn *c = &conns[i];
@@ -979,6 +995,25 @@ void gw_set_subnet(const char *gateway, const char *rabbit)
  * how issue #23's findings 1 and 2 are reached: the bytecode's
  * XmppSessionIsDisconnected runs, and what happens next is the question.
  */
+/**
+ * @brief Nothing passes for `ms` of virtual time, either way.
+ *
+ * What a bad radio link does to a session: the station stays associated,
+ * frames are lost and retried until they get through late or not at all.
+ * The rabbit's segments are swallowed and the server's held back; the host
+ * sockets stay open, so whatever the server sent arrives after the gap
+ * (2026-11-24, Pinkyblack: the bytecode's tcp.mtl gives up after ten
+ * one-second retries).
+ */
+static int gw_stalled(void)
+{
+  if(!gw_stall_until || !sim_now) return 0;
+  if(sim_now() < gw_stall_until) return 1;
+  sim_log("gw: the link is back after the stall, %u frames from the rabbit lost", gw_stalled_frames);
+  gw_stall_until = 0;
+  return 0;
+}
+
 void gw_server_drop(void)
 {
   gw_server_close(0);
