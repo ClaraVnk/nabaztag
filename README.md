@@ -264,9 +264,7 @@ was built on and is tested on, every day, on real hardware.
     (`firmware-arm/v1-icsp/`). Since 25 November 2026 a real v1 (Lazare)
     polls the Terrier on it. The ears, the LEDs, the Terrier's sounds, sleep,
     the head button, ears turned by hand, and its Wi-Fi network and server
-    set from the Terrier are proven in the emulator, on Lazare next. A
-    Raspberry Pi station that writes and sets it up without a PICkit is
-    next, then WPA2.
+    set from the Terrier are proven in the emulator, on Lazare next.
 
   It has no microphone and no RFID reader.
 - **Karotz (v3, 2011)** — works, on Le Terrier, two ways:
