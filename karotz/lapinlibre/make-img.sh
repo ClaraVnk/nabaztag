@@ -34,6 +34,9 @@ VERSION=${VERSION:-$(date -u +%Y%m%d)}
 MB=$(( $(du -sm "$KEY" | cut -f1) + 32 ))
 [ "$MB" -ge 64 ] || MB=64
 mkdir -p "$OUT"
+# An absolute path: podman took a relative "out" for a named volume and the
+# 0.3.0 image went there (2026-11-25).
+OUT=$(cd "$OUT" && pwd)
 URL=${LL_URL:-https://github.com/ClaraVnk/nabaztag/releases/download/terrier-os-$VERSION}
 podman run --rm -v "$KEY:/key:ro,Z" -v "$OUT:/out:Z" -e MB="$MB" -e V="$VERSION" -e URL="$URL" \
     docker.io/library/alpine:3.22 sh -euc '
