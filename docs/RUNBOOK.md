@@ -1412,3 +1412,24 @@ did (`card: init failed 7f`), the fixed one and Violet's pass, and
 `v1-native-proof.sh` fails on any short strobe. The report also keeps
 prism_init's step (join result 0x80 + n) and the card's registers around
 INITIALIZE (EEPROM 0x64).
+
+**Lazare on the native firmware reaches the Terrier (2026-11-25).** After
+the strobes (above), every step read back from the EEPROM with
+`firmware-arm/v1-icsp/card-report.py` (the card report at 0x40, the boot
+count and reset cause at 0x7C, the network report every 40 s at 0x80: frames,
+DHCP, DNS, TCP, HTTP, the card's events, the transmit status, the access
+point's BSSID and SSID, our MAC). Lazare associated, sent, and heard nothing,
+not even a broadcast; UniFi showed 42 packets up and 0 down. The cause: the
+DHCP discover asked for a broadcast reply (flags 0x8000), and the access
+point sends broadcasts at an OFDM rate the 802.11b Prism 2.5 cannot decode.
+Violet asks for none (flags 0, client id 61, host name 12): so does the
+native firmware now. `--bcast-deaf` makes the emulator's gateway drop a
+reply asked as a broadcast (the control, the flag set, fails "no DHCP
+lease"); `v1-native-proof.sh` runs with it. The emulator also checks the
+IPv4 and UDP/TCP checksums now (a real router drops a bad one in silence).
+`firmware-arm/emulator/tools/v1-tx-compare.sh` sets Violet's 1.4b and the
+native firmware side by side: the TX descriptor, the first DHCP discover,
+every card register written and the commands in order. Also as Violet:
+tx_control 0000, INTEN 0000 after INITIALIZE, no WEPFLAGS write, no FD20
+read; and `st=00` on the first poll of a start only (the Terrier counts a
+start at each one).

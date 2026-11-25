@@ -139,6 +139,9 @@ static uint16_t checksum(const uint8_t *data, uint32_t length, uint32_t seed)
   return (uint16_t)~sum;
 }
 
+static int bcast_deaf;
+void gw_set_bcast_deaf(int on) { bcast_deaf = on; }
+
 /* --- sending to the rabbit -------------------------------------------- */
 
 #define GW_FRAME_MAX 1600
@@ -286,6 +289,14 @@ static void handle_dhcp(const uint8_t *udp_payload, uint32_t length)
   if(message_type != 1 && message_type != 3) {
     sim_log("gw: DHCP message type %u, which this server does not answer",
             message_type);
+    return;
+  }
+  /* An access point sending broadcasts at an OFDM rate an 802.11b card
+   * cannot decode (gw_set_bcast_deaf): a reply asked for as a broadcast
+   * (BOOTP flags bit 15) never reaches the rabbit. Lazare's Prism 2.5 under
+   * a UniFi AP, 2026-11-25: our discovers asked for it, Violet's did not. */
+  if(bcast_deaf && (udp_payload[10] & 0x80)) {
+    sim_log("gw: DHCP reply asked as a broadcast, which this 802.11b card never hears");
     return;
   }
 

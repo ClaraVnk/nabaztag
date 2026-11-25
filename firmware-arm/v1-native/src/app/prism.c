@@ -23,6 +23,7 @@
 #define R_ALLOCFID 0x22
 #define R_SWSUPPORT0 0x28
 #define R_EVSTAT   0x30
+#define R_INTEN    0x32
 #define R_EVACK    0x34
 #define R_DATA0    0x36
 
@@ -66,6 +67,13 @@ static uint16_t info_last, link_last;   /* the last info type, the last LinkStat
 /* prism_init's view, for the report: the card's registers before and after
  * INITIALIZE (Lazare 2026-11-25: the init itself failed, nothing more). */
 static uint16_t init_diag[6];
+/* frames, for the network report (Lazare associated and went no further,
+ * 2026-11-25): received, refused by the card's status, sent, failed */
+uint16_t rx_frames, rx_bad, tx_frames, tx_exc;
+uint16_t rx_events, rx_bap_fail, ev_seen;
+uint16_t tx_lost, tx_status_last, tx_cmd_status;
+uint8_t  tx_head[16];                  /* the last frame handed to the card: dst, src, length, SNAP */   /* transmits never confirmed, the frame's status word, the command's STATUS */   /* EV_RX raised, its BAP refused, every EVSTAT bit seen */
+uint16_t rx_status_last;
 
 /* --- the bus ------------------------------------------------------------ */
 
@@ -221,18 +229,18 @@ uint8_t prism_init(void)
   init_diag[0] = rd16(R_CMD); init_diag[1] = rd16(R_EVSTAT); init_diag[2] = rd16(R_SWSUPPORT0);
   r = cmd(CMD_INIT, 0);
   init_diag[3] = rd16(R_CMD); init_diag[4] = rd16(R_EVSTAT); init_diag[5] = rd16(R_STATUS);
+  /* Interrupts off, as Violet writes them (INTEN 0000, v1-tx-compare.sh):
+   * in I/O mode the card's IREQ is the READY pin, and ours never wrote it;
+   * Lazare's card sent frames and never raised a receive (2026-11-25). */
+  wr16(R_INTEN, 0);
   if(r) { log_s("card: init failed "); log_hex8(r); log_nl(); return 1; }
   if(rid_read(RID_MAC, w, 3)) { log_line("card: no MAC"); return 2; }
   our_mac[0] = (uint8_t)w[0]; our_mac[1] = (uint8_t)(w[0] >> 8);
   our_mac[2] = (uint8_t)w[1]; our_mac[3] = (uint8_t)(w[1] >> 8);
   our_mac[4] = (uint8_t)w[2]; our_mac[5] = (uint8_t)(w[2] >> 8);
   log_s("card: mac "); log_mac(our_mac); log_nl();
-  /* The station firmware (the WPA2 question, IMPROVEMENTS.md section 6):
-   * component id, variant, major, minor. */
-  if(!rid_read(RID_STAID, w, 4)) {
-    log_s("card: station fw "); log_dec(w[2]); uart_putc('.'); log_dec(w[3]);
-    uart_putc('.'); log_dec(w[1]); log_nl();
-  }
+  /* No station-firmware read (FD20) here: Violet reads none, and ours is
+   * to match Violet's set-up exactly until Lazare hears (2026-11-25). */
   if(cmd(CMD_ALLOC, TX_BUF_BYTES) || wait_event(EV_ALLOC)) { log_line("card: no txbuf"); return 3; }
   txfid = rd16(R_ALLOCFID);
   wr16(R_EVACK, EV_ALLOC);
@@ -262,7 +270,8 @@ uint8_t prism_join(const __code char *ssid)
   if(rid_write1(RID_FCB3, 0x000F)) return 6;
   if(rid_write1(RID_FCB4, 0x000F)) return 6;
   if(rid_write1(RID_AUTH, 1)) return 4;              /* open system */
-  if(rid_write1(RID_WEPFLAGS, 0)) return 5;          /* no WEP (phase 1) */
+  /* No WEPFLAGS write: Violet writes none (its sequence ends at FC2A, then
+   * ENABLE), and Lazare's card never sent a frame after ours (2026-11-25). */
   linked = 0;
   info_count = 0; info_last = 0; link_last = 0;
   return cmd(CMD_ENABLE, 0) ? 7 : 0;
@@ -282,7 +291,7 @@ uint8_t prism_link(void) { return linked; }
  *   58 FD41 current SSID: length then 8 bytes
  *   64 CMD, EVSTAT, SWSUPPORT0 before INITIALIZE; CMD, EVSTAT, STATUS after
  *   (2 bytes each). Join result 0x80 + n: prism_init failed at step n. */
-static void ee_put(uint8_t a, uint8_t v)
+void ee_put(uint8_t a, uint8_t v)
 {
   EEADRH = 0; EEADR = a; EEDATA = v;
   EECON1 = 0x04;                          /* the data EEPROM, WREN */
@@ -291,9 +300,26 @@ static void ee_put(uint8_t a, uint8_t v)
   EECON1 = 0;
 }
 
-static void ee_words(uint8_t a, __data const uint16_t *w, uint8_t n)
+void ee_words(uint8_t a, __data const uint16_t *w, uint8_t n)
 {
   while(n--) { ee_put(a++, (uint8_t)*w); ee_put(a++, (uint8_t)(*w >> 8)); w++; }
+}
+
+/* The link as the card sees it, associated (net_report, from `at`): FD42
+ * the access point's BSSID (6), FD40 port status (2), FD41 the SSID's
+ * length and first 8 bytes (10), and the MAC this firmware read and puts
+ * in its frames (6). Lazare sent 81 frames and heard none (2026-11-25):
+ * a MAC read in the wrong byte order would do exactly that. */
+void prism_report_link(uint8_t at)
+{
+  uint16_t w[5];
+  uint8_t i;
+  for(i = 0; i < 5; i++) w[i] = 0xFFFF;
+  rid_read(0xFD42, w, 3); ee_words(at, w, 3);
+  w[0] = 0xFFFF; rid_read(0xFD40, w, 1); ee_words(at + 6, w, 1);
+  for(i = 0; i < 5; i++) w[i] = 0xFFFF;
+  rid_read(0xFD41, w, 5); ee_words(at + 8, w, 5);
+  for(i = 0; i < 6; i++) ee_put(at + 18 + i, our_mac[i]);
 }
 
 void prism_report(uint8_t join_result)
@@ -352,9 +378,11 @@ uint16_t rx_remaining(void) { return rx_end > rx_pos ? rx_end - rx_pos : 0; }
 static void handle_rx(void)
 {
   uint16_t fid = rd16(R_RXFID), status, len;
-  if(bap_setup(1, fid, 0)) goto done;
+  rx_events++;
+  if(bap_setup(1, fid, 0)) { rx_bap_fail++; goto done; }
   status = bap_rd(1);
-  if(status & 0x0003) goto done;          /* FCS or other receive error */
+  rx_frames++; rx_status_last = status;
+  if(status & 0x0003) { rx_bad++; goto done; }   /* FCS or other receive error */
   if(bap_setup(1, fid, 44)) goto done;
   rx_have_hi = 0;
   rx_pos = 44;
@@ -386,9 +414,10 @@ static void handle_info(void)
 void prism_poll(void)
 {
   uint16_t ev = rd16(R_EVSTAT);
+  ev_seen |= ev;
   if(ev & EV_INFO) handle_info();
   if(ev & EV_RX) handle_rx();
-  if(ev & EV_TXEXC) { log_line("card: tx exception"); wr16(R_EVACK, EV_TXEXC); }
+  if(ev & EV_TXEXC) { tx_exc++; log_line("card: tx exception"); wr16(R_EVACK, EV_TXEXC); }
   if(ev & EV_TX) wr16(R_EVACK, EV_TX);
 }
 
@@ -398,13 +427,25 @@ void prism_tx(__data const uint8_t *frame, uint16_t len)
 {
   uint8_t i;
   uint16_t n;
+  for(i = 0; i < 16; i++) tx_head[i] = i < len ? frame[i] : 0;
   if(bap_setup(0, txfid, 0)) { log_line("card: tx bap"); return; }
   for(i = 0; i < 6; i++) bap_wr(0, 0);    /* status .. retry/rate */
-  bap_wr(0, 0x0006);                      /* tx_control: 802.3 frame, TX OK/EX events */
+  bap_wr(0, 0x0000);                      /* tx_control: 802.3 frame, no TX events, as Violet
+                                             (v1-tx-compare.sh: Violet 0000, ours was 0006;
+                                             Lazare sent 39 frames, heard none, 2026-11-25) */
   for(i = 0; i < 15; i++) bap_wr(0, 0);   /* the 802.11 header: the card's job */
   bap_wr(0, len - 14);                    /* data length, little-endian */
   for(n = 0; n + 1 < len; n += 2) bap_wr(0, (uint16_t)frame[n] | ((uint16_t)frame[n + 1] << 8));
   if(n < len) bap_wr(0, frame[n]);
   if(cmd(CMD_TX_RECLAIM, txfid)) { log_line("card: tx cmd"); return; }
-  if(wait_event(EV_TX | EV_TXEXC)) log_line("card: tx lost");
+  tx_frames++;
+  /* With no TX events asked for, the reclaimed buffer comes back as an
+   * Alloc event; the next frame waits for it (or the emulator's TX). */
+  if(wait_event(EV_ALLOC | EV_TX | EV_TXEXC)) { tx_lost++; log_line("card: tx lost"); }
+  else if(rd16(R_EVSTAT) & EV_ALLOC) wr16(R_EVACK, EV_ALLOC);
+  /* What the card wrote on the frame (its status word, then the transmit
+   * command's own STATUS): Lazare's card never signalled a frame out
+   * (2026-11-25). */
+  tx_cmd_status = rd16(R_STATUS);
+  if(!bap_setup(0, txfid, 0)) tx_status_last = bap_rd(0);
 }

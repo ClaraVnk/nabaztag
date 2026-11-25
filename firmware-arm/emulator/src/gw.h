@@ -44,6 +44,8 @@ void gw_set_arp(int on);
 void gw_set_xmpp_port(uint16_t port);
 /* Send the rabbit's connections to port 80 to this port of the warren. */
 void gw_set_port80(uint16_t port);
+/* Broadcast replies never reach the rabbit (an AP's OFDM broadcast rate, an 11b card). */
+void gw_set_bcast_deaf(int on);
 void gw_set_port443(uint16_t port);
 
 /** @brief An Ethernet payload from the rabbit: LLC/SNAP, then the packet. */
