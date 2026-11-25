@@ -116,6 +116,12 @@ the watchdog is abandoned after five boots.
 the same 16 kHz tone: the start registers, the burst lengths and every data
 byte equal.
 
+`../tools/v1-sha-proof.sh`: the loader's SHA-256 and HMAC-SHA-256 in
+assembly (`../../v1-native/src/loader/sha256.asm`) run on the emulated PIC with
+the test image `make shatest`: FIPS 180-4's vectors (the million 'a'
+included), RFC 4231's cases 1-5, compared with Python's hashlib and hmac;
+the time per block.
+
 The warrens of these proofs run in a container on the host network, like
 the emulator: on a Mac the podman machine's network is not the Mac's.
 

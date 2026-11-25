@@ -142,6 +142,7 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[i], "--warren") && i + 1 < argc) warren = argv[++i];
     else if(!strcmp(argv[i], "--ssid") && i + 1 < argc) snprintf(prism_ssid, sizeof(prism_ssid), "%s", argv[++i]);
     else if(!strcmp(argv[i], "--port80") && i + 1 < argc) gw_set_port80((uint16_t)atoi(argv[++i]));
+    else if(!strcmp(argv[i], "--bcast-deaf")) gw_set_bcast_deaf(1);
     else if(!strcmp(argv[i], "--press") && i + 2 < argc && presses < 8) {
       press[presses].at_ms = (uint64_t)(atof(argv[i+1]) * 1000);
       press[presses].until_ms = press[presses].at_ms + (uint64_t)(atof(argv[i+2]) * 1000);

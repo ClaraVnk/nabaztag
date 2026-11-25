@@ -40,8 +40,14 @@ emu() {
 }
 # Since phase 2 the loader runs first and, with the key mkimage.py put in
 # the EEPROM, seeds slot A (about 10 s of HMAC) before the application.
-emu --seconds 52 > "$OUT/run1.log" 2>&1 || true
+# --bcast-deaf: the access point's broadcasts never reach the card, as
+# Lazare's 802.11b card under a UniFi AP (2026-11-25): DHCP must not ask for
+# a broadcast reply.
+emu --seconds 135 --bcast-deaf > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
 emu --seconds 6 > "$OUT/run2.log" 2>&1 || true
+# No access point at all (Lazare at blue, 2026-11-24/25): after 30 s the
+# firmware writes what the card says into the EEPROM, for card-report.py.
+emu --seconds 75 --link-down 0.1 0 > "$OUT/run3.log" 2>&1 || true
 sleep 1
 grep -E 'uart:|leds:|card: (enable|link)|gw: (DHCP ack|DNS|the rabbit opened)|ear [01]:|watchdog|halted' "$OUT/run1.log"
 cat "$OUT/warren.log"
@@ -61,6 +67,8 @@ need "$L" 'uart: dhcp: 10.0.0.42 mask 255.255.255.0 gw 10.0.0.1 dns 10.0.0.1' "t
 need "$L" 'gw: DNS p.nabaztag.com' "no DNS query"
 need "$L" 'uart: dns: p.nabaztag.com -> 10.0.0.1' "the DNS answer was not taken"
 need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000 HTTP/1.0' "not the poll"
+need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=01&tc=00000000 HTTP/1.0' "no st=01 after the first poll"
+[ "$(grep -c 'st=00' "$OUT/warren.log")" -le 2 ] || fail "st=00 on more than the first poll of each start"
 need "$L" 'uart: http: HTTP/1.0 200 OK' "the answer's status line was not read"
 need "$L" 'uart: poll interval 1' "the answer's frame 03 was not parsed"
 need "$L" 'uart: poll 3 done' "fewer than three polls answered"
@@ -74,3 +82,14 @@ grep -q 'unknown opcode' "$L" && fail "an opcode the emulator does not know"
 FIRST=$(grep -m1 'gw: the rabbit opened' "$L" | sed -E 's/^\[ *([0-9]+) ms\].*/\1/')
 echo "PASS v1-native: boot, LEDs, card joined, DHCP, DNS, 3 polls answered, ears moved, watchdog quiet;"
 echo "  first poll at ${FIRST} ms; $(tr '\n' ';' < "$OUT/size.txt") ($OUT)"
+
+need "$OUT/run3.log" 'uart: card: report in EEPROM 0x40' "no card report without an access point"
+python3 ../v1-icsp/card-report.py --log "$OUT/run3.log" | tee "$OUT/card-report.txt"
+grep -q "0 info frame(s)" "$OUT/card-report.txt" || fail "the card report is not the one of a card that never heard a link"
+! grep -q 'card: report' "$L" || fail "a card report on a run that associated"
+# The card ignores a strobe held too short (Lazare, 2026-11-25): none here.
+! grep -q 'strobe too short' "$L" "$OUT/run3.log" || fail "a card strobe too short for the real card"
+python3 ../v1-icsp/card-report.py --log "$L" | tee "$OUT/net-report.txt"
+grep -q "furthest ready (HTTP)" "$OUT/net-report.txt" && grep -q "DHCP: address 10.0.0.42" "$OUT/net-report.txt" \
+  || fail "the network report does not show the way to the Terrier"
+echo "PASS v1-native card report"

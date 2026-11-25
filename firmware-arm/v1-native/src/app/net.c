@@ -16,7 +16,9 @@
  */
 #include "board.h"
 
+#ifndef SERVER_NAME
 #define SERVER_NAME     "p.nabaztag.com"
+#endif
 #define POLL_PATH       "/vl/FR/p3.jsp?sn="
 #define FW_PATH         "/vl/v1/fw?sn="          /* ours: the image for this board (DESIGN.md 8) */
 #define REQ_POLL        1
@@ -50,6 +52,11 @@ static uint8_t  tries;
 static uint32_t xid;
 static uint16_t dns_id, dns_port;
 uint16_t polls_answered;
+/* for net_report: frames net_rx refused (not SNAP), the last one's first
+ * bytes, and the DHCP replies seen */
+static uint16_t not_snap, dhcp_replies, ip_frames, arp_frames, dns_replies;
+static uint8_t  connects, established, refused, resets, timeouts, max_state;
+static uint8_t  last_head[8];
 
 static uint8_t  tx[TX_SIZE];
 static uint16_t txp, ip_at, tp_at;       /* cursor; where the IP and the transport header start */
@@ -191,12 +198,17 @@ static void dhcp_send(uint8_t type, __data const uint8_t *req_ip, __data const u
 {
   udp_begin(68, 67, bcast_ip, bcast_mac);
   put8(1); put8(1); put8(6); put8(0);               /* request, Ethernet, 6, hops */
-  put32(xid); put16(0); put16(0x8000);              /* secs; broadcast flag */
+  /* No broadcast flag, as Violet: the reply comes to our MAC. A UniFi AP
+   * sends broadcasts at an OFDM rate Lazare's 802.11b card cannot hear:
+   * asked as a broadcast, no offer ever reached it (2026-11-25). */
+  put32(xid); put16(0); put16(0);                   /* secs; flags */
   putz(16);                                         /* ciaddr yiaddr siaddr giaddr */
   putn(our_mac, 6); putz(10);                       /* chaddr */
   putz(192);                                        /* sname, file */
   put8(0x63); put8(0x82); put8(0x53); put8(0x63);
   put8(53); put8(1); put8(type);
+  put8(61); put8(7); put8(1); putn(our_mac, 6);    /* client id, as Violet's */
+  put8(12); put8(8); puts_code("nabaztag");         /* host name */
   put8(55); put8(3); put8(1); put8(3); put8(6);     /* mask, router, DNS */
   if(req_ip) { put8(50); put8(4); putn(req_ip, 4); put8(54); put8(4); putn(srv_ip, 4); }
   put8(255);
@@ -359,7 +371,11 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
     uint8_t i;
     puts_code(t.kind == REQ_IMAGE ? "GET " FW_PATH : "GET " POLL_PATH);
     for(i = 0; i < 6; i++) put_hex_upper(our_mac[i]);
-    puts_code(t.kind == REQ_IMAGE ? "&v=" FW_VERSION "&b=" STR(BOARD_ID) : "&v=" FW_VERSION "&st=00&tc=00000000");
+    /* st=00 on the first poll after a start only, as Violet: the Terrier
+     * counts a start at each st=00, and Lazare's first native polls showed
+     * one every ten seconds (2026-11-25). */
+    if(t.kind == REQ_IMAGE) puts_code("&v=" FW_VERSION "&b=" STR(BOARD_ID));
+    else puts_code(polls_answered ? "&v=" FW_VERSION "&st=01&tc=00000000" : "&v=" FW_VERSION "&st=00&tc=00000000");
     puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: " SERVER_NAME "\r\n\r\n");
     t.unacked = txp - tp_at - 20;
   }
@@ -368,6 +384,9 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
 
 static void tcp_close(const __code char *why)
 {
+  if(why[0] == 'r' && why[2] == 'f') refused++;
+  else if(why[0] == 'r') resets++;
+  else if(why[0] == 't') timeouts++;
   t.st = T_CLOSED;
   log_s("http: "); log_line(why);
   timer = ticks();
@@ -454,6 +473,7 @@ static void tcp_rx(uint16_t len)
   if(flags & TCP_RST) { tcp_close(t.st == T_SYN_SENT ? "refused" : "reset"); return; }
   if(t.st == T_SYN_SENT) {
     if((flags & (TCP_SYN | TCP_ACK)) != (TCP_SYN | TCP_ACK) || ack != t.snd_nxt) return;
+    established++;
     t.rcv_nxt = seq + 1;
     t.st = T_OPEN;
     tcp_send(TCP_ACK | TCP_PSH, 1);                 /* the request rides on the handshake's ACK */
@@ -500,8 +520,8 @@ static void ip_rx(uint16_t len)
     uint16_t sport = rx_be16(), dport = rx_be16(), ulen = rx_be16();
     rx_be16();
     if(ulen < 8 || ulen > total) return;
-    if(dport == 68 && sport == 67 && state == NET_DHCP) dhcp_rx(ulen - 8);
-    else if(sport == 53 && dport == dns_port && state == NET_DNS) dns_rx();
+    if(dport == 68 && sport == 67 && state == NET_DHCP) { dhcp_replies++; dhcp_rx(ulen - 8); }
+    else if(sport == 53 && dport == dns_port && state == NET_DNS) { dns_replies++; dns_rx(); }
   } else if(proto == IP_TCP && state == NET_READY && same_ip(src, server_ip)) {
     tcp_rx(total);
   } else if(proto == IP_ICMP && state != NET_DHCP) {
@@ -512,13 +532,14 @@ static void ip_rx(uint16_t len)
 void net_rx(uint16_t len)
 {
   uint16_t type;
+  uint8_t i;
   if(len < 8) return;
-  if(rx_byte() != 0xAA || rx_byte() != 0xAA || rx_byte() != 0x03) return;
-  rx_skip(3);
-  type = rx_be16();
+  for(i = 0; i < 8; i++) last_head[i] = rx_byte();
+  if(last_head[0] != 0xAA || last_head[1] != 0xAA || last_head[2] != 0x03) { not_snap++; return; }
+  type = ((uint16_t)last_head[6] << 8) | last_head[7];
   len -= 8;
-  if(type == ETH_ARP && len >= 28) arp_rx();
-  else if(type == ETH_IP) ip_rx(len);
+  if(type == ETH_ARP && len >= 28) { arp_frames++; arp_rx(); }
+  else if(type == ETH_IP) { ip_frames++; ip_rx(len); }
 }
 
 /* --- the clock ----------------------------------------------------------- */
@@ -532,6 +553,46 @@ void net_init(void)
 }
 
 uint8_t net_state(void) { return state; }
+
+/* Every step of the way, 2 minutes after the start, whatever happened
+ * (Lazare associated and went no further, 2026-11-25; Clara: "all the
+ * steps, to limit the round trips"). EEPROM from 0x80, read with
+ * v1-icsp/card-report.py. Written once.
+ *   80 'N' 2   82 state now, furthest state, tries, have_hop
+ *   86 rx frames, rx bad, tx frames, tx exceptions (2 each)
+ *   8E not SNAP, ARP, IP, DHCP replies, DNS replies (2 each)
+ *   98 last rx status (2)   9A the last frame's first 8 bytes
+ *   A2 our IP, A6 mask, AA gateway, AE DNS, B2 the Terrier's IP (4 each)
+ *   B6 connects, established, refused, resets, timeouts, TCP state, HTTP
+ *      phase, status 2xx (1 each)   BE polls answered (2)
+ *   C0 EV_RX raised, its BAP refused, every EVSTAT bit seen (2 each)
+ *   C6 transmits never confirmed, the last frame's status word, the transmit
+ *      command's STATUS (2 each)
+ *   CC the last frame handed to the card, its first 16 bytes
+ *   DC BSSID (6), E2 port status (2), E4 SSID length + 8 bytes, EE our MAC (6) */
+void net_report(void)
+{
+  uint16_t w[5];
+  uint8_t i;
+  ee_put(0x80, 'N'); ee_put(0x81, 2);
+  ee_put(0x82, state); ee_put(0x83, max_state); ee_put(0x84, tries); ee_put(0x85, have_hop);
+  w[0] = rx_frames; w[1] = rx_bad; w[2] = tx_frames; w[3] = tx_exc; ee_words(0x86, w, 4);
+  w[0] = not_snap; w[1] = arp_frames; w[2] = ip_frames; w[3] = dhcp_replies; w[4] = dns_replies; ee_words(0x8E, w, 5);
+  ee_words(0x98, &rx_status_last, 1);
+  for(i = 0; i < 8; i++) ee_put(0x9A + i, last_head[i]);
+  for(i = 0; i < 4; i++) {
+    ee_put(0xA2 + i, our_ip[i]); ee_put(0xA6 + i, mask[i]); ee_put(0xAA + i, gw_ip[i]);
+    ee_put(0xAE + i, dns_ip[i]); ee_put(0xB2 + i, server_ip[i]);
+  }
+  ee_put(0xB6, connects); ee_put(0xB7, established); ee_put(0xB8, refused); ee_put(0xB9, resets);
+  ee_put(0xBA, timeouts); ee_put(0xBB, t.st); ee_put(0xBC, t.http); ee_put(0xBD, t.ok);
+  ee_words(0xBE, &polls_answered, 1);
+  w[0] = rx_events; w[1] = rx_bap_fail; w[2] = ev_seen; ee_words(0xC0, w, 3);
+  w[0] = tx_lost; w[1] = tx_status_last; w[2] = tx_cmd_status; ee_words(0xC6, w, 3);
+  for(i = 0; i < 16; i++) ee_put(0xCC + i, tx_head[i]);
+  prism_report_link(0xDC);
+  log_line("net: report in EEPROM 0x80");
+}
 
 void net_poll(void)
 {
@@ -548,6 +609,7 @@ void net_poll(void)
     timer = ticks() - RETRY;
   }
   age = ticks() - timer;
+  if(state > max_state) max_state = state;
   switch(state) {
     case NET_DHCP:
       if(age >= RETRY) {
@@ -581,6 +643,7 @@ void net_poll(void)
           return;
         }
         log_s("http: connect "); log_ip(server_ip); log_nl();
+        connects++;
         http_open(REQ_POLL);
       } else if(t.st == T_SYN_SENT) {
         if(age >= RETRY) { t.snd_nxt--; tcp_send(TCP_SYN, 0); t.snd_nxt++; timer = ticks(); log_line("http: syn again"); }

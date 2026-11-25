@@ -50,6 +50,14 @@ static uint8_t pins(int p)
 
 #define PIN(p, b)  ((pins(p) >> (b)) & 1)
 
+#define CARD_SETTLE 4      /* instruction cycles a strobe is held before the card answers */
+
+static void strobe_short(const char *what)
+{
+  if(B.short_strobes++ < 8)
+    board_log("card: %s strobe too short, the card ignores it (pc %05X)", what, B.pic.pc);
+}
+
 static void pins_changed(int p, uint8_t before, uint8_t after)
 {
   uint8_t fell = before & ~after, rose = ~before & after;
@@ -59,12 +67,27 @@ static void pins_changed(int p, uint8_t before, uint8_t after)
 
   if(p == PF && ((fell | rose) & 0x0F))
     board_log("motor pins RF3..0: %X -> %X (pc %05X)", before & 0x0F, after & 0x0F, B.pic.pc);
+  /* The card answers only a strobe held long enough: Violet's firmware
+   * holds each for eight NOPs (0x376E-0x37FE, 0.8 us at 10 MIPS); ours held
+   * one and Lazare's card never took its INITIALIZE (2026-11-25), while the
+   * emulator answered at once. A read's data now shows on PORTD only
+   * CARD_SETTLE cycles after the fall, and a write strobe shorter than that
+   * is dropped, both said. */
   if(p == PF) {
-    if(fell & 0x80) B.in[PD] = prism_io_read(B.lat[PE]);       /* /IORD */
-    if(fell & 0x20) B.in[PD] = prism_attr_read(B.lat[PE]);     /* /OE   */
-    if(rose & 0x40) prism_attr_write(B.lat[PE], B.lat[PD]);    /* /WE   */
+    if(fell & 0x80) { B.strobe_at[0] = B.pic.cycles; B.read_value = prism_io_read(B.lat[PE]); B.read_pending = 1; B.in[PD] = 0xFF; }
+    if(fell & 0x20) { B.strobe_at[0] = B.pic.cycles; B.read_value = prism_attr_read(B.lat[PE]); B.read_pending = 1; B.in[PD] = 0xFF; }
+    if(fell & 0x40) B.strobe_at[2] = B.pic.cycles;
+    if((rose & 0xA0) && B.read_pending) { strobe_short("read"); B.read_pending = 0; }
+    if(rose & 0x40) {
+      if(B.pic.cycles - B.strobe_at[2] >= CARD_SETTLE) prism_attr_write(B.lat[PE], B.lat[PD]);
+      else strobe_short("attribute write");
+    }
   }
-  if(p == PG && (rose & 0x10)) prism_io_write(B.lat[PE], B.lat[PD]);  /* /IOWR */
+  if(p == PG && (fell & 0x10)) B.strobe_at[3] = B.pic.cycles;
+  if(p == PG && (rose & 0x10)) {
+    if(B.pic.cycles - B.strobe_at[3] >= CARD_SETTLE) prism_io_write(B.lat[PE], B.lat[PD]);
+    else strobe_short("write");
+  }
   if(p == PB && (rose & 0x20)) spi_latch();                    /* XLAT */
   if((p == PB && ((fell | rose) & 0x18)) || (p == PA && ((fell | rose) & 0x04)))
     spi_select();
@@ -266,4 +289,7 @@ void board_step(void)
 {
   unsigned cyc = pic18_step(&B.pic);
   timers(cyc);
+  if(B.read_pending) {
+    if(B.pic.cycles - B.strobe_at[0] >= CARD_SETTLE) { B.in[PD] = B.read_value; B.read_pending = 0; }
+  }
 }

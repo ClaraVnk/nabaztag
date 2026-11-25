@@ -1,10 +1,10 @@
-// Linker script for the loader on a PIC18F6627 (the 2.0b board, 96 KB): the boot block, 0x0000-0x2FFF
-// (the application starts at 0x3000, app-18f6627.lkr). RAM as the
+// Linker script for the loader on a PIC18F6627 (the 2.0b board, 96 KB): the boot block, 0x0000-0x1FFF
+// (the application starts at 0x2000, app-18f6627.lkr). RAM as the
 // application's script: banks 2-5 merged for the 528-byte page buffer.
 LIBPATH .
 
-CODEPAGE   NAME=page       START=0x0               END=0x2FFF
-CODEPAGE   NAME=app        START=0x3000            END=0x17FFF         PROTECTED
+CODEPAGE   NAME=page       START=0x0               END=0x1FFF
+CODEPAGE   NAME=app        START=0x2000            END=0x17FFF         PROTECTED
 CODEPAGE   NAME=idlocs     START=0x300000          END=0x200007       PROTECTED
 CODEPAGE   NAME=config     START=0x300000          END=0x30000D       PROTECTED
 CODEPAGE   NAME=devid      START=0x3FFFFE          END=0x3FFFFF       PROTECTED

@@ -25,7 +25,7 @@ fail() { echo "FAIL: $*"; exit 1; }
 
 echo "== build"
 podman build -q -t v1native-toolchain -f "$NATIVE/Containerfile" "$NATIVE" >/dev/null
-podman run --rm -v "$NATIVE":/src:Z -w /src v1native-toolchain sh -c 'make clean >/dev/null && make >/dev/null' \
+podman run --rm -v "$NATIVE":/src:z -w /src v1native-toolchain sh -c 'make clean >/dev/null && make >/dev/null' \
   > "$OUT/build.log" 2>&1 || { cat "$OUT/build.log"; fail "the firmware does not build"; }
 podman build -q -t nabaztag-v1-native -f v1/Containerfile .. >/dev/null
 podman build -q -t violet-vasm -f tools/violet-vasm/Containerfile ../.. >/dev/null
@@ -33,18 +33,18 @@ podman build -q -t violet-vasm -f tools/violet-vasm/Containerfile ../.. >/dev/nu
 echo "== the tone: 16 kHz, 1.5 s, OKI ADPCM, Violet's Audi container"
 python3 tools/violet-vasm/v1-audi.py 16000 1.5 "$OUT/test.audi" >/dev/null
 podman run --rm \
-  -v "$(cd tools/violet-vasm && pwd)/sound-test.vasm":/out/net/violet/platform/vasm/sound-test.vasm:ro,Z \
-  -v "$OUT/test.audi":/out/net/violet/platform/vasm/audio/test.audi:ro,Z \
+  -v "$(cd tools/violet-vasm && pwd)/sound-test.vasm":/out/net/violet/platform/vasm/sound-test.vasm:ro,z \
+  -v "$OUT/test.audi":/out/net/violet/platform/vasm/audio/test.audi:ro,z \
   violet-vasm sound-test.vasm > "$OUT/sound.frame"
 
 echo "== 1. Violet's 1.4b plays it"
 WNAME="v1audio-$PORT"
 podman rm -f "$WNAME" >/dev/null 2>&1 || true
-podman run -d --rm --network host --name "$WNAME" -v "$PWD/tools/violet-vasm":/t:ro,Z -v "$OUT":/img:ro,Z \
+podman run -d --rm --network host --name "$WNAME" -v "$PWD/tools/violet-vasm":/t:ro,z -v "$OUT":/img:ro,z \
   docker.io/library/python:3.13-alpine python3 -u /t/violet_warren.py --port "$PORT" --frame /img/sound.frame --after 99 >/dev/null
 trap 'podman rm -f "$WNAME" >/dev/null 2>&1' EXIT
 sleep 2
-podman run --rm --network host -v "$DUMPS":/d:ro,Z nabaztag-v1-native \
+podman run --rm --network host -v "$DUMPS":/d:ro,z nabaztag-v1-native \
   --warren 127.0.0.1 --port80 "$PORT" --hex /d/violet-v1-1.4b.hex --flash-chip 081 --seconds 20 --trace-oki \
   > "$OUT/violet.log" 2>&1 || true
 podman rm -f "$WNAME" >/dev/null 2>&1 || true
@@ -65,13 +65,16 @@ for i in range(0, len(audi), PAGE):
 open(sys.argv[2], "wb").write(sf)
 print(f"   {len(audi)} bytes of Audi at page {DIR + 1}, directory at {DIR}")
 EOF
-podman run --rm --network host -v "$OUT/fw":/img:Z nabaztag-v1-native \
+podman run --rm --network host -v "$OUT/fw":/img:z nabaztag-v1-native \
   --hex /img/full.hex --pic 6525 --flash-chip 081 --flash /img/sf.bin --seconds 14 --trace-oki \
   > "$OUT/ours.log" 2>&1 || true
 
 echo "== 3. compare"
 # Violet: from the start of the sound (reg 35 <- 06 after the boot jingle) to the last burst.
-regs() { grep 'oki: reg' "$1" | awk -v from="$2" '$2 + 0 >= from' | grep -v 'reg 06 ' | sed -E 's/^\[ *[0-9]+ ms\] oki: //'; }
+# From the LINE that sets the rate, not from its millisecond: our firmware
+# writes the boot table and starts the sound within the same millisecond
+# (2026-11-25, on the dev VM), and a cut by time kept the table's tail.
+regs() { grep 'oki: reg' "$1" | grep -v 'reg 06 ' | sed -E 's/^\[ *[0-9]+ ms\] oki: //' | awk 'f || /^reg 35 <- 06/ { f = 1; print }'; }
 V_FROM=$(grep 'oki: reg 35 <- 06' "$OUT/violet.log" | head -1 | sed -E 's/^\[ *([0-9]+) ms\].*/\1/')
 O_FROM=$(grep 'oki: reg 35 <- 06' "$OUT/ours.log" | head -1 | sed -E 's/^\[ *([0-9]+) ms\].*/\1/')
 [ -n "$V_FROM" ] || fail "Violet never set the rate (no reg 35 <- 06 in $OUT/violet.log)"

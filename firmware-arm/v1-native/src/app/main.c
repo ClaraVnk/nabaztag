@@ -51,11 +51,27 @@ static void sound_boot(void)
 static uint16_t leds;
 static void show(uint16_t on) { if(on != leds) { leds = on; leds_set(on); } }
 
+/* EEPROM 0x7C: the boots since the image was written (2 bytes), RCON at this
+ * start, and RCON's TO bit seen (a watchdog reset). */
+static void boot_mark(void)
+{
+  uint16_t n;
+  uint8_t rc = RCON;
+  EEADRH = 0; EEADR = 0x7C; EECON1 = 0x01; n = EEDATA;
+  EEADR = 0x7D; EECON1 = 0x01; n |= (uint16_t)EEDATA << 8;
+  n = n == 0xFFFF ? 1 : n + 1;
+  ee_put(0x7C, (uint8_t)n); ee_put(0x7D, (uint8_t)(n >> 8));
+  ee_put(0x7E, rc);
+  RCON |= 0x1F;                           /* TO, PD, POR, BOR set again: the next start shows its own */
+}
+
 void main(void)
 {
-  uint8_t r, ear_demo = 0, last_net = 0xFF;
+  uint8_t r, ear_demo = 0, last_net = 0xFF, join_r = 0xFF, reported = 0;
+  uint16_t t0, last_report;
   uint16_t last_polls = 0;
 
+  boot_mark();
   ADCON1 = 0x0E;                /* AN0 analog (the volume), the rest digital */
   CMCON = 0x07;                 /* comparators off */
   timer_init();
@@ -72,17 +88,33 @@ void main(void)
   sound_boot();
 
   r = prism_init();
-  if(r) { log_s("card: init error "); log_dec(r); log_nl(); }
+  if(r) { join_r = 0x80 | r; log_s("card: init error "); log_dec(r); log_nl(); }
   else {
     show(LED_BOT_B);
     r = prism_join(SSID);
+    join_r = r;
     if(r) { log_s("card: join error "); log_dec(r); log_nl(); }
     else log_line("card: joining " SSID);
   }
   net_init();
+  t0 = last_report = ticks();
 
   for(;;) {
     clrwdt();
+    /* 30 s without an association: what the card says goes to the EEPROM
+     * (prism_report), for a rabbit with no readable serial log. */
+    if(!(reported & 1) && !prism_link() && (uint16_t)(ticks() - t0) > 30 * TICKS_PER_S) {
+      reported |= 1;
+      prism_report(join_r);
+    }
+    /* Every step of the network into the EEPROM (net_report) at 40 s, then
+     * every 40 s: Lazare's first try of it left nothing, the firmware never
+     * ran 2 minutes in one go (2026-11-25). The boot count and the reset's
+     * cause (RCON) are written once at the start, beside it. */
+    if((uint16_t)(ticks() - last_report) > 40 * TICKS_PER_S) {
+      last_report = ticks();
+      net_report();
+    }
     timer_poll();
     prism_poll();
     net_poll();
@@ -102,7 +134,13 @@ void main(void)
       update_confirm();
       /* Once the Terrier has answered: each ear two holes, one motor at a
        * time (two at once restarted Lazare, 2026-11-24). */
+#ifndef NO_EAR_DEMO
       if(ear_demo == 0) { ear_demo = 1; ear_move(0, 2); }
+#else
+      /* NO_EAR_DEMO: a rabbit whose motor restarts it (Lazare's right ear,
+       * a hardware fault, 2026-11-24) is never sent turning on its own. */
+      ear_demo = 2;
+#endif
     }
     if(ear_demo == 1 && !ears_busy()) { ear_demo = 2; ear_move(1, 2); }
   }

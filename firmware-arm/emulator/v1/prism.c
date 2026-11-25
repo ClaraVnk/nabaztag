@@ -277,7 +277,15 @@ static void command(uint16_t cmd)
     case 0x21: {                                   /* ACCESS */
       struct rid *r = rid_find(p0, 0);
       if(cmd & 0x100) {
-        if(r) board_log("card: RID %04X %s <- %u bytes", p0, rid_name(p0), r->len);
+        if(r) {
+          /* With the value (2026-11-25): our own firmware joined in the
+           * emulator and not on Lazare; what Violet's writes and ours does
+           * not is read off this line. */
+          char hex[3 * 34 + 1]; int i, n = r->len < 34 ? r->len : 34;
+          for(i = 0; i < n; i++) snprintf(hex + 3 * i, 4, " %02x", r->data[i]);
+          hex[3 * n] = 0;
+          board_log("card: RID %04X %s <- %u bytes:%s", p0, rid_name(p0), r->len, hex);
+        }
       } else if(!r) {
         board_log("card: RID %04X %s read, which this card does not know", p0, rid_name(p0));
       }
@@ -403,6 +411,9 @@ void prism_io_write(uint8_t a, uint8_t v)
       bap_store(r == R_DATA1, w);
       return;
   }
+  /* Every other register written (INTEN, SWSUPPORT...), for comparing
+   * Violet's set-up with ours (2026-11-25: Lazare's card sent, heard none). */
+  if(B.trace_bus && r != R_PARAM0) board_log("card: reg %02X <- %04X", r, w);
   reg[r / 2] = w;
 }
 

@@ -21,7 +21,12 @@
 #define STR_(x)         #x
 #define STR(x)          STR_(x)
 #define FW_VERSION      STR(APP_VERSION)
-#define SSID            "Terrier"       /* phase 1: a constant; phase 2 reads the configuration page */
+/* The network and the server, set at build time for a real rabbit
+ * (APP_DEFS='-DSSID=\"<name>\" -DSERVER_NAME=\"<host>\"'); the defaults are
+ * the emulator's. Phase 2's configuration page (frame 15) will replace them. */
+#ifndef SSID
+#define SSID            "Terrier"
+#endif
 
 /* --- the two boards (Makefile: DEV, BOARD_ID, FLASH_END, WRITE_BLOCK) ---- */
 /* PIC18LF6525 (Lazare, 1.4b): 48 KB, 8-byte write blocks (DS39612 6.5: eight
@@ -32,7 +37,7 @@
 #define FLASH_END       0xC000UL
 #define WRITE_BLOCK     8
 #endif
-#define APP_BASE        0x3000          /* the loader owns 0x0000-0x2FFF (also an asm literal) */
+#define APP_BASE        0x2000          /* the loader owns 0x0000-0x1FFF (also an asm literal); 0x3000 until 2026-11-25 */
 #define APP_MAX         (FLASH_END - APP_BASE)
 #define APP_HDR_OFF     0x40            /* the application's header, after the vectors */
 
@@ -92,10 +97,16 @@ struct app_hdr {
 #define nop()           __asm__("nop")
 
 /* --- the serial flash layout, by page number (DESIGN.md 4.3) ------------- */
-#define PG_CONFIG       0               /* configuration, two copies: 0 and 1 */
-#define PG_STATE_A      2               /* the loader's state record, two copies */
-#define PG_STATE_B      3
-#define PG_LOG          4               /* ring log, pages 4-15 */
+/* Pages 0-3 are never written: page 0 is where Violet's own firmware keeps
+ * its configuration (network, server), and a rabbit put back on Violet's
+ * firmware must find it. Our first trial on Lazare (2026-11-24) wrote its
+ * boot counter there and Violet came back unconfigured (measured on the
+ * emulator after: Violet 1.4b writes page 0 and, at each boot, the program
+ * it downloads at pages 1936-2067). */
+#define PG_CONFIG       4               /* configuration, two copies: 4 and 5 */
+#define PG_STATE_A      6               /* the loader's state record, two copies */
+#define PG_STATE_B      7
+#define PG_LOG          8               /* ring log, pages 8-15 */
 #define PG_SLOT_A       16              /* image slot A: header page, then the image */
 #define PG_SLOT_B       208             /* image slot B */
 #define SLOT_PAGES      192
@@ -131,7 +142,6 @@ void uart_init(void);
 void uart_putc(char c);
 void log_s(const __code char *s);        /* string from flash */
 void log_hex8(uint8_t v);
-void log_hex16(uint16_t v);
 void log_nl(void);
 void log_line(const __code char *s);     /* s then newline */
 
@@ -146,7 +156,7 @@ void    flash_write(uint16_t page, __data const uint8_t *buf, uint16_t n);  /* n
  * slot+1), then read in order. Page 0 of a slot is its header. */
 void    slot_seek(uint8_t slot);
 void    slot_next(__data uint8_t *buf, uint8_t n);
-void    slot_write_page(uint8_t slot, uint16_t index, __data const uint8_t *buf, uint16_t n);
+#define slot_write_page(slot, index, buf, n) flash_write(slot_page(slot) + (index), buf, n)
 uint16_t slot_page(uint8_t slot);
 
 /* --- common/state.c */
@@ -193,6 +203,13 @@ uint8_t prism_init(void);                /* 0 ok */
 uint8_t prism_join(const __code char *ssid);
 void    prism_poll(void);                /* events: info frames, received frames */
 uint8_t prism_link(void);                /* 1 associated */
+void    prism_report(uint8_t join_result);  /* the card's view into the EEPROM, once */
+void    ee_put(uint8_t a, uint8_t v);       /* the data EEPROM, for the reports */
+void    ee_words(uint8_t a, __data const uint16_t *w, uint8_t n);
+extern uint16_t rx_frames, rx_bad, tx_frames, tx_exc, rx_status_last, rx_events, rx_bap_fail, ev_seen, tx_lost, tx_status_last, tx_cmd_status;
+void    prism_report_link(uint8_t at);  /* BSSID, port status, SSID, our MAC into the EEPROM */
+extern uint8_t tx_head[16];
+void    net_report(void);                   /* every network step into the EEPROM, once, at 2 min */
 void    prism_tx(__data const uint8_t *frame, uint16_t len);   /* an 802.3 frame: dst, src, len, LLC... */
 /* reading the frame being received, word by word from the card */
 uint8_t  rx_byte(void);
