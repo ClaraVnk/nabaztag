@@ -6,15 +6,6 @@
 
 <h1 align="center">Nabaztag&nbsp;&nbsp;·&nbsp;&nbsp;Naboot&nbsp;&nbsp;·&nbsp;&nbsp;Le Terrier</h1>
 
-> [!IMPORTANT]
-> **The Karotz (v3, 2011) works on [Le Terrier](https://terrier.cyberloutre.fr/karotz)**:
-> since 16 November 2026, real ones are adopted with their own key, and
-> **Terrier OS** (beta) installs it from a USB key written with Raspberry Pi Imager.
-> **The first real Nabaztag v1 (2005) was adopted on 17 November 2026**, through a
-> phone's hotspot. It is still in beta. **Do you own one? Help bring it back!** A
-> tester, or better a capture of its traffic with its server, makes all the difference:
-> [**get in touch**](https://github.com/ClaraVnk/nabaztag/issues/new?title=I%20have%20a%20Nabaztag%20v1%20%2F%20Karotz&body=Which%20rabbit%20and%20what%20firmware%3A%0A%0AWhat%20I%20can%20do%20(test%2C%20dump)%3A).
-
 <p align="center">
   <strong>Bring the 2006 Wi-Fi rabbit back to life — new firmware, a new warren, driven from Home Assistant.</strong><br>
   <sub>WPA3 · TLS 1.3 · signed over-the-air updates · a per-rabbit adoption key. The Violet servers died in 2011; this is its new home.</sub>
@@ -259,12 +250,23 @@ The plain port stays for every other rabbit.
 Everything above is the **Nabaztag:tag (v2, 2006)**, the rabbit this project
 was built on and is tested on, every day, on real hardware.
 
-- **Nabaztag v1 (2005)** — beta, on Le Terrier. It cannot be flashed: point it
-  at the Terrier in its setup page, ask for its code by e-mail on the
-  adoption page and hold its head down. It speaks, moves its ears and lights
-  up; it has no microphone and no RFID reader. Its Wi-Fi knows only WEP or
-  open networks: the first real one, adopted on 17 November 2026, joined
-  through a phone's hotspot.
+- **Nabaztag v1 (2005)** — beta, on Le Terrier, two ways:
+  - **Violet's own firmware**, untouched: point it at the Terrier in its setup
+    page, ask for its code by e-mail on the adoption page and hold its head
+    down. That page lives on an ad hoc Wi-Fi cell phones and Macs cannot
+    join: **a Raspberry Pi with a USB Wi-Fi dongle fills it for you**
+    (`firmware-arm/v1-setup/v1-setup.sh find`, then `set --ssid "<network>"`;
+    [the tool](firmware-arm/v1-setup/README.md)). Its Wi-Fi knows only WEP or
+    open networks: the first real one, adopted on 17 November 2026, joined
+    through a phone's hotspot.
+  - **Our own firmware** (`firmware-arm/v1-native/`, in C for its PIC18):
+    written once with a PICkit over ICSP, the rabbit opened
+    (`firmware-arm/v1-icsp/`). Since 25 November 2026 a real v1 (Lazare)
+    polls the Terrier on it. The ears, the LEDs, the Terrier's sounds, sleep,
+    the head button, ears turned by hand, and its Wi-Fi network and server
+    set from the Terrier are proven in the emulator, on Lazare next.
+
+  It has no microphone and no RFID reader.
 - **Karotz (v3, 2011)** — works, on Le Terrier, two ways:
   - **Terrier OS** (beta): our build of
     [LapinLibre](https://github.com/sweetlilmre/LapinLibre), written to a USB
@@ -275,6 +277,11 @@ was built on and is tested on, every day, on real hardware.
   - **FreeRabbits OS** with OpenKarotz, and the client installed on it
     (WPA2): the Karotz's original system, brought back by FreeRabbits.
 
+  Terrier OS moves from Linux 2.6.32 to **Linux 6.1 LTS**: it runs on a
+  real Karotz (Gengar), started from the USB key, with its USB hub, Wi-Fi
+  and the Terrier's client; writing it into the rabbit's flash is the next
+  step (`karotz/kernel/`).
+
   Either way the client adopts it like a v2 (its own key, TLS 1.3), takes the
   same commands, updates itself signed, and sends a Wi-Fi and a diagnostic
   line. Real Karotz are adopted since 16 November 2026
@@ -283,7 +290,7 @@ was built on and is tested on, every day, on real hardware.
 Both are supported **only through Le Terrier, and so through the HACS
 integration** — not in the Home Assistant add-on. They were built from the
 protocols and the code of the projects that ran them, proven in emulation,
-then by their first owners; a Karotz (Gengar) and a v1 are now here too. If
+then by their first owners; a Karotz (Gengar) and a v1 (Lazare) are now here too. If
 you have a v1, the Terrier is the way in, and your feedback is what takes it
 out of beta.
 
@@ -486,8 +493,8 @@ is the short version.
 
 ## Hardware
 
-- Tested on the **Nabaztag:tag** (v2, 2006 — mic + RFID). The v1 (2005) likely
-  works (same Violet protocol) but is **untested**. The optional **Naboot**
+- Tested on the **Nabaztag:tag** (v2, 2006 — mic + RFID). The v1 (2005) and
+  the Karotz (v3) work on Le Terrier only (above), not with the add-on. The optional **Naboot**
   custom firmware is flashed once from the config-mode upload page, then
   updated over the air, for WPA3, the adoption key, TLS, signed OTA and a
   modern config UI. The Violet add-on drives a **stock** rabbit with no
