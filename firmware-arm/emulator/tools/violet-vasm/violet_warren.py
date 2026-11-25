@@ -16,8 +16,11 @@ polls later. --messages N tells the rabbit N messages wait (a 5 per message
 after the ears, two at most): a click then sends sd=0003 (2026-11-24: the
 one-motor proof needs two orders and a click in one run). --source T V fills
 the (service, value) pairs the belly shows (14 V: how often the rabbit moves
-by itself). --down FROM TO closes polls FROM..TO without an answer, a server
-gone away for a while (2026-11-24: the review's proofs).
+by itself). --info TYPE VALUE fills one the same way, only once the rabbit has
+polled --after times (1 = the weather, 0 sun .. 5 storm: the program's
+@infofirsttype); --msg COLOUR sets byte 18, colormsg_1, from then on (the
+nose's colour, @showmsg). --down FROM TO closes polls FROM..TO without an
+answer, a server gone away for a while (2026-11-24: the review's proofs).
 """
 
 from __future__ import annotations
@@ -34,8 +37,10 @@ def frame(kind: int, body: bytes) -> bytes:
     return bytes([kind]) + len(body).to_bytes(3, "big") + body
 
 
-def sources(left: int, right: int, messages: int = 0, pairs: list | None = None) -> bytes:
-    waiting = bytes([5] * min(messages, 2))
+def sources(left: int, right: int, messages: int = 0, pairs: list | None = None, msg: int = 0) -> bytes:
+    """The 04 frame: eight (service, value) pairs, the ears, then byte 18,
+    colormsg_1: a message waiting, the nose's colour (@showmsg), 0 none."""
+    waiting = bytes([msg]) if msg else bytes([5] * min(messages, 2))
     info = bytearray(16)
     for i, (service, value) in enumerate((pairs or [])[:8]):
         info[2 * i], info[2 * i + 1] = service & 255, value & 255
@@ -49,6 +54,10 @@ def main() -> int:
     ap.add_argument("--frame", required=True, help="the 05 frame (podman run violet-vasm ...)")
     ap.add_argument("--ears", type=int, nargs=2, metavar=("LEFT", "RIGHT"), action="append",
                     default=None, help="an order; repeat for the next ones")
+    ap.add_argument("--info", type=int, nargs=2, action="append", metavar=("TYPE", "VALUE"),
+                    default=[], help="a (service, value) pair, after --after polls")
+    ap.add_argument("--msg", type=int, default=0,
+                    help="byte 18, a message waiting (its colour), after --after polls")
     ap.add_argument("--after", type=int, default=3, help="polls before the first order")
     ap.add_argument("--every", type=int, default=4, help="polls between two orders")
     ap.add_argument("--interval", type=int, default=1, help="03 frame value")
@@ -67,19 +76,23 @@ def main() -> int:
             q = parse_qs(urlsplit(self.path).query)
             state["polls"] += 1
             left, right = (0, 0)
+            info = []
             if args.ears and state["polls"] > args.after:
                 nth = min((state["polls"] - args.after - 1) // args.every, len(args.ears) - 1)
                 left, right = args.ears[nth]
+            if state["polls"] > args.after:
+                info = [tuple(i) for i in args.info]
             tc = (q.get("tc") or [""])[0].upper()
             if args.down and args.down[0] <= state["polls"] <= args.down[1]:
                 print(f"poll {state['polls']}: {self.path} -> no answer (server down)", flush=True)
                 self.close_connection = True
                 return
-            body = b"\x7f" + sources(left, right, args.messages, args.source)
+            msg = args.msg if state["polls"] > args.after else 0
+            body = b"\x7f" + sources(left, right, args.messages, (args.source or []) + info, msg)
             if tc != f"{EV_DUMMY:08X}":
                 body += program
             body += frame(3, bytes([args.interval])) + b"\xff"
-            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right}"
+            print(f"poll {state['polls']}: {self.path} -> ears L{left} R{right} info {info} msg {msg}"
                   f"{' + program' if tc != f'{EV_DUMMY:08X}' else ''}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/html;charset=ISO-8859-1")
