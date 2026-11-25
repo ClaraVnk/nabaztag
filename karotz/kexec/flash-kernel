@@ -92,5 +92,9 @@ else
 fi
 rm -f /tmp/flash-rb.bin
 sync
-[ "${FLASH_NO_REBOOT:-0}" = 1 ] || reboot
+# reboot -f, as LapinLibre's install: the key's autorun runs from linuxrc,
+# before init, and a plain reboot asks init, which is not there yet. Gengar
+# kept running its 2.6.32 after the write (2026-11-25, the emulator's
+# stand-in reboot could not show it).
+[ "${FLASH_NO_REBOOT:-0}" = 1 ] || reboot -f
 exit $rc

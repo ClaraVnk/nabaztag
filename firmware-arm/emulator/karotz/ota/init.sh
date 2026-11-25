@@ -101,6 +101,7 @@ case " $(cat /proc/cmdline) " in *" ota=kernel"*)
     echo "00000000000000000000000000000000  zImage-6.1" > $F/MD5SUMS; touch $F/go-write
     KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
     $D -q -l $(pages $z2) -f /var/tmp/mtd1.bin /dev/mtd1
+    check "it restarts the rabbit with reboot -f (linuxrc has no init to ask)" "grep -q 'reboot -f' /ota/flash-kernel"
     check "a bad MD5SUMS writes nothing" "[ $rc = 1 ] && head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
     # A ramdisk in mtd2 that is not the key's stops 6.1 before anything.
     ( cd $F && md5sum zImage-6.1 zImage-2632 > MD5SUMS )
