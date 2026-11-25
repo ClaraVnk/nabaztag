@@ -1,0 +1,47 @@
+# The toolchain for the v1's native firmware: SDCC's pic16 port and gputils,
+# built from their pinned sources (no distribution packages them: Alpine
+# 3.21, edge and Rocky 9/10 EPEL were checked on 2026-11-24).
+#
+#   podman build -t v1native-toolchain -f firmware-arm/v1-native/Containerfile firmware-arm/v1-native
+#   podman run --rm -v firmware-arm/v1-native:/src:Z -w /src v1native-toolchain make
+#
+# Why SDCC and not Microchip's XC8: XC8's free mode disables most of its
+# optimiser (the licence calls it so) and the compiler cannot be
+# redistributed, so a Containerfile could only download it from Microchip
+# behind a login; SDCC is GPL, pins by version and knows the PIC18LF6525
+# (device/non-free: Microchip's register headers, usable, not GPL). Size
+# is what matters on 48 KB; SDCC's pic16 code is measured in DESIGN.md.
+FROM docker.io/library/alpine:3.21
+RUN apk add --no-cache build-base bison flex boost-dev zlib-dev curl bash python3 \
+    && mkdir -p /build
+WORKDIR /build
+ARG GPUTILS_VER=1.5.2
+ARG GPUTILS_SHA256=8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2
+ARG SDCC_VER=4.5.0
+ARG SDCC_SHA256=d5030437fb436bb1d93a8dbdbfb46baaa60613318f4fb3f5871d72815d1eed80
+RUN curl -sSL -o gputils.tar.bz2 \
+      "https://downloads.sourceforge.net/project/gputils/gputils/1.5.0/gputils-${GPUTILS_VER}.tar.bz2" \
+    && echo "${GPUTILS_SHA256}  gputils.tar.bz2" | sha256sum -c - \
+    && tar xjf gputils.tar.bz2 && cd gputils-${GPUTILS_VER} \
+    && ./configure --prefix=/usr/local >/dev/null && make -j"$(nproc)" >/dev/null && make install >/dev/null \
+    && cd .. && rm -rf gputils-${GPUTILS_VER} gputils.tar.bz2
+# Only the pic16 port: the other back ends are not needed and triple the build.
+# (sdbinutils stays: sdcpp links its libiberty.)
+RUN curl -sSL -o sdcc.tar.bz2 \
+      "https://downloads.sourceforge.net/project/sdcc/sdcc/${SDCC_VER}/sdcc-src-${SDCC_VER}.tar.bz2" \
+    && echo "${SDCC_SHA256}  sdcc.tar.bz2" | sha256sum -c - \
+    && tar xjf sdcc.tar.bz2 && cd sdcc-${SDCC_VER} \
+    && ./configure --prefix=/usr/local --disable-ucsim --disable-sdcdb --disable-packihx \
+         --disable-doc \
+         --disable-mcs51-port --disable-z80-port --disable-z180-port --disable-r2k-port \
+         --disable-r2ka-port --disable-r3ka-port --disable-sm83-port --disable-tlcs90-port \
+         --disable-ez80_z80-port --disable-z80n-port --disable-r800-port --disable-ds390-port \
+         --disable-ds400-port --disable-pic14-port --disable-hc08-port --disable-s08-port \
+         --disable-stm8-port --disable-pdk13-port --disable-pdk14-port --disable-pdk15-port \
+         --disable-pdk16-port --disable-mos6502-port --disable-mos65c02-port --disable-f8-port \
+         >/dev/null \
+    && make -j"$(nproc)" >/dev/null && make install >/dev/null \
+    && cd .. && rm -rf sdcc-${SDCC_VER} sdcc.tar.bz2
+RUN sdcc --version && gpasm --version && test -f /usr/local/share/sdcc/non-free/include/pic16/pic18f6525.h
+WORKDIR /src
+CMD ["make"]

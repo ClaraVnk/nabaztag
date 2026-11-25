@@ -1,0 +1,91 @@
+--- a/Nabaztag_wait.vasm
++++ b/Nabaztag_wait.vasm
+@@ -1038,9 +1038,10 @@
+ 	ld	r1,1
+ 	motorget	r2,r0
+ 	motorget	r3,r1
+-	motor	r0,r1
+-	inc	r0
+ 	motor	r0,r1
++	ld	r11,0	; Terrier 2026-11-24: the right motor starts once the left
++;	inc	r0	; one has stopped: one motor at a time, the homing turn too
++;	motor	r0,r1
+ 	
+ 	ld	r4,100
+ 	ld	r6,100
+@@ -1048,7 +1049,7 @@
+ 	ld	r7,100
+ 	ld	r8,0
+ 	sec	r0,r10
+-	add	r10,30
++	add	r10,40	; Terrier 2026-11-24: 30 s was for both ears at once
+ @reset0	wait	1
+ 	sec	r0,r1
+ 	cmp	r1,r10
+@@ -1090,7 +1091,18 @@
+ 	motor	r0,r0
+ 	or	r8,4
+ @reset3
++	tst	r11	; Terrier 2026-11-24: the right motor, once the left
++	bne	@reset3a	; one has stopped (r8 bit 2)
+ 	ld	r0,r8
++	and	r0,4
++	beq	@reset6
++	ld	r0,1
++	motor	r0,r0
++	motorget	r3,r0
++	ld	r11,1
++	bra	@reset6
++@reset3a
++	ld	r0,r8
+ 	and	r0,2
+ 	bne	@reset5b
+ 	ld	r0,1
+@@ -1109,8 +1121,8 @@
+ 	ld	r7,r5
+ 	clr	r5
+ 	bra	@reset6
+-@reset5 ld      r10,r3
+-        add     r10,2
++@reset5 ld      r13,r3	; Terrier 2026-11-24: was r10, the deadline second
++        add     r13,2
+         or      r8,2
+ @reset5b
+         ld      r0,r8
+@@ -1118,7 +1130,7 @@
+         bne     @reset6
+         ld      r0,1
+         motorget        r0,r0
+-        cmp     r10,r0
++        cmp     r13,r0
+         bne     @reset6
+         ld      r0,1
+ 	clr	r1
+@@ -1156,7 +1168,7 @@
+ 	motorget	rcur0,r0
+ 	motorget	rcur1,r1
+ 	motor	r0,r1
+-	motor	r1,r1
++;	motor	r1,r1	; Terrier 2026-11-24: the right one waits for the left
+ 	ld	rstart0,rcur0
+ 	ld	rcount0,0
+ 	ld	rcmax0,0
+@@ -1187,11 +1199,18 @@
+ 	clr	r0
+ 	motor	r0,r0	; arret moteur 0
+ 	or	rflag,1
++	ld	r0,1	; Terrier 2026-11-24: now the right one turns
++	motor	r0,r0
++	motorget	rcur1,r0
++	ld	rstart1,rcur1
+ 
+ @motor1
+ 	ld	r0,rflag
+ 	and	r0,2
+ 	bne	@motor2
++	ld	r0,rflag	; Terrier 2026-11-24: not before the left one has stopped
++	and	r0,1
++	beq	@motor2
+ 	ld	r0,1
+ 	motorget	r0,r0
+ 	cmp	r0,rcur1

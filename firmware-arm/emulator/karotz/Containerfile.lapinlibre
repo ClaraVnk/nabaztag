@@ -23,6 +23,7 @@ RUN git init -q /tmp/ll && cd /tmp/ll && \
     mkdir -p /usr/share && cp -a /tmp/ll/image/core/usr/share/lapinlibre /usr/share/lapinlibre && \
     mkdir -p /usr/etc/conf/web /var/run/lapinlibre-web /var/run/karotz /usr/karotz/sounds \
              /usr/karotz/res/sounds /var/lock && \
+    : > /usr/karotz/sounds/shutter.wav && \
     chmod -R a+rx /usr/www/cgi-bin && rm -rf /tmp/ll
 
 COPY stubs/ /karotz-stubs/

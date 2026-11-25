@@ -26,7 +26,7 @@ enum {
   SFR_LATA = 0xF89, SFR_LATB, SFR_LATC, SFR_LATD, SFR_LATE, SFR_LATF, SFR_LATG,
   SFR_TRISA = 0xF92, SFR_TRISB, SFR_TRISC, SFR_TRISD, SFR_TRISE, SFR_TRISF, SFR_TRISG,
   SFR_PIE1 = 0xF9D, SFR_PIR1 = 0xF9E,
-  SFR_EECON1 = 0xFA6, SFR_EEDATA = 0xFA8, SFR_EEADR = 0xFA9, SFR_EEADRH = 0xFAA,
+  SFR_EECON1 = 0xFA6, SFR_EECON2 = 0xFA7, SFR_EEDATA = 0xFA8, SFR_EEADR = 0xFA9, SFR_EEADRH = 0xFAA,
   SFR_RCSTA1 = 0xFAB, SFR_TXSTA1 = 0xFAC, SFR_TXREG1 = 0xFAD, SFR_RCREG1 = 0xFAE,
   SFR_T3CON = 0xFB1, SFR_TMR3L = 0xFB2, SFR_TMR3H = 0xFB3,
   SFR_ADCON2 = 0xFC0, SFR_ADCON1, SFR_ADCON0, SFR_ADRESL, SFR_ADRESH,
@@ -68,10 +68,39 @@ struct pic18 {
   uint8_t  sp;                       /* 0 = empty, as STKPTR */
   uint8_t  shadow_w, shadow_status, shadow_bsr;
   uint64_t cycles;                   /* instruction cycles, Fosc/4 */
+  uint64_t wdt_clear;                /* cycles at the last CLRWDT or reset */
   int      halted;                   /* SLEEP, RESET or an unknown opcode */
   const char *halt_reason;
   const struct pic18_board *board;
   void    *ctx;
+  /* Flash self-write (DS39646C ch. 6, DS39612C ch. 6): 64 holding latches
+   * mapped to TBLPTR[5:0], written to the 64-byte row by EECON1 (board.c).
+   * Violet's firmware has no TBLWT, so this is inert for it; it exists to
+   * prove end to end that a loader WOULD need these (v1-icsp/VM-ESCAPE.md). */
+  uint8_t  flash_latch[64];
+  uint32_t flash_row;                /* 64-byte-aligned target of the latches */
+  /* The data EEPROM's initial content, from the hex's 0xF00000 records (what
+   * a PICkit programs at ICSP time: the v1 loader's per-rabbit key); the
+   * board keeps the live copy. */
+  uint8_t  eeprom[1024];
+  /* The RESET instruction (0x00FF) asks for a reset instead of halting the
+   * core (2026-11-24, the v1 loader: the application reboots into it after
+   * writing an image); the board performs it and counts them. */
+  int      reset_req;
+  unsigned resets;
+  /* The part's flash geometry: a PIC18F6627 (DS39646) writes 64-byte blocks
+   * from 64 holding latches; a PIC18F6525 (DS39612) has 8 latches and writes
+   * 8-byte blocks, 48 KB in all. --pic 6525 sets both. */
+  unsigned write_block;
+  uint32_t flash_end;
+  /* vm-audit (VM-ESCAPE.md): the destination of every indirect byte store
+   * (MOVFF through an FSR) made from a PC inside the VM-interpreter band, to
+   * measure that the downloaded program's writes stay in its arena. */
+  int      audit_on;
+  uint16_t audit_lo, audit_hi;       /* the VM-interpreter PC band */
+  uint16_t audit_min, audit_max;     /* destination addresses seen */
+  unsigned audit_stores;             /* how many */
+  unsigned audit_escapes;            /* how many outside 0xA70-0xCFF */
 };
 
 void     pic18_reset(struct pic18 *pic);

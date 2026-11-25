@@ -1,0 +1,20 @@
+diff --git a/image/tools/image.py b/image/tools/image.py
+index 10247c6..50be3ea 100644
+--- a/image/tools/image.py
++++ b/image/tools/image.py
+@@ -208,9 +208,14 @@ def core_generated(changes):
+     serves the rabbit's web page (BusyBox httpd on port 80 as the user web, IPv4, at most 60 connections a minute)
+     with the configuration inetd.sh makes in RAM at boot (the password and the local-network rules);
+     inetd.sh adds telnet when the install set it."""
++    # nowait.600, not 60: past the count inetd stops the service for ten minutes (BusyBox
++    # inetd.c RETRYTIME), and the Terrier client on the rabbit itself makes a connection per
++    # LED or ear order (a choreography: one every 1.5 s) beside the owner's browser; a scanner
++    # on the LAN reached 60 in a second and the rabbit stopped obeying (Terrier OS review,
++    # 2026-11-24, karotz/lapinlibre/test-inetd-rate.sh).
+     inetd = ("# inetd's services (written by the image build; inetd.sh makes httpd's configuration and adds telnet\n"
+              "# when the install set it).\n"
+-             "80 stream tcp nowait.60 web /bin/busybox httpd -i -c /var/run/httpd.conf -h /usr/www\n")
++             "80 stream tcp nowait.600 web /bin/busybox httpd -i -c /var/run/httpd.conf -h /usr/www\n")
+     r = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "scripts" / "fetch.py"), "rt73-firmware", "rt73-licence"],
+                        capture_output=True, text=True, timeout=900)
+     if r.returncode != 0:

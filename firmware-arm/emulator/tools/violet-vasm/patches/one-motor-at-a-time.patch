@@ -1,0 +1,12 @@
+--- a/Nabaztag_wait.vasm
++++ b/Nabaztag_wait.vasm
+@@ -933,6 +933,9 @@
+ 	ldr	r1,/dst1
+ 	cmp	r1,r0
+ 	beq	@move2
++	ldr	r1,/dir0	; Terrier 2026-11-24: the left ear turning,
++	tst	r1	; the right one waits: one motor starts at a time
++	bne	@move2
+ 	ld	r2,1
+ @move2	ld	r0,1
+ 	motor	r0,r2
