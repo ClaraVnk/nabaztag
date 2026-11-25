@@ -1218,9 +1218,17 @@ registers to compare.
 duplicate ramoops gone (below): the hub's four ports and both devices, no
 descriptor error, the client "idle, ready", from the mains (cold) and after
 6.1's own restart (warm, 2.6.32 seeing the hub too). The A/B without
-`usbcore.old_scheme_first` (`karotz-6.1-hubtest.config`): `echo 5 >
+`usbcore.old_scheme_first` (the `karotz-6.1-hubtest.config` of that day, removed with it): `echo 5 >
 <key>/kexec/go-os` runs 6.1 at five boots in a row (a number in go-os
 counts down; empty means once).
+
+**The A/B, 2026-11-25: old_scheme_first goes.** Five boots without it, the
+hub's four ports and both devices each time, no descriptor error, the
+Wi-Fi up and the client started: `CONFIG_CMDLINE` is the console alone.
+The power patch next: the kernel built without it, the same five boots
+(`echo 5 > <key>/kexec/go-os`): the hub's four ports and both devices each
+time, no error, the Wi-Fi up. `usb-bus-power-rabbitv3.patch` is gone: the
+6.1 kernel has no USB workaround left.
 
 **First SLUB run on Gengar (2026-11-25): no USB at all.** The board
 file's ramoops (from 2026-11-24) and the kexec line's `ramoops.*` made the
