@@ -411,6 +411,9 @@ void prism_io_write(uint8_t a, uint8_t v)
       bap_store(r == R_DATA1, w);
       return;
   }
+  /* Every other register written (INTEN, SWSUPPORT...), for comparing
+   * Violet's set-up with ours (2026-11-25: Lazare's card sent, heard none). */
+  if(B.trace_bus && r != R_PARAM0) board_log("card: reg %02X <- %04X", r, w);
   reg[r / 2] = w;
 }
 

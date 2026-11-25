@@ -51,12 +51,27 @@ static void sound_boot(void)
 static uint16_t leds;
 static void show(uint16_t on) { if(on != leds) { leds = on; leds_set(on); } }
 
+/* EEPROM 0x7C: the boots since the image was written (2 bytes), RCON at this
+ * start, and RCON's TO bit seen (a watchdog reset). */
+static void boot_mark(void)
+{
+  uint16_t n;
+  uint8_t rc = RCON;
+  EEADRH = 0; EEADR = 0x7C; EECON1 = 0x01; n = EEDATA;
+  EEADR = 0x7D; EECON1 = 0x01; n |= (uint16_t)EEDATA << 8;
+  n = n == 0xFFFF ? 1 : n + 1;
+  ee_put(0x7C, (uint8_t)n); ee_put(0x7D, (uint8_t)(n >> 8));
+  ee_put(0x7E, rc);
+  RCON |= 0x1F;                           /* TO, PD, POR, BOR set again: the next start shows its own */
+}
+
 void main(void)
 {
   uint8_t r, ear_demo = 0, last_net = 0xFF, join_r = 0xFF, reported = 0;
-  uint16_t t0;
+  uint16_t t0, last_report;
   uint16_t last_polls = 0;
 
+  boot_mark();
   ADCON1 = 0x0E;                /* AN0 analog (the volume), the rest digital */
   CMCON = 0x07;                 /* comparators off */
   timer_init();
@@ -82,15 +97,23 @@ void main(void)
     else log_line("card: joining " SSID);
   }
   net_init();
-  t0 = ticks();
+  t0 = last_report = ticks();
 
   for(;;) {
     clrwdt();
     /* 30 s without an association: what the card says goes to the EEPROM
      * (prism_report), for a rabbit with no readable serial log. */
-    if(!reported && !prism_link() && (uint16_t)(ticks() - t0) > 30 * TICKS_PER_S) {
-      reported = 1;
+    if(!(reported & 1) && !prism_link() && (uint16_t)(ticks() - t0) > 30 * TICKS_PER_S) {
+      reported |= 1;
       prism_report(join_r);
+    }
+    /* Every step of the network into the EEPROM (net_report) at 40 s, then
+     * every 40 s: Lazare's first try of it left nothing, the firmware never
+     * ran 2 minutes in one go (2026-11-25). The boot count and the reset's
+     * cause (RCON) are written once at the start, beside it. */
+    if((uint16_t)(ticks() - last_report) > 40 * TICKS_PER_S) {
+      last_report = ticks();
+      net_report();
     }
     timer_poll();
     prism_poll();

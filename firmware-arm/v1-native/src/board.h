@@ -204,6 +204,12 @@ uint8_t prism_join(const __code char *ssid);
 void    prism_poll(void);                /* events: info frames, received frames */
 uint8_t prism_link(void);                /* 1 associated */
 void    prism_report(uint8_t join_result);  /* the card's view into the EEPROM, once */
+void    ee_put(uint8_t a, uint8_t v);       /* the data EEPROM, for the reports */
+void    ee_words(uint8_t a, __data const uint16_t *w, uint8_t n);
+extern uint16_t rx_frames, rx_bad, tx_frames, tx_exc, rx_status_last, rx_events, rx_bap_fail, ev_seen, tx_lost, tx_status_last, tx_cmd_status;
+void    prism_report_link(uint8_t at);  /* BSSID, port status, SSID, our MAC into the EEPROM */
+extern uint8_t tx_head[16];
+void    net_report(void);                   /* every network step into the EEPROM, once, at 2 min */
 void    prism_tx(__data const uint8_t *frame, uint16_t len);   /* an 802.3 frame: dst, src, len, LLC... */
 /* reading the frame being received, word by word from the card */
 uint8_t  rx_byte(void);
