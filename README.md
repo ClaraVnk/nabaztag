@@ -253,8 +253,12 @@ was built on and is tested on, every day, on real hardware.
 - **Nabaztag v1 (2005)** — beta, on Le Terrier, two ways:
   - **Violet's own firmware**, untouched: point it at the Terrier in its setup
     page, ask for its code by e-mail on the adoption page and hold its head
-    down. Its Wi-Fi knows only WEP or open networks: the first real one,
-    adopted on 17 November 2026, joined through a phone's hotspot.
+    down. That page lives on an ad hoc Wi-Fi cell phones and Macs cannot
+    join: **a Raspberry Pi with a USB Wi-Fi dongle fills it for you**
+    (`firmware-arm/v1-setup/v1-setup.sh find`, then `set --ssid "<network>"`;
+    [the tool](firmware-arm/v1-setup/README.md)). Its Wi-Fi knows only WEP or
+    open networks: the first real one, adopted on 17 November 2026, joined
+    through a phone's hotspot.
   - **Our own firmware** (`firmware-arm/v1-native/`, in C for its PIC18):
     written once with a PICkit over ICSP, the rabbit opened
     (`firmware-arm/v1-icsp/`). Since 25 November 2026 a real v1 (Lazare)
