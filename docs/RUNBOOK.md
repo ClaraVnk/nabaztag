@@ -1238,6 +1238,19 @@ and the LEDs too (60 warnings in the saved console, `hubfix: no 1-1`).
 The board now registers ramoops apart, and the key's line no longer
 carries `ramoops.*` (the board's region is the same 1 MiB at 0x32000000).
 
+### FLASH-PLAN step 1 in QEMU: 6.1 booted by the Karotz's BIOS (2026-11-25)
+
+The BIOS (v1.16, mtd0) passes the pre-2001 `param_struct` at 0x30000100,
+not ATAGs: no ATAG constant in its code, its line built by sprintf into the
+struct's command line. 2.6.32 always converted it (`compat.o` was obj-y);
+6.1 does only with `CONFIG_DEPRECATED_PARAM_STRUCT=y`, now in
+`karotz-6.1.config`. The control, the flash kernel without it under
+`KERNEL=<zImage> bios-boot.sh <dir> ~/gengar-measure 240`: "Neither atags
+nor dtb found", 16 MiB, the built-in line alone, panic at the root. With
+it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
+mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
+`[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
+
 ### FLASH-PLAN step 0 in QEMU: the Karotz's own BIOS boots its NAND, and restores (2026-11-25)
 
 `karotz/kernel/qemu-mini2440/bios-boot.sh` runs QEMU's mini2440 with no
