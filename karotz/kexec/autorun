@@ -107,6 +107,14 @@ elif [ -e $K/kexec/go-os ]; then
     if [ "$N" -gt 1 ] 2>/dev/null; then echo $((N - 1)) > $K/kexec/go-os; else rm -f $K/kexec/go-os; fi
     KERNEL=$K/kexec/zImage-6.1; NAME=os-6.1
     INITRD=$K/kexec/terrieros.cpio.gz
+elif [ -e $K/kexec/go-flash ]; then
+    # FLASH-PLAN step 1 on the rabbit, without the flash (2026-11-25): the
+    # flash 6.1 kernel (karotz-6.1.config alone) on the very ramdisk the
+    # key's install wrote to mtd2 (rootfs.img.gz, the one both kernels boot,
+    # step 2), with the BIOS's line: what the BIOS will do, kexec in its place.
+    rm -f $K/kexec/go-flash; KERNEL=$K/kexec/zImage-6.1-flash; NAME=flash-6.1
+    INITRD=$K/rootfs.img.gz
+    APPEND="root=/dev/ram rw init=/linuxrc mem=65536K devfs=udev k_nbclick=0 panic=10"
 elif [ -e $K/kexec/go ]; then
     rm -f $K/kexec/go; KERNEL=$K/kexec/zImage-6.1; NAME=6.1
 else
@@ -132,8 +140,9 @@ cp $K/kexec/kexec /tmp/ && cp $INITRD /tmp/initrd-next.gz && cp $KERNEL /tmp/zIm
 # file names the partitions. real-boot.sh's, with the measure's /init;
 # panic=10: a kernel that panics restarts the rabbit by itself, a sign too.
 # The memory around 0x32000000 is left out (two mem=) for ramoops.
+APPEND=${APPEND:-"console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10"}
 /tmp/kexec -l /tmp/zImage-next --atags --initrd=/tmp/initrd-next.gz \
-    --append="console=ttySAC0,115200 rdinit=/init mem=32M@0x30000000 mem=31M@0x32100000 ignore_loglevel clk_ignore_unused k_nbclick=0 panic=10 $EXTRA" >> $D/before.txt 2>&1
+    --append="$APPEND $EXTRA" >> $D/before.txt 2>&1
 rc=$?
 echo "kexec -l rc=$rc" >> $D/before.txt
 sync
