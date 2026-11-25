@@ -303,6 +303,15 @@ test key built from `terrier-os-61-kexec` (the same ramdisk with the
 kexec-capable 2.6.32) installed, run under 2.6.32, then `go-os` with the
 flash 6.1 and the key's `rootfs.img.gz` as the initrd.
 
+On Gengar (2026-11-25, nothing written to the flash): a test install
+built from the fork's `terrier-os-61-kexec` (the one ramdisk with the
+kexec-capable 2.6.32, version `0.3.1-kexec`) ran under 2.6.32 as before
+(`/usr` read-write, the client back on the Terrier); then the key's
+`kexec/go-flash` started the flash 6.1 kernel on that same installed
+ramdisk with the BIOS's line: 64 MiB, the ramdisk loaded, `/usr` read-only
+and `/usr/etc` in RAM, the Wi-Fi up and the client 0.1.20 "idle, ready",
+ramoops at 0x32000000. Steps 1 and 2 done on the rabbit.
+
 ### Step 3: the write, boot-time, verified
 
 A reduced `autorun` on the key, LapinLibre's install with steps 5 to 7 left
