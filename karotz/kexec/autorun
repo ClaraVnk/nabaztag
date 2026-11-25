@@ -101,7 +101,11 @@ if [ -e $K/kexec/go-2632 ]; then
 elif [ -e $K/kexec/go-os ]; then
     # The rabbit's own Terrier OS on 6.1, its /usr read-only (make-key.sh):
     # nothing written to the flash, 6.1's YAFFS writing not yet proven.
-    rm -f $K/kexec/go-os; KERNEL=$K/kexec/zImage-6.1; NAME=os-6.1
+    # A number in go-os is how many boots in a row (the hub A/B needs
+    # five, 2026-11-25: one go-os gave one run and four plain 2.6.32).
+    N=$(cat $K/kexec/go-os 2>/dev/null); N=${N:-1}
+    if [ "$N" -gt 1 ] 2>/dev/null; then echo $((N - 1)) > $K/kexec/go-os; else rm -f $K/kexec/go-os; fi
+    KERNEL=$K/kexec/zImage-6.1; NAME=os-6.1
     INITRD=$K/kexec/terrieros.cpio.gz
 elif [ -e $K/kexec/go ]; then
     rm -f $K/kexec/go; KERNEL=$K/kexec/zImage-6.1; NAME=6.1
