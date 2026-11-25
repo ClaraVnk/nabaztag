@@ -411,9 +411,6 @@ static struct platform_device *RabbitV3_devices[] __initdata = {
 	&RabbitV3_rabbit_ears,
 	&RabbitV3_uda134x_codec,
 	&RabbitV3_uda134x,
-#if IS_ENABLED(CONFIG_PSTORE_RAM)
-	&RabbitV3_ramoops,
-#endif
 };
 
 /*
@@ -600,6 +597,14 @@ static void __init RabbitV3_init(void)
 	RV3_STEP(5, "misccr usb host");
 	pwm_add_table(RabbitV3_pwm_lookup, ARRAY_SIZE(RabbitV3_pwm_lookup));
 	platform_add_devices(RabbitV3_devices, ARRAY_SIZE(RabbitV3_devices));
+#if IS_ENABLED(CONFIG_PSTORE_RAM)
+	/* On its own: with ramoops.* also on the kexec line, the parameters'
+	 * device exists first and this one is a duplicate; inside the list the
+	 * failure made platform_add_devices unregister every device before it,
+	 * the USB host among them (Gengar, 2026-11-25: no hub, no network). */
+	if (platform_device_register(&RabbitV3_ramoops))
+		pr_info("rabbitv3: ramoops already registered\n");
+#endif
 	RV3_STEP(6, "devices");
 	spi_register_board_info(RabbitV3_spi_board_info, ARRAY_SIZE(RabbitV3_spi_board_info));
 	register_reboot_notifier(&RabbitV3_usb_reset_nb);
