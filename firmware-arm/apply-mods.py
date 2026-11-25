@@ -10673,6 +10673,68 @@ def patch_scan_prefers_rsn(root: Path) -> None:
     print(f"[ok]   {q}: scan_prefers_rsn")
 
 
+def patch_bss_fallback(root: Path) -> None:
+    """A network with several access points: the rabbit tries them in turn.
+
+    Why (2026-11-24, Pinkyblack …8859 on a TP-Link Deco mesh): its line read
+    `a4 r3/25 h6 ... e4a c6` -- four authentications, the last reply status
+    37 (declined), on the same BSS every time, and steady orange for the
+    owner. The bootloader's `initW` keeps ONE access point per SSID, the
+    strongest (`filterscan` -> `bestscan`), and `boot_loop`'s 20 s retry
+    does `set wifiscans=tl wifiscans`, which on a one-entry list is nil: a
+    fresh scan, the same strongest node, the same refusal, for ever. A
+    second node of the mesh, or a second router on the same name, is never
+    tried -- wpa_supplicant would have moved on after one refusal.
+
+    Now, when a network name is configured, the scan's entries for that
+    name are kept, strongest first, one per BSSID (a scan reports a BSS once
+    per beacon heard, on its own channel and the neighbours'). Nothing else
+    changes: the first try is still the strongest node, the 20 s retry
+    already walks the list, and a list run dry still rescans. Without a
+    configured name (first boot, config mode's list) the old one-per-SSID
+    filter stands.
+
+    Emulator: scenarios/vm/mesh-decline.txt under the bootloader VM, the
+    virtual AP's `decline <status>` option; a 1.2.1.4 build never reaches
+    RUN, this one does at the second node (tools/mesh-fallback-proof.sh).
+    """
+    q = root / "mtl/boot/boot.0.0.0.13.mtl"
+    s = q.read_bytes().decode("latin-1")
+    if "scancmprssi" in s:
+        print(f"[skip] {q}: bss_fallback already applied")
+        return
+    eol = "\r\n" if "\r\n" in s else "\n"
+    t = s.replace("\r\n", "\n")
+    old = "\nfun wifiAuth=\n"
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: fun wifiAuth not found once")
+    t = t.replace(old, (
+        "\n// bss_fallback (apply-mods.py): every access point of the configured\n"
+        "// network, strongest first and once each, so boot_loop's 20 s retry\n"
+        "// (tl wifiscans) reaches the next one when the first declines the rabbit.\n"
+        "fun scancmprssi a b=\n"
+        "\tlet a->[_ _ _ va _ _ _] in\n"
+        "\tlet b->[_ _ _ vb _ _ _] in\n"
+        "\tvb-va;;\n"
+        "fun otherbssid b l=\n"
+        "\tif l!=nil then let hd l->[_ _ bb _ _ _ _] in\n"
+        "\tif !strcmp b bb then otherbssid b tl l\n"
+        "\telse (hd l)::otherbssid b tl l;;\n"
+        "fun uniqbssid l=\n"
+        "\tif l!=nil then let hd l->[_ _ b _ _ _ _] in\n"
+        "\t(hd l)::uniqbssid otherbssid b tl l;;\n"
+        "\nfun wifiAuth=\n"), 1)
+    old = ("\t\t\t\t\t\t\tlet sort filterscan lscan #scancmpssid -> l in\n"
+           "\t\t\t\t\t\t\tlet if ssid==nil then l else select l ssid #wifibyssid-> l in\n")
+    if t.count(old) != 1:
+        sys.exit(f"FAIL {q}: initW's scan filter is not the stock shape")
+    t = t.replace(old, (
+        "\t\t\t\t\t\t\tlet if ssid==nil then sort filterscan lscan #scancmpssid\t// bss_fallback\n"
+        "\t\t\t\t\t\t\t\telse uniqbssid sort select lscan ssid #wifibyssid #scancmprssi -> l in\n"), 1)
+    q.write_bytes(t.replace("\n", eol).encode("latin-1"))
+    print(f"[ok]   {q}: bss_fallback -- every AP of the configured network, strongest first")
+
+
 def patch_eapol_diag(root: Path) -> None:
     """Two counters on wifi_diag's line: m, messages 1 of the four-way
     handshake received; n, messages 3 received.
@@ -10944,7 +11006,7 @@ def main() -> int:
     ap.add_argument("root", help="Path to the nabgcc checkout root")
     ap.add_argument(
         "--mode",
-        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.1", "naboot-1.2.1.2", "naboot-1.2.1.3", "naboot-1.2.1.4", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
+        choices=("full", "minimal", "signed-stock", "pages-only", "max", "mdns-only", "lean", "lean-wpa3", "lean-wpa3-tel", "lean-wpa3-timed", "lean-marker", "lean-nomdns", "phase8-rom", "lean-wpa3-slim", "lean-wpa3-slim-tel", "lean-wpa3-kx", "lean-wpa3-tls", "naboot-1.0.0.0", "naboot-1.0.0.1", "naboot-1.0.0.2", "naboot-1.0.0.3", "naboot-1.1.0.0", "naboot-1.2.0.0", "naboot-1.2.0.0-tel", "naboot-1.2.0.0-kxprobe", "naboot-1.2.0.1", "naboot-1.2.0.1-kxprobe", "naboot-1.2.0.1-rom", "naboot-1.2.0.1-gz", "naboot-1.2.0.1-gz-tel", "naboot-1.2.0.1-gzrf", "naboot-1.2.0.1-gzrf-tel", "naboot-1.2.0.2", "naboot-1.2.1.0", "naboot-1.2.1.1", "naboot-1.2.1.2", "naboot-1.2.1.3", "naboot-1.2.1.4", "naboot-1.2.1.5", "naboot-1.2.1.0-tel", "naboot-1.2.0.2-safe", "naboot-1.2.0.2-usb", "naboot-1.2.0.2-usb-tel", "lean-small", "lean-reclaim", "lean-wpa3-os"),
         default="full",
         help=(
             "full         = everything (verify-enforced bootloader + modernized UI). "
@@ -11101,6 +11163,9 @@ def main() -> int:
     # online (2026-11-22).
         "naboot-1.2.1.3": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
         "naboot-1.2.1.4": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,config_timeout,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,linker_keep,gc_sections",
+        # 1.2.1.4 + bss_fallback (2026-11-24): a network with several access points
+        # is tried node by node when the strongest declines the rabbit (Deco mesh).
+        "naboot-1.2.1.5": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,triple_press,config_boot,config_timeout,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,eapol_exact_body,eapol_diag,scan_prefers_rsn,bss_fallback,linker_keep,gc_sections",
         # The release plus DCC telemetry, for the JTAG station only: the first warm boot after an
         # OTA left the radio deaf twice on Nabazprout (2026-11-18, 2026-11-20); listen.sh reads it.
         "naboot-1.2.1.0-tel": "vbc,vinterp,stdlib,x25519_wdt,strip_tweetnacl,sign_open_alias,verify_wdt,audio_fifo_data,audio_halfduplex,bounded_waits,modernize_pages,makefile,bootloader,firmware_version,factory_server,mdns,captive,wpa2_gtk,eapol_group_ack,group_cipher,eapol_msg2_ie,eapol_ptk_rekey,vm_bounds,eapol_replay,cold_state,usb_robustness,usb_descriptor_bounds,violet_hardening,rx_recovery,extbss,no_libc_malloc,wpa3_sae,wpa3_boot_pw,wpa3_eapol_akm,entropy_pool,rx_protected,eapol_ptk_install,eapol_mic_len,gtk_no_reinstall,mixed_gtk,no_tkip_pairwise,probe_ssid_bound,config_no_password,beacon_ie_bounds,sae_required,wpa3_h2e,link_liveness,adoption_kx,adoption_boot,tls_psk,boot_tls,boot_marker,flash_verify,flash_precheck,flash_no_return,persist_counters,reset_reason,usb_watch,crash_report,rfic_report,tls_certs,uart_no_sprintf,strip_dbg_sprintf,md5_compact,share_sbox,strip_secho,strip_echo_opcodes,strip_echo_funs,strip_dump,inline_dump_calls,inline_mkwav,prune_dead_funs,small_strings,strip_factory_test,strip_eapol_dump,uart_silent,no_tkip_code,stub_soft_codecs,no_wep,no_wep_boot,share_page_css,http_cap,boot_https,owner_unlock,kx_report,dcc_telemetry,ccmp_replay_count,ccmp_replay_enforce,ie_walk_bounds,ccmp_no_probation,vm_strcmp_bound,vm_seed_hidden,tls_in_overflow,gzip_pages,gzip_setup,config_presence,boot_noserver,wifi_diag,boot_diag,boot_strip_wav,boot_strip_login,prune_unreachable,opt_size_crypto,tls_chacha_only,linker_keep,gc_sections",
@@ -11492,6 +11557,7 @@ def main() -> int:
         "boot_diag": patch_boot_diag,
         "eapol_diag": patch_eapol_diag,
         "scan_prefers_rsn": patch_scan_prefers_rsn,
+        "bss_fallback": patch_bss_fallback,
         "boot_strip_wav": patch_boot_strip_wav,
         "boot_strip_login": patch_boot_strip_login,
         "opt_size_crypto": patch_opt_size_crypto,

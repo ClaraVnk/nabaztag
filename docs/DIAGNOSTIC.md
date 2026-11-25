@@ -49,6 +49,18 @@ access point is in WPA2/WPA3 mixed mode: set it to WPA2 only, then save the
 rabbit's Wi-Fi again on its setup page (a rabbit that once joined a network
 over WPA3 refuses WPA2 on it until then).
 
+A line such as `2 t109 W0 A0 E0 a4 r3/25 h6 ... e4a c6` reads differently:
+four authentications sent, three answered, the last with status `0x25` =
+37, "request declined" — the access point itself refuses the rabbit, on a
+WPA2 network it hears perfectly well (`h6`). Nothing in the rabbit's
+authentication frame carries a reason to decline; it is the access point's
+policy (seen on a TP-Link Deco mesh, 2026-11-24). On a mesh or any network
+with several access points on one name, Naboot up to 1.2.1.4 retried the
+strongest one for ever; from 1.2.1.5 it tries the next one after 20 s
+(`bss_fallback`, `firmware-arm/docs/WARM-REBOOT-FREEZE.md`). What to try on
+the router: a 2.4 GHz-only network for the rabbit (Deco: "IoT network"),
+fast roaming off, WPA2-PSK (AES) only, and the rabbit's Wi-Fi saved again.
+
 Two more marks travel in the boot URL, not on the page: `&k=` the key
 exchange (`0` none: it has its key, `1` the entropy pool never came, `2` no
 answer in time, `3` the request failed, `4` an answer that is not a key,

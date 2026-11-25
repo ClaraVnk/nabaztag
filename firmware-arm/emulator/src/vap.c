@@ -1512,6 +1512,16 @@ static void ap_handle_mgt(int ap, const struct ieee80211_frame *fr,
         queue_frame(out, n, a->rssi, a->channel);
         return;
       }
+      if(a->decline_auth) {
+        /* The AP's own decision, nothing in the frame: what a band-steering
+           mesh node answers a client it wants elsewhere (status 37 seen on
+           a TP-Link Deco, 2026-11-24). */
+        sim_log("AP %s: declining open-system auth, status %d", macstr(a->bssid), a->decline_auth);
+        n = build_auth_resp(out, a, (uint16_t)a->decline_auth);
+        queue_frame(out, n, a->rssi, a->channel);
+        vap_stats.auth_responses++;
+        return;
+      }
       a->authenticated = 1;
       a->sae_auth = 0;
       a->mute = 0;

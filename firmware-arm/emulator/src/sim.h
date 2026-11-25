@@ -68,6 +68,9 @@ struct sim_ap {
   uint8_t  sta_akm;         /* its AKM suite type                        */
   uint8_t  sta_rsnxe[8];    /* its RSN Extension element, if any, which  */
   uint8_t  sta_rsnxe_len;   /* message 2 must repeat as well             */
+  int      decline_auth;    /* answer open-system authentication with this
+                               status (37: declined), as a mesh node steering
+                               a client does; 0 = accept (2026-11-24)        */
 };
 
 enum {

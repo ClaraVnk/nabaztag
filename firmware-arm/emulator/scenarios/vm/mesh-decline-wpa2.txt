@@ -1,0 +1,23 @@
+# bytecode: bootloader
+#
+# A network with two access points on one name -- a mesh, or two routers --
+# whose strongest node declines the rabbit: open-system authentication
+# answered with status 37, every time (Pinkyblack …8859 on a TP-Link Deco,
+# 2026-11-24: `a4 r3/25 h6 e4a c6`, steady orange). The other node, weaker,
+# takes it.
+#
+# The stock bootloader keeps one access point per SSID, the strongest, and
+# its 20 s retry rescans into the same one: never RUN (naboot-1.2.1.4, the
+# control, fails the last line). With bss_fallback (naboot-1.2.1.5) the 20 s
+# retry moves to the second node: RUN. tools/mesh-fallback-proof.sh runs it
+# under the bootloader VM with tools/vm-check.sh's wpa2 page ("wpa2" in the
+# name picks it).
+
+ap 02:00:5e:30:00:01 Terrier 6 wpa2-ccmp -45 decline 37
+ap 02:00:5e:30:00:02 Terrier 1 wpa2-ccmp -70
+psk nabaztag
+tick 50
+stop 70000
+
+at 15000 expect-not RUN
+at 65000 expect RUN
