@@ -1386,3 +1386,17 @@ FCB0 1 Mb/s, FCB3/FCB4 0x0F); SSID and server set at build time
 (`APP_DEFS='-DSSID=\"<name>\" -DSERVER_NAME=\"<host>\" -DNO_EAR_DEMO'`).
 On the dev VM: v1-native-proof, v1-loader-proof and v1-audio-proof PASS (the
 two last with shared `:z` mounts; SELinux refused `:Z` between containers).
+
+**Why it stays at blue: the card report (2026-11-25).** The second try
+(Violet's RID values, page 0 spared) stayed at blue too, and Violet's
+firmware came back with no reconfiguration. The native firmware now writes,
+30 s after a join that brought no link, what the card says into the PIC's
+data EEPROM from 0x40 (join result, info frames seen, last LinkStatus,
+FD40 port status, FD4D channel, FD42 BSSID, FD43 quality, FD41 SSID); after
+the next try, `./read.sh lazare-after.hex 18LF6525` then
+`./card-report.py lazare-after.hex` in `firmware-arm/v1-icsp`.
+`v1-native-proof.sh` runs a third boot with no access point
+(`--link-down 0.1 0`) and decodes the report from the emulator's
+`eeprom:` lines. The first run read stale BAP bytes for RIDs the card did
+not hold (the SSID record as the BSSID): `rid_read` now reads only the
+words a record's length counts.

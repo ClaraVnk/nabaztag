@@ -203,6 +203,7 @@ uint8_t prism_init(void);                /* 0 ok */
 uint8_t prism_join(const __code char *ssid);
 void    prism_poll(void);                /* events: info frames, received frames */
 uint8_t prism_link(void);                /* 1 associated */
+void    prism_report(uint8_t join_result);  /* the card's view into the EEPROM, once */
 void    prism_tx(__data const uint8_t *frame, uint16_t len);   /* an 802.3 frame: dst, src, len, LLC... */
 /* reading the frame being received, word by word from the card */
 uint8_t  rx_byte(void);

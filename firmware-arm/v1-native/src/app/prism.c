@@ -60,6 +60,8 @@
 __data uint8_t our_mac[6];
 static uint16_t txfid;
 static uint8_t  linked;
+static uint8_t  info_count;             /* info frames since the join (telemetry) */
+static uint16_t info_last, link_last;   /* the last info type, the last LinkStatus */
 
 /* --- the bus ------------------------------------------------------------ */
 
@@ -170,10 +172,16 @@ static void bap_wr(uint8_t n, uint16_t v) { wr16(R_DATA0 + 2 * n, v); }
 /* A RID read: words of its data land in buf (the length and type skipped). */
 static uint8_t rid_read(uint16_t rid, __data uint16_t *buf, uint8_t words)
 {
+  uint16_t len;
   if(cmd(CMD_ACCESS, rid)) return 1;
   if(bap_setup(0, rid, 0)) return 2;
-  bap_rd(0); bap_rd(0);                   /* length, type */
-  while(words--) *buf++ = bap_rd(0);
+  /* Only the words the record holds (its length counts the type word):
+   * past them the BAP gives stale bytes, and the first card report
+   * (emulator, 2026-11-25) read the SSID record as an empty BSSID. */
+  len = bap_rd(0);
+  if(bap_rd(0) != rid) return 3;
+  len = len ? len - 1 : 0;
+  while(words--) *buf++ = len ? (len--, bap_rd(0)) : 0xFFFF;
   return 0;
 }
 
@@ -245,10 +253,51 @@ uint8_t prism_join(const __code char *ssid)
   if(rid_write1(RID_AUTH, 1)) return 4;              /* open system */
   if(rid_write1(RID_WEPFLAGS, 0)) return 5;          /* no WEP (phase 1) */
   linked = 0;
+  info_count = 0; info_last = 0; link_last = 0;
   return cmd(CMD_ENABLE, 0) ? 7 : 0;
 }
 
 uint8_t prism_link(void) { return linked; }
+
+/* What the card says when it does not associate, kept in the PIC's data
+ * EEPROM from 0x40 (the loader's key is at 0x00-0x1F), read back over ICSP:
+ * Lazare's native firmware stayed at blue twice (2026-11-24/25) and the
+ * rabbit has no readable serial log, so the card's own answers go where a
+ * PICkit can read them (as v1-icsp/wifi-probe.py did). Written once.
+ *   40 'C' 1          magic, format
+ *   42 join result, info frames seen, last info type (2), last LinkStatus (2)
+ *   48 FD40 port status (2)     4A FD4D current channel (2)
+ *   4C FD42 current BSSID (6)   52 FD43 comms quality, signal, noise (6)
+ *   58 FD41 current SSID: length then 8 bytes */
+static void ee_put(uint8_t a, uint8_t v)
+{
+  EEADRH = 0; EEADR = a; EEDATA = v;
+  EECON1 = 0x04;                          /* the data EEPROM, WREN */
+  __asm__("movlw 0x55\n\tmovwf _EECON2\n\tmovlw 0xaa\n\tmovwf _EECON2\n\tbsf _EECON1, 1");
+  while(EECON1 & 0x02) clrwdt();
+  EECON1 = 0;
+}
+
+static void ee_words(uint8_t a, __data const uint16_t *w, uint8_t n)
+{
+  while(n--) { ee_put(a++, (uint8_t)*w); ee_put(a++, (uint8_t)(*w >> 8)); w++; }
+}
+
+void prism_report(uint8_t join_result)
+{
+  uint16_t w[6];
+  uint8_t i;
+  ee_put(0x40, 'C'); ee_put(0x41, 1);
+  ee_put(0x42, join_result); ee_put(0x43, info_count);
+  ee_words(0x44, &info_last, 1); ee_words(0x46, &link_last, 1);
+  for(i = 0; i < 6; i++) w[i] = 0xFFFF;
+  rid_read(0xFD40, w, 1); ee_words(0x48, w, 1);
+  rid_read(0xFD4D, w, 1); ee_words(0x4A, w, 1);
+  rid_read(0xFD42, w, 3); ee_words(0x4C, w, 3);
+  rid_read(0xFD43, w, 3); ee_words(0x52, w, 3);
+  rid_read(0xFD41, w, 5); ee_words(0x58, w, 5);
+  log_line("card: report in EEPROM 0x40");
+}
 
 /* --- receiving: the frame in BAP1, read in order ------------------------ */
 
@@ -309,8 +358,10 @@ static void handle_info(void)
   if(!bap_setup(1, fid, 0)) {
     bap_rd(1);                            /* length */
     type = bap_rd(1);
+    info_count++; info_last = type;
     if(type == INFO_LINK) {
       uint16_t st = bap_rd(1);
+      link_last = st;
       linked = st == 1;
       log_s("card: link "); log_dec(st); log_line(linked ? " up" : " down");
     }

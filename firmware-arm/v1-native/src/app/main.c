@@ -53,7 +53,8 @@ static void show(uint16_t on) { if(on != leds) { leds = on; leds_set(on); } }
 
 void main(void)
 {
-  uint8_t r, ear_demo = 0, last_net = 0xFF;
+  uint8_t r, ear_demo = 0, last_net = 0xFF, join_r = 0xFF, reported = 0;
+  uint16_t t0;
   uint16_t last_polls = 0;
 
   ADCON1 = 0x0E;                /* AN0 analog (the volume), the rest digital */
@@ -76,13 +77,21 @@ void main(void)
   else {
     show(LED_BOT_B);
     r = prism_join(SSID);
+    join_r = r;
     if(r) { log_s("card: join error "); log_dec(r); log_nl(); }
     else log_line("card: joining " SSID);
   }
   net_init();
+  t0 = ticks();
 
   for(;;) {
     clrwdt();
+    /* 30 s without an association: what the card says goes to the EEPROM
+     * (prism_report), for a rabbit with no readable serial log. */
+    if(!reported && !prism_link() && (uint16_t)(ticks() - t0) > 30 * TICKS_PER_S) {
+      reported = 1;
+      prism_report(join_r);
+    }
     timer_poll();
     prism_poll();
     net_poll();

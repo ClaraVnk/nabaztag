@@ -42,6 +42,9 @@ emu() {
 # the EEPROM, seeds slot A (about 10 s of HMAC) before the application.
 emu --seconds 52 > "$OUT/run1.log" 2>&1 || true
 emu --seconds 6 > "$OUT/run2.log" 2>&1 || true
+# No access point at all (Lazare at blue, 2026-11-24/25): after 30 s the
+# firmware writes what the card says into the EEPROM, for card-report.py.
+emu --seconds 75 --link-down 0.1 0 > "$OUT/run3.log" 2>&1 || true
 sleep 1
 grep -E 'uart:|leds:|card: (enable|link)|gw: (DHCP ack|DNS|the rabbit opened)|ear [01]:|watchdog|halted' "$OUT/run1.log"
 cat "$OUT/warren.log"
@@ -74,3 +77,9 @@ grep -q 'unknown opcode' "$L" && fail "an opcode the emulator does not know"
 FIRST=$(grep -m1 'gw: the rabbit opened' "$L" | sed -E 's/^\[ *([0-9]+) ms\].*/\1/')
 echo "PASS v1-native: boot, LEDs, card joined, DHCP, DNS, 3 polls answered, ears moved, watchdog quiet;"
 echo "  first poll at ${FIRST} ms; $(tr '\n' ';' < "$OUT/size.txt") ($OUT)"
+
+need "$OUT/run3.log" 'uart: card: report in EEPROM 0x40' "no card report without an access point"
+python3 ../v1-icsp/card-report.py --log "$OUT/run3.log" | tee "$OUT/card-report.txt"
+grep -q "0 info frame(s)" "$OUT/card-report.txt" || fail "the card report is not the one of a card that never heard a link"
+! grep -q 'card: report' "$L" || fail "a card report on a run that associated"
+echo "PASS v1-native card report"
