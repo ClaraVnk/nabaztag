@@ -61,6 +61,14 @@ void oki_init(void)
   for(i = 0; i < sizeof(boot_regs) / 2; i++) oki_wr(boot_regs[i][0], boot_regs[i][1]);
 }
 
+/* What the last sound did, for the next poll's sp= (net.c; Clara,
+ * 2026-11-26: "aucun des tests sons ne fonctionne sur lazare", and the
+ * rabbit has no serial line to read): oki_last 1 played to the end, 2 the
+ * switch on silent, 3 the download cut short, 4 refused (size); the bursts
+ * sent, and how many found the FIFO never saying "room" (a time-out). */
+uint8_t  oki_last;
+uint16_t oki_bursts, oki_stalls;
+
 /* An "Audi" file in the serial flash from page `page`: 16-byte header (byte
  * 8 gives the rate), the ADPCM from offset 16, `length` data bytes. */
 void oki_play(uint16_t page, uint32_t length)
@@ -77,7 +85,8 @@ void oki_play(uint16_t page, uint32_t length)
      * silent, normal, loud. */
     static const uint8_t att[3] = { 0x0F, 0x03, 0x00 };
     uint8_t lvl = input_volume();
-    if(lvl == 0) { log_line("oki: silent (sound switch)"); return; }
+    oki_bursts = 0; oki_stalls = 0;
+    if(lvl == 0) { log_line("oki: silent (sound switch)"); oki_last = 2; return; }
     oki_wr(0x63, att[lvl]); oki_wr(0x39, 0x05);
   }
   flash_read(page, 8, &rate, 1);
@@ -97,7 +106,9 @@ void oki_play(uint16_t page, uint32_t length)
      * while it was set (2026-11-25): every burst after the time-out, the
      * sound in clicks and far too long, the rabbit not polling meanwhile
      * (Lazare, 2026-11-26: "un tac trac tac", "le son ne s'arrête plus"). */
-    { uint16_t k; for(k = 0; k < 20000 && !(oki_rd(0x06) & 1); k++) clrwdt(); }
+    { uint16_t k; for(k = 0; k < 20000 && !(oki_rd(0x06) & 1); k++) clrwdt();
+      if(k == 20000) oki_stalls++; }
+    oki_bursts++;
     oki_wr(0x29, 0x00);
     OKI_CS = 0;
     spi_xfer(0x01);
@@ -113,5 +124,6 @@ void oki_play(uint16_t page, uint32_t length)
     clrwdt();
   }
   oki_wr(0x33, 0x00); oki_wr(0x29, 0x00);
+  oki_last = 1;
   log_line("oki: done");
 }

@@ -92,6 +92,12 @@ need "$L" 'uart: leds: ordered 855e' "frame 12 did not light the LEDs as ordered
 need "$OUT/warren.log" 'GET /vl/v1/snd?sn=0019DB00BEEF&i=01 HTTP/1.0' "frame 13 did not fetch the sound"
 need "$L" 'uart: sound: in, playing' "the fetched sound was not played"
 need "$L" 'uart: oki: done' "the OKI did not finish the fetched sound"
+# Telemetry (2026-11-26, Lazare silent with no serial line): the sound's
+# outcome on the next poll (sp=01: played to the end; the emulator's FIFO
+# always has room, so no stall), and the start's cause on the first poll.
+need "$OUT/warren.log" '&sp=01' "the sound's outcome was not reported (sp=01)"
+grep -aqE '&sp=01[0-9A-F]{4}0000' "$OUT/warren.log" || fail "the sound's report has stalls, or no bursts, in the emulator"
+need "$OUT/warren.log" 'st=00&tc=00000000&vl=01&rc=' "the start's cause was not reported on the first poll (rc=)"
 # Frame 14: asleep, the LEDs off; frame 15: the settings, taken at the next boot.
 need "$L" 'uart: leds: ordered 0000' "frame 14 did not put the LEDs out"
 need "$L" 'uart: config: set, network Terrier, server p.nabaztag.com (next boot)' "frame 15 was not written"
