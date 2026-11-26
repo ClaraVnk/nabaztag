@@ -32,7 +32,7 @@ up)
   podman run -d -q --pod "$POD" --name "$POD-db" -e POSTGRES_USER=pynab -e POSTGRES_PASSWORD=pynab \
     -e POSTGRES_DB=pynab docker.io/library/postgres:11-alpine >/dev/null
   podman run -d -q --pod "$POD" --name "$POD-nabd" -v "$SRC:/opt/pynab:Z,U" \
-    -e PGHOST=127.0.0.1 -e PGUSER=pynab -e PGPASSWORD=pynab -e PGDATABASE=pynab -e DAEMONS= \
+    -e NABD_HOST=127.0.0.1 -e PGHOST=127.0.0.1 -e PGUSER=pynab -e PGPASSWORD=pynab -e PGDATABASE=pynab -e DAEMONS= \
     "pynab-dev:$PYNAB_COMMIT" /bin/bash /usr/local/bin/run-pynab.sh >/dev/null
   i=0; until podman logs "$POD-nabd" 2>&1 | grep -q "Starting nabd"; do
     i=$((i + 1)); [ $i -lt 120 ] || { podman logs "$POD-nabd" 2>&1 | tail -20; exit 1; }; sleep 2; done
