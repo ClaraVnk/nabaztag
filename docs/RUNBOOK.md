@@ -1663,6 +1663,23 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
+### FLASH-PLAN step 6 in QEMU: the ramdisk written from the key (2026-11-26)
+
+`karotz/kexec/flash-ramdisk` in the same emulator, same command; the proof
+now runs six modes (kernel, kernel-fault1, kernel-fault2, ramdisk,
+ramdisk-fault1, ramdisk-fault2):
+
+    flock -o ~/heavy.lock firmware-arm/emulator/karotz/ota/flash-proof.sh
+    # 2026-11-26: ramdisk (new image in mtd2, kernel and /usr untouched),
+    #   ramdisk-fault1 (once more, then identical), ramdisk-fault2 (twice
+    #   differing, "rootfs-old.img.gz written back and read back", exit 2);
+    #   go-ramdisk-back, mtd2 not the old ramdisk, a bad MD5SUMS-ramdisk and
+    #   a broken gzip each write nothing. "PASS flash-proof: kernel and
+    #   ramdisk: ..." (1 h 34 on the dev VM)
+
+On the rabbit, from RAM over SSH as in step 5 (`KEY=/var/fk
+FLASH_NO_REBOOT=1`), the two ramdisks and `MD5SUMS-ramdisk` in `/var/fk`.
+
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
 `karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,

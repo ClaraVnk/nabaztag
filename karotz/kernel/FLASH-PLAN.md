@@ -427,6 +427,21 @@ The tool: `karotz/kexec/step5-roundtrip.sh` (backup, write61, kernel,
 check). Next: `/usr` read-write under 6.1 in the ramdisk (step 2's
 linuxrc), its settings then kept across reboots.
 
+### Step 6: the ramdisk that mounts /usr read-write
+
+Terrier OS's `linuxrc` mounts `/usr` read-write under both kernels
+(LapinLibre fork, `terrier-os-61-usr-rw`): step 5 showed YAFFS written by
+either kernel reads right under the other. The ramdisk built from it
+differs from the installed one by `linuxrc` and its two version stamps
+only. It goes into mtd2 with `karotz/kexec/flash-ramdisk`, flash-kernel's
+twin: triggers `go-ramdisk` / `go-ramdisk-back`, `rootfs-new.img.gz` and
+`rootfs-old.img.gz` checked against `MD5SUMS-ramdisk`, the image to write
+tested with `gzip -t`, mtd2 required to hold the other image, the settings
+copied first; written, read back, once more on a mismatch, else the other
+image written back (exit 2). mtd2 is shared by both kernels: a ramdisk
+that does not boot is a rabbit that does not boot, so the head button
+(BIOS restore, step 0) and the recovery key are at hand.
+
 ## 5. Sources
 
 - Gengar's measure, 2026-11-23: measure/log.txt (`/proc/mtd`,
