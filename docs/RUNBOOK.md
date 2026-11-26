@@ -826,6 +826,22 @@ EEPROM. DESIGN.md section 8 has the rest of the frames (design only).
 
 ### The Karotz (Nabaztag v3)
 
+**Kernel 6.1, step 5 on the rabbit** (YAFFS between 6.1 and 2.6.32,
+FLASH-PLAN.md): over SSH, no key, settings kept on the computer first.
+
+```sh
+K=karotz/kexec/step5-roundtrip.sh; R=<karotz address>
+$K $R backup ~/.nabaztag/<rabbit>-conf      # private, never in a repository
+$K $R write61                               # under 6.1
+$K $R kernel zImage-6.1 zImage-2632 rootfs.img.gz back    # 2.6.32, reboots
+$K $R check                                 # under 2.6.32: reads, writes its own
+$K $R kernel zImage-6.1 zImage-2632 rootfs.img.gz write   # 6.1, reboots
+$K $R check                                 # under 6.1: reads all
+```
+
+zImage-6.1 is read from mtd1 by its own header's length when no build is at
+hand; the ramdisk must equal mtd2 (flash-kernel checks it before 6.1).
+
 `firmware-arm/emulator/karotz`: OpenKarotz's real CGI, the hardware
 recorded, the client under qemu-arm (see its README; `measure.sh` is what a
 real Karotz must give for the whole-system emulator).
