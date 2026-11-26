@@ -28,7 +28,7 @@ up)
     podman build -q -t "pynab-dev:$PYNAB_COMMIT" -f "$SRC/Docker/nab/Dockerfile.archive" "$SRC" >/dev/null
   fi
   podman pod rm -f "$POD" >/dev/null 2>&1 || true
-  podman pod create -q --name "$POD" -p 127.0.0.1:10543:10543 >/dev/null
+  podman pod create --name "$POD" -p 127.0.0.1:10543:10543 >/dev/null
   podman run -d -q --pod "$POD" --name "$POD-db" -e POSTGRES_USER=pynab -e POSTGRES_PASSWORD=pynab \
     -e POSTGRES_DB=pynab docker.io/library/postgres:11-alpine >/dev/null
   podman run -d -q --pod "$POD" --name "$POD-nabd" -v "$SRC:/opt/pynab:Z" \
