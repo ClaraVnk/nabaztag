@@ -1677,6 +1677,15 @@ ramdisk-fault1, ramdisk-fault2):
     #   a broken gzip each write nothing. "PASS flash-proof: kernel and
     #   ramdisk: ..." (1 h 34 on the dev VM)
 
+The ramdisk itself, booted by the Karotz's BIOS under 6.1 on a copy of
+Gengar's NAND (`bios-boot.sh`, `KERNEL=` the 6.1 zImage, `RAMDISK=` each):
+
+    KERNEL=zImage-6.1 RAMDISK=<old or new rootfs.img.gz> \
+      karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 240
+    # 2026-11-26: both reach "[START] starting init"; the installed ramdisk
+    #   (control) says "chmod: /usr/karotz/.ssh: Read-only file system", the
+    #   new one says nothing of the kind: /usr mounted read-write.
+
 On the rabbit, from RAM over SSH as in step 5 (`KEY=/var/fk
 FLASH_NO_REBOOT=1`), the two ramdisks and `MD5SUMS-ramdisk` in `/var/fk`.
 
