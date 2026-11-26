@@ -18,3 +18,16 @@ index 10247c6..50be3ea 100644
      r = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "scripts" / "fetch.py"), "rt73-firmware", "rt73-licence"],
                         capture_output=True, text=True, timeout=900)
      if r.returncode != 0:
+diff --git a/tests/image/test_usbkey.py b/tests/image/test_usbkey.py
+index ddf08a1..356c9bb 100644
+--- a/tests/image/test_usbkey.py
++++ b/tests/image/test_usbkey.py
+@@ -538,7 +538,7 @@ class UsbKeyTest(unittest.TestCase):
+         core = self.rootfs_file("karotz/etc/inetd.conf").decode()
+         self.assertNotIn("telnetd", core)
+         self.assertNotIn("ftpd", core)
+-        self.assertIn("80 stream tcp nowait.60 web /bin/busybox httpd -i -c /var/run/httpd.conf -h /usr/www", core)
++        self.assertIn("80 stream tcp nowait.600 web /bin/busybox httpd -i -c /var/run/httpd.conf -h /usr/www", core)
+         self.assertNotIn("/karotz/etc/httpd.conf", core)
+         # The fixed part alone refuses everyone; inetd.sh makes the configuration with the password.
+         self.assertIn("D:*", self.rootfs_file("karotz/etc/httpd.conf").decode())

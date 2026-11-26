@@ -1647,6 +1647,26 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
+### Terrier OS 1.0.0: the key with Linux 6.1 (2026-11-26)
+
+`karotz/lapinlibre/build.sh` builds the flash kernel first (`karotz/kernel`,
+GCC 16.1.0 and binutils 2.45.1 pinned, the banner's date fixed) and the key
+writes it into mtd1 (`LL_FLASH_KERNEL`, fork `terrier-os-1.0.0`);
+`LL_FLASH_KERNEL=2632` builds the old way. The fork's install also reads
+mtd1 and mtd2 back (written once more on a difference), keeps the owner's
+client options (`--ears-up`) and, with no `LANGUAGE` on the key, speaks the
+rabbit's own language. On the dev VM:
+
+    LL_WORK_DIR=$HOME/lapinlibre-100 LL_STAGES="check image" sh karotz/lapinlibre/build.sh
+    # 2026-11-26: zImage 2,530,528 bytes, sha256 4cc85dcc... (twice the same;
+    #   the first try differed: BusyBox's date refused "... UTC", and the
+    #   built-in initramfs took the build's time), build 770d755b9e610347
+    python3 -m unittest tests.image.test_usbkey      # in lapinlibre-build, on that work dir
+    # 43 tests OK (patches 0001 and 0002 now update the tests they broke)
+    KERNEL=<key>/zImage RAMDISK=<key>/rootfs.img.gz \
+      karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 240
+    # "[START] LapinLibre 1.0.0", Linux 6.1.192 (terrier-os@build), /usr read-write
+
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
 `karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,

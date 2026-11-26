@@ -34,3 +34,15 @@ index 10247c6..8211437 100644
      changes = []
  
      # The system build's kernel, Linux 2.6.32: its userland needs it (its headers), and BusyBox 1.37's mdev
+diff --git a/tests/expected/key-files.txt b/tests/expected/key-files.txt
+index ed9328e..b231dd0 100644
+--- a/tests/expected/key-files.txt
++++ b/tests/expected/key-files.txt
+@@ -206,6 +206,7 @@ rootfs:karotz/etc/httpd.conf f 0644 0:0
+ rootfs:karotz/etc/inetd.conf f 0644 0:0
+ rootfs:karotz/etc/inittab f 0644 0:0
+ rootfs:karotz/etc/ld.so.conf f 0644 0:0
++rootfs:karotz/etc/lapinlibre-base f 0644 0:0
+ rootfs:karotz/etc/mdev.conf f 0644 0:0
+ rootfs:karotz/etc/motd f 0644 0:0
+ rootfs:karotz/etc/passwd f 0644 0:0

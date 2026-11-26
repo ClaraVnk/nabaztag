@@ -6,6 +6,12 @@
 set -eu
 cd /linux
 export ARCH=arm CROSS_COMPILE=arm-none-eabi-
+# The banner's date, user and host fixed: the same zImage from one build to
+# the next (Terrier OS 1.0.0 records its sha256). Without "UTC": BusyBox's
+# date refuses it, and gen_initramfs.sh then dated the built-in cpio at the
+# build's own time (two zImages, 2026-11-26). The container runs in UTC.
+export KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-2026-11-26 00:00:00}" \
+       KBUILD_BUILD_USER=terrier-os KBUILD_BUILD_HOST=build
 make -s tinyconfig
 # EXTRA: more fragments (karotz-6.1-debug.config for the emulator, step 2).
 scripts/kconfig/merge_config.sh -m .config /k/karotz-6.1.config ${EXTRA:-} > /dev/null

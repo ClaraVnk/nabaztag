@@ -5,8 +5,11 @@
 #   podman build -t karotz-kernel61 -f karotz/kernel/Containerfile karotz/kernel
 #   podman run --rm karotz-kernel61
 FROM docker.io/library/alpine:3.24
-RUN apk add --no-cache build-base bc bison flex perl xz curl gcc-arm-none-eabi \
-      binutils-arm-none-eabi linux-headers openssl-dev elfutils-dev python3 diffutils findutils
+# The compiler pinned (RUNBOOK, 2026-11-25: Alpine's GCC moved from 15.1.0 to
+# 16.1.0 under the same alpine:3.24): Terrier OS 1.0.0's flash kernel is
+# built with these, and a rebuild must give the same zImage.
+RUN apk add --no-cache build-base bc bison flex perl xz curl gcc-arm-none-eabi=16.1.0-r0 \
+      binutils-arm-none-eabi=2.45.1-r0 linux-headers openssl-dev elfutils-dev python3 diffutils findutils
 ARG LINUX=6.1.192
 # kernel.org's sha256sums.asc for v6.x.
 ARG LINUX_SHA256=1e88e317e20dbc79a2cb9e3d9667e908b262d12e76eb66eed894c5460eb87fca
