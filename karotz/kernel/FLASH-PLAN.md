@@ -399,6 +399,18 @@ written, a reboot into 2.6.32, the file read; undone by `flash_erase
 holds 2.1 MB of factory data. Only after that, `/usr` read-write under 6.1,
 with `/usr/etc/conf` copied to the key first.
 
+**Measured 2026-11-26: QEMU cannot give this proof.** `yaffs-roundtrip.sh`
+(SEQ runs) on the copy of Gengar's NAND: 2.6.32 reads `/usr` the same three
+times, write included; 6.1 differs from it on 3 of 1234 files from the
+first read, before any write (libavcodec, libjpeg, libstdc++), and
+differently again after its own write. But on Gengar itself, under 6.1.192
+with `/usr` read-only, libavcodec (9674de15...) and libstdc++ (148d3d28...)
+are byte for byte the build's (`system/out/target`), and in QEMU neither
+kernel reads those files right. So 6.1 reads YAFFS correctly on the
+hardware, and the emulated NAND (or the old measure it is made from) is
+what differs. The round trip moves to the hardware, on mtd7 as above;
+QEMU keeps the script as the control of a new measure only.
+
 ## 5. Sources
 
 - Gengar's measure, 2026-11-23: measure/log.txt (`/proc/mtd`,
