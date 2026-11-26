@@ -146,10 +146,13 @@ void leds_order(__data const uint8_t *five, uint8_t seconds)
 
 /* EEPROM 0x7C: the boots since the image was written (2 bytes), RCON at this
  * start, and RCON's TO bit seen (a watchdog reset). */
+uint8_t boot_rcon;                         /* the first poll's rc= (net.c) */
+
 static void boot_mark(void)
 {
   uint16_t n;
   uint8_t rc = RCON;
+  boot_rcon = rc;
   EEADRH = 0; EEADR = 0x7C; EECON1 = 0x01; n = EEDATA;
   EEADR = 0x7D; EECON1 = 0x01; n |= (uint16_t)EEDATA << 8;
   n = n == 0xFFFF ? 1 : n + 1;

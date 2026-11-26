@@ -386,6 +386,15 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
       t.sd = input_sd();
       if(t.sd) { puts_code("&sd="); put_hex_upper((uint8_t)(t.sd >> 8)); put_hex_upper((uint8_t)t.sd); }
       puts_code("&vl="); put_hex_upper(input_volume_raw());
+      /* Telemetry (2026-11-26): why the last start (RCON: 1x TO clear =
+       * watchdog, POR/BOR clear = power), and what the last sound did. */
+      if(!polls_answered) { puts_code("&rc="); put_hex_upper(boot_rcon); }
+      if(oki_last) {
+        puts_code("&sp="); put_hex_upper(oki_last);
+        put_hex_upper((uint8_t)(oki_bursts >> 8)); put_hex_upper((uint8_t)oki_bursts);
+        put_hex_upper((uint8_t)(oki_stalls >> 8)); put_hex_upper((uint8_t)oki_stalls);
+        oki_last = 0;
+      }
     }
     puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: ");
     { __data const char *h = net_server; while(*h) put8((uint8_t)*h++); }

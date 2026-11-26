@@ -23,7 +23,7 @@ static uint16_t fill, pg;
 
 void sound_offer(uint8_t index, uint32_t len)
 {
-  if(len < 32 || len > SND_MAX) { log_s("sound: refused, "); log_dec((uint16_t)(len >> 8)); log_line("00 B"); return; }
+  if(len < 32 || len > SND_MAX) { oki_last = 4; oki_bursts = 0; oki_stalls = 0; log_s("sound: refused, "); log_dec((uint16_t)(len >> 8)); log_line("00 B"); return; }
   if(fetching) return;
   want = index; length = len;
   log_s("sound: "); log_dec(index); log_s(" offered, "); log_dec((uint16_t)len); log_line(" B");
@@ -50,6 +50,7 @@ void sound_end(uint8_t complete)
   want = 0xFF;
   if(!complete || got != length) {
     log_s("sound: incomplete at "); log_dec((uint16_t)got); log_nl();
+    oki_last = 3; oki_bursts = (uint16_t)(got >> 8); oki_stalls = 0;
     return;
   }
   log_line("sound: in, playing");

@@ -277,6 +277,9 @@ uint8_t net_state(void);
 #define NET_DNS       2
 #define NET_READY     3
 extern uint16_t polls_answered;
+extern uint8_t  boot_rcon;                 /* RCON at this start: rc= on the first poll */
+extern uint8_t  oki_last;                  /* the last sound: sp= on the next poll (oki.c) */
+extern uint16_t oki_bursts, oki_stalls;
 
 /* --- app/oki.c: the ML2870A, Violet's register sequence */
 void    oki_init(void);
