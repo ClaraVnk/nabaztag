@@ -67,6 +67,19 @@ void oki_play(uint16_t page, uint32_t length)
 {
   uint8_t  buf[64], n, i, rate;
   uint16_t off = 16;
+  /* The volume wheel at its lowest is the rabbit's silent mode: nothing
+   * plays (Clara, 2026-11-25: "le mode silencieux de lazare (matériel) est
+   * ignoré"; it was only read and reported). */
+  {
+    /* The three-way sound switch, as Violet's 1.4b sets it before a sound
+     * (0x5FE6 -> 0x1FBC: level 0, 1, 2 -> volume 0x00, 0xC8, 0xFF, written
+     * as the attenuation (0xFF - volume) >> 4 to 0x63, then 0x39 <- 5):
+     * silent, normal, loud. */
+    static const uint8_t att[3] = { 0x0F, 0x03, 0x00 };
+    uint8_t lvl = input_volume();
+    if(lvl == 0) { log_line("oki: silent (sound switch)"); return; }
+    oki_wr(0x63, att[lvl]); oki_wr(0x39, 0x05);
+  }
   flash_read(page, 8, &rate, 1);
   rate = rate == 0x1F ? 3 : rate == 0x7D ? 7 : 6;
   log_s("oki: play "); log_dec((uint16_t)length); log_s(" B rate "); log_dec(rate); log_nl();

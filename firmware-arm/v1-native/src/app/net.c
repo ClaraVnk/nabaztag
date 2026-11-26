@@ -385,6 +385,7 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
       /* the button or the ears by hand (input.c), as Violet's sd= */
       t.sd = input_sd();
       if(t.sd) { puts_code("&sd="); put_hex_upper((uint8_t)(t.sd >> 8)); put_hex_upper((uint8_t)t.sd); }
+      puts_code("&vl="); put_hex_upper(input_volume_raw());
     }
     puts_code(" HTTP/1.0\r\nUser-Agent: VIOLET\r\nHost: ");
     { __data const char *h = net_server; while(*h) put8((uint8_t)*h++); }
@@ -481,6 +482,7 @@ static void http_byte(uint8_t c)
         }
       }
       if(t.ftype == 0x15) config_frame_byte(c, t.flen == 1);   /* ours: settings, TLV */
+      if(t.ftype == 0x16 && t.flen == 1) leds_rest(c);         /* ours: the base's breathing colour */
       if(t.ftype == 0x11) {                         /* ours: the ears' places, left then right */
         if(t.flen == 2) t.word = c;
         else if(t.flen == 1) ears_goto((uint8_t)t.word, c);

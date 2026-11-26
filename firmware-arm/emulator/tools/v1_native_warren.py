@@ -19,6 +19,7 @@ p.add_argument("--leds", help="frame 12 in the second answer: five LEDs (bits R1
 p.add_argument("--sound", help="frame 13 in the second answer: an Audi file, served at GET /vl/v1/snd")
 p.add_argument("--asleep", type=int, default=0, help="frame 14 in the third answer: asleep for MINUTES")
 p.add_argument("--config", nargs=2, metavar=("SERVER", "SSID"), help="frame 15 in the third answer")
+p.add_argument("--rest", type=int, help="frame 16 with every answer: the base's breathing colour (bits R1 G2 B4)")
 p.add_argument("--ears", type=int, nargs=2, metavar=("LEFT", "RIGHT"),
                help="frame 11: the ears' places, 0-16 holes from the top, with every answer")
 a = p.parse_args()
@@ -28,6 +29,8 @@ if a.offer:
     BODY += bytes([0x10, 0, 0, 2, a.offer >> 8, a.offer & 0xFF])
 if a.ears:
     BODY += bytes([0x11, 0, 0, 2, a.ears[0], a.ears[1]])
+if a.rest is not None:
+    BODY += bytes([0x16, 0, 0, 1, a.rest])
 BODY += bytes([0xFF, 0x0A])
 # Frames 12 and 13 once, in the second answer (the first one confirms the
 # image and starts the ears): the LEDs ordered, the sound offered.

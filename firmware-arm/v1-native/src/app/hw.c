@@ -67,6 +67,25 @@ static void leds_full_brightness(void)
   LED_MODE = 0;
 }
 
+/* Dot correction (7 bits a output, OUT15 first): every output at full
+ * brightness but the bottom LED's three (OUT3..OUT1), at `base`. How the
+ * bottom LED breathes, as a v2's base does (Clara, 2026-11-25: "socle
+ * (respiration, à faire clignoter comme V2 ?)"). */
+void leds_dc(uint8_t base)
+{
+  uint8_t out = 16, b, acc = 0, n = 0;
+  LED_MODE = 1;
+  while(out--) {
+    uint8_t v = (out >= 1 && out <= 3) ? base : 0x7F;
+    for(b = 7; b--; ) {
+      acc = (uint8_t)((acc << 1) | ((v >> b) & 1));
+      if(++n == 8) { spi_xfer(acc); n = 0; acc = 0; }
+    }
+  }
+  leds_latch();
+  LED_MODE = 0;
+}
+
 /* The first bit shifted in lands on OUT15 (TLC5922 datasheet, figure 11),
  * and Newbaztag's LED order puts the top LED's red first: bit 15 = top red. */
 void leds_set(uint16_t onoff)

@@ -229,6 +229,10 @@ void     input_ears(uint8_t right, uint8_t left);
 uint16_t input_sd(void);
 void     input_sent(uint16_t v);
 uint8_t  input_volume(void);
+void     input_volume_poll(void);
+void     leds_dc(uint8_t base);
+void     leds_rest(uint8_t c);
+uint8_t  input_volume_raw(void);
 #define EAR_HOLES   17
 /* Ear 0 counts on T0CKI, ear 1 on T13CKI; which is the left one is still to
  * be confirmed on Lazare (its right ear's motor is dead, 2026-11-24): the
