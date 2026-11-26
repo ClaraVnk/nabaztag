@@ -442,6 +442,15 @@ image written back (exit 2). mtd2 is shared by both kernels: a ramdisk
 that does not boot is a rabbit that does not boot, so the head button
 (BIOS restore, step 0) and the recovery key are at hand.
 
+**Done on Gengar (2026-11-26), PASS.** Settings copied to Clara's computer
+first; `flash-ramdisk` from RAM over SSH (`KEY=/var/fk FLASH_NO_REBOOT=1`):
+mtd2 checked as the installed ramdisk (eedb90ea...), the new one
+(9f747143...) written and read back identical at once. Rebooted: 6.1.192,
+LapinLibre 0.3.1, `/usr` yaffs `rw`. A file written in `/usr/etc/conf`,
+rebooted again: the same file, same sum; the adoption key in place, the
+Terrier client running. Next: Terrier OS 1.0.0 (6.1 in the flash, this
+ramdisk, `LL_COMMIT` in `karotz/lapinlibre/Containerfile`).
+
 ## 5. Sources
 
 - Gengar's measure, 2026-11-23: measure/log.txt (`/proc/mtd`,
