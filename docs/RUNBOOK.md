@@ -1667,6 +1667,14 @@ rabbit's own language. On the dev VM:
       karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 240
     # "[START] LapinLibre 1.0.0", Linux 6.1.192 (terrier-os@build), /usr read-write
 
+On Gengar by key, the same evening (under 6.1 already, 0.3.1): "zImage: read
+back from mtd1, identical", "rootfs.img.gz: read back from mtd2, identical",
+"the client's options kept: --ears-up 14"; rebooted into 1.0.0, Linux 6.1.192
+(terrier-os@build), mtd1 = the key's zImage (2f33ce89...), `/usr` rw, the
+adoption key in place, the client "TLSv1.3 ... idle, ready". The first
+install started under 6.1.
+
+
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
 `karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,
