@@ -1647,7 +1647,6 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
-<<<<<<< HEAD
 ### Terrier OS 1.0.0: the key with Linux 6.1 (2026-11-26)
 
 `karotz/lapinlibre/build.sh` builds the flash kernel first (`karotz/kernel`,
@@ -1675,7 +1674,6 @@ back from mtd1, identical", "rootfs.img.gz: read back from mtd2, identical",
 adoption key in place, the client "TLSv1.3 ... idle, ready". The first
 install started under 6.1.
 
-=======
 ### The Karotz's camera on Linux 6.1 (2026-11-26)
 
 Under 6.1 there was no camera at all ("the camera gave no picture", Gengar
@@ -1694,7 +1692,6 @@ cache), read() bounded by a buffer (the original copied what was asked).
     # Gengar: read back identical, rebooted; dmesg "OV7675 ... manufacture ID
     #   0x7FA2", "product ID 0x7673", /dev/camera; cgi-bin/snapshot gave a
     #   640x480 JPEG (44,673 bytes), sharp, colours right.
->>>>>>> origin/karotz/camera-61
 
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
