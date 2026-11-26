@@ -103,6 +103,9 @@ need "$OUT/warren.log" '&sd=8903&vl=' "the ears turned by hand were not reported
 # At rest: the bottom LED alone, breathing (its dot correction moving), the
 # rest dark (Lazare, 2026-11-25: the network's green stayed lit).
 [ "$(grep -c 'leds dc:' "$L")" -gt 20 ] || fail "the bottom LED does not breathe at rest"
+# Connected: the four belly and base LEDs green, the left one too (Lazare,
+# 2026-11-26: it stayed dark), before the rest.
+need "$L" 'leds: .....#..#..#..#.' "the connection's progress does not light the four lower LEDs"
 # Frame 16 (--rest 6): the base breathes cyan, the owner's colour.
 need "$L" 'uart: leds: rest 06' "frame 16 did not set the base's colour"
 need "$L" 'leds: .............##.' "at rest, not the bottom LED alone in the colour of frame 16"

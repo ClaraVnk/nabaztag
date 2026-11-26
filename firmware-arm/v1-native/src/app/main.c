@@ -242,7 +242,7 @@ void main(void)
       show(r == NET_DOWN ? (prism_link() ? LED_BOT_G : LED_BOT_B)
          : r == NET_DHCP ? LED_BOT_G
          : r == NET_DNS  ? (LED_BOT_G | LED_MID_G)
-         :                 (LED_BOT_G | LED_MID_G | LED_ML_G));
+         :                 (LED_BOT_G | LED_MID_G | LED_ML_G | LED_MR_G));
     }
     if(polls_answered != last_polls) {
       last_polls = polls_answered;

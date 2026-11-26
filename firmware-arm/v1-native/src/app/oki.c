@@ -92,7 +92,12 @@ void oki_play(uint16_t page, uint32_t length)
     flash_read(page, off, buf, n);
     off += n; length -= n;
     if(off == flash_page_size) { off = 0; page++; }
-    { uint16_t k; for(k = 0; k < 20000 && (oki_rd(0x06) & 1); k++) clrwdt(); }  /* room in the FIFO */
+    /* Room in the FIFO: register 0x06 bit 0 SET, Violet's 1.4b refills
+     * when it is (0x07A6-0x07B0: btfsc 0,0 -> rcall 0x03C0). This waited
+     * while it was set (2026-11-25): every burst after the time-out, the
+     * sound in clicks and far too long, the rabbit not polling meanwhile
+     * (Lazare, 2026-11-26: "un tac trac tac", "le son ne s'arrête plus"). */
+    { uint16_t k; for(k = 0; k < 20000 && !(oki_rd(0x06) & 1); k++) clrwdt(); }
     oki_wr(0x29, 0x00);
     OKI_CS = 0;
     spi_xfer(0x01);
