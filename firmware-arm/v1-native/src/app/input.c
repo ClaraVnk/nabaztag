@@ -66,16 +66,40 @@ uint16_t input_sd(void) { return sd; }
  * that came meanwhile waits for the next poll). */
 void input_sent(uint16_t v) { if(sd == v) sd = 0; }
 
-/* AN0 in three levels, as Violet's firmware reads it. */
-uint8_t input_volume(void)
+/* The sound button (AN0): a push button, not a switch. It reads 0 at rest
+ * and about 0xDA while pressed (Lazare, 2026-11-26: 00 in every position,
+ * DA/DC/DE once at each press; Clara: "un bouton poussoir avec 3 états").
+ * Each press moves to the next state, normal -> loud -> silent -> normal,
+ * kept in the EEPROM (0x79) across starts; oki.c plays at that state's
+ * volume as Violet's 0x1FBC does (silent: nothing). Read every 50 ms so a
+ * short press is not missed. */
+#define EE_VOLUME 0x79
+
+void input_volume_poll(void)
 {
+  static uint16_t at;
+  static uint8_t pressed;
   uint8_t v;
+  if((uint16_t)(ticks() - at) < MS_TO_TICKS(50)) return;
+  at = ticks();
   ADCON0 = 0x01;                        /* AN0, on */
   { uint8_t k; for(k = 0; k < 60; k++) nop(); }   /* acquisition */
   ADCON0bits.GO = 1;
   while(ADCON0bits.GO) ;
   v = ADRESH;
-  v = v < 0x40 ? 0 : v < 0xC0 ? 1 : 2;
-  if(v != volume) { volume = v; log_s("input: volume "); log_dec(v); log_nl(); }
-  return v;
+  if(v >= 0x80 && !pressed) {
+    pressed = 1;
+    volume = input_volume() == 2 ? 0 : volume + 1;
+    ee_put(EE_VOLUME, volume);
+    log_s("input: sound "); log_dec(volume); log_s(" (raw "); log_hex8(v); log_line(")");
+  } else if(v < 0x40) pressed = 0;
 }
+
+uint8_t input_volume(void)
+{
+  if(volume > 2) { volume = ee_get(EE_VOLUME); if(volume > 2) volume = 1; }
+  return volume;
+}
+
+/* The sound state, sent with each poll (&vl=0N: 0 silent, 1 normal, 2 loud). */
+uint8_t input_volume_raw(void) { return input_volume(); }

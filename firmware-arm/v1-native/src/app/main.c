@@ -70,7 +70,12 @@ static void sound_boot(void)
   oki_play(d.s[0].page, d.s[0].length);
 }
 
-static uint16_t leds, net_leds, order_until;
+/* The bottom LED breathing at rest: violet until the Terrier says (frame 16,
+ * the owner's colour on the rabbit's page; Clara, 2026-11-26). 0: dark. */
+static uint16_t led_rest = LED_BOT_R | LED_BOT_B;
+#define LED_REST led_rest
+static uint16_t leds, net_leds, order_until, breath_at;
+static uint8_t  breath = 0x7F, breath_up;
 static uint8_t  ordered;
 static void show(uint16_t on)
 {
@@ -112,6 +117,17 @@ void config_frame_byte(uint8_t c, uint8_t last)
 /* Frame 12: five LEDs, top first, each byte bit 0 R, 1 G, 2 B, for
  * `seconds` (0: ten), then the network's LEDs again. LED i's bits in
  * leds_set(): R 15-3i, B 14-3i, G 13-3i. */
+/* Frame 16: one byte, bit 0 R, 1 G, 2 B, as each LED of frame 12. */
+void leds_rest(uint8_t c)
+{
+  uint16_t want = (c & 1 ? LED_BOT_R : 0) | (c & 4 ? LED_BOT_B : 0) | (c & 2 ? LED_BOT_G : 0);
+  if(want == led_rest) return;
+  if(net_leds == led_rest) net_leds = want;    /* at rest: the new colour now */
+  led_rest = want;
+  if(!ordered) { leds = ~net_leds; show(net_leds); }
+  log_s("leds: rest "); log_hex8(c); log_nl();
+}
+
 void leds_order(__data const uint8_t *five, uint8_t seconds)
 {
   uint16_t on = 0;
@@ -145,7 +161,7 @@ static void boot_mark(void)
 void main(void)
 {
   uint8_t r, ear_demo = 0, last_net = 0xFF, join_r = 0xFF, reported = 0;
-  uint16_t t0, last_report, vol_at = 0;
+  uint16_t t0, last_report;
   uint16_t last_polls = 0;
 
   boot_mark();
@@ -198,12 +214,27 @@ void main(void)
     net_poll();
     ears_poll();
     input_poll();
-    if((uint16_t)(ticks() - vol_at) > 2 * TICKS_PER_S) { vol_at = ticks(); input_volume(); }
+    input_volume_poll();
     if(ordered && (int16_t)(ticks() - order_until) >= 0) {
       ordered = 0;
       leds = ~net_leds;                 /* forces the write */
       show(net_leds);
     }
+    /* At rest on the Terrier: everything dark but the bottom LED, violet,
+     * breathing, as a v2's base (Clara, 2026-11-25: the network's green
+     * progress stayed lit, all but one LED). An order lights at full. */
+    if(net_leds == LED_REST && LED_REST && !ordered) {
+      if((uint16_t)(ticks() - breath_at) > MS_TO_TICKS(40)) {
+        breath_at = ticks();
+        /* Plain steps: SDCC kept breath at 0x7F with the assignment inside
+         * the test (the emulator, 2026-11-25). */
+        if(breath_up) breath = breath + 3;
+        else breath = breath - 3;
+        if(breath >= 0x7C) breath_up = 0;
+        if(breath <= 4) breath_up = 1;
+        leds_dc(breath);
+      }
+    } else if(breath != 0x7F) { breath = 0x7F; breath_up = 0; leds_dc(0x7F); }
 
     r = net_state();
     if(r != last_net) {
@@ -211,11 +242,11 @@ void main(void)
       show(r == NET_DOWN ? (prism_link() ? LED_BOT_G : LED_BOT_B)
          : r == NET_DHCP ? LED_BOT_G
          : r == NET_DNS  ? (LED_BOT_G | LED_MID_G)
-         :                 (LED_BOT_G | LED_MID_G | LED_ML_G));
+         :                 (LED_BOT_G | LED_MID_G | LED_ML_G | LED_MR_G));
     }
     if(polls_answered != last_polls) {
       last_polls = polls_answered;
-      show(net_leds | LED_TOP_G);
+      show(LED_REST);
       update_confirm();
       /* Once the Terrier has answered: each ear two holes, one motor at a
        * time (two at once restarted Lazare, 2026-11-24). */

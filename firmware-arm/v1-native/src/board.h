@@ -179,6 +179,11 @@ void     log_dec(uint16_t v);
 void     log_ip(__data const uint8_t *ip);
 void     log_mac(__data const uint8_t *mac);
 void    leds_set(uint16_t onoff);        /* bit 15 top R, 14 top B, 13 top G ... 1 bottom G */
+/* As Lazare shows them (Clara, 2026-11-25, one LED at a time from the
+ * Terrier): TOP the nose, MR the belly's LEFT one (the rabbit's left), MID
+ * the middle, ML the belly's RIGHT one, BOT the base. The names came from
+ * Newbaztag's order and are the wrong way round for the two sides: the
+ * connection's progress never lit the left one (2026-11-26). */
 #define LED_TOP_R   0x8000
 #define LED_TOP_B   0x4000
 #define LED_TOP_G   0x2000
@@ -229,6 +234,10 @@ void     input_ears(uint8_t right, uint8_t left);
 uint16_t input_sd(void);
 void     input_sent(uint16_t v);
 uint8_t  input_volume(void);
+void     input_volume_poll(void);
+void     leds_dc(uint8_t base);
+void     leds_rest(uint8_t c);
+uint8_t  input_volume_raw(void);
 #define EAR_HOLES   17
 /* Ear 0 counts on T0CKI, ear 1 on T13CKI; which is the left one is still to
  * be confirmed on Lazare (its right ear's motor is dead, 2026-11-24): the

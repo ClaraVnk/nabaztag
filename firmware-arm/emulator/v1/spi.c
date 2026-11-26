@@ -163,6 +163,10 @@ static char oki_hex[2 * 64 + 1];       /* the burst's bytes, for --trace-oki */
 static uint8_t oki_byte(uint8_t in)
 {
   if(oki_n++ == 0) { oki_reg = in; return 0; }
+  /* Register 06, the FIFO's status: bit 0 set, room (Violet's 1.4b refills
+   * when it is, 0x07A6). It read 0 here, which hid a firmware that waited
+   * for the opposite (2026-11-26). */
+  if(oki_n == 2 && oki_reg == 0x06) { oki_first = in; return 0x01; }
   if(oki_n == 2) oki_first = in;
   if(oki_n <= 65) snprintf(oki_hex + 2 * (oki_n - 2), 3, "%02X", in);
   oki_bytes++;

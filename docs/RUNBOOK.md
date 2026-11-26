@@ -1859,6 +1859,16 @@ VM, `firmware-arm/emulator/tools/v1-native-proof.sh` runs them all against
 --config ...`, a click, a long press, a hand on ear 0): PASS. What is left
 on Lazare and after: `firmware-arm/v1-native/ROADMAP.md`.
 
+**At rest, and the sound button (2026-11-26, Lazare).** At rest the LEDs are
+dark and the base breathes (its three outputs' dot correction, 4 to 0x7C and
+back), in the colour of frame 16 (one byte, R 1 G 2 B 4; violet without
+one; the owner's choice on the Terrier). The sound button on AN0 is a push
+button (Lazare: 0 at rest, about 0xDA pressed): each press goes normal ->
+loud -> silent, kept in the EEPROM at 0x79, played as Violet's 0x1FBC sets
+the chip (silent: nothing; 0x63 <- 3 or 0, 0x39 <- 5), sent as `&vl=0N`.
+The emulator's `--an0 REST` and `--sound-press AT` model it;
+`v1-native-proof.sh` checks frame 16, the breathing, and vl=01 then 02.
+
 ### A network with several access points: the next one after a refusal (Naboot 1.2.1.5)
 
 2026-11-24. `apply-mods.py bss_fallback`: the bootloader keeps every scanned

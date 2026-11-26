@@ -33,7 +33,7 @@ cp "$NATIVE/out/18f6525/full.hex" "$OUT/fw/"
 # Mac that network is the podman machine's).
 podman run --rm --network host --name "v1warren-$PORT" -v "$PWD/tools":/t:ro,Z \
   docker.io/library/python:3.13-alpine python3 -u /t/v1_native_warren.py "$PORT" --ears 3 5 \
-  --leds 1,2,4,3,7,2 --sound /t/proof.audi --asleep 1 --config p.nabaztag.com Terrier \
+  --leds 1,2,4,3,7,2 --sound /t/proof.audi --asleep 1 --rest 6 --config p.nabaztag.com Terrier \
   > "$OUT/warren.log" 2>&1 &
 WARREN=$!
 trap 'kill $WARREN 2>/dev/null; podman rm -f "v1warren-$PORT" >/dev/null 2>&1; rm -f tools/proof.audi' EXIT
@@ -51,7 +51,7 @@ emu() {
 # a broadcast reply.
 # A click at 60 s, a long press at 75 s, the right ear (0) turned 4 holes
 # by hand at 95 s: the button and the ears by hand go to sd=.
-emu --seconds 135 --bcast-deaf --press 60 0.2 --press 75 2 --hand 0 4 95 > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
+emu --seconds 135 --bcast-deaf --an0 0 --sound-press 50 --press 60 0.2 --press 75 2 --hand 0 4 95 > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
 emu --seconds 6 > "$OUT/run2.log" 2>&1 || true
 # No access point at all (Lazare at blue, 2026-11-24/25): after 30 s the
 # firmware writes what the card says into the EEPROM, for card-report.py.
@@ -74,8 +74,8 @@ need "$L" 'gw: DHCP acknowledge' "no DHCP lease"
 need "$L" 'uart: dhcp: 10.0.0.42 mask 255.255.255.0 gw 10.0.0.1 dns 10.0.0.1' "the lease was not taken"
 need "$L" 'gw: DNS p.nabaztag.com' "no DNS query"
 need "$L" 'uart: dns: p.nabaztag.com -> 10.0.0.1' "the DNS answer was not taken"
-need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000 HTTP/1.0' "not the poll"
-need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=01&tc=00000000 HTTP/1.0' "no st=01 after the first poll"
+need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000&vl=' "not the poll"
+need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=01&tc=00000000&vl=' "no st=01 after the first poll"
 [ "$(grep -c 'st=00' "$OUT/warren.log")" -le 2 ] || fail "st=00 on more than the first poll of each start"
 need "$L" 'uart: http: HTTP/1.0 200 OK' "the answer's status line was not read"
 need "$L" 'uart: poll interval 1' "the answer's frame 03 was not parsed"
@@ -97,9 +97,23 @@ need "$L" 'uart: leds: ordered 0000' "frame 14 did not put the LEDs out"
 need "$L" 'uart: config: set, network Terrier, server p.nabaztag.com (next boot)' "frame 15 was not written"
 need "$OUT/run2.log" 'uart: config: network Terrier, server p.nabaztag.com' "the next boot did not take frame 15's settings"
 # The button and the ears by hand, as Violet's sd=.
-need "$OUT/warren.log" '&sd=0003 HTTP' "a click was not reported (sd=0003)"
-need "$OUT/warren.log" '&sd=0004 HTTP' "a long press was not reported (sd=0004)"
-need "$OUT/warren.log" '&sd=8903 HTTP' "the ears turned by hand were not reported (sd=8903: right 9, left 3)"
+need "$OUT/warren.log" '&sd=0003&vl=' "a click was not reported (sd=0003)"
+need "$OUT/warren.log" '&sd=0004&vl=' "a long press was not reported (sd=0004)"
+need "$OUT/warren.log" '&sd=8903&vl=' "the ears turned by hand were not reported (sd=8903: right 9, left 3)"
+# At rest: the bottom LED alone, breathing (its dot correction moving), the
+# rest dark (Lazare, 2026-11-25: the network's green stayed lit).
+[ "$(grep -c 'leds dc:' "$L")" -gt 20 ] || fail "the bottom LED does not breathe at rest"
+# Connected: the four belly and base LEDs green, the left one too (Lazare,
+# 2026-11-26: it stayed dark), before the rest.
+need "$L" 'leds: .....#..#..#..#.' "the connection's progress does not light the four lower LEDs"
+# Frame 16 (--rest 6): the base breathes cyan, the owner's colour.
+need "$L" 'uart: leds: rest 06' "frame 16 did not set the base's colour"
+need "$L" 'leds: .............##.' "at rest, not the bottom LED alone in the colour of frame 16"
+# The sound button (a push button on AN0, 0 at rest): normal at first
+# (vl=01), loud after one press at 50 s (vl=02), as Lazare's reads.
+need "$OUT/warren.log" '&vl=01' "the sound state is not reported as normal at first (vl=01)"
+need "$L" 'uart: input: sound 2' "a press of the sound button did not move to loud"
+need "$OUT/warren.log" '&vl=02' "the sound state is not reported as loud after the press (vl=02)"
 need "$L" 'ear 1: motor stopped' "the emulator did not see ear 1 stop"
 grep -q 'watchdog:' "$L" && fail "the watchdog fired"
 grep -q 'halted' "$L" && fail "the PIC halted"
