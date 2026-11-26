@@ -973,6 +973,20 @@ bytecode/reproduce-served.sh tls   /tmp/served-tls.hybrid
 The add-on ships both, built by these two commands: `nabaztag-violet/bootcode.https` and
 `bootcode.tls` (checksums in its Dockerfile).
 
+**The runtime release** (every Terrier takes it from GitHub, as Naboot;
+2026-11-26): byte for byte the ones served, the manifest signed with the
+Naboot key.
+
+```sh
+python3 bytecode/release-runtime.py build <YYYY.MM.DD> /tmp/rt     # reproduce-served.sh, both
+python3 bytecode/release-runtime.py sign /tmp/rt                   # the signing machine only
+python3 bytecode/release-runtime.py check /tmp/rt <Naboot public key hex>
+gh release create runtime-<YYYY.MM.DD> /tmp/rt/* --latest=false --title "Runtime <YYYY.MM.DD>"
+```
+
+A new runtime: move its pin in `reproduce-served.sh` (and `KINDS` in
+`release-runtime.py`) once it is served, then release it.
+
 `<tree>` is a copy of `firmware-arm/vendor/openjabnab/bootcode`. A new
 runtime is proven in the emulator against that control (same scenario, the
 control first) before it goes to `/data/bytecode/`.
