@@ -9,6 +9,18 @@
 # its own 2.6.32. Without kexec/go the boot carries on as usual.
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 K=/mnt/usbkey
+# Every boot that runs this, its kernel: which one the flash holds, read off
+# the key (Gengar on the flash's 6.1, 2026-11-25, out of reach on its VLAN).
+mkdir -p $K/kexec/log && { date; uname -r; cat /proc/uptime; } | tr '\n' ' ' >> $K/kexec/log/boots.txt
+echo >> $K/kexec/log/boots.txt; sync
+# FLASH-PLAN step 3: flash/go-write puts the key's flash/zImage-6.1 into
+# mtd1, flash/go-back the rabbit's 2.6.32 (karotz/kexec/flash-kernel, which
+# reads it back and restarts the rabbit). Under either kernel, first of all:
+# with 6.1 in the flash, go-back is the way back. /usr is untouched.
+if [ -e $K/flash/go-write ] || [ -e $K/flash/go-back ]; then
+    KEY=$K sh $K/kexec/flash-kernel
+    exit 0
+fi
 # Under 6.1 running the rabbit's own Terrier OS (kexec/go-os): what it does,
 # every 30 s for 10 minutes, on the key -- the kernel's log, the processes,
 # the network, the system log. In the background: the boot carries on.
@@ -24,6 +36,15 @@ case "$(uname -r)" in
     # and os-prelude's ps lines filled the ring before the run of 2026-11-24
     # 21:37 could say why /usr (YAFFS, mtdblock6) was not mounted.
     cp $D/dmesg.txt $D/dmesg-boot.txt; cat /proc/mtd > $D/mtd.txt 2>&1
+    # 6.1's NAND driver reading the kernel partition (FLASH-PLAN step 3,
+    # read only): what 2.6.32 wrote must read back the same, or a go-back
+    # from 6.1 cannot check its own write.
+    z=$(wc -c < $K/zImage); ws=$(cat /sys/class/mtd/mtd1/writesize 2> /dev/null || echo 2048)
+    { nanddump -q -l $(( (z + ws - 1) / ws * ws )) -f /tmp/mtd1-61.bin /dev/mtd1 \
+        && head -c $z /tmp/mtd1-61.bin | cmp -s - $K/zImage \
+        && echo "mtd1 read by 6.1: identical to the key's zImage ($z bytes)" \
+        || echo "mtd1 read by 6.1: DIFFERS from the key's zImage"; } >> $D/mtd.txt 2>&1
+    rm -f /tmp/mtd1-61.bin
     grep -i yaffs /proc/filesystems >> $D/mtd.txt 2>&1; sync
     # The USB host, its clocks and the hub as 6.1 sees them, against the
     # same read under 2.6.32 before the jump (usb-2632.txt): the hub

@@ -60,11 +60,12 @@ case " $(cat /proc/cmdline) " in *" ota=kernel"*)
     head -c 2500000 /dev/urandom > $F/zImage-6.1
     ( cd $F && md5sum zImage-6.1 zImage-2632 > MD5SUMS )
     if [ -n "$FAULT" ]; then
-        # nanddump spoiled: one byte changed in what it reads, the first
-        # time (fault 1) or each time the 6.1 image is read (fault 2).
+        # nanddump spoiled: one byte changed in what it reads of mtd1, the
+        # first time (fault 1) or each time the 6.1 image is read (fault 2).
+        # mtd1 only: flash-kernel's check of the ramdisk reads mtd2.
         WHERE=$(command -v nanddump); REAL=$WHERE.real
         rm -f "$WHERE.tmp"; cp "$WHERE" "$REAL" && rm -f "$WHERE"
-        printf '#!/bin/sh\n%s "$@"\nout=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && out=$2; shift; done\nn=$(cat /var/tmp/spoil 2>/dev/null || echo 0)\nif [ "$n" -gt 0 ] && [ -n "$out" ] && ! head -c $(wc -c < /mnt/usbkey/flash/zImage-2632) "$out" | cmp -s - /mnt/usbkey/flash/zImage-2632; then printf "\\377" | dd of="$out" bs=1 seek=1000 conv=notrunc 2>/dev/null; [ "$n" = 9 ] || echo $((n - 1)) > /var/tmp/spoil; fi\n' "$REAL" > "$WHERE"
+        printf '#!/bin/sh\n%s "$@"\nout=""; dev=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && out=$2; dev=$1; shift; done\nn=$(cat /var/tmp/spoil 2>/dev/null || echo 0)\nif [ "$n" -gt 0 ] && [ -n "$out" ] && [ "$dev" = /dev/mtd1 ] && ! head -c $(wc -c < /mnt/usbkey/flash/zImage-2632) "$out" | cmp -s - /mnt/usbkey/flash/zImage-2632; then printf "\\377" | dd of="$out" bs=1 seek=1000 conv=notrunc 2>/dev/null; [ "$n" = 9 ] || echo $((n - 1)) > /var/tmp/spoil; fi\n' "$REAL" > "$WHERE"
         chmod 755 "$WHERE"
         [ "$FAULT" = 1 ] && echo 1 > /var/tmp/spoil || echo 9 > /var/tmp/spoil
     fi
@@ -100,7 +101,14 @@ case " $(cat /proc/cmdline) " in *" ota=kernel"*)
     echo "00000000000000000000000000000000  zImage-6.1" > $F/MD5SUMS; touch $F/go-write
     KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
     $D -q -l $(pages $z2) -f /var/tmp/mtd1.bin /dev/mtd1
+    check "it restarts the rabbit with reboot -f (linuxrc has no init to ask)" "grep -q 'reboot -f' /ota/flash-kernel"
     check "a bad MD5SUMS writes nothing" "[ $rc = 1 ] && head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
+    # A ramdisk in mtd2 that is not the key's stops 6.1 before anything.
+    ( cd $F && md5sum zImage-6.1 zImage-2632 > MD5SUMS )
+    flash_erase -q /dev/mtd2 0 1; touch $F/go-write
+    KEY=$K FLASH_NO_REBOOT=1 FLASH_MTD_NAME= sh /ota/flash-kernel; rc=$?
+    $D -q -l $(pages $z2) -f /var/tmp/mtd1.bin /dev/mtd1
+    check "another ramdisk in mtd2 writes nothing" "[ $rc = 1 ] && grep -q 'not the key.s rootfs.img.gz' $F/log.txt && head -c $z2 /var/tmp/mtd1.bin | cmp -s - $F/zImage-2632"
     echo "OTA-RESULT"
     /bin/busybox poweroff -f
     sleep 600 ;;                      # poweroff returns before QEMU stops: nothing after it runs

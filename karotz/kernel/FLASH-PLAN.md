@@ -364,9 +364,17 @@ spoiled (written again), every 6.1 read-back spoiled (2.6.32 back); each
 time mtd2 and `/usr` untouched, the settings on the key, `go-back` writing
 2.6.32, a bad `MD5SUMS` writing nothing. PASS.
 
-Not done yet: the nose (red on a failure: the log on the key says it), the
-read-back once more from the running 6.1, and `bios-boot.sh` booting an
-image this script wrote. The first write on Gengar waits for Clara's go.
+Before the first write on Gengar (2026-11-25): the key's `autorun` runs
+`flash-kernel` when `flash/go-write` or `flash/go-back` is there, under
+either kernel (with 6.1 in the flash, `go-back` is the way back); 6.1 is
+written only when mtd2 reads back as the key's `rootfs.img.gz`, step 2's
+ramdisk (the proof's fourth check: another ramdisk writes nothing); and 6.1
+read Gengar's mtd1 identical to the key's 2.6.32 zImage (2,422,912 bytes,
+by `kexec/go-flash`, read only), so its NAND read path holds on the rabbit.
+6.1 writing the NAND is proven on nandsim only.
+
+Not done yet: the nose (red on a failure: the log on the key says it) and
+`bios-boot.sh` booting an image this script wrote.
 
 ### Step 4: the first week
 

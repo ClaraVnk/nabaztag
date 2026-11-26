@@ -46,6 +46,20 @@ done
 want=${FLASH_MTD_NAME-Kernel}
 [ -z "$want" ] || awk -v d="$name:" '$1 == d' /proc/mtd | grep -q "\"$want\"" \
     || { log "STOP: $MTD is not the \"$want\" partition; nothing written"; sync; exit 1; }
+# 6.1 boots from the BIOS only on step 2's ramdisk, the one the key's install
+# wrote (the key's rootfs.img.gz): with any other in mtd2 the rabbit would
+# restart into a kernel that cannot mount its root (panic=10) for ever, the
+# head button's restore the only way out. Checked before 6.1, not 2.6.32.
+RD=${FLASH_RAMDISK_MTD:-/dev/mtd2}
+if [ "$WHAT" = 6.1 ]; then
+    r=$(wc -c < "$K/rootfs.img.gz" 2> /dev/null || echo 0)
+    rws=$(cat "/sys/class/mtd/$(basename "$RD")/writesize" 2> /dev/null || echo 2048)
+    [ "$r" -gt 0 ] && nanddump -q -l $(( (r + rws - 1) / rws * rws )) -f /tmp/flash-rd.bin "$RD" >> "$LOG" 2>&1 \
+        && head -c "$r" /tmp/flash-rd.bin | cmp -s - "$K/rootfs.img.gz" \
+        || { rm -f /tmp/flash-rd.bin; log "STOP: $RD is not the key's rootfs.img.gz (step 2's ramdisk); nothing written"; sync; exit 1; }
+    rm -f /tmp/flash-rd.bin
+    log "the ramdisk in $RD is the key's rootfs.img.gz"
+fi
 
 # --- the rabbit's settings to the key, kept anyway ----------------------
 mkdir -p "$F/conf-backup" && cp -a /usr/etc/conf/. "$F/conf-backup/" 2> /dev/null
@@ -78,5 +92,9 @@ else
 fi
 rm -f /tmp/flash-rb.bin
 sync
-[ "${FLASH_NO_REBOOT:-0}" = 1 ] || reboot
+# reboot -f, as LapinLibre's install: the key's autorun runs from linuxrc,
+# before init, and a plain reboot asks init, which is not there yet. Gengar
+# kept running its 2.6.32 after the write (2026-11-25, the emulator's
+# stand-in reboot could not show it).
+[ "${FLASH_NO_REBOOT:-0}" = 1 ] || reboot -f
 exit $rc
