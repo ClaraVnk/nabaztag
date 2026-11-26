@@ -84,9 +84,17 @@ void oki_play(uint16_t page, uint32_t length)
      * as the attenuation (0xFF - volume) >> 4 to 0x63, then 0x39 <- 5):
      * silent, normal, loud. */
     static const uint8_t att[3] = { 0x0F, 0x03, 0x00 };
-    uint8_t lvl = input_volume();
+    uint8_t lvl;
+    /* The chip's power-up, then the switch, as Violet's 0x5FDE: 0x200A
+     * (0x31 <- 0, 0x29 <- 0), 0x1FE4 (0x31 <- 1, 10 ms, 0x29 <- 2). */
+    oki_wr(0x31, 0x00); oki_wr(0x29, 0x00);
+    oki_wr(0x31, 0x01); delay_ms(10); oki_wr(0x29, 0x02);
+    lvl = input_volume_read();
     oki_bursts = 0; oki_stalls = 0;
-    if(lvl == 0) { log_line("oki: silent (sound switch)"); oki_last = 2; return; }
+    if(lvl == 0) {
+      oki_wr(0x29, 0x00); oki_wr(0x31, 0x00);
+      log_line("oki: silent (sound switch)"); oki_last = 2; return;
+    }
     oki_wr(0x63, att[lvl]); oki_wr(0x39, 0x05);
   }
   flash_read(page, 8, &rate, 1);

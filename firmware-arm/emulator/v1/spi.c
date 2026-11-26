@@ -175,6 +175,10 @@ static uint8_t oki_byte(uint8_t in)
 
 static void oki_release(void)
 {
+  /* Register 31 powers the sound side, and with it the sound switch's
+   * divider on AN0 (main.c): Violet's 1.4b reads the switch only after
+   * writing 31 <- 1 (0x1FE4). */
+  if(oki_n == 2 && oki_reg == 0x31) B.oki_power = oki_first & 1;
   if(!(B.trace_bus || B.trace_oki) || oki_n < 2) return;
   if(oki_n == 2) board_log("oki: reg %02X <- %02X", oki_reg, oki_first);
   else if(B.trace_oki) board_log("oki: reg %02X <- %d bytes %s", oki_reg, oki_n - 1, oki_hex);

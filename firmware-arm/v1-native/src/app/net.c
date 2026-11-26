@@ -393,6 +393,9 @@ static void tcp_send(uint8_t flags, uint8_t with_request)
         puts_code("&sp="); put_hex_upper(oki_last);
         put_hex_upper((uint8_t)(oki_bursts >> 8)); put_hex_upper((uint8_t)oki_bursts);
         put_hex_upper((uint8_t)(oki_stalls >> 8)); put_hex_upper((uint8_t)oki_stalls);
+        /* the switch's raw reading at that sound (input.c), to check the
+         * three levels on the rabbit */
+        puts_code("&va="); put_hex_upper(input_volume_adc);
         oki_last = 0;
       }
     }

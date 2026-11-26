@@ -6,7 +6,7 @@
  *         [--mac 0019db00beef] [--warren host] [--port80 port] [--ssid name] [--trace-pins] [--trace-bus]
  *         [--trace-net] [--hot] [--hand EAR SLOTS AT_SECONDS]...
  *         [--press AT_SECONDS HOLD_SECONDS]... [--stall EAR]
- *         [--an0 REST] [--sound-press AT_SECONDS]...
+ *         [--slider 0|1|2] [--slider-at SECONDS 0|1|2]...
  *         [--server-vanish AT] [--server-close AT] [--link-down AT SECONDS]
  *         [--dns-mute UNTIL_SECONDS] [--pic 6525|6627] [--pic-flash FILE] [--trace-flash]
  *         [--trace-oki]
@@ -78,22 +78,28 @@ static void pic_flash_save(void)
   fclose(f);
 }
 
-/* The sound button on AN0, a push button (Lazare, 2026-11-26: 0 at rest,
- * about 0xDA in ADRESH while pressed): --an0 sets the rest value (10 bits),
- * --sound-press AT holds it pressed for 200 ms. */
-static uint64_t sound_at[4];
-static int sound_presses, an0_rest = -1;
+/* The sound switch on AN0: a three-position slider (Clara, 2026-11-26),
+ * left silent, middle normal, right loud. Its divider is fed by the sound
+ * side: AN0 reads 0 unless the OKI is powered (register 31, spi.c), as
+ * Lazare showed (00 in every position at rest) and Violet's 1.4b implies
+ * (it reads the switch only after the chip's power-up). --slider POS sets
+ * the position from the start (1 by default), --slider-at SECONDS POS moves
+ * it; the readings are Violet's three bands (ADRESH < 0x40, < 0xC0, else). */
+static const uint16_t slider_adc[3] = { 0x10 << 2, 0x80 << 2, 0xF0 << 2 };
+static int slider = 1, slider_moves;
+static struct { uint64_t at; int pos; } slider_move[4];
 
 static void sound_poll(void)
 {
   uint64_t now = board_ms();
-  for(int i = 0; i < sound_presses; i++) {
-    if(sound_at[i] && now >= sound_at[i] && now < sound_at[i] + 200) {
-      if(B.adc[0] != 0x368) { B.adc[0] = 0x368; board_log("sound button: pressed"); }
-      return;
+  for(int i = 0; i < slider_moves; i++)
+    if(slider_move[i].at && now >= slider_move[i].at) {
+      slider = slider_move[i].pos;
+      board_log("sound switch: moved to %d", slider);
+      slider_move[i].at = 0;
     }
-  }
-  if(an0_rest >= 0 && B.adc[0] != an0_rest) B.adc[0] = (uint16_t)an0_rest;
+  uint16_t want = B.oki_power ? slider_adc[slider] : 0;
+  if(B.adc[0] != want) B.adc[0] = want;
 }
 
 static void button_poll(void)
@@ -168,9 +174,12 @@ int main(int argc, char **argv)
       press[presses].until_ms = press[presses].at_ms + (uint64_t)(atof(argv[i+2]) * 1000);
       presses++; i += 2;
     }
-    else if(!strcmp(argv[i], "--an0") && i + 1 < argc) an0_rest = atoi(argv[++i]);
-    else if(!strcmp(argv[i], "--sound-press") && i + 1 < argc && sound_presses < 4)
-      sound_at[sound_presses++] = (uint64_t)(atof(argv[++i]) * 1000);
+    else if(!strcmp(argv[i], "--slider") && i + 1 < argc) slider = atoi(argv[++i]) % 3;
+    else if(!strcmp(argv[i], "--slider-at") && i + 2 < argc && slider_moves < 4) {
+      slider_move[slider_moves].at = (uint64_t)(atof(argv[i+1]) * 1000);
+      slider_move[slider_moves++].pos = atoi(argv[i+2]) % 3;
+      i += 2;
+    }
     else if(!strcmp(argv[i], "--stall") && i + 1 < argc) ears_stall(atoi(argv[++i]));
     else if(!strcmp(argv[i], "--mac") && i + 1 < argc) {
       unsigned v[6];

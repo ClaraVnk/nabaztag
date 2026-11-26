@@ -75,7 +75,10 @@ while True:
     elif "/vl/v1/snd" in first and SOUND:
         body, ctype = SOUND, b"application/octet-stream"
     else:
-        polls += 1
+        # Counted from each start (st=00): the once-frames come to every run
+        # of a proof that starts the rabbit several times (the sound switch
+        # on silent, 2026-11-26), not to the first run alone.
+        polls = 1 if "st=00" in first else polls + 1
         body = BODY[:-2] + (ONCE if polls == 2 else THIRD if polls == 3 else b"") + BODY[-2:]
         ctype = b"text/html;charset=ISO-8859-1"
     head = (b"HTTP/1.0 200 OK\r\nContent-Type: " + ctype + b"\r\n"
