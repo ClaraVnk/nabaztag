@@ -6,7 +6,7 @@
 # reaches the rabbit, which runs LapinLibre's own Buildroot system.
 FROM docker.io/library/ubuntu:24.04
 ARG LL_REPO=https://github.com/ClaraVnk/LapinLibre.git
-ARG LL_COMMIT=12db6de
+ARG LL_COMMIT=2987d19
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates sudo python3 \
  && git clone "$LL_REPO" /ll && git -C /ll checkout -q "$LL_COMMIT" \
  && cd /ll && bash scripts/host-prereqs.sh --install \
