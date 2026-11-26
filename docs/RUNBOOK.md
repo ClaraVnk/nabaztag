@@ -1647,6 +1647,7 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
+<<<<<<< HEAD
 ### Terrier OS 1.0.0: the key with Linux 6.1 (2026-11-26)
 
 `karotz/lapinlibre/build.sh` builds the flash kernel first (`karotz/kernel`,
@@ -1674,6 +1675,26 @@ back from mtd1, identical", "rootfs.img.gz: read back from mtd2, identical",
 adoption key in place, the client "TLSv1.3 ... idle, ready". The first
 install started under 6.1.
 
+=======
+### The Karotz's camera on Linux 6.1 (2026-11-26)
+
+Under 6.1 there was no camera at all ("the camera gave no picture", Gengar
+on Terrier OS 1.0.0): LapinLibre's 2.6.32 driver was never ported.
+`karotz/kernel/rabbitv3/rabbitv3-camif.c` is that driver on 6.1, hooked in
+by `hook.sh` as the ears were: the same misc device `/dev/camera`, read()
+and the VGA/QVGA ioctls, so webcam-daemon and the API's snapshot are
+unchanged. Underneath: gpiolib and `s3c_gpio_cfgpin` (GPJ0-12 function 2,
+SCCB on GPG7/GPG3, power-down GPG5), `clk_prepare_enable`, CAMDIVN written
+for the sensor's 6 MHz (UPLL / 8), coherent image buffers (the ARM920T's
+cache), read() bounded by a buffer (the original copied what was asked).
+
+    podman run --rm -e OUT=/out -v <dir>:/out:Z karotz-kernel61    # the flash kernel
+    # 2026-11-26: 2,534,800 bytes, FITS
+    karotz/kexec/step5-roundtrip.sh <karotz> kernel <zImage> zImage-2632 rootfs.img.gz write
+    # Gengar: read back identical, rebooted; dmesg "OV7675 ... manufacture ID
+    #   0x7FA2", "product ID 0x7673", /dev/camera; cgi-bin/snapshot gave a
+    #   640x480 JPEG (44,673 bytes), sharp, colours right.
+>>>>>>> origin/karotz/camera-61
 
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
