@@ -1693,6 +1693,32 @@ cache), read() bounded by a buffer (the original copied what was asked).
     #   0x7FA2", "product ID 0x7673", /dev/camera; cgi-bin/snapshot gave a
     #   640x480 JPEG (44,673 bytes), sharp, colours right.
 
+### Every driver of the Karotz answering on Linux 6.1 (2026-11-27)
+
+`karotz/kernel/drivers-check.sh` runs on the rabbit and makes each driver do
+something real through LapinLibre's local API (the client's password, from
+its settings): the flash read, a file round trip on `/usr`, the gateway
+pinged over the Wi-Fi dongle, the LED (SPI), both ears out and back (their
+encoder interrupts), a sound file over I2S/DMA, a picture (measured, then
+deleted on the rabbit), the RFID reader's I2C polling, the
+microcontroller's UART, then the button (a press with `BUTTON_WAIT`), the
+power device, the watchdog (never opened), the RTC and the USB gadget bound.
+The microphone is checked as present only; nothing is recorded.
+
+    ssh root@<karotz> 'BUTTON_WAIT=20 sh -s' < karotz/kernel/drivers-check.sh
+    # Gengar, 1.0.0 key 770d755b9e610347: 16 ok, 1 failed (rtc: the
+    #   s3c2410-rtc device unbound, 6.1's rtc-s3c matching device trees
+    #   only) -> rtc-s3c-platform.patch.
+    # Then the patched kernel written by flash-kernel: bound, but hwclock
+    #   EINVAL: linuxrc made /dev/rtc0 254:0, gpiochip's major under 6.1
+    #   (the RTC is 253) -> linuxrc takes the numbers from sysfs (fork
+    #   06830c2). With the node remade by hand: 17 ok, 0 failed.
+
+Not a driver: the local API's speech (`cgi-bin/tts`) goes through
+voice-daemon and the speech server of `voice.conf`, Mindscape's, gone; the
+stream opens and never runs, and the API still answers `"played":true`.
+The Le Terrier client's speech comes as a sound file and plays.
+
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
 `karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,
