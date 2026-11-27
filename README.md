@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://terrier.cyberloutre.fr/"><img src="https://img.shields.io/badge/warren-Le%20Terrier-8957e5?style=flat-square" alt="Le Terrier, the hosted warren"></a>
   <img src="https://img.shields.io/badge/firmware-Naboot%201.2.1.4-8957e5?style=flat-square" alt="Naboot 1.2.1.4">
+  <a href="https://github.com/ClaraVnk/nabaztag/releases/tag/terrier-os-1.0.0"><img src="https://img.shields.io/badge/Karotz-Terrier%20OS%201.0.0%20%C2%B7%20Linux%206.1-8957e5?style=flat-square" alt="Terrier OS 1.0.0, Linux 6.1"></a>
   <a href="https://github.com/ClaraVnk/terrier-ha"><img src="https://img.shields.io/badge/HACS-integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white" alt="HACS integration"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
 </p>
@@ -62,7 +63,7 @@ project brings them back:
 
   It has no microphone and no RFID reader.
 - **Karotz (v3, 2011)** — works, on Le Terrier, two ways:
-  - **Terrier OS** (beta): our build of
+  - **Terrier OS** (beta, [1.0.0](https://github.com/ClaraVnk/nabaztag/releases/tag/terrier-os-1.0.0)): our build of
     [LapinLibre](https://github.com/sweetlilmre/LapinLibre), written to a USB
     key with Raspberry Pi Imager ([the guide](https://terrier.cyberloutre.fr/karotz);
     `karotz/lapinlibre/`). The Wi-Fi is set in Imager, WPA3 included; the
@@ -71,10 +72,11 @@ project brings them back:
   - **FreeRabbits OS** with OpenKarotz, and the client installed on it
     (WPA2): the Karotz's original system, brought back by FreeRabbits.
 
-  Terrier OS moves from Linux 2.6.32 to **Linux 6.1 LTS**: it runs on a
-  real Karotz (Gengar), started from the USB key, with its USB hub, Wi-Fi
-  and the Terrier's client; writing it into the rabbit's flash is the next
-  step (`karotz/kernel/`).
+  Since Terrier OS 1.0.0 (27 November 2026) the key writes **Linux 6.1 LTS**
+  into the rabbit's flash in place of its 2.6.32 of 2009, read back after
+  writing: every driver ported (`karotz/kernel/`), the camera and the clock
+  included, each one made to answer on a real Karotz by
+  `karotz/kernel/drivers-check.sh` (17 of 17 on Gengar).
 
   Either way the client adopts it like a v2 (its own key, TLS 1.3), takes the
   same commands, updates itself signed, and sends a Wi-Fi and a diagnostic
