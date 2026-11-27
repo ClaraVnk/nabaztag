@@ -411,6 +411,22 @@ hardware, and the emulated NAND (or the old measure it is made from) is
 what differs. The round trip moves to the hardware, on mtd7 as above;
 QEMU keeps the script as the control of a new measure only.
 
+**Done on Gengar (2026-11-26), PASS.** mtd7 cannot hold YAFFS (six
+blocks: "NAND geometry problems", the same geometry as mtd6, too few
+blocks), so the round trip ran in `/usr/step5` itself, the settings first
+copied to Clara's computer (`/usr/etc/conf`, the flash's and the RAM's;
+the key, failing reads, was not used). Under 6.1.192: `/usr` read-write a
+moment, a 200 KB blob and a file written, read back after dropping the
+caches, `/usr` read-only again, the libraries of the morning unchanged.
+Then `flash-kernel` from RAM (`KEY=/var/fk`): 2.6.32 into mtd1, read back
+identical; under 2.6.32 the blob and the file read right, the libraries
+unchanged, a file of its own written. Then 6.1 back the same way (mtd2
+checked as the key's ramdisk), and 6.1 read all three files right. The
+NAND has no ECC on either kernel, YAFFS does its own (karotz-6.1.config).
+The tool: `karotz/kexec/step5-roundtrip.sh` (backup, write61, kernel,
+check). Next: `/usr` read-write under 6.1 in the ramdisk (step 2's
+linuxrc), its settings then kept across reboots.
+
 ## 5. Sources
 
 - Gengar's measure, 2026-11-23: measure/log.txt (`/proc/mtd`,
