@@ -1647,6 +1647,78 @@ it: the BIOS's own line (`initrd=0x31800000,0x00500000 root=/dev/ram ...
 mem=65536K`), 64 MiB, the ramdisk mounted, `/linuxrc` and Terrier OS's
 `[START]`. Next: step 2, the 6.1 kernel and its modules in the flash.
 
+### Terrier OS 1.0.0: the key with Linux 6.1 (2026-11-26)
+
+`karotz/lapinlibre/build.sh` builds the flash kernel first (`karotz/kernel`,
+GCC 16.1.0 and binutils 2.45.1 pinned, the banner's date fixed) and the key
+writes it into mtd1 (`LL_FLASH_KERNEL`, fork `terrier-os-1.0.0`);
+`LL_FLASH_KERNEL=2632` builds the old way. The fork's install also reads
+mtd1 and mtd2 back (written once more on a difference), keeps the owner's
+client options (`--ears-up`) and, with no `LANGUAGE` on the key, speaks the
+rabbit's own language. On the dev VM:
+
+    LL_WORK_DIR=$HOME/lapinlibre-100 LL_STAGES="check image" sh karotz/lapinlibre/build.sh
+    # 2026-11-26: zImage 2,530,528 bytes, sha256 4cc85dcc... (twice the same;
+    #   the first try differed: BusyBox's date refused "... UTC", and the
+    #   built-in initramfs took the build's time), build 770d755b9e610347
+    python3 -m unittest tests.image.test_usbkey      # in lapinlibre-build, on that work dir
+    # 43 tests OK (patches 0001 and 0002 now update the tests they broke)
+    KERNEL=<key>/zImage RAMDISK=<key>/rootfs.img.gz \
+      karotz/kernel/qemu-mini2440/bios-boot.sh <dir> <measure dir> 240
+    # "[START] LapinLibre 1.0.0", Linux 6.1.192 (terrier-os@build), /usr read-write
+
+On Gengar by key, the same evening (under 6.1 already, 0.3.1): "zImage: read
+back from mtd1, identical", "rootfs.img.gz: read back from mtd2, identical",
+"the client's options kept: --ears-up 14"; rebooted into 1.0.0, Linux 6.1.192
+(terrier-os@build), mtd1 = the key's zImage (2f33ce89...), `/usr` rw, the
+adoption key in place, the client "TLSv1.3 ... idle, ready". The first
+install started under 6.1.
+
+### The Karotz's camera on Linux 6.1 (2026-11-26)
+
+Under 6.1 there was no camera at all ("the camera gave no picture", Gengar
+on Terrier OS 1.0.0): LapinLibre's 2.6.32 driver was never ported.
+`karotz/kernel/rabbitv3/rabbitv3-camif.c` is that driver on 6.1, hooked in
+by `hook.sh` as the ears were: the same misc device `/dev/camera`, read()
+and the VGA/QVGA ioctls, so webcam-daemon and the API's snapshot are
+unchanged. Underneath: gpiolib and `s3c_gpio_cfgpin` (GPJ0-12 function 2,
+SCCB on GPG7/GPG3, power-down GPG5), `clk_prepare_enable`, CAMDIVN written
+for the sensor's 6 MHz (UPLL / 8), coherent image buffers (the ARM920T's
+cache), read() bounded by a buffer (the original copied what was asked).
+
+    podman run --rm -e OUT=/out -v <dir>:/out:Z karotz-kernel61    # the flash kernel
+    # 2026-11-26: 2,534,800 bytes, FITS
+    karotz/kexec/step5-roundtrip.sh <karotz> kernel <zImage> zImage-2632 rootfs.img.gz write
+    # Gengar: read back identical, rebooted; dmesg "OV7675 ... manufacture ID
+    #   0x7FA2", "product ID 0x7673", /dev/camera; cgi-bin/snapshot gave a
+    #   640x480 JPEG (44,673 bytes), sharp, colours right.
+
+### Every driver of the Karotz answering on Linux 6.1 (2026-11-27)
+
+`karotz/kernel/drivers-check.sh` runs on the rabbit and makes each driver do
+something real through LapinLibre's local API (the client's password, from
+its settings): the flash read, a file round trip on `/usr`, the gateway
+pinged over the Wi-Fi dongle, the LED (SPI), both ears out and back (their
+encoder interrupts), a sound file over I2S/DMA, a picture (measured, then
+deleted on the rabbit), the RFID reader's I2C polling, the
+microcontroller's UART, then the button (a press with `BUTTON_WAIT`), the
+power device, the watchdog (never opened), the RTC and the USB gadget bound.
+The microphone is checked as present only; nothing is recorded.
+
+    ssh root@<karotz> 'BUTTON_WAIT=20 sh -s' < karotz/kernel/drivers-check.sh
+    # Gengar, 1.0.0 key 770d755b9e610347: 16 ok, 1 failed (rtc: the
+    #   s3c2410-rtc device unbound, 6.1's rtc-s3c matching device trees
+    #   only) -> rtc-s3c-platform.patch.
+    # Then the patched kernel written by flash-kernel: bound, but hwclock
+    #   EINVAL: linuxrc made /dev/rtc0 254:0, gpiochip's major under 6.1
+    #   (the RTC is 253) -> linuxrc takes the numbers from sysfs (fork
+    #   06830c2). With the node remade by hand: 17 ok, 0 failed.
+
+Not a driver: the local API's speech (`cgi-bin/tts`) goes through
+voice-daemon and the speech server of `voice.conf`, Mindscape's, gone; the
+stream opens and never runs, and the API still answers `"played":true`.
+The Le Terrier client's speech comes as a sound file and plays.
+
 ### FLASH-PLAN step 3 in QEMU: the kernel written from the key (2026-11-25)
 
 `karotz/kexec/flash-kernel` (FLASH-PLAN step 3) in the Karotz OTA emulator,

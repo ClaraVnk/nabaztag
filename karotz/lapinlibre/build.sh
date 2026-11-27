@@ -21,6 +21,20 @@ podman build -t lapinlibre-build -f "$HERE/Containerfile" "$HERE"
 # install.conf, the rabbit's status and make-img.sh's file names carry; the LapinLibre commit
 # the build came from stays in /karotz/etc/lapinlibre-base (patches/0002).
 VERSION=$(tr -d ' \n' < "$HERE/VERSION")
-flock "$HOME/heavy.lock" podman run --rm --privileged -e LL_STAGES="${LL_STAGES:-$STAGES}" -e LL_REUSE_UNCHANGED=1 \
-    -e LL_BUILD_VERSION="${LL_BUILD_VERSION:-$VERSION}" --userns=keep-id:uid=1000,gid=1000 -v "$W:/work:Z" lapinlibre-build
+# Terrier OS 1.0.0 and up: the key writes Linux 6.1 into mtd1 (FLASH-PLAN, steps 1 to 6 on
+# Gengar), built here from karotz/kernel with its pinned compiler; LL_FLASH_KERNEL=2632 keeps
+# LapinLibre's 2.6.32 (the builds before 1.0.0).
+FK=
+if [ "${LL_FLASH_KERNEL:-61}" != 2632 ]; then
+    K="$HERE/../kernel"
+    podman build -t karotz-kernel61 -f "$K/Containerfile" "$K"
+    mkdir -p "$W/kernel61"
+    flock -o "$HOME/heavy.lock" podman run --rm -e OUT=/out -v "$W/kernel61:/out:Z" karotz-kernel61 > "$W/kernel61/build.log" 2>&1
+    grep -E "^== |FITS|TOO BIG" "$W/kernel61/build.log"
+    grep -qx FITS "$W/kernel61/build.log"
+    FK=/work/kernel61/zImage
+fi
+flock -o "$HOME/heavy.lock" podman run --rm --privileged -e LL_STAGES="${LL_STAGES:-$STAGES}" -e LL_REUSE_UNCHANGED=1 \
+    -e LL_BUILD_VERSION="${LL_BUILD_VERSION:-$VERSION}" -e LL_FLASH_KERNEL="$FK" \
+    --userns=keep-id:uid=1000,gid=1000 -v "$W:/work:Z" lapinlibre-build
 ls "$W/usbkey"
