@@ -13,7 +13,9 @@
 #
 # POD_NET: the pod on that podman network instead of a published port (the
 # Terrier's karotz/proof/tagtagtag.sh, a test Terrier beside it); PROOF_DIR:
-# mounted at /proof in the nabd container (its observer, ttt-observe.py).
+# mounted at /proof in the nabd container (its observer, ttt-observe.py);
+# LOGLEVEL=DEBUG: nabd logs the exception that makes it drop a service
+# (service_loop logs it at debug only, 2026-11-27).
 set -eu
 PYNAB_COMMIT=${PYNAB_COMMIT:-f24d3e1}      # nabaztag2018/pynab, 2025-01-12
 POD=${POD:-tagtagtag}
@@ -43,7 +45,7 @@ up)
     -e POSTGRES_DB=pynab docker.io/library/postgres:11-alpine >/dev/null
   # shellcheck disable=SC2086
   podman run -d -q --pod "$POD" --name "$POD-nabd" -v "$SRC:/opt/pynab:Z,U" $PROOF_MOUNT \
-    -e NABD_HOST=127.0.0.1 -e PGHOST=127.0.0.1 -e PGUSER=pynab -e PGPASSWORD=pynab -e PGDATABASE=pynab -e DAEMONS= \
+    -e LOGLEVEL="${LOGLEVEL:-INFO}" -e NABD_HOST=127.0.0.1 -e PGHOST=127.0.0.1 -e PGUSER=pynab -e PGPASSWORD=pynab -e PGDATABASE=pynab -e DAEMONS= \
     "pynab-dev:$PYNAB_COMMIT" /bin/bash /usr/local/bin/run-pynab.sh >/dev/null
   i=0; until podman logs "$POD-nabd" 2>&1 | grep -q "Starting nabd"; do
     i=$((i + 1)); [ $i -lt 120 ] || { podman logs "$POD-nabd" 2>&1 | tail -20; exit 1; }; sleep 2; done
