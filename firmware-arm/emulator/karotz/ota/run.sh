@@ -7,9 +7,11 @@ python3 /ota/cpio-list.py /ota/rootfs / /ota/key /mnt/usbkey > /tmp/list
 echo "file /init /ota/init.sh 755 0 0" >> /tmp/list
 # flash-proof.sh mounts karotz/kexec/flash-kernel at /ota/flash-kernel in the
 # container; the guest boots its own initramfs, so it goes in there too.
-if [ -f /ota/flash-kernel ]; then
+if [ -f /ota/flash-kernel ] || [ -f /ota/flash-ramdisk ]; then
     echo "dir /ota 755 0 0" >> /tmp/list
-    echo "file /ota/flash-kernel /ota/flash-kernel 755 0 0" >> /tmp/list
+    for t in flash-kernel flash-ramdisk; do
+        [ -f /ota/$t ] && echo "file /ota/$t /ota/$t 755 0 0" >> /tmp/list
+    done
 fi
 /ota/gen_init_cpio /tmp/list | gzip -1 > /tmp/initramfs.gz
 echo "initramfs: $(wc -c < /tmp/initramfs.gz) bytes"

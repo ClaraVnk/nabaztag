@@ -114,6 +114,81 @@ case " $(cat /proc/cmdline) " in *" ota=kernel"*)
     sleep 600 ;;                      # poweroff returns before QEMU stops: nothing after it runs
 esac
 
+# ota=ramdisk* (flash-proof.sh): FLASH-PLAN step 6, karotz/kexec/flash-ramdisk
+# (at /ota/flash-ramdisk) writing a new ramdisk into mtd2 over the installed
+# one, mtd1 and /usr untouched. ramdisk-fault1: the first read-back of the
+# new one spoiled (written again); ramdisk-fault2: every one (the old one
+# written back). Then the refusals: a bad MD5SUMS-ramdisk, mtd2 not the old
+# ramdisk, a broken gzip; and go-ramdisk-back.
+case " $(cat /proc/cmdline) " in *" ota=ramdisk"*)
+    K=/mnt/usbkey; F=$K/flash
+    FAULT=$(sed -n 's/.* ota=ramdisk-fault\([12]\).*/\1/p' /proc/cmdline)
+    echo "OTA: ramdisk write, fault ${FAULT:-none}"
+    nandwrite -q -p /dev/mtd1 $K/zImage; nandwrite -q -p /dev/mtd2 $K/rootfs.img.gz
+    mkdir -p $F && cp $K/rootfs.img.gz $F/rootfs-old.img.gz
+    # The new ramdisk: the old one's bytes changed, a whole gzip all the same.
+    head -c 3000000 /dev/urandom | gzip -1 > $F/rootfs-new.img.gz
+    ( cd $F && md5sum rootfs-new.img.gz rootfs-old.img.gz > MD5SUMS-ramdisk )
+    z=$(wc -c < $K/zImage); n=$(wc -c < $F/rootfs-new.img.gz); o=$(wc -c < $F/rootfs-old.img.gz)
+    pages() { echo $(( ($1 + 2047) / 2048 * 2048 )); }
+    nanddump -q -l $(pages $z) -f /var/tmp/mtd1-before.bin /dev/mtd1
+    if [ -n "$FAULT" ]; then
+        # nanddump spoiled on mtd2 when it reads anything but the old ramdisk:
+        # once (fault 1) or each time (fault 2).
+        WHERE=$(command -v nanddump); REAL=$WHERE.real
+        cp "$WHERE" "$REAL" && rm -f "$WHERE"
+        printf '#!/bin/sh\n%s "$@"\nout=""; dev=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && out=$2; dev=$1; shift; done\nn=$(cat /var/tmp/spoil 2>/dev/null || echo 0)\nif [ "$n" -gt 0 ] && [ -n "$out" ] && [ "$dev" = /dev/mtd2 ] && ! head -c $(wc -c < /mnt/usbkey/flash/rootfs-old.img.gz) "$out" | cmp -s - /mnt/usbkey/flash/rootfs-old.img.gz; then printf "\\377" | dd of="$out" bs=1 seek=1000 conv=notrunc 2>/dev/null; [ "$n" = 9 ] || echo $((n - 1)) > /var/tmp/spoil; fi\n' "$REAL" > "$WHERE"
+        chmod 755 "$WHERE"
+        [ "$FAULT" = 1 ] && echo 1 > /var/tmp/spoil || echo 9 > /var/tmp/spoil
+    fi
+    check() { if eval "$2"; then echo "OTA-PASS $1"; else echo "OTA-FAIL $1"; fi; }
+    touch $F/go-ramdisk
+    KEY=$K FLASH_NO_REBOOT=1 FLASH_RAMDISK_NAME= sh /ota/flash-ramdisk; rc=$?
+    echo "OTA: flash-ramdisk returned $rc; its log:"; cat $F/log.txt
+    rm -f /var/tmp/spoil
+    D=$(command -v nanddump.real || command -v nanddump)
+    $D -q -l $(pages $n) -f /var/tmp/mtd2.bin /dev/mtd2
+    $D -q -l $(pages $z) -f /var/tmp/mtd1.bin /dev/mtd1
+    if [ "$FAULT" = 2 ]; then
+        check "it gave up on the new ramdisk and said so" "[ $rc = 2 ] && grep -q 'FAILED: the new ramdisk' $F/log.txt"
+        $D -q -l $(pages $o) -f /var/tmp/mtd2.bin /dev/mtd2
+        check "the old ramdisk is back in mtd2" "head -c $o /var/tmp/mtd2.bin | cmp -s - $F/rootfs-old.img.gz"
+    else
+        check "it wrote the new ramdisk" "[ $rc = 0 ] && grep -q 'DONE: the new ramdisk' $F/log.txt"
+        check "the new ramdisk is in mtd2" "head -c $n /var/tmp/mtd2.bin | cmp -s - $F/rootfs-new.img.gz"
+        [ "$FAULT" = 1 ] && check "a spoiled read-back was written once more" "grep -q 'once more' $F/log.txt"
+    fi
+    check "the kernel (mtd1) was not touched" "cmp -s /var/tmp/mtd1.bin /var/tmp/mtd1-before.bin"
+    check "/usr was not touched: key, settings, client" "grep -q THE-ADOPTION-KEY /usr/etc/conf/terrier/key && grep -q lang=fr /usr/etc/conf/voice.conf"
+    check "the settings were copied to the key" "grep -q THE-ADOPTION-KEY $F/conf-backup/terrier/key"
+    check "the triggers are gone" "[ ! -e $F/go-ramdisk ] && [ ! -e $F/go-ramdisk-back ]"
+    if [ "$FAULT" != 2 ]; then
+        # mtd2 now holds the new one: go-ramdisk again finds it is not the old one.
+        touch $F/go-ramdisk
+        KEY=$K FLASH_NO_REBOOT=1 FLASH_RAMDISK_NAME= sh /ota/flash-ramdisk; rc=$?
+        check "mtd2 not the old ramdisk writes nothing" "[ $rc = 1 ] && grep -q 'not rootfs-old.img.gz' $F/log.txt"
+        # The way back.
+        touch $F/go-ramdisk-back
+        KEY=$K FLASH_NO_REBOOT=1 FLASH_RAMDISK_NAME= sh /ota/flash-ramdisk; rc=$?
+        $D -q -l $(pages $o) -f /var/tmp/mtd2.bin /dev/mtd2
+        check "go-ramdisk-back wrote the old ramdisk" "[ $rc = 0 ] && head -c $o /var/tmp/mtd2.bin | cmp -s - $F/rootfs-old.img.gz"
+        # A bad MD5SUMS-ramdisk, then a broken gzip: nothing written.
+        echo "00000000000000000000000000000000  rootfs-new.img.gz" > $F/MD5SUMS-ramdisk; touch $F/go-ramdisk
+        KEY=$K FLASH_NO_REBOOT=1 FLASH_RAMDISK_NAME= sh /ota/flash-ramdisk; rc=$?
+        $D -q -l $(pages $o) -f /var/tmp/mtd2.bin /dev/mtd2
+        check "a bad MD5SUMS-ramdisk writes nothing" "[ $rc = 1 ] && head -c $o /var/tmp/mtd2.bin | cmp -s - $F/rootfs-old.img.gz"
+        head -c 100000 $F/rootfs-new.img.gz > /var/tmp/cut.gz && mv /var/tmp/cut.gz $F/rootfs-new.img.gz
+        ( cd $F && md5sum rootfs-new.img.gz rootfs-old.img.gz > MD5SUMS-ramdisk ); touch $F/go-ramdisk
+        KEY=$K FLASH_NO_REBOOT=1 FLASH_RAMDISK_NAME= sh /ota/flash-ramdisk; rc=$?
+        $D -q -l $(pages $o) -f /var/tmp/mtd2.bin /dev/mtd2
+        check "a broken gzip writes nothing" "[ $rc = 1 ] && grep -q 'not a whole gzip' $F/log.txt && head -c $o /var/tmp/mtd2.bin | cmp -s - $F/rootfs-old.img.gz"
+    fi
+    check "it restarts the rabbit with reboot -f" "grep -q 'reboot -f' /ota/flash-ramdisk"
+    echo "OTA-RESULT"
+    /bin/busybox poweroff -f
+    sleep 600 ;;
+esac
+
 # ota=package (run.sh OTA_MODE): no stick. The update from the rabbit's page
 # puts the package where installs keep things, the client's own folder, and
 # shows it to the install where it reads the stick (KEY=/mnt/usbkey).
