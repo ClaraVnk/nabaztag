@@ -55,6 +55,10 @@ RUN cd /linux && patch -p1 < /k/s3c2410-nand-inithw.patch
 # sound card's stop crashed the kernel on Gengar, 2026-11-24.
 COPY s3c24xx-dma-tx-status.patch /k/
 RUN cd /linux && patch -p1 < /k/s3c24xx-dma-tx-status.patch
+# The board's RTC bound again (rtc-s3c-platform.patch): 6.1's driver matched
+# device trees only, Gengar's /dev/rtc0 had no driver, 2026-11-27.
+COPY rtc-s3c-platform.patch /k/
+RUN cd /linux && patch -p1 < /k/rtc-s3c-platform.patch
 # The Karotz's board file (step 4): machine 1912, ported from 2.6.32.
 COPY rabbitv3/ /k/rabbitv3/
 RUN sh /k/rabbitv3/hook.sh /linux
