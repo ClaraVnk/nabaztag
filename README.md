@@ -36,7 +36,7 @@ project brings them back:
   every day on real hardware. Naboot 1.2.1.4, stable.
   Guide: <https://terrier.cyberloutre.fr/naboot> · details: [`docs/NABOOT.md`](docs/NABOOT.md).
 - **Nabaztag:tag with a TagTagTag board (a v2 on [Pynab](https://github.com/nabaztag2018/pynab))**
-  — coming, on Le Terrier, as one more Pynab service: the Terrier's client
+  — beta, on Le Terrier (client 0.1.24, 27 November 2026), as one more Pynab service: the Terrier's client
   (the Karotz's, the same binary on the Pi Zero) talks to Pynab's `nabd` on
   the rabbit and moves nothing itself. Pynab stays the master and keeps
   everything it does alone; with the client stopped or uninstalled the
