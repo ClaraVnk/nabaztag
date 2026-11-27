@@ -70,8 +70,10 @@ n=$(irq s3c2410-spi)
 api_ok 'leds?color=FF00FF&nomemory=1' || fail led "the API refused the colour"
 sleep 1
 rose s3c2410-spi "$n" led "SPI written"
+# Back to the API's own LED state, or dark when it has none: its default is
+# green, which lit Gengar's belly after a check (2026-11-27).
 set -- $(cat /var/run/lapinlibre-web/led 2>/dev/null)
-api_ok "leds?color=${1:-00FF00}&pulse=${2:-0}&color2=${3:-000000}&speed=${4:-700}&nomemory=1" >/dev/null
+api_ok "leds?color=${1:-000000}&pulse=${2:-0}&color2=${3:-000000}&speed=${4:-700}&nomemory=1" >/dev/null
 
 # Ears: out and back, each ear's encoder interrupt counted.
 l=$(irq 'Left ear') r=$(irq 'Right Ear')
