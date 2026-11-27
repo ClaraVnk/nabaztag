@@ -2,16 +2,16 @@
 # Hooks the Karotz's board file (mach-rabbitv3.c, beside this script) into a
 # Linux 6.1 tree: machine 1912 back in mach-types (6.1 pruned it), its
 # Kconfig entry before MINI2440's, its objects in the Makefile (the board
-# and, step 5, its /dev/rabbit_* drivers). Step 4 of
+# and, step 5, its /dev/rabbit_* drivers; the camera, /dev/camera, 2026-11-26). Step 4 of
 # docs/TERRIER-OS-KERNEL.md. Usage: hook.sh <linux tree>
 set -eu
 L=${1:?linux tree}
 D=$(dirname "$0")
-cp "$D/mach-rabbitv3.c" "$D/rabbitv3-chardevs.c" "$L/arch/arm/mach-s3c/"
+cp "$D/mach-rabbitv3.c" "$D/rabbitv3-chardevs.c" "$D/rabbitv3-camif.c" "$D/rabbitv3-camif.h" "$L/arch/arm/mach-s3c/"
 grep -q "MACH_RABBITV3" "$L/arch/arm/tools/mach-types" ||
 	printf 'rabbitv3\t\tMACH_RABBITV3\t\tRABBITV3\t\t1912\n' >> "$L/arch/arm/tools/mach-types"
 grep -q "MACH_RABBITV3" "$L/arch/arm/mach-s3c/Makefile.s3c24xx" ||
-	printf 'obj-$(CONFIG_MACH_RABBITV3)\t\t+= mach-rabbitv3.o rabbitv3-chardevs.o\n' >> "$L/arch/arm/mach-s3c/Makefile.s3c24xx"
+	printf 'obj-$(CONFIG_MACH_RABBITV3)\t\t+= mach-rabbitv3.o rabbitv3-chardevs.o rabbitv3-camif.o\n' >> "$L/arch/arm/mach-s3c/Makefile.s3c24xx"
 K="$L/arch/arm/mach-s3c/Kconfig.s3c24xx"
 grep -q "MACH_RABBITV3" "$K" || {
 	awk '/^config MACH_MINI2440$/ {

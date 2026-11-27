@@ -1,0 +1,35 @@
+rtc-s3c matches device trees only in 6.1: the S3C2410 RTC that a board
+file registers (s3c_device_rtc, "s3c2410-rtc") is never bound, and
+/dev/rtc0 has no clock behind it. Gengar under 6.1, 2026-11-27
+(drivers-check.sh): the device in /sys/bus/platform/devices, no driver,
+hwclock failing; under 2.6.32 the board's RTC had its driver. The
+platform name back, with the S3C2410's data, as the driver had it before
+the S3C24xx board files went to device trees.
+--- a/drivers/rtc/rtc-s3c.c
++++ b/drivers/rtc/rtc-s3c.c
+@@ -409,6 +409,8 @@
+ 
+ 	info->dev = &pdev->dev;
+ 	info->data = of_device_get_match_data(&pdev->dev);
++	if (!info->data && platform_get_device_id(pdev))
++		info->data = (const void *)platform_get_device_id(pdev)->driver_data;
+ 	if (!info->data) {
+ 		dev_err(&pdev->dev, "failed getting s3c_rtc_data\n");
+ 		return -EINVAL;
+@@ -603,9 +605,16 @@
+ };
+ MODULE_DEVICE_TABLE(of, s3c_rtc_dt_match);
+ 
++static const struct platform_device_id s3c_rtc_ids[] = {
++	{ "s3c2410-rtc", (kernel_ulong_t)&s3c2410_rtc_data },
++	{ }
++};
++MODULE_DEVICE_TABLE(platform, s3c_rtc_ids);
++
+ static struct platform_driver s3c_rtc_driver = {
+ 	.probe		= s3c_rtc_probe,
+ 	.remove		= s3c_rtc_remove,
++	.id_table	= s3c_rtc_ids,
+ 	.driver		= {
+ 		.name	= "s3c-rtc",
+ 		.pm	= &s3c_rtc_pm_ops,

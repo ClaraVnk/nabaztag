@@ -35,6 +35,15 @@ project brings them back:
 - **Nabaztag:tag (v2, 2006)** — the rabbit this project was built on, tested
   every day on real hardware. Naboot 1.2.1.4, stable.
   Guide: <https://terrier.cyberloutre.fr/naboot> · details: [`docs/NABOOT.md`](docs/NABOOT.md).
+- **Nabaztag:tag with a TagTagTag board (a v2 on [Pynab](https://github.com/nabaztag2018/pynab))**
+  — coming, on Le Terrier, as one more Pynab service: the Terrier's client
+  (the Karotz's, the same binary on the Pi Zero) talks to Pynab's `nabd` on
+  the rabbit and moves nothing itself. Pynab stays the master and keeps
+  everything it does alone; with the client stopped or uninstalled the
+  rabbit is unchanged. Installed and removed with one command
+  (`install-tagtagtag.sh`, in its `tagtagtag-*` release). The test bench:
+  Pynab's own `nabd` with its virtual I/O (`firmware-arm/emulator/tagtagtag/`).
+  Guide: <https://terrier.cyberloutre.fr/tagtagtag>.
 - **Nabaztag v1 (2005)** — beta, on Le Terrier, two ways:
   - **Violet's own firmware**, untouched: point it at the Terrier in its setup
     page, ask for its code by e-mail on the adoption page and hold its head
@@ -80,6 +89,7 @@ you have a v1, the Terrier is the way in, and your feedback is what takes it
 out of beta.
 
 Guides: [v1](https://terrier.cyberloutre.fr/v1) ·
+[TagTagTag](https://terrier.cyberloutre.fr/tagtagtag) ·
 [Karotz](https://terrier.cyberloutre.fr/karotz) ·
 [manual](https://terrier.cyberloutre.fr/manuel) ·
 [FAQ](https://terrier.cyberloutre.fr/faq).
@@ -148,6 +158,10 @@ Found a bug, have a v1 or a Karotz to test?
   platform server; [dirk-thomas/karotz](https://github.com/dirk-thomas/karotz)
   — the Karotz's `Voos-message.proto`. The reference for
   `firmware-arm/emulator/karotz/fros/`.
+- [Pynab](https://github.com/nabaztag2018/pynab) and the TagTagTag board by
+  the nabaztag2018 team — the free system a TagTagTag runs; its `nabd`
+  protocol is what the Terrier's client speaks there, and its Docker image
+  is the TagTagTag test bench.
 
 Images: Home Assistant logo © the Home Assistant project. Nabaztag photo by
 Catalarem, via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Nabaztag1.jpg),
