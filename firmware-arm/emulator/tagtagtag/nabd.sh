@@ -10,6 +10,10 @@
 #   firmware-arm/emulator/tagtagtag/nabd.sh up      # nabd on 127.0.0.1:10543 (the pod)
 #   firmware-arm/emulator/tagtagtag/nabd.sh logs    # what nabd did
 #   firmware-arm/emulator/tagtagtag/nabd.sh down
+#
+# POD_NET: the pod on that podman network instead of a published port (the
+# Terrier's karotz/proof/tagtagtag.sh, a test Terrier beside it); PROOF_DIR:
+# mounted at /proof in the nabd container (its observer, ttt-observe.py).
 set -eu
 PYNAB_COMMIT=${PYNAB_COMMIT:-f24d3e1}      # nabaztag2018/pynab, 2025-01-12
 POD=${POD:-tagtagtag}
@@ -28,10 +32,17 @@ up)
     podman build -q -t "pynab-dev:$PYNAB_COMMIT" -f "$SRC/Docker/nab/Dockerfile.archive" "$SRC" >/dev/null
   fi
   podman pod rm -f "$POD" >/dev/null 2>&1 || true
-  podman pod create --name "$POD" -p 127.0.0.1:10543:10543 >/dev/null
+  if [ -n "${POD_NET:-}" ]; then
+    podman pod create --name "$POD" --network "$POD_NET" >/dev/null
+  else
+    podman pod create --name "$POD" -p 127.0.0.1:10543:10543 >/dev/null
+  fi
+  PROOF_MOUNT=""
+  [ -n "${PROOF_DIR:-}" ] && PROOF_MOUNT="-v $PROOF_DIR:/proof:z"
   podman run -d -q --pod "$POD" --name "$POD-db" -e POSTGRES_USER=pynab -e POSTGRES_PASSWORD=pynab \
     -e POSTGRES_DB=pynab docker.io/library/postgres:11-alpine >/dev/null
-  podman run -d -q --pod "$POD" --name "$POD-nabd" -v "$SRC:/opt/pynab:Z,U" \
+  # shellcheck disable=SC2086
+  podman run -d -q --pod "$POD" --name "$POD-nabd" -v "$SRC:/opt/pynab:Z,U" $PROOF_MOUNT \
     -e NABD_HOST=127.0.0.1 -e PGHOST=127.0.0.1 -e PGUSER=pynab -e PGPASSWORD=pynab -e PGDATABASE=pynab -e DAEMONS= \
     "pynab-dev:$PYNAB_COMMIT" /bin/bash /usr/local/bin/run-pynab.sh >/dev/null
   i=0; until podman logs "$POD-nabd" 2>&1 | grep -q "Starting nabd"; do
