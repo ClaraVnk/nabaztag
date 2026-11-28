@@ -78,22 +78,23 @@ keep them out of anywhere else too.
 
 ```sh
 scp firmware-arm/bin/lean/Nab.bin pi-host:~/nabaztag-flash/Nab.new.bin
-ssh pi-host 'cd ~/nabaztag-flash && ./mkfwprog.py Nab.new.bin -o fwprog.tcl'
+ssh -t pi-host 'cd ~/nabaztag-flash && ./flash.sh Nab.new.bin'
+tail -f /tmp/flash-progress.log      # on the Pi, from another shell
 ```
 
-That prints how many words it will write and an estimate. Then, **twice** —
-the first run is expected to fail:
-
-```sh
-ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -f fwprog.tcl -c shutdown'
-ssh pi-host 'cd ~/nabaztag-flash && openocd -f nabaztag-pi.cfg -f oki.tcl -f fwprog.tcl -c shutdown'
-```
+The JTAG link does not last a whole image: the first pass usually dies
+partway through the erase, and later passes can die a few thousand words
+into the write. `flash.sh` reads the flash back after each pass (in 16 KB
+pieces) and plans only what is left (`mkfwprog.py --against`): a sector
+already right is skipped, one with its missing words still erased is
+completed without an erase. Up to `FLASH_PASSES` passes (8); running it
+again after an interruption also resumes. It exits 0 only when the
+read-back is byte-identical to the image.
 
 Sectors 30 and 31 are spared, so the rabbit keeps its Wi-Fi and server
-configuration. It prints a line every thousand words: a silent run and a
-wedged run look identical, and the rabbit cannot boot until this finishes.
-`--no-erase` on `mkfwprog.py` resumes a write whose sectors are already
-erased.
+configuration. `mkfwprog.py` reports every thousand words: a silent run and
+a wedged run look identical, and the rabbit cannot boot until this
+finishes.
 
 ## 5. Check what is actually in the chip
 
@@ -122,6 +123,22 @@ GET /vl/bc.jsp?v=0.0.0.13&m=…&h=4&z=<build mark>&s=1
 `z=` is the build stamp of the image now running. If it is the stamp of what
 you just wrote, the flash landed. If it has not changed, it did not — whatever
 else looked fine.
+
+## 7. Listening to a running rabbit (no halt)
+
+A firmware built with the `dcc_telemetry` step (modes `lean-wpa3-tel`,
+`lean-wpa3-slim-tel`) prints a status line over the JTAG wires without the
+core ever being halted: Wi-Fi state, SAE, EAPOL, USB errors, resets,
+bytecode loads. The fields are explained at the top of `listen.sh`.
+
+```sh
+ssh pi-host 'cd ~/nabaztag-flash && ./listen.sh | tee -a ~/listen.log'
+```
+
+Stop it with Ctrl-C: the script kills OpenOCD (only SIGKILL stops it), or
+the next run fails with "Error requesting gpio line tdo"; then
+`pkill -9 openocd` on the Pi. Listening never halts the core, so the rabbit
+keeps running whatever happens to the listener.
 
 ## When it goes wrong
 
