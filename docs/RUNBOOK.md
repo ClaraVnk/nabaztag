@@ -971,6 +971,44 @@ tools/rabbits-proof.sh --terrier <terrier checkout> --v2 "<xmpp-tls-proof.sh inp
 
 One verdict per rabbit; one without its inputs is NOT RUN, never passed.
 
+### A TagTagTag without its hardware
+
+`firmware-arm/emulator/tagtagtag/nabd.sh` runs Pynab's own development
+image and its nabd with the virtual I/O (it logs what the Pi Zero would do
+with the LEDs, ears and sound), a PostgreSQL beside it, in one podman pod:
+the bench for the Terrier's TagTagTag client. Debian by Clara's exception
+(2026-11-27): the test bench only, nothing of it reaches a rabbit. On the
+dev VM, from the repository root:
+
+```sh
+firmware-arm/emulator/tagtagtag/nabd.sh up      # nabd on 127.0.0.1:10543
+firmware-arm/emulator/tagtagtag/nabd.sh logs    # what nabd did
+firmware-arm/emulator/tagtagtag/nabd.sh down
+```
+
+### Issue #23, finding 5: the microphone and a lost session
+
+`firmware-arm/emulator/tools/i23-lost-rt.sh` drives the add-on from outside
+in step with a realtime run: it starts the rabbit's microphone at 20 s, the
+scenario drops the session at 30 s, so the RT that would stop the capture
+is the one the drop loses.
+
+```sh
+firmware-arm/emulator/tools/i23-lost-rt.sh 127.0.0.1:8080 &
+./rabbit-vm scenarios/vm/i23-lost-rt.txt --eeprom ... --warren ...
+```
+
+### What a TLS 1.3 client would cost in flash
+
+`firmware-arm/tools/cost/tls-size/mbedtls-size.sh` and `picotls-size.sh`
+compile each library's TLS 1.3 client for the rabbit's CPU with -Os, as
+object files (an upper bound: nothing linked), in `localhost/nab-qemu`:
+
+```sh
+bash firmware-arm/tools/cost/tls-size/mbedtls-size.sh /path/to/mbedtls
+bash firmware-arm/tools/cost/tls-size/picotls-size.sh /path/to/picotls
+```
+
 ## 5. The runtime bytecode
 
 Details: [`bytecode/README.md`](../bytecode/README.md).

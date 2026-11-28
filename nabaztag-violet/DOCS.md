@@ -90,6 +90,14 @@ Note that `violet` and `ojn` carry no mic stream, no OTA and no mDNS — point
    is bundled — a *hybrid* build, so passive listening and volume work out of the
    box; there's nothing to choose.)
 
+Two advanced options, rarely needed:
+
+- `log_level` (`Debug`, `Info`, `Warning`, `Error`; default `Info`): how much
+  the add-on writes to its log. `Debug` to investigate a problem.
+- `xmpp_idle_s` (0 to 3600; default 90): seconds without anything received
+  from a connected rabbit before its session is cut (it reconnects by
+  itself). `0` never cuts.
+
 ## Point the rabbit at the server
 
 1. **DNS record** so the rabbit resolves the `server_address` hostname to this
