@@ -234,6 +234,8 @@ void     input_ears(uint8_t right, uint8_t left);
 uint16_t input_sd(void);
 void     input_sent(uint16_t v);
 uint8_t  input_volume(void);
+uint8_t  input_volume_read(void);
+extern uint8_t input_volume_adc;
 void     input_volume_poll(void);
 void     leds_dc(uint8_t base);
 void     leds_rest(uint8_t c);

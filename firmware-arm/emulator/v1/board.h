@@ -43,6 +43,7 @@ struct board {
   unsigned flash_erases, flash_writes; /* PIC flash rows erased, blocks written */
   /* adc: what each channel reads (10 bits) */
   uint16_t adc[16];
+  int      oki_power;                  /* the OKI's register 31 bit 0: the sound side on */
 };
 
 extern struct board B;

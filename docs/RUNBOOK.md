@@ -624,6 +624,24 @@ ipecmd.sh -P18LF6525 -TPPK3 -M -Y -Fdumps/violet-v1-1.4b.hex   # the original ba
 probe's (2026-11-24): erase first, then the original reads back identical,
 EEPROM included.
 
+### Our v1 firmware for a real rabbit: its network and server built in (2026-11-27)
+
+A plain `make` in `firmware-arm/v1-native` builds the proof's image: no Wi-Fi
+network and no server built in. Written to Lazare, such an image stays blue,
+looking for nothing; on 2026-11-26 that read as "main does not associate on
+hardware", and the slider fix (#288) was blamed with it. Built with the
+network, the server and Lazare's own key, main gives byte for byte the image
+that works:
+
+```sh
+sh firmware-arm/v1-native/build-rabbit.sh "<network>" terrier.cyberloutre.fr ~/.nabaztag/v1-keys/<rabbit>.key /tmp/full.hex
+# 2026-11-27: 7cf8c1e built so == lazare-native19's app-30.hex (cmp), the
+#   image Lazare ran; a plain make differed in 25 887 bytes.
+cd firmware-arm/v1-icsp
+ipecmd.sh -P18LF6525 -TPPK3 -E
+ipecmd.sh -P18LF6525 -TPPK3 -M -Y -F/tmp/full.hex
+```
+
 **Result on Lazare (2026-11-24): station firmware 1.4.2** (EEPROM `05 20 1F
 02 01 04`, component 0x1F). Host-side WPA2 needs 1.7.0 or later: not with
 this card's firmware, whatever the PIC. The one way left would load a newer

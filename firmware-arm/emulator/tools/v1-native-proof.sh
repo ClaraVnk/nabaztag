@@ -51,11 +51,14 @@ emu() {
 # a broadcast reply.
 # A click at 60 s, a long press at 75 s, the right ear (0) turned 4 holes
 # by hand at 95 s: the button and the ears by hand go to sd=.
-emu --seconds 135 --bcast-deaf --an0 0 --sound-press 50 --press 60 0.2 --press 75 2 --hand 0 4 95 > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
+# The sound switch on loud (2), a three-position slider read at the sound.
+emu --seconds 135 --bcast-deaf --slider 2 --press 60 0.2 --press 75 2 --hand 0 4 95 > "$OUT/run1.log" 2>&1 || true   # several 40-second network reports
 emu --seconds 6 > "$OUT/run2.log" 2>&1 || true
 # No access point at all (Lazare at blue, 2026-11-24/25): after 30 s the
 # firmware writes what the card says into the EEPROM, for card-report.py.
 emu --seconds 75 --link-down 0.1 0 > "$OUT/run3.log" 2>&1 || true
+# The switch on silent: the sound is not played, and said so (sp=02).
+emu --seconds 135 --bcast-deaf --slider 0 > "$OUT/run4.log" 2>&1 || true
 sleep 1
 grep -E 'uart:|leds:|card: (enable|link)|gw: (DHCP ack|DNS|the rabbit opened)|ear [01]:|watchdog|halted' "$OUT/run1.log"
 cat "$OUT/warren.log"
@@ -76,7 +79,8 @@ need "$L" 'gw: DNS p.nabaztag.com' "no DNS query"
 need "$L" 'uart: dns: p.nabaztag.com -> 10.0.0.1' "the DNS answer was not taken"
 need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=00&tc=00000000&vl=' "not the poll"
 need "$OUT/warren.log" 'GET /vl/FR/p3.jsp?sn=0019DB00BEEF&v=30&st=01&tc=00000000&vl=' "no st=01 after the first poll"
-[ "$(grep -c 'st=00' "$OUT/warren.log")" -le 2 ] || fail "st=00 on more than the first poll of each start"
+# Three starts poll: run1, run2 and run4 (run3 has no access point).
+[ "$(grep -c 'st=00' "$OUT/warren.log")" -le 3 ] || fail "st=00 on more than the first poll of each start"
 need "$L" 'uart: http: HTTP/1.0 200 OK' "the answer's status line was not read"
 need "$L" 'uart: poll interval 1' "the answer's frame 03 was not parsed"
 need "$L" 'uart: poll 3 done' "fewer than three polls answered"
@@ -115,11 +119,17 @@ need "$L" 'leds: .....#..#..#..#.' "the connection's progress does not light the
 # Frame 16 (--rest 6): the base breathes cyan, the owner's colour.
 need "$L" 'uart: leds: rest 06' "frame 16 did not set the base's colour"
 need "$L" 'leds: .............##.' "at rest, not the bottom LED alone in the colour of frame 16"
-# The sound button (a push button on AN0, 0 at rest): normal at first
-# (vl=01), loud after one press at 50 s (vl=02), as Lazare's reads.
-need "$OUT/warren.log" '&vl=01' "the sound state is not reported as normal at first (vl=01)"
-need "$L" 'uart: input: sound 2' "a press of the sound button did not move to loud"
-need "$OUT/warren.log" '&vl=02' "the sound state is not reported as loud after the press (vl=02)"
+# The sound switch (a three-position slider on AN0, fed by the sound side):
+# normal before the first sound (vl=01, the EEPROM's default), read at the
+# sound as loud (raw F0, va=F0), then reported loud (vl=02); on silent, the
+# sound is not played (sp=02) and the state is silent (vl=00).
+need "$OUT/warren.log" '&vl=01' "the sound state is not reported as normal before any sound (vl=01)"
+need "$L" 'uart: input: sound switch 2 (raw f0)' "the switch was not read as loud at the sound"
+need "$OUT/warren.log" '&va=F0' "the switch's raw reading was not reported (va=F0)"
+need "$OUT/warren.log" '&vl=02' "the sound state is not reported as loud after the sound (vl=02)"
+need "$OUT/run4.log" 'uart: oki: silent (sound switch)' "on silent, the sound was played"
+need "$OUT/warren.log" '&sp=02' "on silent, the outcome was not reported (sp=02)"
+need "$OUT/warren.log" '&vl=00' "on silent, the state is not reported (vl=00)"
 need "$L" 'ear 1: motor stopped' "the emulator did not see ear 1 stop"
 grep -q 'watchdog:' "$L" && fail "the watchdog fired"
 grep -q 'halted' "$L" && fail "the PIC halted"

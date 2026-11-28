@@ -4,7 +4,7 @@
  * (the Terrier's nabv1.parse_sd: 0003 a click, 0001 a double click, 0004 a
  * long press, 8R0L the ears' places, a nibble each). One report waits at a
  * time; it goes with the next poll and is dropped once that poll is
- * answered. The volume wheel (AN0) is read too, in three levels as Violet's
+ * answered. The sound switch (AN0) is read at each sound, in three levels as Violet's
  * firmware reads it (thresholds 0x40 and 0xC0, 0x5A4C in 1.4b); what it
  * changes is not known yet, so it is only reported.
  */
@@ -66,33 +66,34 @@ uint16_t input_sd(void) { return sd; }
  * that came meanwhile waits for the next poll). */
 void input_sent(uint16_t v) { if(sd == v) sd = 0; }
 
-/* The sound button (AN0): a push button, not a switch. It reads 0 at rest
- * and about 0xDA while pressed (Lazare, 2026-11-26: 00 in every position,
- * DA/DC/DE once at each press; Clara: "un bouton poussoir avec 3 états").
- * Each press moves to the next state, normal -> loud -> silent -> normal,
- * kept in the EEPROM (0x79) across starts; oki.c plays at that state's
- * volume as Violet's 0x1FBC does (silent: nothing). Read every 50 ms so a
- * short press is not missed. */
+/* The sound switch (AN0): a three-position slider, left silent, middle
+ * normal, right loud (Clara, 2026-11-26). Its divider is fed by the sound
+ * side, so AN0 reads 0 at rest and only means something with the sound chip
+ * powered: Violet's 1.4b reads it at each sound's start, after the chip's
+ * power-up (0x5FDE: 0x200A, 0x1FE4, then 0x5A4C: below 0x40 silent, below
+ * 0xC0 normal, else loud). Read at rest, ours saw 00 in every position and
+ * a spike at each move, took the spikes for presses, and counted them
+ * round: Lazare said "silent" with the slider in the middle. oki.c reads it
+ * now as Violet does, through input_volume_read(); the last level is kept
+ * in the EEPROM (0x79) for the poll's vl= before the first sound. */
 #define EE_VOLUME 0x79
+uint8_t input_volume_adc;               /* the last raw reading, for &va= */
 
-void input_volume_poll(void)
+void input_volume_poll(void) { }
+
+uint8_t input_volume_read(void)
 {
-  static uint16_t at;
-  static uint8_t pressed;
-  uint8_t v;
-  if((uint16_t)(ticks() - at) < MS_TO_TICKS(50)) return;
-  at = ticks();
+  uint8_t v, k, lvl;
   ADCON0 = 0x01;                        /* AN0, on */
-  { uint8_t k; for(k = 0; k < 60; k++) nop(); }   /* acquisition */
+  for(k = 0; k < 60; k++) nop();        /* acquisition */
   ADCON0bits.GO = 1;
   while(ADCON0bits.GO) ;
   v = ADRESH;
-  if(v >= 0x80 && !pressed) {
-    pressed = 1;
-    volume = input_volume() == 2 ? 0 : volume + 1;
-    ee_put(EE_VOLUME, volume);
-    log_s("input: sound "); log_dec(volume); log_s(" (raw "); log_hex8(v); log_line(")");
-  } else if(v < 0x40) pressed = 0;
+  input_volume_adc = v;
+  lvl = v < 0x40 ? 0 : v < 0xC0 ? 1 : 2;
+  if(lvl != input_volume()) { volume = lvl; ee_put(EE_VOLUME, volume); }
+  log_s("input: sound switch "); log_dec(lvl); log_s(" (raw "); log_hex8(v); log_line(")");
+  return lvl;
 }
 
 uint8_t input_volume(void)
